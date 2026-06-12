@@ -1,9 +1,9 @@
 ---
-name: trellis-grill
+name: client-grill
 description: Gate 前拷问会话（grill-with-docs 的 guru 适配版）。对照本项目领域模型（golden-path 分层语义、project-conventions 槽位、spec 项目域、既有 BHV/UNIT 编号）逐分支拷问 prd 或概要归属表，磨尖术语、压测边界场景、与代码交叉核对，决策当场固化进产物。运行位置：需求 Gate 前（拷问 prd.md）与概要 Gate 前（拷问 design.md §1）。不替代 trellis-brainstorm（探索生成）与 *-review（判定）。
 ---
 
-# trellis-grill — Gate 前拷问
+# client-grill — Gate 前拷问
 
 ## 做什么
 
