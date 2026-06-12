@@ -36,11 +36,16 @@ max_journal_lines: 2000
 # Task Lifecycle Hooks
 #-------------------------------------------------------------------------------
 
-# Shell commands to run after task lifecycle events.
+# Shell commands to run on task lifecycle events.
 # Each hook receives TASK_JSON_PATH environment variable pointing to task.json.
-# Hook failures print a warning but do not block the main operation.
+#
+# after_* hooks are observational: failures print a warning but do not block.
+# before_start hooks are blocking: a non-zero exit aborts `task.py start`
+# (used by workflows that gate implementation behind explicit approvals).
 #
 # hooks:
+#   before_start:
+#     - "python3 .trellis/scripts/guru/guru_gate.py check"
 #   after_create:
 #     - "echo 'Task created'"
 #   after_start:

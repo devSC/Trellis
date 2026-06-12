@@ -261,6 +261,50 @@ def run_task_hooks(event: str, task_json_path: Path, repo_root: Path) -> None:
             )
 
 
+def run_blocking_task_hooks(event: str, task_json_path: Path, repo_root: Path) -> bool:
+    """Run blocking lifecycle hooks for a task event (e.g. "before_start").
+
+    Unlike run_task_hooks, hook output is streamed to the console and a
+    non-zero exit aborts the operation: returns False so the caller stops.
+
+    Args:
+        event: Event name (e.g. "before_start").
+        task_json_path: Absolute path to the task's task.json.
+        repo_root: Repository root for cwd and config lookup.
+
+    Returns:
+        True if all hooks passed (or none configured), False to abort.
+    """
+    import os
+    import subprocess
+
+    from .config import get_hooks
+    from .log import Colors, colored
+
+    commands = get_hooks(event, repo_root)
+    if not commands:
+        return True
+
+    env = {**os.environ, "TASK_JSON_PATH": str(task_json_path)}
+
+    for cmd in commands:
+        try:
+            result = subprocess.run(cmd, shell=True, cwd=repo_root, env=env)
+        except Exception as e:
+            print(
+                colored(f"[BLOCK] Hook error ({event}): {cmd} — {e}", Colors.RED),
+                file=sys.stderr,
+            )
+            return False
+        if result.returncode != 0:
+            print(
+                colored(f"[BLOCK] {event} hook rejected the operation: {cmd}", Colors.RED),
+                file=sys.stderr,
+            )
+            return False
+    return True
+
+
 # =============================================================================
 # Main Entry (for testing)
 # =============================================================================

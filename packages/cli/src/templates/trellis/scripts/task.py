@@ -43,7 +43,7 @@ from common.active_task import (
     set_active_task,
 )
 from common.io import read_json, write_json
-from common.task_utils import resolve_task_dir, run_task_hooks
+from common.task_utils import resolve_task_dir, run_blocking_task_hooks, run_task_hooks
 from common.tasks import iter_active_tasks, children_progress
 
 # Import command handlers from split modules (also re-exports for plan.py compatibility)
@@ -91,6 +91,13 @@ def cmd_start(args: argparse.Namespace) -> int:
         task_dir = str(full_path)
 
     task_json_path = full_path / FILE_TASK_JSON
+
+    # Blocking pre-activation hooks (config.yaml `hooks.before_start`). Unlike
+    # after_* hooks, a non-zero exit here aborts the start — used by workflows
+    # that gate implementation behind explicit (e.g. human) approvals.
+    if not run_blocking_task_hooks("before_start", task_json_path, repo_root):
+        print(colored("Error: task activation blocked by before_start hook", Colors.RED))
+        return 1
 
     if not resolve_context_key():
         # Degraded mode: no session identity available.
