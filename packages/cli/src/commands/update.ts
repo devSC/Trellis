@@ -154,7 +154,7 @@ function replaceTrellisManagedBlock(
   );
 }
 
-function buildAgentsMdTemplate(cwd: string): string {
+export function buildAgentsMdTemplate(cwd: string): string {
   const fullPath = path.join(cwd, FILE_NAMES.AGENTS);
   if (!fs.existsSync(fullPath)) {
     return agentsMdContent;

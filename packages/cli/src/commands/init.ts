@@ -21,12 +21,14 @@ import { AI_TOOLS, type CliFlag } from "../types/ai-tools.js";
 import { DIR_NAMES, FILE_NAMES, PATHS } from "../constants/paths.js";
 import { VERSION } from "../constants/version.js";
 import { agentsMdContent } from "../templates/markdown/index.js";
+import { buildAgentsMdTemplate } from "./update.js";
 import {
   setWriteMode,
   startRecordingWrites,
   stopRecordingWrites,
-  writeFile,
   type WriteMode,
+  recordWrite,
+  getWriteMode,
 } from "../utils/file-writer.js";
 import { emptyTaskJson, type TaskJson } from "../utils/task-json.js";
 import {
@@ -1997,9 +1999,37 @@ function askInput(prompt: string): Promise<string> {
 async function createRootFiles(cwd: string): Promise<void> {
   const agentsPath = path.join(cwd, FILE_NAMES.AGENTS);
 
-  // Write AGENTS.md from template
-  const agentsWritten = await writeFile(agentsPath, agentsMdContent);
-  if (agentsWritten) {
+  if (!fs.existsSync(agentsPath)) {
+    fs.writeFileSync(agentsPath, agentsMdContent);
+    recordWrite(agentsPath);
     console.log(chalk.blue("📄 Created AGENTS.md"));
+    return;
   }
+
+  // Existing file: honor the global write mode. In skip mode the user's
+  // AGENTS.md is never touched — not even by an append — so it stays out of
+  // the manifest and survives uninstall byte-identical (PR #271 contract).
+  // Outside skip mode, merge at block level instead of clobbering: replace
+  // the TRELLIS block when markers exist, append it when they don't —
+  // preserving user content either way.
+  const rawMode = getWriteMode();
+  const mode = rawMode === "ask" && !process.stdin.isTTY ? "skip" : rawMode;
+  const merged = buildAgentsMdTemplate(cwd);
+  const existing = fs.readFileSync(agentsPath, "utf-8");
+  if (existing === merged) {
+    return; // Already up to date — nothing to write or record.
+  }
+
+  if (mode !== "force") {
+    console.log(
+      chalk.gray(
+        "  ○ Skipped: AGENTS.md (already exists; run `trellis update` or re-run init with --force to merge the Trellis managed block)",
+      ),
+    );
+    return;
+  }
+
+  fs.writeFileSync(agentsPath, merged);
+  recordWrite(agentsPath);
+  console.log(chalk.blue("📝 Updated AGENTS.md (merged Trellis managed block)"));
 }

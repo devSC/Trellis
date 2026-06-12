@@ -624,6 +624,26 @@ function parseGitmodules(cwd: string): { name: string; path: string }[] | null {
   }
 }
 
+/**
+ * Check whether a declared submodule is actually initialized.
+ *
+ * Per git's layout, an initialized submodule has a `.git` *file* (a gitlink
+ * containing `gitdir: <path>`); an uninitialized one is just an empty
+ * placeholder directory with no `.git` entry at all. A `.git` *directory*
+ * means a standalone repo checked out in place — also usable as a package.
+ * Declared-but-uninitialized submodules must NOT be treated as monorepo
+ * packages: they have no content, and counting them flips single-app repos
+ * (app + dependency submodule) into the monorepo flow, installing specs into
+ * bogus per-package paths.
+ */
+function isInitializedGitSubmodule(cwd: string, pkgPath: string): boolean {
+  try {
+    return fs.existsSync(path.join(cwd, pkgPath, ".git"));
+  } catch {
+    return false;
+  }
+}
+
 // --- Main monorepo detection ---
 
 /**
@@ -639,16 +659,20 @@ export function detectMonorepo(cwd: string): DetectedPackage[] | null {
   const packages = new Map<string, DetectedPackage>();
   let detected = false;
 
-  // 1. Parse .gitmodules first to build submodule path set
+  // 1. Parse .gitmodules first to build submodule path set.
+  // Only initialized submodules count: declared-but-uninitialized entries are
+  // placeholders and must not flip the repo into the monorepo flow.
   const submodulePaths = new Map<string, string>();
   const gitmodules = parseGitmodules(cwd);
   if (gitmodules) {
-    detected = true;
     for (const mod of gitmodules) {
       const np = normalizePkgPath(mod.path);
-      if (np && np !== ".") {
+      if (np && np !== "." && isInitializedGitSubmodule(cwd, np)) {
         submodulePaths.set(np, mod.name);
       }
+    }
+    if (submodulePaths.size > 0) {
+      detected = true;
     }
   }
 

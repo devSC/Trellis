@@ -759,3 +759,43 @@ export function applyPullBasedPreludeToml(
     };
   });
 }
+
+/**
+ * Defaults-style deep merge for JSON config files (e.g. .claude/settings.json).
+ *
+ * Semantics: `existing` (the user's file) always wins; `template` only fills
+ * in what is missing. Objects merge recursively; arrays union (template items
+ * appended when no existing item is deep-equal by JSON serialization);
+ * scalars keep the existing value. This lets re-running `trellis init` inject
+ * newly added platform hooks without clobbering user customizations.
+ */
+export function mergeJsonDefaults(existing: unknown, template: unknown): unknown {
+  if (existing === undefined) return template;
+  if (template === undefined) return existing;
+  if (Array.isArray(existing) && Array.isArray(template)) {
+    const seen = new Set(existing.map((item) => JSON.stringify(item)));
+    const merged = [...existing];
+    for (const item of template) {
+      if (!seen.has(JSON.stringify(item))) merged.push(item);
+    }
+    return merged;
+  }
+  if (
+    typeof existing === "object" &&
+    existing !== null &&
+    !Array.isArray(existing) &&
+    typeof template === "object" &&
+    template !== null &&
+    !Array.isArray(template)
+  ) {
+    const result: Record<string, unknown> = {
+      ...(existing as Record<string, unknown>),
+    };
+    for (const [key, value] of Object.entries(template)) {
+      result[key] = key in result ? mergeJsonDefaults(result[key], value) : value;
+    }
+    return result;
+  }
+  // Scalar or type mismatch: the user's existing value wins.
+  return existing;
+}

@@ -18,11 +18,16 @@ import path from "node:path";
 
 import { workflowMdTemplate } from "../templates/trellis/index.js";
 import {
+  GURU_CLIENT_WORKFLOW_ID,
+  guruWorkflowMdTemplate,
+} from "../templates/guru/index.js";
+import {
   TIMEOUTS,
   TEMPLATE_INDEX_URL,
   RegistryBackendError,
   parseRegistrySource,
   probeRegistryIndex,
+  retryOnTransientError,
   type RegistryBackend,
   type RegistrySource,
   type SpecTemplate,
@@ -38,6 +43,18 @@ import {
  * design.md "Durable-state contract").
  */
 export const NATIVE_WORKFLOW_ID = "native";
+
+export { GURU_CLIENT_WORKFLOW_ID };
+
+/**
+ * Ids resolvable offline from CLI-bundled content. Only `native` keeps
+ * `.trellis/workflow.md` under hash tracking (durable-state contract); other
+ * bundled ids remain user-managed local workflows after install.
+ */
+const BUNDLED_WORKFLOW_IDS = new Set([
+  NATIVE_WORKFLOW_ID,
+  GURU_CLIENT_WORKFLOW_ID,
+]);
 
 /**
  * Resolved workflow template entry.
@@ -106,6 +123,29 @@ function nativeResolvedEntry(): ResolvedWorkflowTemplate {
   };
 }
 
+/**
+ * Bundled guru-client workflow entry — virtual, resolved without network
+ * access (fork-specific five-phase client workflow).
+ */
+function guruClientListingEntry(): WorkflowTemplateListing {
+  return {
+    id: GURU_CLIENT_WORKFLOW_ID,
+    type: "workflow",
+    name: "Guru Client 5-Phase Workflow",
+    description:
+      "需求→概要→详细→实现→审核 五阶段（三道文档 Gate + verify 强制），bundled with the guru fork CLI",
+    path: "bundled:guru/workflow.md",
+    source: "bundled",
+  };
+}
+
+function guruClientResolvedEntry(): ResolvedWorkflowTemplate {
+  return {
+    ...guruClientListingEntry(),
+    content: guruWorkflowMdTemplate,
+  };
+}
+
 function parseSourceOrThrow(source: string): RegistrySource {
   try {
     return parseRegistrySource(source);
@@ -161,7 +201,10 @@ export async function listWorkflowTemplates(
   templates: WorkflowTemplateListing[];
   errorMessage?: string;
 }> {
-  const result: WorkflowTemplateListing[] = [nativeListingEntry()];
+  const result: WorkflowTemplateListing[] = [
+    nativeListingEntry(),
+    guruClientListingEntry(),
+  ];
 
   let registry: RegistrySource | undefined;
   let indexUrl = TEMPLATE_INDEX_URL;
@@ -177,7 +220,7 @@ export async function listWorkflowTemplates(
 
   for (const t of fetched.templates) {
     if (t.type !== "workflow") continue;
-    if (t.id === NATIVE_WORKFLOW_ID) continue;
+    if (BUNDLED_WORKFLOW_IDS.has(t.id)) continue;
     result.push({
       id: t.id,
       type: "workflow",
@@ -206,6 +249,9 @@ export async function resolveWorkflowTemplate(
 ): Promise<ResolvedWorkflowTemplate> {
   if (id === NATIVE_WORKFLOW_ID) {
     return nativeResolvedEntry();
+  }
+  if (id === GURU_CLIENT_WORKFLOW_ID) {
+    return guruClientResolvedEntry();
   }
 
   let registry: RegistrySource | undefined;
@@ -265,7 +311,9 @@ async function fetchWorkflowFile(
   validateWorkflowPath(relativePath);
   const useGit = registry?.preferGit ?? backend === "git";
   if (registry && useGit) {
-    return fetchWorkflowFileGit(registry, relativePath);
+    return retryOnTransientError(() =>
+      fetchWorkflowFileGit(registry, relativePath),
+    );
   }
   const rawBase = registry
     ? registry.rawBaseUrl

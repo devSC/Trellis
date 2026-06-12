@@ -194,6 +194,14 @@ describe("detectMonorepo", () => {
   });
 
   /** Create a subdirectory and optionally write a package.json with a name */
+  /** Simulate an initialized submodule: write the .git gitlink file. */
+  function mkSubmoduleGitlink(relPath: string): void {
+    fs.writeFileSync(
+      path.join(tmpDir, relPath, ".git"),
+      "gitdir: ../.git/modules/" + relPath + "\n",
+    );
+  }
+
   function mkPkg(relPath: string, name?: string): void {
     const dir = path.join(tmpDir, relPath);
     fs.mkdirSync(dir, { recursive: true });
@@ -370,6 +378,7 @@ describe("detectMonorepo", () => {
       '[submodule "docs-site"]\n\tpath = docs-site\n\turl = https://example.com/docs.git\n',
     );
     mkPkg("docs-site", "docs-site");
+    mkSubmoduleGitlink("docs-site");
 
     const result = assertPackages(detectMonorepo(tmpDir));
     expect(result).toHaveLength(1);
@@ -377,17 +386,26 @@ describe("detectMonorepo", () => {
     expect(result[0].isSubmodule).toBe(true);
   });
 
-  it("keeps uninitialized submodule as unknown type", () => {
+  it("skips declared-but-uninitialized submodules (no .git entry)", () => {
     fs.writeFileSync(
       path.join(tmpDir, ".gitmodules"),
       '[submodule "missing"]\n\tpath = missing\n\turl = https://example.com/missing.git\n',
     );
     // Don't create the directory — uninitialized
 
-    const result = assertPackages(detectMonorepo(tmpDir));
-    expect(result).toHaveLength(1);
-    expect(result[0].type).toBe("unknown");
-    expect(result[0].isSubmodule).toBe(true);
+    // Placeholder-only submodules must not flip the repo into the monorepo
+    // flow (an app repo with one dependency submodule is NOT a monorepo).
+    expect(detectMonorepo(tmpDir)).toBeNull();
+  });
+
+  it("skips uninitialized submodule placeholder directory (dir without .git)", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, ".gitmodules"),
+      '[submodule "vendor"]\n\tpath = vendor\n\turl = https://example.com/vendor.git\n',
+    );
+    fs.mkdirSync(path.join(tmpDir, "vendor"), { recursive: true });
+
+    expect(detectMonorepo(tmpDir)).toBeNull();
   });
 
   // --- Path normalization ---
@@ -436,6 +454,7 @@ describe("detectMonorepo", () => {
     );
     mkPkg("packages/cli", "@trellis/cli");
     mkPkg("docs-site", "docs-site");
+    mkSubmoduleGitlink("docs-site");
 
     const result = assertPackages(detectMonorepo(tmpDir));
     expect(result).toHaveLength(2);
@@ -589,6 +608,12 @@ describe("detectMonorepo polyrepo fallback", () => {
       '[submodule "docs"]\n\tpath = docs\n\turl = https://example.com\n',
     );
     fs.mkdirSync(path.join(tmpDir, "docs"), { recursive: true });
+    // Initialized submodule (gitlink file) — placeholder-only submodules no
+    // longer suppress the polyrepo fallback.
+    fs.writeFileSync(
+      path.join(tmpDir, "docs", ".git"),
+      "gitdir: ../.git/modules/docs\n",
+    );
     // Plus sibling .git that would otherwise trigger polyrepo
     mkRepoDir("standalone-a");
     mkRepoDir("standalone-b");

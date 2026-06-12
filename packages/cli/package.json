@@ -1,6 +1,6 @@
 {
-  "name": "@mindfoldhq/trellis",
-  "version": "0.6.0-rc.0",
+  "name": "@devsc/trellis",
+  "version": "0.6.0-rc.0-guru.1",
   "description": "AI capabilities grow like ivy — Trellis provides the structure to guide them along a disciplined path",
   "type": "module",
   "main": "./dist/index.js",
@@ -10,7 +10,8 @@
     "tl": "./bin/trellis.js"
   },
   "publishConfig": {
-    "access": "public"
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
   },
   "scripts": {
     "build": "pnpm run clean && tsc && pnpm run copy-templates",
@@ -35,7 +36,8 @@
     "release:beta": "node scripts/release.js beta",
     "release:rc": "node scripts/release.js rc",
     "release:promote": "node scripts/release.js promote",
-    "manifest": "node scripts/create-manifest.js"
+    "manifest": "node scripts/create-manifest.js",
+    "sync:guru": "node scripts/sync-guru-template.js"
   },
   "keywords": [
     "ai",
@@ -52,7 +54,7 @@
   "author": "Mindfold LLC",
   "license": "AGPL-3.0-only",
   "dependencies": {
-    "@mindfoldhq/trellis-core": "workspace:*",
+    "@mindfoldhq/trellis-core": "workspace:@devsc/trellis-core@*",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "figlet": "^1.9.4",
@@ -85,6 +87,6 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/mindfold-ai/trellis.git"
+    "url": "https://github.com/devSC/Trellis.git"
   }
 }

@@ -1,4 +1,10 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { AI_TOOLS } from "../types/ai-tools.js";
 import { getClaudeTemplatePath } from "../templates/extract.js";
@@ -11,6 +17,7 @@ import {
   writeSkills,
   writeSharedHooks,
   replacePythonCommandLiterals,
+  mergeJsonDefaults,
 } from "./shared.js";
 
 const EXCLUDE_PATTERNS = [
@@ -57,6 +64,33 @@ async function copyDirFiltered(
       let content = readFileSync(srcPath, "utf-8");
       if (entry === "settings.json") {
         content = resolvePlaceholders(content);
+        // Key-level merge for an existing settings.json: the user's values
+        // win, template entries only fill gaps (objects recurse, arrays
+        // union). Re-running init thus injects newly added platform hooks
+        // without clobbering user customizations.
+        if (existsSync(destPath)) {
+          try {
+            const existing: unknown = JSON.parse(
+              readFileSync(destPath, "utf-8"),
+            );
+            const incoming: unknown = JSON.parse(
+              replacePythonCommandLiterals(content),
+            );
+            const serialized =
+              JSON.stringify(mergeJsonDefaults(existing, incoming), null, 2) +
+              "\n";
+            if (serialized !== readFileSync(destPath, "utf-8")) {
+              // Deliberately NOT recorded in the manifest: a pre-existing
+              // settings.json is user-owned; merging defaults into it must
+              // not let uninstall delete the user's file.
+              writeFileSync(destPath, serialized);
+              console.log("  📝 Merged: .claude/settings.json");
+            }
+            continue;
+          } catch {
+            // Unparseable JSON — fall through to the standard write path.
+          }
+        }
       }
       await writeFile(destPath, replacePythonCommandLiterals(content));
     }

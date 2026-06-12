@@ -30,3 +30,26 @@ git checkout guru/main && git merge upstream/main                               
 | 日期 | 改动 | 关联 issue |
 |------|------|-----------|
 | 2026-06-12 | 建立 guru/main 基线 + 本说明文件 | client_agent#2 |
+
+## 包发布（GitHub Packages）
+
+| 包 | 用途 |
+|----|------|
+| `@devsc/trellis` | CLI（bin: `trellis`/`tl`），内置 guru-client workflow 与 guru-flutter-client spec（离线可用） |
+| `@devsc/trellis-core` | CLI 的运行时依赖（经 npm alias `@mindfoldhq/trellis-core` 引用，源码 import 零改动） |
+
+版本策略：跟随上游 + guru 后缀（如 `0.6.0-rc.0-guru.1`）。
+
+```bash
+# 发布（需 PAT 含 write:packages；prepublishOnly 自动 test+build）
+npm login --registry=https://npm.pkg.github.com   # 或 ~/.npmrc 配 _authToken
+pnpm -C packages/core publish --no-git-checks
+pnpm -C packages/cli  publish --no-git-checks
+
+# 团队安装（一次性 ~/.npmrc）：
+#   @devsc:registry=https://npm.pkg.github.com
+#   //npm.pkg.github.com/:_authToken=<read:packages PAT>
+npm i -g @devsc/trellis
+
+# 内容更新流：改 guru-template/ → pnpm -C packages/cli sync:guru → bump guru.N → publish
+```

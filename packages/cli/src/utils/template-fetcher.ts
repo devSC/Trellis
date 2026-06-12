@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { downloadTemplate } from "giget";
 import { toPosix } from "./posix.js";
+import { getBundledSpecFiles } from "../templates/guru/index.js";
 
 // =============================================================================
 // Constants
@@ -28,13 +29,82 @@ const INSTALL_PATHS: Record<string, string> = {
   full: ".", // Entire project root
 };
 
-/** Timeout constants for network operations */
+/**
+ * Parse a positive integer timeout from an environment variable.
+ * Exported for tests. Invalid or non-positive values fall back to the default.
+ */
+export function readTimeoutEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return fallback;
+}
+
+/**
+ * Timeout constants for network operations.
+ * Overridable via environment variables (resolved at module load):
+ * - TRELLIS_INDEX_TIMEOUT_MS (default 5000)
+ * - TRELLIS_DOWNLOAD_TIMEOUT_MS (default 30000) — large registries over slow
+ *   links (e.g. blob-on-demand checkout of a multi-hundred-MB repo) may need more.
+ */
 export const TIMEOUTS = {
   /** Timeout for fetching the template index (ms) */
-  INDEX_FETCH_MS: 5_000,
+  INDEX_FETCH_MS: readTimeoutEnv("TRELLIS_INDEX_TIMEOUT_MS", 5_000),
   /** Timeout for downloading a template via giget (ms) */
-  DOWNLOAD_MS: 30_000,
+  DOWNLOAD_MS: readTimeoutEnv("TRELLIS_DOWNLOAD_TIMEOUT_MS", 30_000),
 } as const;
+
+/** Error fragments that indicate a transient network failure worth retrying. */
+const RETRYABLE_ERROR_FRAGMENTS = [
+  "timed out",
+  "timeout",
+  "econnreset",
+  "enotfound",
+  "connection closed",
+  "connection reset",
+  "could not read from remote repository",
+];
+
+function isTransientNetworkError(err: unknown): boolean {
+  const text = getCommandErrorTextSafe(err).toLowerCase();
+  return RETRYABLE_ERROR_FRAGMENTS.some((f) => text.includes(f));
+}
+
+function getCommandErrorTextSafe(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const commandError = err as Error & { stdout?: string; stderr?: string };
+  return [commandError.message, commandError.stderr, commandError.stdout]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join("\n");
+}
+
+/**
+ * Retry an async operation on transient network errors with exponential backoff.
+ * Auth failures, 404s and other deterministic errors are NOT retried.
+ */
+export async function retryOnTransientError<T>(
+  fn: () => Promise<T>,
+  maxAttempts = 2,
+  shouldRetry: (err: unknown) => boolean = isTransientNetworkError,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts && shouldRetry(err)) {
+        const delayMs = 200 * 2 ** (attempt - 1);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
 
 // =============================================================================
 // Types
@@ -418,14 +488,19 @@ export async function fetchTemplateIndex(
 ): Promise<SpecTemplate[]> {
   try {
     const url = indexUrl ?? TEMPLATE_INDEX_URL;
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(TIMEOUTS.INDEX_FETCH_MS),
-    });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-    const index: TemplateIndex = (await res.json()) as TemplateIndex;
-    return index.templates;
+    return await retryOnTransientError(
+      async () => {
+        const res = await fetch(url, {
+          signal: AbortSignal.timeout(TIMEOUTS.INDEX_FETCH_MS),
+        });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const index: TemplateIndex = (await res.json()) as TemplateIndex;
+        return index.templates;
+      },
+      2,
+    );
   } catch {
     // Network error or timeout - return empty array, caller will fallback to blank
     return [];
@@ -512,9 +587,13 @@ async function probeRegistryIndexHttp(
   indexUrl: string,
 ): Promise<RegistryProbeResult> {
   try {
-    const res = await fetch(indexUrl, {
-      signal: AbortSignal.timeout(TIMEOUTS.INDEX_FETCH_MS),
-    });
+    const res = await retryOnTransientError(
+      () =>
+        fetch(indexUrl, {
+          signal: AbortSignal.timeout(TIMEOUTS.INDEX_FETCH_MS),
+        }),
+      2,
+    );
     if (res.status === 404) {
       return emptyProbeResult("http", true);
     }
@@ -606,6 +685,16 @@ export async function removeDirectory(dir: string): Promise<void> {
 }
 
 async function runGit(args: string[]): Promise<GitCommandOutput> {
+  // Network-touching git commands (clone/fetch) get one retry on transient
+  // failures (flaky proxies that close connections mid-handshake, timeouts).
+  const touchesNetwork = args.includes("clone") || args.includes("fetch");
+  if (touchesNetwork) {
+    return retryOnTransientError(() => runGitOnce(args));
+  }
+  return runGitOnce(args);
+}
+
+async function runGitOnce(args: string[]): Promise<GitCommandOutput> {
   const { execFile } = await import("node:child_process");
   return new Promise<GitCommandOutput>((resolve, reject) => {
     execFile(
@@ -1093,6 +1182,26 @@ function resolveRegistryBackend(
  *                   repo as the giget source instead of the default TEMPLATE_REPO.
  * @returns Object with success status and message
  */
+/**
+ * Write a bundled (in-memory) spec template to disk honoring the strategy.
+ */
+async function writeBundledSpecFiles(
+  files: Map<string, string>,
+  destDir: string,
+  strategy: TemplateStrategy,
+): Promise<void> {
+  const exists = fs.existsSync(destDir);
+  if (strategy === "overwrite" && exists) {
+    await fs.promises.rm(destDir, { recursive: true, force: true });
+  }
+  for (const [relPath, content] of files) {
+    const filePath = path.join(destDir, ...relPath.split("/"));
+    if (strategy === "append" && fs.existsSync(filePath)) continue;
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, content, "utf-8");
+  }
+}
+
 export async function downloadTemplateById(
   cwd: string,
   templateId: string,
@@ -1102,6 +1211,27 @@ export async function downloadTemplateById(
   destDirOverride?: string,
   registryBackend?: RegistryBackend,
 ): Promise<{ success: boolean; message: string; skipped?: boolean }> {
+  // Bundled specs resolve offline when no explicit registry is given.
+  // An explicit --registry always wins (the user asked for a remote source).
+  if (!registry) {
+    const bundled = getBundledSpecFiles(templateId);
+    if (bundled) {
+      const destDir = destDirOverride ?? getInstallPath(cwd, "spec");
+      if (strategy === "skip" && fs.existsSync(destDir)) {
+        return {
+          success: true,
+          skipped: true,
+          message: `Skipped: ${destDir} already exists`,
+        };
+      }
+      await writeBundledSpecFiles(bundled, destDir, strategy);
+      return {
+        success: true,
+        message: `Installed bundled template "${templateId}" to ${destDir}`,
+      };
+    }
+  }
+
   // Use pre-fetched template or find from index
   let resolved = template;
   let backend = registryBackend;
