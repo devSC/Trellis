@@ -33,6 +33,7 @@
 - `design.md` — 两章结构：**§1 概要设计**（行为集合、行为→owner 归属表+三问理由、页面流、技术决策承接、详细设计承接索引）；**§2 详细设计**（按承接索引逐 doc_type 展开合同八问）。
 - `implement.md` — **实现计划**（trace 合同 §1：任务切片/顺序/风险，见 `.trellis/spec/harness/implementation/implementation-trace-contract.md`）；实现期持续追加 §2 执行 / §3 证据 / §4 阻塞偏差。
 - `implement.jsonl` / `check.jsonl` — spec/research 注入清单（见 1.5）。
+- **编号纪律** — 行为 `BHV-NNN`（prd 标题，不复用不重排）、设计单元 `UNIT-<slug>`（design §2 标题）；跨产物引用一律写编号 token。`python3 .trellis/scripts/guru/guru_gate.py trace-matrix <task_dir> [--write]` 随时生成追溯矩阵（--strict 断链拦截）。
 
 ---
 
@@ -70,7 +71,7 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 按 design.md 章节存在性定位当前步骤：无 prd.md→1.1 需求；prd 过 Gate 无 design.md §1→1.3 概要；§1 过 Gate 无 §2→1.4 详细。
 1.1 需求：trellis-brainstorm 探索 + 行为规格口径（Given/When/Then + P0/P1 + 失败路径 + 验收）写 prd.md。需求 Gate：无行为/前置/状态变化/失败路径/验收场景 → 不进概要。
 1.3 概要：加载 client-design-overview-writing 写 design.md §1（归属表+三问+承接索引）。概要 Gate（client-design-overview-review）：行为无 owner 证据/违反分层依赖律 → 不进详细。
-1.4 详细：加载 client-design-detail-writing 写 design.md §2（合同八问）+ implement.md（trace §1）。详细 Gate（client-design-detail-review）：合同追溯不到 owner/无测试映射/涉权限无合规依据 → 不进实现。
+1.4 详细：加载 client-design-detail-writing 写 design.md §2（合同八问）+ implement.md（trace §1）。详细 Gate（client-design-detail-review）：合同追溯不到 owner/无测试映射/涉权限无合规依据 → 不进实现；编号断链（幽灵 BHV/行为无承接）由 guru_gate 自动拦截。
 1.5 配置 jsonl：implement.jsonl/check.jsonl 必含本任务所读 harness SSOT、golden-path、project-conventions（带 reason）。
 每道 Gate 由人工判定（review skill 给互斥结论）；Gate 不过回本步修订，禁止硬推进。全 Gate 过后 1.6 task.py start。
 [/workflow-state:planning]

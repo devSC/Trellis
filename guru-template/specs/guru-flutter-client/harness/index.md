@@ -24,4 +24,6 @@
 - 实现 Gate：analyze/test/lints/compliance 任一无证据、trace 四节不全 → 不进 commit。
 - 审核：存量豁免判定（SLOT-15 内记债不阻塞；清单外新增违例阻塞）。
 
+- 编号与追溯：行为以 `BHV-NNN`、单元以 `UNIT-<slug>` 标题定义，引用写编号 token；`guru_gate.py trace-matrix <task_dir> --write` 生成追溯矩阵，断链进不了详细/实现 Gate。
+
 缺陷只能回上游修：审核发现结构性缺陷（归属错、合同越界）回到拥有该决策的阶段修订，禁止下游补造。
