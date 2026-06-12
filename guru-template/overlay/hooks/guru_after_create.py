@@ -11,6 +11,8 @@
   1. 项目约定硬前置：.trellis/spec/conventions/project-conventions.md 缺失 → stderr 警告（不阻塞主流程，
      但 Gate 与各 skill 硬前置会拦）。
   2. 往 implement.jsonl / check.jsonl 追加基线条目（已存在的路径跳过，幂等）。
+  3. task.json 默认写入 guru_chain=full（双轨制安全默认：完整五阶段链）。降为 light 必须
+     经 client-small-iteration-dev 分流且获用户同意后显式改写。
 """
 
 import json
@@ -68,7 +70,32 @@ def main() -> int:
 
     a = append_unique(os.path.join(task_dir, "implement.jsonl"), BASELINE)
     b = append_unique(os.path.join(task_dir, "check.jsonl"), BASELINE + CHECK_EXTRA)
-    print(f"[guru-after-create] jsonl 基线注入完成（implement +{a} / check +{b}）")
+
+    # 判轨安全默认：guru_chain=full（轻量链须显式降级）
+    chain_note = ""
+    try:
+        with open(task_json, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("task.json 根节点必须是对象")
+        if data.get("guru_chain") not in ("full", "light"):
+            data["guru_chain"] = "full"
+            # 原子写：先写临时文件再 replace，中断不会留下半截 task.json
+            tmp_path = f"{task_json}.tmp.{os.getpid()}"
+            try:
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                    f.write("\n")
+                os.replace(tmp_path, task_json)
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            chain_note = "；guru_chain 默认 full（降 light 需分流+用户同意）"
+    except (ValueError, OSError) as e:
+        # ValueError 覆盖 json.JSONDecodeError（其子类）与非对象根节点；保持 best-effort 不阻塞主流程
+        sys.stderr.write(f"[guru-after-create] 警告：guru_chain 写入失败（{e}）\n")
+
+    print(f"[guru-after-create] jsonl 基线注入完成（implement +{a} / check +{b}）{chain_note}")
     return 0
 
 

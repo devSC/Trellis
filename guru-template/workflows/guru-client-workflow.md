@@ -9,7 +9,7 @@
 
 ## Core Principles
 
-1. **Plan before code** — 需求/概要/详细三 Gate 全过才能 `task.py start`
+1. **Plan before code** — 需求/概要/详细三 Gate 全过（review 结论 + 用户本人终端 confirm）才能 `task.py start`（before_start 钩子强制校验）
 2. **Specs injected, not remembered** — 规则经 jsonl/hook 注入，不靠记忆
 3. **Persist everything** — 研究、决策、trace 全部落文件
 4. **Gate 不过不进下一阶段** — 缺陷只能回上游阶段修，禁止下游补造
@@ -26,11 +26,16 @@
 - `.trellis/spec/` 使用 guru-flutter-client spec 库：`harness/`（五阶段 SSOT）、`guides/golden-path.md`、`conventions/`（项目约定槽位）。入口与阶段映射见 `.trellis/spec/harness/index.md`。
 - 任何阶段开始前必须通过 `.trellis/spec/conventions/project-conventions.md` 的校验清单 C1~C5（缺失/未填 = 硬前置失败，先补约定）。
 - 三条最高禁令（违反即任务失败）：① 禁止执行 l10n 同步脚本（SLOT-07，人工受控）② 禁止在 SLOT-12 老目录新建业务模块 ③ 禁止违反分层依赖律的 import。
+- **人工 Gate 机制**：阶段跃迁（需求→概要→详细→实现）必须由用户本人在交互式终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm <requirements|overview|detail> <task_dir>` 确认落盘；agent 经工具运行会因无 TTY 被拒，**不得代跑、不得以自写 review 记录替代**。`task.py start` 经 before_start 钩子强制校验三道确认，缺一即失败。进度随时用 `guru_gate.py status` 查。
 
-### Planning Artifacts（guru 五阶段语义）
+### Planning Artifacts（guru 五阶段语义，双轨制）
 
-- `prd.md` — **需求阶段产物**：行为规格（Given/When/Then）、核心能力清单（P0/P1）、失败路径、验收场景、未决问题。不含技术设计。
-- `design.md` — 两章结构：**§1 概要设计**（行为集合、行为→owner 归属表+三问理由、页面流、技术决策承接、详细设计承接索引）；**§2 详细设计**（按承接索引逐 doc_type 展开合同八问）。
+**判轨**：task.json `guru_chain`（创建时 after_create 默认 `full`）。**full=完整五阶段链**（核心玩法/付费/广告/存档/权限/数据采集）；**light=轻量链**（client-small-iteration-dev 分流且用户同意后显式降级）。
+
+- `prd.md` — **需求阶段产物**：行为规格（Given/When/Then）、核心能力清单（P0/P1）、失败路径、验收场景、未决问题。不含技术设计。full 链另有**正式需求包**（requirement-writing/review，项目 docs 需求目录），prd.md 为其行为规格抽取层。
+- 设计产物按链型分轨：
+  - **full**：目录级设计包（task.json `design_package` 指向，如 `docs/design/<feature>/`）= `README.md`（导航）+ `design-main.md`（概要主定义，含归属表/承接索引/架构就绪自检）+ `chapters/*.md`（详细设计逐章，directory_precheck + chapter_loop 生成）。任务内 `design.md` 退为指针+摘要。
+  - **light**：任务内 `design.md` 两章：**§1 概要设计**（归属表+三问+承接索引）；**§2 详细设计**（逐 doc_type 合同八问）。
 - `implement.md` — **实现计划**（trace 合同 §1：任务切片/顺序/风险，见 `.trellis/spec/harness/implementation/implementation-trace-contract.md`）；实现期持续追加 §2 执行 / §3 证据 / §4 阻塞偏差。
 - `implement.jsonl` / `check.jsonl` — spec/research 注入清单（见 1.5）。
 - **编号纪律** — 行为 `BHV-NNN`（prd 标题，不复用不重排）、设计单元 `UNIT-<slug>`（design §2 标题）；跨产物引用一律写编号 token。`python3 .trellis/scripts/guru/guru_gate.py trace-matrix <task_dir> [--write]` 随时生成追溯矩阵（--strict 断链拦截）。
@@ -50,11 +55,11 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 
 - 简单对话/小任务：先问是否需要建 Trellis 任务；用户说不需要则本轮跳过 Trellis。
 - 进入任务后第一步加载 `client-small-iteration-dev` 的入口决策树：判定碰哪几层（只文案→l10n 路径；只接口→network+data；整页 feature→全链）与风险等级。
-- **核心玩法 / 付费 / 广告 / 存档 / 涉权限或数据采集 → 必须走完整五阶段**；小改可走轻量链（prd 简版 + 所碰层的详细合同 + 实现），但每步仍要 Gate。
-- 建任务许可 ≠ 实现许可：实现必须等三 Gate 全过后 `task.py start`。
+- **核心玩法 / 付费 / 广告 / 存档 / 涉权限或数据采集 → 必须走完整五阶段（full 链，目录级设计包）**；小改可走轻量链（prd 简版 + 所碰层的详细合同 + 实现），但每步仍要 Gate。判轨结论落 task.json `guru_chain`（默认 full；降 light 需用户同意）。
+- 建任务许可 ≠ 实现许可：实现必须等三 Gate 全过（含用户终端 confirm）后 `task.py start`。
 
 [workflow-state:no_task]
-无活动任务。先分类本轮请求并征得任务创建同意。小任务：问是否建 Trellis 任务，不建则跳过。复杂任务：征得同意后建任务进入 planning。核心玩法/付费/广告/存档/权限类需求必须走完整五阶段链。
+无任务：先分类请求并征得建任务同意。小任务可不建；核心玩法/付费/广告/存档/权限/数据采集必须建任务走完整五阶段。
 [/workflow-state:no_task]
 
 ### Phase 1: Plan（承载 需求 → 概要 → 详细 三阶段）
@@ -69,17 +74,11 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 - 1.7 完成判定
 
 [workflow-state:planning]
-按 design.md 章节存在性定位当前步骤：无 prd.md→1.1 需求；prd 过 Gate 无 design.md §1→1.3 概要；§1 过 Gate 无 §2→1.4 详细。
-1.1 需求：trellis-brainstorm 探索 + 行为规格口径（Given/When/Then + P0/P1 + 失败路径 + 验收）写 prd.md。需求 Gate：无行为/前置/状态变化/失败路径/验收场景 → 不进概要。草稿后用 client-grill 拷问磨尖再送 Gate。
-1.3 概要：加载 client-design-overview-writing 写 design.md §1（归属表+三问+承接索引）。概要 Gate（client-design-overview-review）：行为无 owner 证据/违反分层依赖律 → 不进详细。
-1.4 详细：加载 client-design-detail-writing 写 design.md §2（合同八问）+ implement.md（trace §1）。详细 Gate（client-design-detail-review）：合同追溯不到 owner/无测试映射/涉权限无合规依据 → 不进实现；编号断链（幽灵 BHV/行为无承接）由 guru_gate 自动拦截。
-1.5 配置 jsonl：implement.jsonl/check.jsonl 必含本任务所读 harness SSOT、golden-path、project-conventions（带 reason）。
-每道 Gate 由人工判定（review skill 给互斥结论）；Gate 不过回本步修订，禁止硬推进。全 Gate 过后 1.6 task.py start。
-产物语言：中文优先（代码标识符/命令/路径/专有名词除外）。
+无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md，详见步骤细则）。每步=writing→review skill→用户终端 guru_gate.py confirm（agent禁代跑）；三确认齐才 task.py start；查 status。
 [/workflow-state:planning]
 
 [workflow-state:planning-inline]
-同 [workflow-state:planning] 的三步推进与 Gate 口径；inline 模式跳过 1.5 jsonl 策展，Phase 2 经 trellis-before-dev 直接读 spec。
+无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→用户终端 guru_gate.py confirm（agent禁代跑）；三确认齐才 task.py start。inline：Phase2 先 trellis-before-dev。
 [/workflow-state:planning-inline]
 
 ### Phase 2: Execute（实现阶段）
@@ -89,15 +88,11 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 - 2.3 回退 `[on demand]`
 
 [workflow-state:in_progress]
-Flow: trellis-implement（按 flutter-implementation-guru-writing 口径）→ trellis-check（按 flutter-implementation-guru-review 口径）→ trellis-update-spec（萃取九段）→ commit（3.4）→ /trellis:finish-work。
-trace 与质检 findings 用中文（命令与代码标识符除外）。实现口径：golden-path 迷你路径 + 项目约定槽位取值；implement.md 持续记 trace §2 执行/§3 证据（analyze/test 命令与结果）/§4 阻塞偏差；禁止执行 l10n 同步脚本；不私自拍板新决策（记 §4 升级人工）。
-质检口径：与 design.md 合同一致性 + 分层依赖律/canonical + **存量豁免判定**（SLOT-15 清单内记债不阻塞；清单外新增违例阻塞）+ 合规红线。实现 Gate：analyze/test/lints/compliance 任一无证据 → 不进 commit。
-发现设计缺陷 → 回 Phase 1 对应阶段修订（status 不变），修完重入 2.1；禁止在代码里绕过设计。
-Dispatch prompt 以 `Active task: <task path>` 开头；sub-agent 不再自派 implement/check。
+实现→质检→spec回写→commit→finish。dispatch trellis-implement/check，prompt 以 Active task: <path> 开头；trace 记执行/证据/偏差；质检按 guru 口径，无 analyze/test 证据不 commit；设计缺陷回 Phase1。
 [/workflow-state:in_progress]
 
 [workflow-state:in_progress-inline]
-Flow: trellis-before-dev → 按 golden-path+约定编辑 → trellis-check（guru 审核口径含存量豁免）→ 验证证据记 implement.md → trellis-update-spec → commit（3.4）→ /trellis:finish-work。inline 模式不派 sub-agent。
+实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 spec，编辑后 trellis-check（guru 口径）；验证证据记 implement.md，无证据不 commit；设计缺陷回 Phase1。
 [/workflow-state:in_progress-inline]
 
 ### Phase 3: Finish（审核与收尾）
@@ -123,7 +118,7 @@ Flow: trellis-before-dev → 按 golden-path+约定编辑 → trellis-check（gu
 
 [Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
 
-- 需求不清 → `trellis-brainstorm`（需求阶段口径）。
+- 需求不清 → `trellis-brainstorm`（前置探索）；full 链正式需求 → `requirement-writing` / `requirement-review`（guru-ai-guides）。
 - 概要/详细撰写 → `client-design-overview-writing` / `client-design-detail-writing`；Gate 判定 → 对应 `*-review`。
 - Gate 前拷问/术语磨尖 → `client-grill`。
 - `in_progress` 实现/质检 → dispatch `trellis-implement` / `trellis-check`（guru 口径）。
@@ -133,7 +128,7 @@ Flow: trellis-before-dev → 按 golden-path+约定编辑 → trellis-check（gu
 
 [codex-inline, Kilo, Antigravity, Windsurf]
 
-- 需求不清 → `trellis-brainstorm`；概要/详细 → `client-design-*-writing/review`。
+- 需求不清 → `trellis-brainstorm`；full 链正式需求 → `requirement-writing/review`；概要/详细 → `client-design-*-writing/review`。
 - Gate 前拷问 → `client-grill`。
 - 编辑前 → `trellis-before-dev`；编辑后 → `trellis-check`（guru 口径）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`。
@@ -143,6 +138,7 @@ Flow: trellis-before-dev → 按 golden-path+约定编辑 → trellis-check（gu
 ### Guardrails
 
 - 任务创建同意 ≠ 实现同意；实现等待三 Gate 全过后的 `task.py start`。
+- 阶段跃迁确认只能由用户本人在终端运行 `guru_gate.py confirm`；agent 不得代跑、不得以自写 review 记录或机器检查通过替代人工确认。
 - 合规 STOP：任何可能违反 App Store / Google Play 政策或美国法规的不确定性 → 立即停止，输出风险点+替代方案+人类确认清单。
 - 三条最高禁令（见 Trellis System 节）全程生效；planning 必须落盘到 task artifacts；完成报告前必须有验证证据。
 - 产物语言中文优先（英文仅限标识符/命令/路径/协议字段/专有名词/缩写/原文引用）；面向用户的提问与结论一律中文。
@@ -160,12 +156,15 @@ python3 ./.trellis/scripts/get_context.py --mode phase --step <step>
 #### 1.0 创建任务 `[required · once]`
 
 与 Trellis 原版一致：`task.py create "<title>" --slug <name>`（仅 create，不 start）。多交付物用 parent/child 树。
+after_create 钩子默认写入 `guru_chain: full`；按 Request Triage 判定为小改且**用户同意**走轻量链时，才把 task.json 改为 `guru_chain: light` 并记录理由。
 
 #### 1.1 需求阶段 `[required · repeatable]`
 
-加载 `trellis-brainstorm` 探索需求，产物口径按需求 SSOT：`prd.md` 必含行为规格（Given/When/Then）、核心能力清单（P0/P1）、失败路径、验收场景、显式未决问题（一次问用户 1~4 个，不私自拍板）。
+**full 链**：先加载 `requirement-writing`（guru-ai-guides，硬前置=其标准包 requirement-doc-standard 可读，缺即停）撰写/补齐**正式需求包**（项目 docs 需求目录），全稿后加载 `requirement-review` 做门禁审核；review 通过后把行为规格抽取为任务内 `prd.md`（BHV 编号承接需求包场景）。`trellis-brainstorm` 仅作前置探索，不替代正式需求链。
+**light 链**：加载 `trellis-brainstorm` 探索需求，直接产出 `prd.md`。
+两轨 `prd.md` 口径一致：必含行为规格（Given/When/Then）、核心能力清单（P0/P1）、失败路径、验收场景、显式未决问题（一次问用户 1~4 个，不私自拍板）。
 prd 草稿成形后加载 `client-grill` 拷问（对照 golden-path/项目约定/既有 BHV 磨术语、压测边界，决策当场固化进 prd），然后才提交需求 Gate。
-**需求 Gate**：上述五要素缺一 → 留在本步修订。
+**需求 Gate**：上述五要素缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），提请**用户本人**在终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm requirements <task_dir>`；确认落盘后方可进 1.3。agent 不得代跑（无 TTY 会被拒）。
 
 #### 1.2 研究 `[optional · repeatable]`
 
@@ -174,13 +173,17 @@ prd 草稿成形后加载 `client-grill` 拷问（对照 golden-path/项目约�
 #### 1.3 概要设计 `[required · repeatable]`
 
 归属有争议时加载 `client-grill` 对归属表逐行拷问（唯一写 owner、并发场景、与代码现状核对）后再送审。
-加载 `client-design-overview-writing`（`.agents/skills/`），硬前置装载 `.trellis/spec/harness/overview/overview-structure-single-source.md` + golden-path + 项目约定。产出 `design.md` **§1 概要设计**。
-**概要 Gate**：加载 `client-design-overview-review` 审核，结论"可进入详细设计"方可进 1.4；归属违反分层依赖律 = 直接 fail。
+加载 `client-design-overview-writing`（`.agents/skills/`），硬前置装载 `.trellis/spec/harness/overview/overview-structure-single-source.md` + golden-path + 项目约定。
+**full 链**：建立设计包骨架（`README.md` + `design-main.md` + `chapters/`），把包路径写入 task.json `design_package`，产出 `design-main.md` 概要主定义（含架构就绪自检与逐文件承接索引）；任务内 `design.md` 写指针+摘要。
+**light 链**：产出 `design.md` **§1 概要设计**。
+**概要 Gate**：加载 `client-design-overview-review` 审核，结论"可进入详细设计"后，提请**用户本人**在终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm overview <task_dir>`；确认落盘后方可进 1.4。归属违反分层依赖律 = 直接 fail。
 
 #### 1.4 详细设计 `[required · repeatable]`
 
-加载 `client-design-detail-writing`，按 §1 承接索引展开 `design.md` **§2 详细设计**（逐 doc_type 合同八问），并产出 `implement.md`（trace §1 计划）。
-**详细 Gate**：加载 `client-design-detail-review` 审核，结论"可进入编码"方可进 1.5/1.6。
+加载 `client-design-detail-writing`，按概要承接索引展开详细设计（逐 doc_type 合同八问），并产出 `implement.md`（trace §1 计划）。
+**full 链**：directory_precheck（design-main 承接索引存在且非空，否则回退概要）→ chapter_loop **逐章/小批次**生成 `chapters/<slug>.md`（禁止一次性全量输出）；命中 pending L2 类型须显式 `L2豁免：<doc_type> 理由：…` 或先补 L2（gate 拦截）。
+**light 链**：展开 `design.md` **§2 详细设计**（单文档多章节）。
+**详细 Gate**：加载 `client-design-detail-review` 审核，结论"可进入编码"后，提请**用户本人**在终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm detail <task_dir>`；确认落盘后方可进 1.5/1.6。
 
 #### 1.5 配置上下文 `[required · once]`
 
@@ -188,18 +191,18 @@ prd 草稿成形后加载 `client-grill` 拷问（对照 golden-path/项目约�
 
 #### 1.6 激活任务 `[required · once]`
 
-前置 = 三 Gate 结论均为"可进入"（或"带明确假设可进入"且假设已记录）。然后 `task.py start <task-dir>`。
+前置 = 三道人工确认均已落盘（`guru_gate.py check <task_dir>` 通过）。然后 `task.py start <task-dir>`——其 before_start 钩子会再次强制校验，缺确认直接失败；此时回到对应阶段补 review + 用户确认，禁止绕过。
 
 #### 1.7 完成判定
 
 | 条件 | 必须 |
 |------|:---:|
-| `prd.md` 过需求 Gate | ✅ |
-| `design.md` §1 过概要 Gate | ✅ |
-| `design.md` §2 过详细 Gate | ✅ |
+| 需求产物过需求 Gate + 用户 confirm requirements（full 链含正式需求包 review 通过） | ✅ |
+| 概要主定义过概要 Gate + 用户 confirm overview（full=design-main.md；light=design.md §1） | ✅ |
+| 详细设计过详细 Gate + 用户 confirm detail（full=chapters/ 闭合；light=design.md §2） | ✅ |
 | `implement.md`（trace §1）存在 | ✅ |
 | jsonl 含 harness SSOT + 项目约定条目 | ✅（inline 平台除外） |
-| `task.py start` 已执行 | ✅ |
+| `task.py start` 已执行（before_start 校验通过） | ✅ |
 
 ---
 
@@ -207,11 +210,37 @@ prd 草稿成形后加载 `client-grill` 拷问（对照 golden-path/项目约�
 
 与 Trellis 原版同构（dispatch 协议、commit 批量确认流程、finish-work 收尾不变），仅口径替换：
 
-- **2.1 实现**：sub-agent 按 `flutter-implementation-guru-writing` 口径（golden-path 迷你路径组合 + 逐片验证 + trace 持续更新）。
-- **2.2/3.1 质检**：`trellis-check` 按 `flutter-implementation-guru-review` 口径（合同一致性、分层律/canonical、存量豁免、合规红线、证据核查）。
-- **2.3 回退**：质检暴露 prd/design 缺陷 → 回 Phase 1 对应步骤修订产物，再重入 2.1。
-- **3.3 Spec 回写**：`trellis-update-spec` 按 `.trellis/spec/harness/extraction-template.md`（萃取九段结构）；即使结论是"无可沉淀"也要走判断。
-- **3.4 Commit**：与原版批量 commit 流程一致（不 amend、不 push、一次性确认）。
+#### 2.1 实现 `[required · repeatable]`
+
+sub-agent 平台 dispatch `trellis-implement`，inline 平台先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT。编码按 `flutter-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，逐片实现并持续更新 `implement.md` 的执行/证据/阻塞偏差。禁止执行 l10n 同步脚本；发现设计缺口停下回 Phase 1 修订。
+
+#### 2.2 质检 `[required · repeatable]`
+
+加载 `trellis-check`，按 `flutter-implementation-guru-review` 口径审核：需求/设计/实现合同一致性、分层依赖律、DI canonical、项目槽位取值、SLOT-15 存量豁免、合规红线与验证证据。无 analyze/test/lints/compliance 证据不得进入 commit。
+
+#### 2.3 回退 `[on demand]`
+
+质检暴露需求/概要/详细设计缺陷 → 回 Phase 1 对应步骤修订产物并重新过 Gate（review + 用户 confirm）；不得在代码里绕过设计语义或下游补造 owner/合同。
+
+#### 3.1 质量验证 `[required · repeatable]`
+
+复跑与变更范围匹配的验证命令，确认 `implement.md` §3 已记录命令、结果与说明。验证失败回 2.1/2.2；验证缺失不得进入 3.3。
+
+#### 3.2 Debug 复盘 `[on demand]`
+
+同类 bug 或修复失败反复出现时，加载 `trellis-break-loop` 分析根因、失败原因与预防机制；有可沉淀结论才继续 3.3。
+
+#### 3.3 Spec 回写 `[required · once]`
+
+加载 `trellis-update-spec`，按 `.trellis/spec/harness/extraction-template.md` 萃取九段判断是否回写 spec；即使结论是"无可沉淀"也要在任务记录中说明。
+
+#### 3.4 Commit `[required · once]`
+
+提交前展示变更范围、验证证据与建议 commit 切分，等待用户确认；不 amend、不 push；只 stage 本任务相关文件，不回滚用户改动。
+
+#### 3.5 收尾提醒
+
+运行 `/trellis:finish-work` 或等价收尾流程；确认任务状态、journal、归档/后续动作与未提交变更均已说明。
 
 ---
 

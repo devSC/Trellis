@@ -15,8 +15,10 @@ echo "== guru overlay 装配 → $TARGET =="
 mkdir -p "$TARGET/.agents/skills"
 for s in "$HERE"/agents-skills/*/; do
   name="$(basename "$s")"
+  # 重装刷新语义：先清空再整目录拷贝（SKILL.md + references/），避免模板中已删除/改名的文件残留
+  rm -rf "$TARGET/.agents/skills/$name"
   mkdir -p "$TARGET/.agents/skills/$name"
-  cp "$s/SKILL.md" "$TARGET/.agents/skills/$name/"
+  cp -R "$s"/. "$TARGET/.agents/skills/$name/"
   echo "  skill: $name"
 done
 
@@ -59,7 +61,10 @@ merge(os.path.join(t, ".trellis", "worktree.yaml"),
 merge(os.path.join(t, ".trellis", "config.yaml"),
 """hooks:
   after_create:
-    - "python3 .trellis/scripts/guru/guru_after_create.py\"""")
+    - "python3 .trellis/scripts/guru/guru_after_create.py"
+  # 阻断式：三道人工 Gate 确认缺一，task.py start 直接失败
+  before_start:
+    - "python3 .trellis/scripts/guru/guru_gate.py check\"""")
 PYEOF
 
 echo ""

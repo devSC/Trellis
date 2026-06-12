@@ -2,3 +2,6 @@
 hooks:
   after_create:
     - "python3 .trellis/scripts/guru/guru_after_create.py"
+  # 阻断式：三道人工 Gate（requirements/overview/detail）确认缺一，task.py start 直接失败
+  before_start:
+    - "python3 .trellis/scripts/guru/guru_gate.py check"
