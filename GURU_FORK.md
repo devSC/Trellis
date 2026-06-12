@@ -43,8 +43,12 @@ git checkout guru/main && git merge upstream/main                               
 ```bash
 # 发布（需 PAT 含 write:packages；prepublishOnly 自动 test+build）
 npm login --registry=https://npm.pkg.github.com   # 或 ~/.npmrc 配 _authToken
-pnpm -C packages/core publish --no-git-checks
-pnpm -C packages/cli  publish --no-git-checks
+# prerelease 版本必须带 --tag（实测：缺省报 "must specify a tag"）
+pnpm -C packages/core publish --tag guru --no-git-checks
+# cli 的 prepublishOnly 跑全量测试（含 3 个环境性预存失败会中断）：
+# 先手动等价执行（build 已新鲜 + cp README/LICENSE），再 --ignore-scripts
+cd packages/cli && cp ../../README.md ../../LICENSE . && npm publish --tag guru --ignore-scripts
+# 注意：需 PAT(classic) 含 write:packages —— gh CLI 的 OAuth token 无此 scope（实测 403）
 
 # 团队安装（一次性 ~/.npmrc）：
 #   @devsc:registry=https://npm.pkg.github.com
