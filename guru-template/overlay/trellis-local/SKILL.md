@@ -1,0 +1,31 @@
+---
+name: trellis-local
+description: "本仓库的 Trellis 团队定制登记（guru-template）。记录 Guru 客户端五阶段 Harness 在本项目的全部定制：spec 库、workflow、skills、hooks、verify gates。任何后续 Trellis 定制都必须更新本文件（官方自我迭代原则）。"
+---
+
+# Trellis Local — Guru 客户端 Harness 定制登记
+
+> 来源：guru-template（devSC/Trellis fork，guru/main）· PRD：devSC/client_agent#1
+> 原则：每次修改 Trellis 行为 → 更新本文件（官方 self-iteration-guide）。
+
+## Customizations Summary
+
+- **Specs**: 1 个库（guru-flutter-client）→ `.trellis/spec/`：`harness/`（五阶段 SSOT：概要归属判定/详细合同八问+L2×3/实现 trace/萃取九段）、`guides/golden-path.md`（通用方法）、`conventions/`（项目约定槽位 + 本项目取值 `project-conventions.md`）
+- **Workflow**: 替换为 guru-client 五阶段（需求→概要→详细→实现→审核映射进 planning/in_progress；Phase 1 含三道文档 Gate）
+- **Skills**: 7 个 `client-*`（`.agents/skills/`）：design-overview/detail 的 writing+review、flutter-implementation 的 writing+review、small-iteration-dev（入口分流）
+- **Hooks**: `after_create` → `guru_after_create.py`（jsonl 自动注入项目约定/golden-path/harness 基线条目）；平台 PreToolUse ×3（l10n 同步拦截 / SLOT-12 老目录拦截 / 制裁 TLD）
+- **Verify**: `guru_gate.py auto` 进 `worktree.yaml verify`（phase 感知五阶段 Gate；ralph-loop 在 gate 不过时阻止 check agent 停止）
+- **Agents**: 0 新增（复用官方 trellis-implement/check，经 workflow 指明 guru 口径 skill）
+
+## 关键约定
+
+1. 规则唯一真源在 `.trellis/spec/`；skills/workflow/hooks 只做编排与装载，不复写规则正文。
+2. 项目级取值只住 `.trellis/spec/conventions/project-conventions.md`（槽位机制）；缺失时各硬前置与 hook 会警告/拦截。
+3. 存量豁免：审核按约定文件 SLOT-15 清单判定（清单内记债不阻塞、清单外新增阻塞）。
+4. 三条最高禁令与合规 STOP 见 workflow Guardrails；Codex 等无 hook 平台靠 AGENTS.md 受管区块兜底。
+
+## Changelog
+
+| 日期 | 变更 | 关联 |
+|------|------|------|
+| 2026-06-12 | 初版：五阶段 Harness 全套定制落地 | client_agent#4 #5 #6 #7 |

@@ -1,0 +1,4 @@
+# 合并进目标项目 .trellis/config.yaml 的 hooks 节
+hooks:
+  after_create:
+    - "python3 .trellis/scripts/guru/guru_after_create.py"

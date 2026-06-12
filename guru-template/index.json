@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "guru-flutter-client",
+      "type": "spec",
+      "name": "Guru Flutter Client Harness Spec",
+      "description": "五阶段 Harness SSOT：概要归属判定 / 详细合同八问+L2 / 实现 trace / 萃取九段 + golden-path + 项目约定槽位",
+      "path": "specs/guru-flutter-client",
+      "tags": ["flutter", "guru", "harness"]
+    },
+    {
+      "id": "guru-client",
+      "type": "workflow",
+      "name": "Guru Client 5-Phase Workflow",
+      "description": "需求→概要→详细→实现→审核 五阶段（三道文档 Gate + verify 强制）",
+      "path": "workflows/guru-client-workflow.md",
+      "tags": ["flutter", "guru", "workflow"]
+    }
+  ]
+}
