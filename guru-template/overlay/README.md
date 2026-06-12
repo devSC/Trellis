@@ -12,3 +12,15 @@
 | `trellis-local/SKILL.md` | `.claude/skills/trellis-local/` | 团队定制登记（官方自我迭代规范） |
 
 安装后必做：①按 conventions 模板填 `.trellis/spec/conventions/project-conventions.md` ②按 SLOT-12 填 block-legacy-dirs.sh 的 LEGACY_PATTERNS ③AGENTS.md 受管区块追加（Codex 等无 hook 平台兜底）。
+
+## 安装/升级边界（apply.sh）
+
+apply.sh 负责 guru 定制内容的完整安装与升级刷新：skills（.agents + 平台镜像）、gate/hook 脚本、
+settings.json 接线、workflow.md、harness/guides SSOT、config 接线，并在装配后自检。
+
+不负责（边界）：
+- **CLI core 脚本**（task.py/common/*）：归 `trellis update` 的 hash 三方合并；apply.sh 只检测
+  before_start 支持并警告。
+- **conventions/project-conventions.md**：项目取值，永不覆盖。
+- **.codex/skills 项目级内容**（如 guru-ai-guides 的 requirement-* 技能）与 AGENTS.md 项目区块：
+  项目自有，入项目 git 管理。
