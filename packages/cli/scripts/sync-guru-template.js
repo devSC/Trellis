@@ -12,7 +12,10 @@ const repoRoot = join(import.meta.dirname, "../../..");
 const src = join(repoRoot, "guru-template");
 const dest = join(import.meta.dirname, "../src/templates/guru");
 
-rmSync(dest, { recursive: true, force: true });
+// Only wipe what this script manages (workflow.md + specs/); dest also holds
+// hand-written files like index.ts that a full rmSync(dest) would destroy.
+rmSync(join(dest, "workflow.md"), { force: true });
+rmSync(join(dest, "specs"), { recursive: true, force: true });
 mkdirSync(join(dest, "specs"), { recursive: true });
 cpSync(join(src, "workflows/guru-client-workflow.md"), join(dest, "workflow.md"));
 cpSync(join(src, "specs/guru-flutter-client"), join(dest, "specs/guru-flutter-client"), { recursive: true });
