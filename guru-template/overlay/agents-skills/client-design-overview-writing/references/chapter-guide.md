@@ -214,4 +214,4 @@ sequenceDiagram
 4. 不让图表与归属表两套口径（图中组件 ⊆ 归属表）。
 5. 不在"未选定"技术决策上构建下游设计。
 6. 不用概括性结论替代 G 项逐条证据。
-7. 不代替用户执行 `guru_gate.py confirm`（无 TTY 会被拒）。
+7. strict 模式不代跑 `guru_gate.py confirm`（无 TTY 会被拒）；soft 模式必须先获用户本轮对话明确确认，再以 `--via-agent --user-quote` 代跑。

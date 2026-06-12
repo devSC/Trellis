@@ -57,7 +57,7 @@ description: 用于撰写 Flutter 客户端概要设计文档。按"判轨与设
 15. 阶段 9 自检按 L1 §6 G1~G8 逐项输出（满足/缺口+闭合计划），full 链写成 design-main 的"架构就绪自检"章节；存在未闭合 G 项不得送审，不得用概括性"基本满足"替代逐项证据。
 16. 修订时按 L1 §8 先判定局部修订 vs 文档级重构；发现需求缺陷回退需求阶段，不在概要补造业务规则。
 17. 产物语言：辅助性文本一律中文；代码语法元素与路由名/组件名保持英文。
-18. 完稿后提示送审：加载 `client-design-overview-review` 过概要 Gate；Gate 结论"可进入"后提请**用户本人**在终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm overview <task_dir>`（agent 不得代跑）。
+18. 完稿后提示送审：加载 `client-design-overview-review` 过概要 Gate；Gate 结论"可进入"后按 gate_mode 完成 confirm 人工收口（通道与红线见 review skill「Gate 收口」节及 workflow 机制节）。
 
 ## 分阶段流程（writing 专属）
 

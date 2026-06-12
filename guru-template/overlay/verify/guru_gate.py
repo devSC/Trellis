@@ -10,8 +10,10 @@
   python3 guru_gate.py trace-matrix <task_dir> [--write] [--strict]
                                                   # 追溯矩阵：BHV × owner × UNIT × 测试 × 切片 + 孤儿清单
                                                   # --write 写入 <task_dir>/trace-matrix.md；--strict 有断链时 exit 2
-  python3 guru_gate.py confirm <gate> [task_dir]  # 人工确认 Gate（gate ∈ requirements|overview|detail）
-                                                  # 仅限用户本人在交互式终端运行；agent 代跑（无 TTY）直接拒绝
+  python3 guru_gate.py confirm [gate] [task_dir] [--via-agent]
+                                                  # 人工确认 Gate（gate 省略=批量确认全部待确认阶段，逐个 y/n）
+                                                  # strict 模式（默认）：仅限用户本人在交互式终端运行，agent 代跑被拒
+                                                  # soft 模式（config guru.gate_mode: soft）：用户对话确认后 agent 以 --via-agent 代跑（记录留痕标注）
   python3 guru_gate.py status [task_dir]          # 查看三道人工 Gate 的确认状态与下一步
   python3 guru_gate.py check [task_dir]           # before_start 钩子用：复跑结构 Gate + 三道人工确认 + 确认快照比对，任一不满足 exit 2
   python3 guru_gate.py digest <gate> [task_dir]   # 输出该阶段产物的确认快照摘要（排查快照失配用）
@@ -553,35 +555,29 @@ def _developer_name() -> str:
         return "unknown"
 
 
-def cmd_confirm(gate: str, task_dir_arg) -> int:
-    if gate not in HUMAN_GATES:
-        sys.stderr.write(f"[guru-gate:confirm] 未知 gate: {gate}（可选: {', '.join(HUMAN_GATES)}）\n")
-        return BLOCK
-    task_dir = resolve_task_dir(task_dir_arg)
-    if not task_dir:
-        sys.stderr.write("[guru-gate:confirm] 无法定位任务目录，请显式传 task_dir\n")
-        return BLOCK
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        sys.stderr.write(
-            f"[guru-gate:confirm] 拒绝：人工 Gate 确认必须由用户本人在交互式终端执行（当前无 TTY）。\n"
-            f"agent 不得代为确认。请提示用户在自己的终端运行：\n"
-            f"  python3 .trellis/scripts/guru/guru_gate.py confirm {gate} {task_dir}\n"
-        )
-        return BLOCK
-    # 结构 Gate 未过时确认无意义，先拦下
-    rc = {"requirements": check_requirements, "overview": check_overview, "detail": check_detail}[gate](task_dir)
-    if rc != PASS:
-        sys.stderr.write(f"[guru-gate:confirm] {GATE_LABEL[gate]}结构 Gate 未过，先修复缺口再确认。\n")
-        return BLOCK
-    print(f"任务：{task_dir}")
-    print(f"即将确认【{GATE_LABEL[gate]} Gate】通过，允许进入下一阶段。")
-    try:
-        answer = input("确认请输入 yes：").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        answer = ""
-    if answer not in ("yes", "y"):
-        print("已取消，未写入确认。")
-        return BLOCK
+def _gate_mode() -> str:
+    """人工 Gate 通道：strict（默认，用户终端 TTY）/ soft（对话确认后 agent --via-agent 代跑）。
+
+    优先级：GURU_GATE_MODE 环境变量 > .trellis/config.yaml 的 `guru.gate_mode` > strict。
+    soft 即官方 Trellis 的对话确认模型，另保留累积快照/结构复跑/留痕标注三道兜底。
+    """
+    mode = os.environ.get("GURU_GATE_MODE", "").strip().lower()
+    if mode == "strict":
+        return mode  # env 收紧到 strict 总是允许
+    if mode == "soft" and os.environ.get("GURU_GATE_ALLOW_ENV_SOFT") == "1":
+        return mode  # env 放宽到 soft 仅限测试（需双开关）——生产降级必须改 config（留 git 痕迹可审计）
+    cfg = read(os.path.join(".trellis", "config.yaml"))
+    # 只认顶层 guru: 块内的 gate_mode（防止其他配置节的同名键误开 soft）
+    guru = re.search(r"(?ms)^guru\s*:\s*\n(?P<body>(?:^[ \t]+[^\n]*\n?)*)", cfg)
+    if guru:
+        m = re.search(r"(?m)^[ \t]+gate_mode\s*:\s*(soft|strict)\b", guru.group("body"))
+        if m:
+            return m.group(1)
+    return "strict"
+
+
+def _record_confirm(task_dir: str, gate: str, via: str, user_quote=None) -> int:
+    """写入单个 Gate 的确认记录（严格 JSON 守卫 + 原子写）。via ∈ tty|agent。"""
     from datetime import datetime
     # confirm 是写路径：task.json 内容非法时拒绝写入（_task_json_of 的宽容 {} 会冲掉原有元数据）
     raw = read(os.path.join(task_dir, "task.json"))
@@ -597,12 +593,18 @@ def cmd_confirm(gate: str, task_dir_arg) -> int:
     else:
         data = {}
     gates = data.setdefault(GATES_KEY, {})
-    gates[gate] = {
+    record = {
         "confirmed_by": _developer_name(),
         "confirmed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         # 确认快照：check 时比对，产物在确认后被修改 → 要求重新确认
         "artifact_digest": _gate_digest(task_dir, gate),
     }
+    if via == "agent":
+        record["mode"] = "soft"
+        record["via"] = "agent"  # 留痕：对话确认、agent 代跑（非 TTY 人手证明）
+        if user_quote:
+            record["user_quote"] = user_quote[:500]  # 用户确认原话（审计：伪造须编造用户言论）
+    gates[gate] = record
     tj_path = os.path.join(task_dir, "task.json")
     # 原子写：中断不留半截 task.json（与 guru_after_create 同一模式）
     tmp_path = f"{tj_path}.tmp.{os.getpid()}"
@@ -614,7 +616,71 @@ def cmd_confirm(gate: str, task_dir_arg) -> int:
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
-    print(f"[guru-gate:confirm] ✅ {GATE_LABEL[gate]} Gate 已由 {gates[gate]['confirmed_by']} 确认（已写入 {tj_path}）")
+    suffix = "（soft：对话确认，agent 代跑）" if via == "agent" else ""
+    print(f"[guru-gate:confirm] ✅ {GATE_LABEL[gate]} Gate 已由 {record['confirmed_by']} 确认{suffix}（已写入 {tj_path}）")
+    return PASS
+
+
+def _pending_gates(task_dir: str) -> list:
+    """按阶段顺序列出待确认 Gate（未确认 / 缺快照 / 快照失配）。"""
+    states = _gate_states(task_dir)
+    pending = []
+    for g in HUMAN_GATES:
+        s = states.get(g)
+        ok_record = (isinstance(s, dict) and s.get("confirmed_by")
+                     and s.get("artifact_digest") == _gate_digest(task_dir, g))
+        if not ok_record:
+            pending.append(g)
+    return pending
+
+
+def cmd_confirm(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None) -> int:
+    if gate_arg is not None and gate_arg not in HUMAN_GATES:
+        sys.stderr.write(f"[guru-gate:confirm] 未知 gate: {gate_arg}（可选: {', '.join(HUMAN_GATES)}；省略=批量确认全部待确认 Gate）\n")
+        return BLOCK
+    task_dir = resolve_task_dir(task_dir_arg)
+    if not task_dir:
+        sys.stderr.write("[guru-gate:confirm] 无法定位任务目录，请显式传 task_dir\n")
+        return BLOCK
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    mode = _gate_mode()
+    if not interactive and not (mode == "soft" and via_agent):
+        sys.stderr.write(
+            f"[guru-gate:confirm] 拒绝：strict 模式下人工 Gate 确认必须由用户本人在交互式终端执行（当前无 TTY）。\n"
+            f"agent 不得代为确认。请提示用户在自己的终端运行：\n"
+            f"  python3 .trellis/scripts/guru/guru_gate.py confirm\n"
+            f"（项目可在 .trellis/config.yaml 设 guru.gate_mode: soft 改为对话确认后 agent --via-agent 代跑）\n"
+        )
+        return BLOCK
+    if not interactive and not (user_quote and user_quote.strip()):
+        # soft 代跑的审计底线：必须留用户确认原话，否则留痕失去意义
+        sys.stderr.write(
+            "[guru-gate:confirm] soft 模式 agent 代跑必须带 --user-quote \"<用户确认原话>\" 记录审计留痕\n"
+        )
+        return BLOCK
+    targets = [gate_arg] if gate_arg else _pending_gates(task_dir)
+    if not targets:
+        print(f"[guru-gate:confirm] 三道人工 Gate 均已确认且快照一致（{task_dir}），无需操作")
+        return PASS
+    print(f"任务：{task_dir}（gate_mode={mode}）")
+    checkers = {"requirements": check_requirements, "overview": check_overview, "detail": check_detail}
+    for g in targets:
+        # 结构 Gate 未过时确认无意义，先拦下（批量模式停在首个未过阶段）
+        if checkers[g](task_dir) != PASS:
+            sys.stderr.write(f"[guru-gate:confirm] {GATE_LABEL[g]}结构 Gate 未过，先修复缺口再确认；本次到此为止。\n")
+            return BLOCK
+        if interactive:
+            print(f"即将确认【{GATE_LABEL[g]} Gate】通过，允许进入下一阶段。")
+            try:
+                answer = input("确认请输入 yes/y（其他=取消）：").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = ""
+            if answer not in ("yes", "y"):
+                print("已取消，本 Gate 及后续未写入确认。")
+                return BLOCK
+        rc = _record_confirm(task_dir, g, "tty" if interactive else "agent", user_quote=user_quote)
+        if rc != PASS:
+            return rc
     return PASS
 
 
@@ -643,7 +709,8 @@ def cmd_status(task_dir_arg) -> int:
                 pending.append(g)
                 print(f"  ⚠️ {GATE_LABEL[g]} Gate — 确认快照失配（产物已改动），请重新确认")
             else:
-                print(f"  ✅ {GATE_LABEL[g]} Gate — {s['confirmed_by']} @ {s.get('confirmed_at', '?')}")
+                soft_mark = "（soft：对话确认，agent 代跑）" if s.get("via") == "agent" else ""
+                print(f"  ✅ {GATE_LABEL[g]} Gate — {s['confirmed_by']} @ {s.get('confirmed_at', '?')}{soft_mark}")
         else:
             pending.append(g)
             print(f"  ⬜ {GATE_LABEL[g]} Gate — 未确认")
@@ -743,8 +810,18 @@ def main() -> int:
         sys.stderr.write(__doc__ or "")
         return BLOCK
     cmd = sys.argv[1]
-    rest = [a for a in sys.argv[2:] if not a.startswith("--")]
-    flags = {a for a in sys.argv[2:] if a.startswith("--")}
+    argv = list(sys.argv[2:])
+    # --user-quote 带值：先摘出值，避免污染位置参数
+    user_quote = None
+    if "--user-quote" in argv:
+        qi = argv.index("--user-quote")
+        if qi + 1 < len(argv):
+            user_quote = argv[qi + 1]
+            del argv[qi:qi + 2]
+        else:
+            del argv[qi]
+    rest = [a for a in argv if not a.startswith("--")]
+    flags = {a for a in argv if a.startswith("--")}
     arg = rest[0] if rest else None
     table = {
         "requirements": check_requirements,
@@ -755,10 +832,12 @@ def main() -> int:
     if cmd == "auto":
         return auto(arg)
     if cmd == "confirm":
-        if not rest:
-            sys.stderr.write(f"[guru-gate:confirm] 需要 gate 参数（{', '.join(HUMAN_GATES)}）\n")
-            return BLOCK
-        return cmd_confirm(rest[0], rest[1] if len(rest) > 1 else None)
+        # confirm [gate] [task_dir] [--via-agent]：gate 省略=批量确认全部待确认 Gate
+        if rest and rest[0] in HUMAN_GATES:
+            gate_arg, dir_arg = rest[0], (rest[1] if len(rest) > 1 else None)
+        else:
+            gate_arg, dir_arg = None, (rest[0] if rest else None)
+        return cmd_confirm(gate_arg, dir_arg, via_agent="--via-agent" in flags, user_quote=user_quote)
     if cmd == "digest":
         if not rest or rest[0] not in HUMAN_GATES:
             sys.stderr.write(f"[guru-gate:digest] 需要 gate 参数（{', '.join(HUMAN_GATES)}）\n")

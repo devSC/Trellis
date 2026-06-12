@@ -5,6 +5,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 GATE="$HERE/../guru_gate.py"
 TMP="$(mktemp -d)"
 export GURU_GATE_ALLOW_ABS=1  # 夹具的 design_package 用绝对路径；生产环境默认拒绝绝对路径
+export GURU_GATE_ALLOW_ENV_SOFT=1  # 允许夹具用 env 开 soft；生产降级只能改 config（留 git 痕迹）
 trap 'rm -rf "$TMP"' EXIT
 pass=0; failn=0
 
@@ -405,6 +406,74 @@ else failn=$((failn+1)); echo "FAIL  fallback 崩溃或未定位 (rc=$rc)"; echo
 out=$(printf '{"tool_input":{"command":"python3 mytask.py start x"}}' | bash "$HOOK" 2>&1); rc=$?
 if [ "$rc" = 0 ]; then pass=$((pass+1)); echo "PASS  hook 不误伤 mytask.py"
 else failn=$((failn+1)); echo "FAIL  hook 误伤 mytask.py (rc=$rc)"; fi
+
+# ============ gate_mode（strict/soft 双通道）============
+SM="$TMP/softmode"; mkdir -p "$SM"; cp "$G/prd.md" "$G/design.md" "$G/implement.md" "$SM/"
+expect "strict（默认）下 --via-agent 仍被拒" 2 python3 "$GATE" confirm requirements "$SM" --via-agent
+out=$(GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$SM" --via-agent --user-quote "确认，进概要" 2>&1); rc=$?
+if [ "$rc" = 0 ] && grep -q '"via": "agent"' "$SM/task.json" && grep -q '确认，进概要' "$SM/task.json"; then
+  pass=$((pass+1)); echo "PASS  soft 单 gate 代跑成功且留痕（via/user_quote）"
+else failn=$((failn+1)); echo "FAIL  soft 代跑 (rc=$rc)"; echo "$out" | head -3; fi
+expect "soft 代跑缺 --user-quote 被拒" 2 env GURU_GATE_MODE=soft python3 "$GATE" confirm "$SM" --via-agent
+expect "soft 零参数批量代跑剩余 Gate" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm "$SM" --via-agent --user-quote "确认全部"
+expect "soft 批量后 check 放行" 0 python3 "$GATE" check "$SM"
+expect_grep "status 显示 soft 留痕" "soft" python3 "$GATE" status "$SM"
+
+# config.yaml 文件判定（无 env）：guru.gate_mode: soft
+CFGROOT="$TMP/cfgroot"; mkdir -p "$CFGROOT/.trellis"
+printf 'guru:\n  gate_mode: soft\n' > "$CFGROOT/.trellis/config.yaml"
+SM2="$TMP/softmode2"; mkdir -p "$SM2"; cp "$G/prd.md" "$SM2/"
+out=$(cd "$CFGROOT" && python3 "$GATE" confirm requirements "$SM2" --via-agent --user-quote "确认" 2>&1); rc=$?
+if [ "$rc" = 0 ]; then pass=$((pass+1)); echo "PASS  config.yaml gate_mode: soft 生效"
+else failn=$((failn+1)); echo "FAIL  config soft (rc=$rc)"; echo "$out" | head -3; fi
+
+# env soft 需要测试专用双开关：生产环境单设 GURU_GATE_MODE=soft 不得绕过 strict
+out=$(env -u GURU_GATE_ALLOW_ENV_SOFT GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$SM2" --via-agent --user-quote "x" 2>&1); rc=$?
+if [ "$rc" = 2 ]; then pass=$((pass+1)); echo "PASS  env soft 无测试开关不生效（防 agent 单次注入）"
+else failn=$((failn+1)); echo "FAIL  env soft 绕过 (rc=$rc)"; fi
+
+# gate_mode 只认顶层 guru 块：其他配置节的同名键不得误开 soft
+CFGROOT2="$TMP/cfgroot2"; mkdir -p "$CFGROOT2/.trellis"
+printf 'other:\n  gate_mode: soft\n' > "$CFGROOT2/.trellis/config.yaml"
+SM3="$TMP/softmode3"; mkdir -p "$SM3"; cp "$G/prd.md" "$SM3/"
+out=$(cd "$CFGROOT2" && python3 "$GATE" confirm requirements "$SM3" --via-agent --user-quote "x" 2>&1); rc=$?
+if [ "$rc" = 2 ]; then pass=$((pass+1)); echo "PASS  非 guru 块的 gate_mode 不生效（保持 strict）"
+else failn=$((failn+1)); echo "FAIL  gate_mode 作用域泄漏 (rc=$rc)"; fi
+
+# TTY 零参数批量确认（pty 逐个 y）
+PT="$TMP/ptybatch"; mkdir -p "$PT"; cp "$G/prd.md" "$G/design.md" "$G/implement.md" "$PT/"
+out=$(python3 - "$GATE" "$PT" <<'PY'
+import os, pty, select, sys, time
+gate, td = sys.argv[1], sys.argv[2]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp("python3", ["python3", gate, "confirm", td])
+buf, answered = b"", 0
+deadline = time.time() + 30
+PROMPT = "确认请输入".encode()
+while True:
+    if time.time() > deadline:
+        sys.exit(124)
+    r, _, _ = select.select([fd], [], [], 0.2)
+    if not r:
+        continue
+    try:
+        d = os.read(fd, 1024)
+    except OSError:
+        break
+    if not d:
+        break
+    buf += d
+    if buf.count(PROMPT) > answered:
+        os.write(fd, b"y\n"); answered += 1
+_, st = os.waitpid(pid, 0)
+sys.stdout.write(buf.decode(errors="replace"))
+sys.exit(os.waitstatus_to_exitcode(st))
+PY
+); rc=$?
+if [ "$rc" = 0 ] && python3 "$GATE" check "$PT" >/dev/null 2>&1; then
+  pass=$((pass+1)); echo "PASS  TTY 零参数批量确认（pty 三连 y）"
+else failn=$((failn+1)); echo "FAIL  pty 批量 (rc=$rc)"; echo "$out" | tail -3; fi
 
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]

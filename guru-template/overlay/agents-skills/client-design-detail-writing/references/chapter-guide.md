@@ -155,4 +155,4 @@ N/A（非 page-entry）。
 4. 把"见概要"当八问答案（每问就地作答，可引用但须有本地结论）。
 5. 跳过失败路径的测试映射。
 6. 执行 l10n 同步脚本（SLOT-07）。
-7. 代替用户执行 `guru_gate.py confirm`（无 TTY 会被拒）。
+7. strict 模式代跑 `guru_gate.py confirm`（无 TTY 会被拒）；soft 模式未获用户本轮对话明确确认即代跑。

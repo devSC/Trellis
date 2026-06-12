@@ -77,13 +77,12 @@ description: 用于审核 Flutter 客户端概要设计文档，判定能否进�
 
 ## Gate 收口（人工确认）
 
-结论为"可进入详细设计"（或带明确假设可进入且假设已记录）时，提请**用户本人**在终端运行：
+结论为"可进入详细设计"（或带明确假设可进入且假设已记录）时，按 config `guru.gate_mode` 完成人工收口（通道主定义见 workflow Trellis System 节）：
 
-```bash
-python3 .trellis/scripts/guru/guru_gate.py confirm overview <task_dir>
-```
+- **strict（默认）**：提请**用户本人**在终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm`；agent 不得代跑（无 TTY 会被拒）。
+- **soft**：用户在对话中明确确认后，agent 运行 `python3 .trellis/scripts/guru/guru_gate.py confirm overview <task_dir> --via-agent --user-quote "<用户确认原话>"` 代跑（记录留痕标注 soft/agent）；未获用户本轮明确确认不得执行。
 
-agent 不得代跑（无 TTY 会被拒）；确认未落盘前不得进入详细设计。
+确认未落盘前不得进入详细设计。
 
 ## 参考资料
 

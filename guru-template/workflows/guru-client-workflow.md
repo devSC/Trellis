@@ -9,7 +9,7 @@
 
 ## Core Principles
 
-1. **Plan before code** — 需求/概要/详细三 Gate 全过（review 结论 + 用户本人终端 confirm）才能 `task.py start`（before_start 钩子强制校验）
+1. **Plan before code** — 需求/概要/详细三 Gate 全过（review 结论 + 人工 confirm 收口，通道见 Trellis System 节 gate_mode）才能 `task.py start`（before_start 钩子强制校验）
 2. **Specs injected, not remembered** — 规则经 jsonl/hook 注入，不靠记忆
 3. **Persist everything** — 研究、决策、trace 全部落文件
 4. **Gate 不过不进下一阶段** — 缺陷只能回上游阶段修，禁止下游补造
@@ -26,7 +26,10 @@
 - `.trellis/spec/` 使用 guru-flutter-client spec 库：`harness/`（五阶段 SSOT）、`guides/golden-path.md`、`conventions/`（项目约定槽位）。入口与阶段映射见 `.trellis/spec/harness/index.md`。
 - 任何阶段开始前必须通过 `.trellis/spec/conventions/project-conventions.md` 的校验清单 C1~C5（缺失/未填 = 硬前置失败，先补约定）。
 - 三条最高禁令（违反即任务失败）：① 禁止执行 l10n 同步脚本（SLOT-07，人工受控）② 禁止在 SLOT-12 老目录新建业务模块 ③ 禁止违反分层依赖律的 import。
-- **人工 Gate 机制**：阶段跃迁（需求→概要→详细→实现）必须由用户本人在交互式终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm <requirements|overview|detail> <task_dir>` 确认落盘；agent 经工具运行会因无 TTY 被拒，**不得代跑、不得以自写 review 记录替代**。`task.py start` 经 before_start 钩子强制校验三道确认，缺一即失败。进度随时用 `guru_gate.py status` 查。
+- **人工 Gate 机制**：阶段跃迁（需求→概要→详细→实现）必须人工确认落盘，通道按 config `guru.gate_mode`（**本节是通道唯一主定义**，其余处写"confirm 收口"均指此处）：
+  - **strict（默认）**：用户本人在交互式终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm`（零参数=批量确认待确认 Gate，逐个 y/n）；agent 经工具运行因无 TTY 被拒，**不得代跑、不得以自写 review 记录替代**。
+  - **soft**：用户在对话中明确确认后，agent 运行 `guru_gate.py confirm --via-agent --user-quote "<用户确认原话>"` 代跑（`--user-quote` 必填，留痕标注 soft/agent + 用户原话）；**未获用户本轮明确确认不得执行**。
+  - 两种模式下确认快照（累积 digest）、结构 Gate 复跑、`task.py start` 的 before_start 强制校验均生效；进度随时 `guru_gate.py status` 查。
 
 ### Planning Artifacts（guru 五阶段语义，双轨制）
 
@@ -56,7 +59,7 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 - 简单对话/小任务：先问是否需要建 Trellis 任务；用户说不需要则本轮跳过 Trellis。
 - 进入任务后第一步加载 `client-small-iteration-dev` 的入口决策树：判定碰哪几层（只文案→l10n 路径；只接口→network+data；整页 feature→全链）与风险等级。
 - **核心玩法 / 付费 / 广告 / 存档 / 涉权限或数据采集 → 必须走完整五阶段（full 链，目录级设计包）**；小改可走轻量链（prd 简版 + 所碰层的详细合同 + 实现），但每步仍要 Gate。判轨结论落 task.json `guru_chain`（默认 full；降 light 需用户同意）。
-- 建任务许可 ≠ 实现许可：实现必须等三 Gate 全过（含用户终端 confirm）后 `task.py start`。
+- 建任务许可 ≠ 实现许可：实现必须等三 Gate 全过（含 confirm 人工收口）后 `task.py start`。
 
 [workflow-state:no_task]
 无任务：先分类请求并征得建任务同意。小任务可不建；核心玩法/付费/广告/存档/权限/数据采集必须建任务走完整五阶段。
@@ -74,11 +77,11 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 - 1.7 完成判定
 
 [workflow-state:planning]
-无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md，详见步骤细则）。每步=writing→review skill→用户终端 guru_gate.py confirm（agent禁代跑）；三确认齐才 task.py start；查 status。
+无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md，详见步骤细则）。每步=writing→review skill→guru_gate.py confirm 人工收口（通道按 gate_mode）；三确认齐才 task.py start。
 [/workflow-state:planning]
 
 [workflow-state:planning-inline]
-无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→用户终端 guru_gate.py confirm（agent禁代跑）；三确认齐才 task.py start。inline：Phase2 先 trellis-before-dev。
+无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→guru_gate.py confirm 收口（通道按 gate_mode）；三确认齐才 task.py start。inline：Phase2 先 trellis-before-dev。
 [/workflow-state:planning-inline]
 
 ### Phase 2: Execute（实现阶段）
@@ -138,7 +141,7 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 ### Guardrails
 
 - 任务创建同意 ≠ 实现同意；实现等待三 Gate 全过后的 `task.py start`。
-- 阶段跃迁确认只能由用户本人在终端运行 `guru_gate.py confirm`；agent 不得代跑、不得以自写 review 记录或机器检查通过替代人工确认。
+- 阶段跃迁必须经 `guru_gate.py confirm` 人工收口（strict=用户终端；soft=用户**本轮对话明确确认**后 agent 以 `--via-agent --user-quote "<用户原话>"` 代跑）；不得以自写 review 记录或机器检查通过替代；soft 下未获用户确认即代跑属违规（记录留痕可审计）。
 - 合规 STOP：任何可能违反 App Store / Google Play 政策或美国法规的不确定性 → 立即停止，输出风险点+替代方案+人类确认清单。
 - 三条最高禁令（见 Trellis System 节）全程生效；planning 必须落盘到 task artifacts；完成报告前必须有验证证据。
 - 产物语言中文优先（英文仅限标识符/命令/路径/协议字段/专有名词/缩写/原文引用）；面向用户的提问与结论一律中文。
@@ -164,7 +167,7 @@ after_create 钩子默认写入 `guru_chain: full`；按 Request Triage 判定�
 **light 链**：加载 `trellis-brainstorm` 探索需求，直接产出 `prd.md`。
 两轨 `prd.md` 口径一致：必含行为规格（Given/When/Then）、核心能力清单（P0/P1）、失败路径、验收场景、显式未决问题（一次问用户 1~4 个，不私自拍板）。
 prd 草稿成形后加载 `client-grill` 拷问（对照 golden-path/项目约定/既有 BHV 磨术语、压测边界，决策当场固化进 prd），然后才提交需求 Gate。
-**需求 Gate**：上述五要素缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），提请**用户本人**在终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm requirements <task_dir>`；确认落盘后方可进 1.3。agent 不得代跑（无 TTY 会被拒）。
+**需求 Gate**：上述五要素缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），完成 **confirm 人工收口**（通道按 gate_mode，见 Trellis System 节）；确认落盘后方可进 1.3。
 
 #### 1.2 研究 `[optional · repeatable]`
 
@@ -176,14 +179,14 @@ prd 草稿成形后加载 `client-grill` 拷问（对照 golden-path/项目约�
 加载 `client-design-overview-writing`（`.agents/skills/`），硬前置装载 `.trellis/spec/harness/overview/overview-structure-single-source.md` + golden-path + 项目约定。
 **full 链**：建立设计包骨架（`README.md` + `design-main.md` + `chapters/`），把包路径写入 task.json `design_package`，产出 `design-main.md` 概要主定义（含架构就绪自检与逐文件承接索引）；任务内 `design.md` 写指针+摘要。
 **light 链**：产出 `design.md` **§1 概要设计**。
-**概要 Gate**：加载 `client-design-overview-review` 审核，结论"可进入详细设计"后，提请**用户本人**在终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm overview <task_dir>`；确认落盘后方可进 1.4。归属违反分层依赖律 = 直接 fail。
+**概要 Gate**：加载 `client-design-overview-review` 审核，结论"可进入详细设计"后，完成 **confirm 人工收口**（通道按 gate_mode）；确认落盘后方可进 1.4。归属违反分层依赖律 = 直接 fail。
 
 #### 1.4 详细设计 `[required · repeatable]`
 
 加载 `client-design-detail-writing`，按概要承接索引展开详细设计（逐 doc_type 合同八问），并产出 `implement.md`（trace §1 计划）。
 **full 链**：directory_precheck（design-main 承接索引存在且非空，否则回退概要）→ chapter_loop **逐章/小批次**生成 `chapters/<slug>.md`（禁止一次性全量输出）；命中 pending L2 类型须显式 `L2豁免：<doc_type> 理由：…` 或先补 L2（gate 拦截）。
 **light 链**：展开 `design.md` **§2 详细设计**（单文档多章节）。
-**详细 Gate**：加载 `client-design-detail-review` 审核，结论"可进入编码"后，提请**用户本人**在终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm detail <task_dir>`；确认落盘后方可进 1.5/1.6。
+**详细 Gate**：加载 `client-design-detail-review` 审核，结论"可进入编码"后，完成 **confirm 人工收口**（通道按 gate_mode）；确认落盘后方可进 1.5/1.6。
 
 #### 1.5 配置上下文 `[required · once]`
 
@@ -191,7 +194,7 @@ prd 草稿成形后加载 `client-grill` 拷问（对照 golden-path/项目约�
 
 #### 1.6 激活任务 `[required · once]`
 
-前置 = 三道人工确认均已落盘（`guru_gate.py check <task_dir>` 通过）。然后 `task.py start <task-dir>`——其 before_start 钩子会再次强制校验，缺确认直接失败；此时回到对应阶段补 review + 用户确认，禁止绕过。
+前置 = 三道人工确认均已落盘（`guru_gate.py check <task_dir>` 通过）。然后 `task.py start <task-dir>`——其 before_start 钩子会再次强制校验，缺确认直接失败；此时回到对应阶段补 review + confirm 人工收口，禁止绕过。
 
 #### 1.7 完成判定
 

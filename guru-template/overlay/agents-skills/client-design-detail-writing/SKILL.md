@@ -65,7 +65,7 @@ light 链执行 WX-3/WX-4/WX-5 的等价检查（索引在 design.md §1；产�
 9. 涉权限/数据采集/三方域名/PII 的单元必须落合规依据；不写制裁 TLD、私有 API、动态执行类设计。
 10. 辅助文本中文；代码语法元素英文。
 11. 中断升级仅限四种情形：概要源缺失 / 业务语义必须人工确认 / 技术决策未选定 / 修复无法收敛；其余情况自动闭环推进。
-12. 全目录完成后提示送审：加载 `client-design-detail-review`；Gate 结论"可进入编码"后提请**用户本人**终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm detail <task_dir>`（agent 不得代跑）。
+12. 全目录完成后提示送审：加载 `client-design-detail-review`；Gate 结论"可进入编码"后按 gate_mode 完成 confirm 人工收口（通道与红线见 review skill「Gate 收口」节及 workflow 机制节）。
 
 ## 输出要求（writing 专属）
 
