@@ -9,11 +9,13 @@
 
 ## 阶段 → SSOT 映射
 
-| 阶段 | 产物 | 装载 |
+**双轨制**：task.json `guru_chain` 判轨（创建默认 `full`）。full=完整五阶段链，需求走正式需求包、设计走目录级设计包（task.json `design_package`）；light=轻量链（分流+用户同意），产物为任务内单文件。下表产物列写作 `full / light`。
+
+| 阶段 | 产物（full / light） | 装载 |
 |------|------|------|
-| 需求 | `prd.md` | 需求三件套 SSOT（guru-ai-guides requirement-doc-standard，jsonl 引用其安装路径） |
-| 概要设计 | `design.md` §概要 | [overview/overview-structure-single-source.md](./overview/overview-structure-single-source.md) |
-| 详细设计 | `design.md` §详细 | [detail/detail-structure-single-source.md](./detail/detail-structure-single-source.md) + 涉及类型的 [detail-type-controller](./detail/detail-type-controller.md) / [detail-type-usecase](./detail/detail-type-usecase.md) / [detail-type-repository-datasource](./detail/detail-type-repository-datasource.md)（其余六类 doc_type 按 L1 合同八问展开，标注 `l2_status: pending`） |
+| 需求 | 正式需求包（requirement-writing 撰写 + requirement-review 门禁）+ `prd.md` 行为规格抽取 / 仅 `prd.md` | guru-ai-guides `requirement-writing`、`requirement-review` skill 及其标准包 `requirement-doc-standard`（**硬前置：未安装即停**）；jsonl 引用安装路径 |
+| 概要设计 | `design_package/design-main.md` / `design.md` §概要 | [overview/overview-structure-single-source.md](./overview/overview-structure-single-source.md) |
+| 详细设计 | `design_package/chapters/*.md`（逐章）/ `design.md` §详细 | [detail/detail-structure-single-source.md](./detail/detail-structure-single-source.md) + 涉及类型的 [detail-type-controller](./detail/detail-type-controller.md) / [detail-type-usecase](./detail/detail-type-usecase.md) / [detail-type-repository-datasource](./detail/detail-type-repository-datasource.md)（其余六类 doc_type 为 pending：full 链须显式 `L2豁免` 或先补 L2，light 链按 L1 合同八问展开并标注 `l2_status: pending`） |
 | 实现 | 代码 + `implement.md`（trace） | golden-path + [implementation/implementation-trace-contract.md](./implementation/implementation-trace-contract.md) |
 | 审核/复盘 | findings + spec 回写 | 各 SSOT 审核基线章节 + [extraction-template.md](./extraction-template.md) |
 
