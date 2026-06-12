@@ -70,7 +70,7 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 
 [workflow-state:planning]
 按 design.md 章节存在性定位当前步骤：无 prd.md→1.1 需求；prd 过 Gate 无 design.md §1→1.3 概要；§1 过 Gate 无 §2→1.4 详细。
-1.1 需求：trellis-brainstorm 探索 + 行为规格口径（Given/When/Then + P0/P1 + 失败路径 + 验收）写 prd.md。需求 Gate：无行为/前置/状态变化/失败路径/验收场景 → 不进概要。
+1.1 需求：trellis-brainstorm 探索 + 行为规格口径（Given/When/Then + P0/P1 + 失败路径 + 验收）写 prd.md。需求 Gate：无行为/前置/状态变化/失败路径/验收场景 → 不进概要。草稿后用 client-grill 拷问磨尖再送 Gate。
 1.3 概要：加载 client-design-overview-writing 写 design.md §1（归属表+三问+承接索引）。概要 Gate（client-design-overview-review）：行为无 owner 证据/违反分层依赖律 → 不进详细。
 1.4 详细：加载 client-design-detail-writing 写 design.md §2（合同八问）+ implement.md（trace §1）。详细 Gate（client-design-detail-review）：合同追溯不到 owner/无测试映射/涉权限无合规依据 → 不进实现；编号断链（幽灵 BHV/行为无承接）由 guru_gate 自动拦截。
 1.5 配置 jsonl：implement.jsonl/check.jsonl 必含本任务所读 harness SSOT、golden-path、project-conventions（带 reason）。
@@ -125,6 +125,7 @@ Flow: trellis-before-dev → 按 golden-path+约定编辑 → trellis-check（gu
 
 - 需求不清 → `trellis-brainstorm`（需求阶段口径）。
 - 概要/详细撰写 → `client-design-overview-writing` / `client-design-detail-writing`；Gate 判定 → 对应 `*-review`。
+- Gate 前拷问/术语磨尖 → `client-grill`。
 - `in_progress` 实现/质检 → dispatch `trellis-implement` / `trellis-check`（guru 口径）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`（萃取九段）。
 
@@ -133,6 +134,7 @@ Flow: trellis-before-dev → 按 golden-path+约定编辑 → trellis-check（gu
 [codex-inline, Kilo, Antigravity, Windsurf]
 
 - 需求不清 → `trellis-brainstorm`；概要/详细 → `client-design-*-writing/review`。
+- Gate 前拷问 → `client-grill`。
 - 编辑前 → `trellis-before-dev`；编辑后 → `trellis-check`（guru 口径）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`。
 
@@ -162,6 +164,7 @@ python3 ./.trellis/scripts/get_context.py --mode phase --step <step>
 #### 1.1 需求阶段 `[required · repeatable]`
 
 加载 `trellis-brainstorm` 探索需求，产物口径按需求 SSOT：`prd.md` 必含行为规格（Given/When/Then）、核心能力清单（P0/P1）、失败路径、验收场景、显式未决问题（一次问用户 1~4 个，不私自拍板）。
+prd 草稿成形后加载 `client-grill` 拷问（对照 golden-path/项目约定/既有 BHV 磨术语、压测边界，决策当场固化进 prd），然后才提交需求 Gate。
 **需求 Gate**：上述五要素缺一 → 留在本步修订。
 
 #### 1.2 研究 `[optional · repeatable]`
@@ -170,6 +173,7 @@ python3 ./.trellis/scripts/get_context.py --mode phase --step <step>
 
 #### 1.3 概要设计 `[required · repeatable]`
 
+归属有争议时加载 `client-grill` 对归属表逐行拷问（唯一写 owner、并发场景、与代码现状核对）后再送审。
 加载 `client-design-overview-writing`（`.agents/skills/`），硬前置装载 `.trellis/spec/harness/overview/overview-structure-single-source.md` + golden-path + 项目约定。产出 `design.md` **§1 概要设计**。
 **概要 Gate**：加载 `client-design-overview-review` 审核，结论"可进入详细设计"方可进 1.4；归属违反分层依赖律 = 直接 fail。
 
