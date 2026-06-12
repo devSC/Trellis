@@ -34,6 +34,7 @@
 - `implement.md` — **实现计划**（trace 合同 §1：任务切片/顺序/风险，见 `.trellis/spec/harness/implementation/implementation-trace-contract.md`）；实现期持续追加 §2 执行 / §3 证据 / §4 阻塞偏差。
 - `implement.jsonl` / `check.jsonl` — spec/research 注入清单（见 1.5）。
 - **编号纪律** — 行为 `BHV-NNN`（prd 标题，不复用不重排）、设计单元 `UNIT-<slug>`（design §2 标题）；跨产物引用一律写编号 token。`python3 .trellis/scripts/guru/guru_gate.py trace-matrix <task_dir> [--write]` 随时生成追溯矩阵（--strict 断链拦截）。
+- **产物语言** — task 产物（prd/design/implement/research、spec 回写、findings）一律**中文优先**；英文仅限代码标识符、命令、文件路径、协议字段、外部专有名词、缩写与原文引用。commit message 跟随仓库历史风格（3.4 步已有学习机制）。
 
 ---
 
@@ -74,6 +75,7 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 1.4 详细：加载 client-design-detail-writing 写 design.md §2（合同八问）+ implement.md（trace §1）。详细 Gate（client-design-detail-review）：合同追溯不到 owner/无测试映射/涉权限无合规依据 → 不进实现；编号断链（幽灵 BHV/行为无承接）由 guru_gate 自动拦截。
 1.5 配置 jsonl：implement.jsonl/check.jsonl 必含本任务所读 harness SSOT、golden-path、project-conventions（带 reason）。
 每道 Gate 由人工判定（review skill 给互斥结论）；Gate 不过回本步修订，禁止硬推进。全 Gate 过后 1.6 task.py start。
+产物语言：中文优先（代码标识符/命令/路径/专有名词除外）。
 [/workflow-state:planning]
 
 [workflow-state:planning-inline]
@@ -88,7 +90,7 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 
 [workflow-state:in_progress]
 Flow: trellis-implement（按 flutter-implementation-guru-writing 口径）→ trellis-check（按 flutter-implementation-guru-review 口径）→ trellis-update-spec（萃取九段）→ commit（3.4）→ /trellis:finish-work。
-实现口径：golden-path 迷你路径 + 项目约定槽位取值；implement.md 持续记 trace §2 执行/§3 证据（analyze/test 命令与结果）/§4 阻塞偏差；禁止执行 l10n 同步脚本；不私自拍板新决策（记 §4 升级人工）。
+trace 与质检 findings 用中文（命令与代码标识符除外）。实现口径：golden-path 迷你路径 + 项目约定槽位取值；implement.md 持续记 trace §2 执行/§3 证据（analyze/test 命令与结果）/§4 阻塞偏差；禁止执行 l10n 同步脚本；不私自拍板新决策（记 §4 升级人工）。
 质检口径：与 design.md 合同一致性 + 分层依赖律/canonical + **存量豁免判定**（SLOT-15 清单内记债不阻塞；清单外新增违例阻塞）+ 合规红线。实现 Gate：analyze/test/lints/compliance 任一无证据 → 不进 commit。
 发现设计缺陷 → 回 Phase 1 对应阶段修订（status 不变），修完重入 2.1；禁止在代码里绕过设计。
 Dispatch prompt 以 `Active task: <task path>` 开头；sub-agent 不再自派 implement/check。
@@ -141,6 +143,7 @@ Flow: trellis-before-dev → 按 golden-path+约定编辑 → trellis-check（gu
 - 任务创建同意 ≠ 实现同意；实现等待三 Gate 全过后的 `task.py start`。
 - 合规 STOP：任何可能违反 App Store / Google Play 政策或美国法规的不确定性 → 立即停止，输出风险点+替代方案+人类确认清单。
 - 三条最高禁令（见 Trellis System 节）全程生效；planning 必须落盘到 task artifacts；完成报告前必须有验证证据。
+- 产物语言中文优先（英文仅限标识符/命令/路径/协议字段/专有名词/缩写/原文引用）；面向用户的提问与结论一律中文。
 
 ### Loading Step Detail
 

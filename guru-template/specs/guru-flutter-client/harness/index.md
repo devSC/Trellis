@@ -5,6 +5,7 @@
 - [ ] 读 `.trellis/spec/conventions/project-conventions.md` 并通过其校验清单 C1~C5（缺失/未填 → 停止，先完成项目约定）
 - [ ] 读 `.trellis/spec/guides/golden-path.md`（分层依赖律与禁止清单）
 - [ ] 按本任务所处阶段读对应 SSOT（下表），并把所读文件登记进任务的 `implement.jsonl` / `check.jsonl`（带 reason）
+- [ ] 产物语言：中文优先（英文仅限代码标识符、命令、路径、协议字段、外部专有名词、缩写、原文引用）
 
 ## 阶段 → SSOT 映射
 
