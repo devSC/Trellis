@@ -18,8 +18,13 @@ import path from "node:path";
 
 import { workflowMdTemplate } from "../templates/trellis/index.js";
 import {
+  BUNDLED_GURU_WORKFLOWS,
+  getBundledGuruWorkflow,
   GURU_CLIENT_WORKFLOW_ID,
-  guruWorkflowMdTemplate,
+  GURU_GO_WORKFLOW_ID,
+  GURU_H5_WORKFLOW_ID,
+  GURU_IOS_WORKFLOW_ID,
+  type BundledWorkflowMeta,
 } from "../templates/guru/index.js";
 import {
   TIMEOUTS,
@@ -44,16 +49,22 @@ import {
  */
 export const NATIVE_WORKFLOW_ID = "native";
 
-export { GURU_CLIENT_WORKFLOW_ID };
+export {
+  GURU_CLIENT_WORKFLOW_ID,
+  GURU_GO_WORKFLOW_ID,
+  GURU_IOS_WORKFLOW_ID,
+  GURU_H5_WORKFLOW_ID,
+};
 
 /**
  * Ids resolvable offline from CLI-bundled content. Only `native` keeps
- * `.trellis/workflow.md` under hash tracking (durable-state contract); other
- * bundled ids remain user-managed local workflows after install.
+ * `.trellis/workflow.md` under hash tracking (durable-state contract); the
+ * per-platform guru workflows remain user-managed local workflows after
+ * install. Data-driven from the guru bundled registry.
  */
-const BUNDLED_WORKFLOW_IDS = new Set([
+const BUNDLED_WORKFLOW_IDS = new Set<string>([
   NATIVE_WORKFLOW_ID,
-  GURU_CLIENT_WORKFLOW_ID,
+  ...BUNDLED_GURU_WORKFLOWS.map((w) => w.id),
 ]);
 
 /**
@@ -124,25 +135,17 @@ function nativeResolvedEntry(): ResolvedWorkflowTemplate {
 }
 
 /**
- * Bundled guru-client workflow entry — virtual, resolved without network
- * access (fork-specific five-phase client workflow).
+ * Bundled guru workflow listing entry — virtual, resolved without network
+ * access (one fork-specific five-phase workflow per platform).
  */
-function guruClientListingEntry(): WorkflowTemplateListing {
+function guruListingEntry(meta: BundledWorkflowMeta): WorkflowTemplateListing {
   return {
-    id: GURU_CLIENT_WORKFLOW_ID,
+    id: meta.id,
     type: "workflow",
-    name: "Guru Client 5-Phase Workflow",
-    description:
-      "需求→概要→详细→实现→审核 五阶段（三道文档 Gate + verify 强制），bundled with the guru fork CLI",
-    path: "bundled:guru/workflow.md",
+    name: meta.name,
+    description: meta.description,
+    path: `bundled:guru/workflows/${meta.id}.md`,
     source: "bundled",
-  };
-}
-
-function guruClientResolvedEntry(): ResolvedWorkflowTemplate {
-  return {
-    ...guruClientListingEntry(),
-    content: guruWorkflowMdTemplate,
   };
 }
 
@@ -203,7 +206,7 @@ export async function listWorkflowTemplates(
 }> {
   const result: WorkflowTemplateListing[] = [
     nativeListingEntry(),
-    guruClientListingEntry(),
+    ...BUNDLED_GURU_WORKFLOWS.map(guruListingEntry),
   ];
 
   let registry: RegistrySource | undefined;
@@ -250,8 +253,24 @@ export async function resolveWorkflowTemplate(
   if (id === NATIVE_WORKFLOW_ID) {
     return nativeResolvedEntry();
   }
-  if (id === GURU_CLIENT_WORKFLOW_ID) {
-    return guruClientResolvedEntry();
+  const guruMeta = BUNDLED_GURU_WORKFLOWS.find((w) => w.id === id);
+  if (guruMeta) {
+    // Registered guru workflows resolve from bundled markdown (offline). They are
+    // filtered out of the marketplace listing, so a missing bundled file must be an
+    // explicit packaging error — never a silent fall-through to a network fetch.
+    // getBundledGuruWorkflow returns `string` for a registered id (it THROWS on an
+    // unreadable bundled file) and `null` only for *unregistered* ids. `guruMeta`
+    // already proves registration, so `content === null` is unreachable here — but
+    // the return type is `string | null` and the repo bans non-null assertions
+    // (`@typescript-eslint/no-non-null-assertion`), so we narrow with an explicit
+    // guard rather than `!`.
+    const content = getBundledGuruWorkflow(id);
+    if (content === null) {
+      throw new WorkflowResolveError(
+        `Bundled guru workflow "${id}" is registered but has no bundled content.`,
+      );
+    }
+    return { ...guruListingEntry(guruMeta), content };
   }
 
   let registry: RegistrySource | undefined;

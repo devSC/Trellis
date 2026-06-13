@@ -16,7 +16,18 @@ TARGET="${1:?用法: apply.sh <目标项目路径>}"
 TARGET="$(cd "$TARGET" && pwd)"
 [ -d "$TARGET/.trellis" ] || { echo "ERROR: $TARGET 不是 Trellis 项目（缺 .trellis/），先 trellis init"; exit 1; }
 
-echo "== guru overlay 装配 → $TARGET =="
+# 平台选择（第二位置参数，默认 flutter）：决定 spec 包 / workflow / verify analyze 命令。
+PLATFORM="${2:-flutter}"
+case "$PLATFORM" in
+  flutter) SPEC_NAME="guru-flutter-client"; WF_NAME="guru-client"; ANALYZE_CMD="flutter analyze" ;;
+  go)      SPEC_NAME="guru-go-backend";     WF_NAME="guru-go";     ANALYZE_CMD="go build ./... && go vet ./..." ;;
+  ios)     SPEC_NAME="guru-ios-native";     WF_NAME="guru-ios";    ANALYZE_CMD="xcodebuild build -quiet || swift build" ;;
+  h5)      SPEC_NAME="guru-h5-web";         WF_NAME="guru-h5";     ANALYZE_CMD="pnpm exec tsc --noEmit" ;;
+  *) echo "ERROR: 未知平台 '$PLATFORM'（支持 flutter|go|ios|h5）"; exit 1 ;;
+esac
+[ -d "$ROOT/specs/$SPEC_NAME" ] || { echo "ERROR: spec 包不存在: specs/${SPEC_NAME}（先 pnpm -C packages/cli sync:guru 或确认 guru-template/specs/）"; exit 1; }
+
+echo "== guru overlay 装配 → ${TARGET} （平台: ${PLATFORM} → spec=${SPEC_NAME} workflow=${WF_NAME}）=="
 
 # 1) skills → .agents/skills/（共享真源）
 mkdir -p "$TARGET/.agents/skills"
@@ -108,14 +119,21 @@ print(f"  settings.json: hooks 接线完成（新增 {added} 条，已有内容�
 PYEOF
 
 # 6) workflow + SSOT 同步（升级通道：CLI update 不跟踪非 native workflow，spec/ 又是其保护路径）
-cp "$ROOT/workflows/guru-client-workflow.md" "$TARGET/.trellis/workflow.md"
-echo "  workflow: guru-client-workflow.md → .trellis/workflow.md"
-SPEC_SRC="$ROOT/specs/guru-flutter-client"
+cp "$ROOT/workflows/${WF_NAME}-workflow.md" "$TARGET/.trellis/workflow.md"
+echo "  workflow: ${WF_NAME}-workflow.md → .trellis/workflow.md"
+SPEC_SRC="$ROOT/specs/${SPEC_NAME}"
 mkdir -p "$TARGET/.trellis/spec/guides" "$TARGET/.trellis/spec/conventions"
 rm -rf "$TARGET/.trellis/spec/harness"
 cp -R "$SPEC_SRC/harness" "$TARGET/.trellis/spec/harness"
 cp "$SPEC_SRC/guides/"*.md "$TARGET/.trellis/spec/guides/"
-cp "$SPEC_SRC/README.md" "$SPEC_SRC/RECONCILE.md" "$TARGET/.trellis/spec/"
+cp "$SPEC_SRC/README.md" "$TARGET/.trellis/spec/"
+# RECONCILE.md 平台特定（目前仅 flutter 提供）。切到不提供它的平台时清掉上一平台残留，
+# 避免旧 reconcile 指引被 agent 继续消费。
+if [ -f "$SPEC_SRC/RECONCILE.md" ]; then
+  cp "$SPEC_SRC/RECONCILE.md" "$TARGET/.trellis/spec/"
+else
+  rm -f "$TARGET/.trellis/spec/RECONCILE.md"
+fi
 # conventions：项目取值（project-conventions.md）绝不覆盖；模板/样例/索引可刷新
 for f in "$SPEC_SRC/conventions/"*.md; do
   base="$(basename "$f")"
@@ -131,9 +149,10 @@ else
 fi
 
 # 7) config 合并（幂等：marker 检测）
-python3 - "$TARGET" <<'PYEOF'
+python3 - "$TARGET" "$ANALYZE_CMD" <<'PYEOF'
 import os, sys
 t = sys.argv[1]
+analyze = sys.argv[2] if len(sys.argv) > 2 else "flutter analyze"
 MARK = "# >>> guru-overlay >>>"
 END = "# <<< guru-overlay <<<"
 
@@ -148,10 +167,9 @@ def merge(path, block, create_header=""):
     print(f"  merged: {os.path.relpath(path, t)}")
 
 merge(os.path.join(t, ".trellis", "worktree.yaml"),
-"""verify:
+f'''verify:
   - "python3 .trellis/scripts/guru/guru_gate.py auto"
-  - "flutter analyze"
-  # - "dart run custom_lint"   # guru_lints 建成后启用""")
+  - "{analyze}"''')
 
 merge(os.path.join(t, ".trellis", "config.yaml"),
 """hooks:

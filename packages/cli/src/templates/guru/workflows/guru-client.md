@@ -28,7 +28,7 @@
 - 三条最高禁令（违反即任务失败）：① 禁止执行 l10n 同步脚本（SLOT-07，人工受控）② 禁止在 SLOT-12 老目录新建业务模块 ③ 禁止违反分层依赖律的 import。
 - **人工 Gate 机制**：阶段跃迁（需求→概要→详细→实现）必须人工确认落盘，通道按 config `guru.gate_mode`（**本节是通道唯一主定义**，其余处写"confirm 收口"均指此处）：
   - **strict（默认）**：用户本人在交互式终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm`（零参数=批量确认待确认 Gate，逐个 y/n）；agent 经工具运行因无 TTY 被拒，**不得代跑、不得以自写 review 记录替代**。
-  - **soft**：用户在对话中明确确认后，agent 运行 `guru_gate.py confirm --via-agent` 代跑（确认记录留痕标注 soft/agent）；**未获用户本轮明确确认不得执行**。
+  - **soft**：用户在对话中明确确认后，agent 运行 `guru_gate.py confirm --via-agent --user-quote "<用户确认原话>"` 代跑（`--user-quote` 必填，留痕标注 soft/agent + 用户原话）；**未获用户本轮明确确认不得执行**。
   - 两种模式下确认快照（累积 digest）、结构 Gate 复跑、`task.py start` 的 before_start 强制校验均生效；进度随时 `guru_gate.py status` 查。
 
 ### Planning Artifacts（guru 五阶段语义，双轨制）

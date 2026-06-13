@@ -10,6 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   GURU_CLIENT_WORKFLOW_ID,
+  GURU_GO_WORKFLOW_ID,
+  GURU_IOS_WORKFLOW_ID,
+  GURU_H5_WORKFLOW_ID,
   NATIVE_WORKFLOW_ID,
   listWorkflowTemplates,
   resolveWorkflowTemplate,
@@ -55,6 +58,77 @@ describe("bundled guru-client workflow", () => {
       expect(ids).toContain(GURU_CLIENT_WORKFLOW_ID);
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("bundled multi-platform guru workflows", () => {
+  const PLATFORMS = [
+    GURU_GO_WORKFLOW_ID,
+    GURU_IOS_WORKFLOW_ID,
+    GURU_H5_WORKFLOW_ID,
+  ];
+
+  it("lists every bundled platform workflow even when the marketplace is unreachable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 500 })));
+    try {
+      const { templates } = await listWorkflowTemplates();
+      const ids = templates.map((t) => t.id);
+      for (const id of [GURU_CLIENT_WORKFLOW_ID, ...PLATFORMS]) {
+        expect(ids).toContain(id);
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("resolves each platform workflow offline with five-phase content", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network must not be touched for bundled ids");
+      }),
+    );
+    try {
+      for (const id of PLATFORMS) {
+        const resolved = await resolveWorkflowTemplate(id);
+        expect(resolved.id).toBe(id);
+        expect(resolved.source).toBe("bundled");
+        expect(resolved.content).toContain("五阶段");
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("bundled multi-platform guru spec packages", () => {
+  const SPECS = ["guru-go-backend", "guru-ios-native", "guru-h5-web"];
+
+  it("registers every platform spec as bundled (offline-installable)", () => {
+    const ids = listBundledSpecTemplateIds();
+    for (const id of ["guru-flutter-client", ...SPECS]) {
+      expect(ids).toContain(id);
+    }
+  });
+
+  it("each platform spec ships the core harness SSOT files", () => {
+    for (const id of SPECS) {
+      const files = getBundledSpecFiles(id);
+      if (files === null) throw new Error(`expected bundled spec ${id}`);
+      const keys = [...files.keys()];
+      expect(keys).toContain("harness/index.md");
+      expect(keys).toContain("guides/golden-path.md");
+      expect(
+        keys.some((k) =>
+          k.startsWith("harness/overview/overview-structure-single-source"),
+        ),
+      ).toBe(true);
+      expect(
+        keys.some((k) =>
+          k.startsWith("harness/detail/detail-structure-single-source"),
+        ),
+      ).toBe(true);
     }
   });
 });
