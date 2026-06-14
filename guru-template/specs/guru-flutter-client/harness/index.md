@@ -7,6 +7,8 @@
 - [ ] 按本任务所处阶段读对应 SSOT（下表），并把所读文件登记进任务的 `implement.jsonl` / `check.jsonl`（带 reason）
 - [ ] 产物语言：中文优先（英文仅限代码标识符、命令、路径、协议字段、外部专有名词、缩写、原文引用）
 
+> 项目实际按层模式见 `.trellis/spec/<layer>/`（by-layer 项目 spec，`flutter/`/`service/`/`shared/`，bootstrap 填实）；本 harness 只承载方法学，不写项目实例。
+
 ## 阶段 → SSOT 映射
 
 **双轨制**：task.json `guru_chain` 判轨（创建默认 `full`）。full=完整五阶段链，需求走正式需求包、设计走目录级设计包（task.json `design_package`）；light=轻量链（分流+用户同意），产物为任务内单文件。下表产物列写作 `full / light`。
