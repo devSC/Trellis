@@ -13,6 +13,9 @@ esac
 TASK_DIR=$(dirname "$FP")
 MARK="$TASK_DIR/.grilled-$ART"
 [ -f "$MARK" ] && exit 0
+# 锚定项目根：GATE 是相对路径，CWD 非项目根时会找不到而静默失效（FP 是绝对路径，不受 cd 影响）。
+# 与兄弟 hook block-unconfirmed-start.sh 一致，遵循「不依赖进程 cwd」不变量。
+cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 GATE=".trellis/scripts/guru/guru_gate.py"
 [ -f "$GATE" ] || exit 0
 if python3 "$GATE" "$KIND" "$TASK_DIR" >/dev/null 2>&1; then
