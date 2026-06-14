@@ -110,6 +110,32 @@ else
   echo "  platform mirror: skills ×${claude_skill_n} → .claude/skills/（${PLATFORM} 平台 + shared）"
 fi
 
+# 4.5) 两个 skill 面双向对齐（修「换客户端就少一批 skill」）：
+#   trellis init 只把引擎 skill（trellis-*）装进 --client 对应目录（如 --claude → .claude/skills），
+#   但 Codex/本地 agent 客户端读 .agents/skills。§4 的镜像又只搬 guru skill。结果 trellis-* 只在
+#   .claude/skills、读 .agents/skills 的客户端永远看不到它们。这里把两面对齐成同一并集（guru 平台 +
+#   shared + 引擎 trellis-* + trellis-local + 用户自有），任意客户端读哪个目录都是完整集合。
+#   guru 越界项已在 §1/§4 从两面同时剪掉、且并集只补「非 guru」项，故不会复活被裁剪的他平台 guru skill。
+if [ "$USED_PROJECT_MIRROR" = 0 ]; then
+  mkdir -p "$TARGET/.agents/skills" "$TARGET/.claude/skills"
+  recon_n=0
+  reconcile_skills() {  # $1=源 skills 目录  $2=目标 skills 目录：把源里"非 guru、目标缺失"的 skill 补到目标
+    local sd nm
+    [ -d "$1" ] || return 0
+    for sd in "$1"/*/; do
+      [ -d "$sd" ] || continue
+      nm="$(basename "$sd")"
+      case " $GURU_SKILLS " in *" $nm "*) continue ;; esac   # guru-managed 由 §1/§4 按平台权威管理，不在此并集
+      if [ ! -d "$2/$nm" ]; then
+        mkdir -p "$2/$nm"; cp -R "$sd." "$2/$nm/"; recon_n=$((recon_n + 1))
+      fi
+    done
+  }
+  reconcile_skills "$TARGET/.claude/skills" "$TARGET/.agents/skills"   # 引擎 trellis-* / trellis-local → .agents
+  reconcile_skills "$TARGET/.agents/skills" "$TARGET/.claude/skills"   # .agents 侧用户自有 skill → .claude
+  echo "  skill 双面对齐: 补齐 ×${recon_n}（引擎 trellis-*/trellis-local/用户自有，两面一致）"
+fi
+
 # 5) Claude settings.json hooks 接线（自动幂等合并：按 matcher 定位、按 command 去重，保留用户既有内容）
 python3 - "$TARGET" "$HERE/config-snippets/claude-settings.hooks.json" "$INSTALLED_HOOKS" <<'PYEOF'
 import json, os, re, sys
