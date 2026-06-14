@@ -89,8 +89,16 @@ export function getBundledGuruWorkflow(id: string): string | null {
  * Backward-compat alias: the flutter (guru-client) workflow content. Existing
  * callers that imported `guruWorkflowMdTemplate` keep working.
  */
-export const guruWorkflowMdTemplate =
-  getBundledGuruWorkflow(GURU_CLIENT_WORKFLOW_ID) ?? "";
+export const guruWorkflowMdTemplate = ((): string => {
+  // 该常量在 import 期 eager 求值。getBundledGuruWorkflow 对"已注册但文件缺失"会抛错
+  // （打包错误应显式）——但不应让这个 backward-compat 常量在模块加载期崩掉整个 CLI 启动。
+  // 故此处降级为 ""；运行时真正解析仍走 resolveWorkflowTemplate（缺失时会正常抛错）。
+  try {
+    return getBundledGuruWorkflow(GURU_CLIENT_WORKFLOW_ID) ?? "";
+  } catch {
+    return "";
+  }
+})();
 
 const SPEC_ROOT = join(__dirname, "specs");
 

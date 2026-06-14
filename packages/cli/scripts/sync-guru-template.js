@@ -8,7 +8,7 @@
  * platform workflow guru-template/workflows/<id>-workflow.md -> workflows/<id>.md.
  * Adding a platform needs no edit here.
  */
-import { cpSync, rmSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { cpSync, rmSync, mkdirSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dirname, "../../..");
@@ -21,6 +21,13 @@ rmSync(join(dest, "specs"), { recursive: true, force: true });
 rmSync(join(dest, "workflows"), { recursive: true, force: true });
 mkdirSync(join(dest, "specs"), { recursive: true });
 mkdirSync(join(dest, "workflows"), { recursive: true });
+
+// 源目录缺失时给出清晰报错（否则 readdirSync 直接抛 ENOENT 栈，定位困难）
+for (const sub of ["specs", "workflows"]) {
+  if (!existsSync(join(src, sub))) {
+    throw new Error(`源目录 guru-template/${sub}/ 不存在，无法 sync（确认 ${src} 完整）`);
+  }
+}
 
 let specCount = 0;
 for (const name of readdirSync(join(src, "specs"))) {

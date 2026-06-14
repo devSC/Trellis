@@ -6,6 +6,7 @@
 # 示例 calorie: LEGACY_PATTERNS='lib/ui/pages/|lib/data/repositories/'
 # 示例 seek:    LEGACY_PATTERNS='lib/domain/|lib/infrastructure/|lib/application/'
 LEGACY_PATTERNS=''
+# 留空 = 该项目无老目录（SLOT-12 可显式留空，合规），拦截按设计不生效；非空才按 grep -E 拦截。
 [ -z "$LEGACY_PATTERNS" ] && exit 0
 INPUT=$(cat)
 # Claude Write/Edit：tool_input.file_path 字段

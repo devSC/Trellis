@@ -39,10 +39,13 @@ import sys
 
 PASS, BLOCK = 0, 2
 
-BHV_DEF = re.compile(r"^#{2,5}\s+(BHV-\d+)\b[^\n]*$", re.M)
-UNIT_DEF = re.compile(r"^#{2,5}\s+(UNIT-[a-z0-9][a-z0-9-]*)\b[^\n]*$", re.M)
-BHV_REF = re.compile(r"\b(BHV-\d+)\b")
-UNIT_REF = re.compile(r"\b(UNIT-[a-z0-9][a-z0-9-]*)\b")
+# 不用 \b 词边界：Python 的 \b 把 CJK 视作 word 字符，"执行BHV-001"/"UNIT-x执行" 等
+# 中文相邻编号会因边界失配被漏掉，导致 trace 误判孤儿（假拦/假通过）。
+# DEF 靠行首标题(^#{2,5}\s+)锚定；REF 直匹配编号本体。slug 首字符限 [a-z]（语义 slug 字母起头）。
+BHV_DEF = re.compile(r"^#{2,5}\s+(BHV-\d+)[^\n]*$", re.M)
+UNIT_DEF = re.compile(r"^#{2,5}\s+(UNIT-[a-z][a-z0-9-]*)[^\n]*$", re.M)
+BHV_REF = re.compile(r"(BHV-\d+)")
+UNIT_REF = re.compile(r"(UNIT-[a-z][a-z0-9-]*)")
 
 # 双轨制（完整五阶段链=目录级设计包；轻量链=单文件 design.md）
 # V1_L2 / NINE_TYPES 与 detail-structure-single-source.md §2 同步维护。
