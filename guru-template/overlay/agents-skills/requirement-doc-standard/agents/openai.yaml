@@ -1,0 +1,4 @@
+interface:
+  display_name: "需求文档体系标准"
+  short_description: "提供需求文档语义SSOT、入口组织和完成收敛口径的中立主定义"
+  default_prompt: "请使用 $requirement-doc-standard 输出并解释当前需求文档体系的语义SSOT主定义，包括第二章入口组织、API/CLI适用性、阶段0核心能力收敛、非功能范围豁免和完成收敛口径。"

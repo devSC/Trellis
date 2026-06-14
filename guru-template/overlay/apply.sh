@@ -30,9 +30,12 @@ BOOTSTRAP_PRD="$HERE/bootstrap/${PLATFORM}-bootstrap-prd.md"
 
 # guru-managed skill 全集（剪枝白名单：只删这些里的"非本平台"项，绝不碰用户自有/官方 trellis-* skill）
 GURU_SKILLS="$(ls -d "$HERE"/agents-skills/*/ 2>/dev/null | xargs -n1 basename)"
-# skill 名是否属当前平台（按 SKILL_GLOBS 任一 glob 匹配）
+# 平台无关 shared skill（每平台都装、不剪）：需求三件套被所有 workflow 的 Phase1(需求) 硬前置依赖。
+SHARED_SKILLS="requirement-doc-standard requirement-writing requirement-review"
+# skill 名是否该装：shared 始终装；否则按当前平台 SKILL_GLOBS 任一 glob 匹配。
 skill_in_scope() {
   local n="$1" g
+  case " $SHARED_SKILLS " in *" $n "*) return 0 ;; esac
   for g in $SKILL_GLOBS; do
     # shellcheck disable=SC2254
     case "$n" in $g) return 0 ;; esac
@@ -42,25 +45,21 @@ skill_in_scope() {
 
 echo "== guru overlay 装配 → ${TARGET} （平台: ${PLATFORM} → spec=${SPEC_NAME} workflow=${WF_NAME}）=="
 
-# 1) skills → .agents/skills/（只装本平台集合 + 剪枝他平台 guru skill）
+# 1) skills → .agents/skills/（装本平台集合 + shared 需求三件套，剪枝他平台 guru skill）
 mkdir -p "$TARGET/.agents/skills"
-# 剪枝：删目标里"guru-managed 但不属当前平台"的 skill（不碰用户自有/官方 trellis-*）
-for gs in $GURU_SKILLS; do
-  skill_in_scope "$gs" || rm -rf "$TARGET/.agents/skills/$gs"
-done
-# 装本平台集合（先清空再整目录拷贝，避免模板中已删/改名残留）
 agent_skill_n=0
-for glob in $SKILL_GLOBS; do
-  for s in "$HERE"/agents-skills/$glob/; do
-    [ -d "$s" ] || continue
-    name="$(basename "$s")"
-    rm -rf "$TARGET/.agents/skills/$name"
-    mkdir -p "$TARGET/.agents/skills/$name"
-    cp -R "$s"/. "$TARGET/.agents/skills/$name/"
+# 单遍历 guru-managed 全集：属本平台或 shared → rm-then-cp 刷新装；否则剪枝（不碰用户自有/官方 trellis-*）
+for gs in $GURU_SKILLS; do
+  if skill_in_scope "$gs"; then
+    rm -rf "$TARGET/.agents/skills/$gs"
+    mkdir -p "$TARGET/.agents/skills/$gs"
+    cp -R "$HERE/agents-skills/$gs/." "$TARGET/.agents/skills/$gs/"
     agent_skill_n=$((agent_skill_n + 1))
-  done
+  else
+    rm -rf "$TARGET/.agents/skills/$gs"
+  fi
 done
-echo "  skills ×${agent_skill_n} → .agents/skills/（${PLATFORM} 平台）"
+echo "  skills ×${agent_skill_n} → .agents/skills/（${PLATFORM} 平台 + shared 需求三件套）"
 
 # 2) gate + after_create → .trellis/scripts/guru/
 mkdir -p "$TARGET/.trellis/scripts/guru"
@@ -96,22 +95,19 @@ if [ -f "$MIRROR_SCRIPT" ]; then
   USED_PROJECT_MIRROR=1
   echo "  platform mirror: 项目镜像脚本 --sync 完成"
 else
-  # 剪枝：删目标里 guru-managed 但不属当前平台的 skill 镜像
-  for gs in $GURU_SKILLS; do
-    skill_in_scope "$gs" || rm -rf "$TARGET/.claude/skills/$gs"
-  done
+  # 单遍历 guru-managed 全集：属本平台或 shared → 镜像刷新；否则剪枝
   claude_skill_n=0
-  for glob in $SKILL_GLOBS; do
-    for s in "$HERE"/agents-skills/$glob/; do
-      [ -d "$s" ] || continue
-      name="$(basename "$s")"
-      rm -rf "$TARGET/.claude/skills/$name"
-      mkdir -p "$TARGET/.claude/skills/$name"
-      cp -R "$s"/. "$TARGET/.claude/skills/$name/"
+  for gs in $GURU_SKILLS; do
+    if skill_in_scope "$gs"; then
+      rm -rf "$TARGET/.claude/skills/$gs"
+      mkdir -p "$TARGET/.claude/skills/$gs"
+      cp -R "$HERE/agents-skills/$gs/." "$TARGET/.claude/skills/$gs/"
       claude_skill_n=$((claude_skill_n + 1))
-    done
+    else
+      rm -rf "$TARGET/.claude/skills/$gs"
+    fi
   done
-  echo "  platform mirror: skills ×${claude_skill_n} → .claude/skills/（${PLATFORM} 平台）"
+  echo "  platform mirror: skills ×${claude_skill_n} → .claude/skills/（${PLATFORM} 平台 + shared）"
 fi
 
 # 5) Claude settings.json hooks 接线（自动幂等合并：按 matcher 定位、按 command 去重，保留用户既有内容）

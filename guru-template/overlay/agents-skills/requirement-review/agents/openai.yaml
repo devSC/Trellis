@@ -1,0 +1,4 @@
+interface:
+  display_name: "需求文档审核"
+  short_description: "仅用于需求全稿门禁审核，覆盖 UI/API/CLI 入口与核心能力承接"
+  default_prompt: "请使用 $requirement-review 对已完成全稿的需求文档执行门禁审核：先读取同级 requirement-doc-standard 的主定义，按语义SSOT判定是否通过；第二章入口组织、阶段0核心能力收敛、核心能力目标/分层/证据状态/设计承接、入口分支追踪结论、编号差集检查结果与 API/CLI 适用性均引用标准包 5.2/6/6.1/7.0 核查，不在提示中另起判定规则；非功能范围豁免按标准包 5.3 或审核指令核查并记录来源；重点检查 confirmation_status 与 open_questions 是否满足进入概要设计条件，但不替代用户完成业务确认；严重度和阻断口径引用 review-baseline。"
