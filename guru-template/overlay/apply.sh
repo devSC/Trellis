@@ -19,27 +19,48 @@ TARGET="$(cd "$TARGET" && pwd)"
 # 平台选择（第二位置参数，默认 flutter）：决定 spec 包 / workflow / verify analyze 命令。
 PLATFORM="${2:-flutter}"
 case "$PLATFORM" in
-  flutter) SPEC_NAME="guru-flutter-client"; WF_NAME="guru-client"; ANALYZE_CMD="flutter analyze"; LAYERS="flutter service shared" ;;
-  go)      SPEC_NAME="guru-go-backend";     WF_NAME="guru-go";     ANALYZE_CMD="go build ./... && go vet ./..."; LAYERS="backend shared" ;;
-  ios)     SPEC_NAME="guru-ios-native";     WF_NAME="guru-ios";    ANALYZE_CMD="xcodebuild build -quiet || swift build"; LAYERS="ios shared" ;;
-  h5)      SPEC_NAME="guru-h5-web";         WF_NAME="guru-h5";     ANALYZE_CMD="pnpm exec tsc --noEmit"; LAYERS="frontend backend shared" ;;
+  flutter) SPEC_NAME="guru-flutter-client"; WF_NAME="guru-client"; ANALYZE_CMD="flutter analyze"; LAYERS="flutter service shared"; SKILL_GLOBS="client-* flutter-implementation-guru-*"; GRILL_SKILL="client-grill"; XTRA_HOOKS="block-l10n-sync.sh" ;;
+  go)      SPEC_NAME="guru-go-backend";     WF_NAME="guru-go";     ANALYZE_CMD="go build ./... && go vet ./..."; LAYERS="backend shared"; SKILL_GLOBS="go-*"; GRILL_SKILL="go-design-grill"; XTRA_HOOKS="" ;;
+  ios)     SPEC_NAME="guru-ios-native";     WF_NAME="guru-ios";    ANALYZE_CMD="xcodebuild build -quiet || swift build"; LAYERS="ios shared"; SKILL_GLOBS="ios-*"; GRILL_SKILL="ios-design-grill"; XTRA_HOOKS="" ;;
+  h5)      SPEC_NAME="guru-h5-web";         WF_NAME="guru-h5";     ANALYZE_CMD="pnpm exec tsc --noEmit"; LAYERS="frontend backend shared"; SKILL_GLOBS="h5-*"; GRILL_SKILL="h5-design-grill"; XTRA_HOOKS="" ;;
   *) echo "ERROR: 未知平台 '$PLATFORM'（支持 flutter|go|ios|h5）"; exit 1 ;;
 esac
 [ -d "$ROOT/specs/$SPEC_NAME" ] || { echo "ERROR: spec 包不存在: specs/${SPEC_NAME}（先 pnpm -C packages/cli sync:guru 或确认 guru-template/specs/）"; exit 1; }
 BOOTSTRAP_PRD="$HERE/bootstrap/${PLATFORM}-bootstrap-prd.md"
 
+# guru-managed skill 全集（剪枝白名单：只删这些里的"非本平台"项，绝不碰用户自有/官方 trellis-* skill）
+GURU_SKILLS="$(ls -d "$HERE"/agents-skills/*/ 2>/dev/null | xargs -n1 basename)"
+# skill 名是否属当前平台（按 SKILL_GLOBS 任一 glob 匹配）
+skill_in_scope() {
+  local n="$1" g
+  for g in $SKILL_GLOBS; do
+    # shellcheck disable=SC2254
+    case "$n" in $g) return 0 ;; esac
+  done
+  return 1
+}
+
 echo "== guru overlay 装配 → ${TARGET} （平台: ${PLATFORM} → spec=${SPEC_NAME} workflow=${WF_NAME}）=="
 
-# 1) skills → .agents/skills/（共享真源）
+# 1) skills → .agents/skills/（只装本平台集合 + 剪枝他平台 guru skill）
 mkdir -p "$TARGET/.agents/skills"
-for s in "$HERE"/agents-skills/*/; do
-  name="$(basename "$s")"
-  # 重装刷新语义：先清空再整目录拷贝（SKILL.md + references/），避免模板中已删除/改名的文件残留
-  rm -rf "$TARGET/.agents/skills/$name"
-  mkdir -p "$TARGET/.agents/skills/$name"
-  cp -R "$s"/. "$TARGET/.agents/skills/$name/"
+# 剪枝：删目标里"guru-managed 但不属当前平台"的 skill（不碰用户自有/官方 trellis-*）
+for gs in $GURU_SKILLS; do
+  skill_in_scope "$gs" || rm -rf "$TARGET/.agents/skills/$gs"
 done
-echo "  skills ×$(ls -d "$HERE"/agents-skills/*/ | wc -l | tr -d ' ') → .agents/skills/"
+# 装本平台集合（先清空再整目录拷贝，避免模板中已删/改名残留）
+agent_skill_n=0
+for glob in $SKILL_GLOBS; do
+  for s in "$HERE"/agents-skills/$glob/; do
+    [ -d "$s" ] || continue
+    name="$(basename "$s")"
+    rm -rf "$TARGET/.agents/skills/$name"
+    mkdir -p "$TARGET/.agents/skills/$name"
+    cp -R "$s"/. "$TARGET/.agents/skills/$name/"
+    agent_skill_n=$((agent_skill_n + 1))
+  done
+done
+echo "  skills ×${agent_skill_n} → .agents/skills/（${PLATFORM} 平台）"
 
 # 2) gate + after_create → .trellis/scripts/guru/
 mkdir -p "$TARGET/.trellis/scripts/guru"
@@ -47,12 +68,24 @@ cp "$HERE/verify/guru_gate.py" "$HERE/hooks/guru_after_create.py" "$TARGET/.trel
 chmod +x "$TARGET/.trellis/scripts/guru/"*.py
 echo "  scripts: guru_gate.py, guru_after_create.py → .trellis/scripts/guru/"
 
-# 3) 平台 hooks（Claude）+ trellis-local
+# 3) 平台 hooks（Claude）+ trellis-local：只装共享 + 本平台专属 + 平台化 grill-nudge
 mkdir -p "$TARGET/.claude/hooks" "$TARGET/.claude/skills/trellis-local"
-cp "$HERE"/hooks/platform/*.sh "$TARGET/.claude/hooks/"
+SHARED_HOOKS="block-legacy-dirs.sh block-sanctioned-tlds.sh block-unconfirmed-start.sh"
+INSTALLED_HOOKS="$SHARED_HOOKS grill-nudge.sh $XTRA_HOOKS"
+# 剪枝：删目标里 guru-managed 但不属当前平台的旧 hook（含历史名 client-grill-nudge.sh、非 flutter 的 block-l10n-sync.sh）
+GURU_HOOKS="$(ls "$HERE"/hooks/platform/*.sh 2>/dev/null | xargs -n1 basename) client-grill-nudge.sh"
+for gh in $GURU_HOOKS; do
+  case " $INSTALLED_HOOKS " in *" $gh "*) ;; *) rm -f "$TARGET/.claude/hooks/$gh" ;; esac
+done
+# 装共享 + 平台专属 hook
+for h in $SHARED_HOOKS $XTRA_HOOKS; do
+  cp "$HERE/hooks/platform/$h" "$TARGET/.claude/hooks/$h"
+done
+# grill-nudge 平台化：占位符替换成本平台 grill skill 名（flutter→client-grill、h5→h5-design-grill…）
+sed "s/__GRILL_SKILL__/${GRILL_SKILL}/g" "$HERE/hooks/platform/grill-nudge.sh" > "$TARGET/.claude/hooks/grill-nudge.sh"
 chmod +x "$TARGET/.claude/hooks/"*.sh
 cp "$HERE/trellis-local/SKILL.md" "$TARGET/.claude/skills/trellis-local/"
-echo "  hooks(platform) ×$(ls "$HERE"/hooks/platform/*.sh | wc -l | tr -d ' ') + trellis-local"
+echo "  hooks(platform): ${INSTALLED_HOOKS} + trellis-local"
 
 # 4) 平台 skill 镜像（Claude Code 只读 .claude/skills；Codex 等读 .agents/skills）
 MIRROR_SCRIPT="$TARGET/scripts/sync_platform_skills.py"
@@ -63,19 +96,29 @@ if [ -f "$MIRROR_SCRIPT" ]; then
   USED_PROJECT_MIRROR=1
   echo "  platform mirror: 项目镜像脚本 --sync 完成"
 else
-  for s in "$HERE"/agents-skills/*/; do
-    name="$(basename "$s")"
-    rm -rf "$TARGET/.claude/skills/$name"
-    mkdir -p "$TARGET/.claude/skills/$name"
-    cp -R "$s"/. "$TARGET/.claude/skills/$name/"
+  # 剪枝：删目标里 guru-managed 但不属当前平台的 skill 镜像
+  for gs in $GURU_SKILLS; do
+    skill_in_scope "$gs" || rm -rf "$TARGET/.claude/skills/$gs"
   done
-  echo "  platform mirror: skills 字节镜像 → .claude/skills/"
+  claude_skill_n=0
+  for glob in $SKILL_GLOBS; do
+    for s in "$HERE"/agents-skills/$glob/; do
+      [ -d "$s" ] || continue
+      name="$(basename "$s")"
+      rm -rf "$TARGET/.claude/skills/$name"
+      mkdir -p "$TARGET/.claude/skills/$name"
+      cp -R "$s"/. "$TARGET/.claude/skills/$name/"
+      claude_skill_n=$((claude_skill_n + 1))
+    done
+  done
+  echo "  platform mirror: skills ×${claude_skill_n} → .claude/skills/（${PLATFORM} 平台）"
 fi
 
 # 5) Claude settings.json hooks 接线（自动幂等合并：按 matcher 定位、按 command 去重，保留用户既有内容）
-python3 - "$TARGET" "$HERE/config-snippets/claude-settings.hooks.json" <<'PYEOF'
-import json, os, sys
+python3 - "$TARGET" "$HERE/config-snippets/claude-settings.hooks.json" "$INSTALLED_HOOKS" <<'PYEOF'
+import json, os, re, sys
 target_root, snippet_path = sys.argv[1], sys.argv[2]
+installed_hooks = set(sys.argv[3].split()) if len(sys.argv) > 3 else None
 settings_path = os.path.join(target_root, ".claude", "settings.json")
 snippet = json.load(open(snippet_path, encoding="utf-8"))
 if os.path.isfile(settings_path):
@@ -100,6 +143,17 @@ for event, entries in snippet.get("hooks", {}).items():
         print(f"  ERROR: .claude/settings.json 的 hooks.{event} 必须是数组", file=sys.stderr)
         sys.exit(1)
     for entry in entries:
+        # 只注册 command 指向"已安装" hook 脚本的条目；漏装的 hook 不注册（避免 settings 悬空引用、触发时跑不存在脚本）
+        if installed_hooks is not None:
+            kept = []
+            for h in entry.get("hooks", []):
+                m = re.search(r"([A-Za-z0-9_.-]+\.sh)", h.get("command", "") if isinstance(h, dict) else "")
+                if m and m.group(1) not in installed_hooks:
+                    continue
+                kept.append(h)
+            if not kept:
+                continue
+            entry = {**entry, "hooks": kept}
         existing = next((e for e in cur if isinstance(e, dict) and e.get("matcher") == entry.get("matcher")), None)
         if existing is None:
             cur.append(entry)
