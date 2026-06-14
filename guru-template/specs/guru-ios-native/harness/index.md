@@ -4,6 +4,7 @@
 > 模型对齐 `guru-flutter-client` 同名 SSOT，但 **doc_type 与分层归属一律以本文 §3 钉死的七类为权威**——禁止照抄 flutter 的 `controller / page-entry / service / db-dao / api-network` 或 Go 平台的类型名。
 > 实测来源：`story-verse-mac`（SwiftUI 主 + RxSwift 遗留、FactoryKit DI、WCDBSwift 持久化、AppCoordinator 导航）。证据锚点见 §3 表与 §6 各 Gate。
 > 层级契约：本文（harness 入口）承载阶段映射、doc_type 权威表、编号纪律、Gate 口径；writing/review skill 的 `references/` 只承载编排细则、模板与示例；冲突时 本文 > L2 > references > SKILL.md。
+> 项目实际按层模式见 `.trellis/spec/<layer>/`（by-layer 项目 spec，`ios/` + `shared/`，由 `00-bootstrap-guidelines` 扫真实项目填实）；本 harness 只承载方法学，不写项目实例。
 
 ---
 

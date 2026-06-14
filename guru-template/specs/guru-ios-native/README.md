@@ -22,23 +22,54 @@ guru-ios-native/
 │   ├── project-conventions.template.md        ← 空槽位模板（新项目起点；不生效、不校验）
 │   ├── story-verse.project-conventions.md     ← story-verse-mac 取值样例（仅参考；不生效、不校验）
 │   └── project-conventions.md                 ← 【本项目取值唯一权威】init 后由模板填写，所有阶段硬前置只认它
-└── harness/
-    ├── index.md                               ← 五阶段方法 SSOT 导航
-    ├── extraction-template.md                 ← 萃取模板（从存量代码反向提取设计单元）
-    ├── overview/
-    │   └── overview-structure-single-source.md ← 概要设计 SSOT（行为枚举 → owner 归属表 → 承接索引 → 架构总览六件套 → 技术决策承接）
-    ├── detail/
-    │   ├── detail-structure-single-source.md   ← 详细设计 SSOT（L1：合同八问骨架 + 章节结构 + Gate 基线）
-    │   ├── detail-type-viewmodel.md            ← L2 类型规范：viewmodel（v1 提供）
-    │   ├── detail-type-usecase.md              ← L2 类型规范：usecase（v1 提供）
-    │   └── detail-type-repository.md           ← L2 类型规范：repository（v1 提供，接口+实现合并一类）
-    └── implementation/
-        ├── implementation-trace-contract.md    ← 实现 trace 合同（计划 / 执行 / 证据 / 阻塞偏差 四节）
-        └── implementation-ios-standard.md       ← 实现 L1 编码标准（LOCK-1~7 / doc_type 七类 / 合同八问 / 实现 Gate / 测试 allowlist / 存量豁免）
+├── harness/
+│   ├── index.md                               ← 五阶段方法 SSOT 导航
+│   ├── extraction-template.md                 ← 萃取模板（从存量代码反向提取设计单元）
+│   ├── overview/
+│   │   └── overview-structure-single-source.md ← 概要设计 SSOT（行为枚举 → owner 归属表 → 承接索引 → 架构总览六件套 → 技术决策承接）
+│   ├── detail/
+│   │   ├── detail-structure-single-source.md   ← 详细设计 SSOT（L1：合同八问骨架 + 章节结构 + Gate 基线）
+│   │   ├── detail-type-viewmodel.md            ← L2 类型规范：viewmodel（v1 提供）
+│   │   ├── detail-type-usecase.md              ← L2 类型规范：usecase（v1 提供）
+│   │   └── detail-type-repository.md           ← L2 类型规范：repository（v1 提供，接口+实现合并一类）
+│   └── implementation/
+│       ├── implementation-trace-contract.md    ← 实现 trace 合同（计划 / 执行 / 证据 / 阻塞偏差 四节）
+│       └── implementation-ios-standard.md       ← 实现 L1 编码标准（LOCK-1~7 / doc_type 七类 / 合同八问 / 实现 Gate / 测试 allowlist / 存量豁免）
+├── ios/                                        ← by-layer 项目 spec：iOS 层（DDD 四层）项目实际模式（bootstrap 从真实项目填实）
+│   ├── index.md                               ← 本层导航入口（链到本层真实存在的 topic 文件）
+│   ├── directory-structure.md                 ← 项目实际模式（bootstrap 从真实项目填实）
+│   ├── viewmodel.md                           ← 项目实际模式（bootstrap 从真实项目填实）
+│   ├── usecase.md                             ← 项目实际模式（bootstrap 从真实项目填实）
+│   ├── repository.md                          ← 项目实际模式（bootstrap 从真实项目填实）
+│   ├── view-guidelines.md                     ← 项目实际模式（bootstrap 从真实项目填实）
+│   ├── coordinator-navigation.md              ← 项目实际模式（bootstrap 从真实项目填实）
+│   ├── di-factorykit.md                       ← 项目实际模式（bootstrap 从真实项目填实）
+│   ├── error-handling.md                      ← 项目实际模式（bootstrap 从真实项目填实）
+│   └── quality.md                             ← 项目实际模式（bootstrap 从真实项目填实）
+└── shared/                                     ← by-layer 项目 spec：跨层（横跨 DDD 四层）项目实际模式（bootstrap 从真实项目填实）
+    ├── index.md                               ← 本层导航入口（链到本层真实存在的 topic 文件）
+    ├── swift-conventions.md                   ← 项目实际模式（bootstrap 从真实项目填实）
+    ├── naming-conventions.md                  ← 项目实际模式（bootstrap 从真实项目填实）
+    └── git-conventions.md                     ← 项目实际模式（bootstrap 从真实项目填实）
 ```
 
 > 注：`detail/` 下 v1 只提供三份 L2（与 flutter 的 `controller` / `usecase` / `repository-datasource` 一一对应）。其余四类 `domain-model` / `view` / `coordinator` / `external` 暂无独立 L2 文件（`l2_status: pending`），按 L1 合同八问展开；full 链命中 pending 类型时须在 `design-main.md` 显式声明 `L2豁免`（见 §4、§7）。
 > `conventions/project-conventions.md` 在本配置包内通常不存在（属项目侧产物）；init 后由 `template` 复制并填写，落位目标仓库 `.trellis/spec/conventions/project-conventions.md`。
+
+## by-layer 项目 spec（项目实例层）
+
+`ios/` 与 `shared/` 是 **by-layer 项目 spec（项目实例层）**——记录**本项目实际**按层模式的开放式文档（目录结构 / 命名 / WRONG·CORRECT 代码示例），与 harness、conventions 三者职责边界互斥、不重叠：
+
+- **harness（方法学 / HOW）**：钉五阶段方法、doc_type 七类、合同八问、Gate 口径——只承载**方法学**，不写任何项目实例。
+- **conventions（钉死的 SLOT 决策，Gate 硬前置）**：`project-conventions.md` 的 SLOT-01~16 取值是**钉死的决策**，C1~C6 校验是任何阶段的**硬前置**（不过即「项目约定未就绪」，硬前置不通过）。
+- **by-layer 项目 spec（本节）**：**开放式按层模式文档**（非钉死、非 Gate 硬前置），供 sub-agent **匹配本项目风格**；由 `00-bootstrap-guidelines` 任务**扫真实项目填实**，document reality（写「这个项目实际怎么做」）而非理想；**不复写 harness / golden-path 正文，只引用**。
+
+本平台 by-layer 两层：
+
+- **`ios/`**：iOS 层，覆盖 DDD 四层的 `viewmodel` / `usecase` / `repository` / `view`（`view-guidelines.md`）/ `coordinator`（`coordinator-navigation.md`）模式，外加目录结构、FactoryKit DI、错误分层、质量门禁。
+- **`shared/`**：跨层，横跨 DDD 四层、不归属任何单一 doc_type 的通用约定（Swift 语言级、命名、git）。
+
+每层 `index.md` 是**导航入口**（只链到本层**真实存在**的 topic 文件）；topic 文件初始为 `To fill`，bootstrap 后按真实代码填实。各层正文遵循 `guides/golden-path.md` 分层依赖律与 `harness/` 的 doc_type 七类口径，**不复写其正文、只引用**。
 
 ---
 
