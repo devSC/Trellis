@@ -48,11 +48,14 @@ BHV_REF = re.compile(r"(BHV-\d+)")
 UNIT_REF = re.compile(r"(UNIT-[a-z][a-z0-9-]*)")
 
 # 双轨制（完整五阶段链=目录级设计包；轻量链=单文件 design.md）
-# V1_L2 / NINE_TYPES 与 detail-structure-single-source.md §2 同步维护。
-V1_L2 = {"controller", "usecase", "repository-datasource"}
-NINE_TYPES = V1_L2 | {"page-entry", "service", "db-dao", "api-network",
-                      "config-l10n", "external-platform"}
-DOC_TYPE_REF = re.compile(r"(?:detail_)?doc_type\s*[=:：]\s*`?([a-z][a-z-]*)`?")
+# doc_type 分类【运行时】从已装的 detail-structure-single-source.md §2 表解析（见 _doc_type_taxonomy），
+# 使 gate 自适应平台（flutter/go/ios/h5 的 doc_type 类目各异）。下列 fallback 是 flutter 基线，仅在
+# SSOT 缺失/解析空时使用（向后兼容测试夹具与上游 CLI 装的项目）。
+_FALLBACK_V1 = {"controller", "usecase", "repository-datasource"}
+_FALLBACK_NINE = _FALLBACK_V1 | {"page-entry", "service", "db-dao", "api-network",
+                                 "config-l10n", "external-platform"}
+_TAXONOMY_CACHE = {}
+DOC_TYPE_REF = re.compile(r"(?:detail_)?doc_type\s*[=:：]\s*`?([a-z][a-z0-9-]*)`?")
 CHAPTER_FILE_REF = re.compile(r"chapters/([A-Za-z0-9_][A-Za-z0-9_.-]*\.md)")
 L2_EXEMPT_LINE = re.compile(r"L2豁免[^\n]*")
 
@@ -79,8 +82,13 @@ def read(path: str) -> str:
 
 
 def _design_sections(design: str):
-    """切出概要章与详细章正文（按 § 或章节标题启发式）。"""
-    m = re.search(r"(?:§\s*2|##\s*(?:§?\s*2|详细设计))", design)
+    """切出概要章与详细章正文（按行首 §2/详细设计标题锚定）。
+
+    分割点必须是行首标题（^#{1,6}）：§2 要求行首（不命中正文里的 `详见 §2` 行内交叉引用），
+    「详细设计」用负向前瞻排除「详细设计承接索引」子节标题——否则结构合规的 light design.md
+    会被误切（承接索引/三问理由漏进详细段），导致 overview/auto 假拦截。
+    """
+    m = re.search(r"(?m)^#{1,6}\s*(?:§\s*2(?![0-9])|详细设计(?!承接))", design)
     if m:
         return design[: m.start()], design[m.start():]
     return design, ""
@@ -269,7 +277,9 @@ def check_requirements(task_dir: str) -> int:
         problems.append("缺行为编号：行为须以 `### BHV-NNN <短名>` 标题定义（编号纪律）")
     if not (re.search(r"\bGiven\b", prd) and re.search(r"\bWhen\b", prd) and re.search(r"\bThen\b", prd)):
         problems.append("缺行为规格：未找到 Given/When/Then 三段式（至少一组）")
-    if not re.search(r"\bP0\b|\bP1\b", prd):
+    # 不用 \bP0\b：Python \b 把 CJK 当 word 字符，"优先级P0" 会失配（同文件头部反 \b 纪律）。
+    # 守卫用显式 ASCII-word 类（含数字/下划线）两侧对称：放过 CJK 紧贴，挡掉 step_P0/3P0/P0Beta 假阳性。
+    if not re.search(r"(?<![A-Za-z0-9_])P[01](?![A-Za-z0-9_])", prd):
         problems.append("缺核心能力清单：未找到 P0/P1 优先级标记")
     if not re.search(r"失败路径|失败场景|异常路径|failure", prd, re.I):
         problems.append("缺失败路径章节")
@@ -315,15 +325,49 @@ def _check_chapter_closure(task_dir: str) -> list:
     return problems
 
 
+def _doc_type_taxonomy():
+    """运行时从已装 SSOT 解析 doc_type 分类，返回 (all_types, v1_types)。
+
+    定位 .trellis/spec/harness/detail/detail-structure-single-source.md（相对 cwd=项目根，与
+    _package_dir 同约定）的 doc_type 表：表格行最后一列为 L2 状态（pending / 含 v1）时，取行内第一个
+    反引号 token 为 doc_type；含 v1 → 已建成 L2（不需豁免）。这样 go/ios/h5 的 domain/route/
+    coordinator… 也能被 pending-L2 Gate 正确拦截，而非只认 flutter 硬编码类目。SSOT 缺失/解析空 →
+    fallback flutter 基线。结果按 cwd 缓存（同一进程多次调用不重复解析）。
+    """
+    key = os.path.realpath(os.getcwd())
+    if key in _TAXONOMY_CACHE:
+        return _TAXONOMY_CACHE[key]
+    text = read(os.path.join(".trellis", "spec", "harness", "detail",
+                             "detail-structure-single-source.md"))
+    allt, v1 = set(), set()
+    for line in text.splitlines():
+        s = line.strip()
+        if not s.startswith("|"):
+            continue
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        if len(cells) < 2 or not re.search(r"pending|v1", cells[-1]):
+            continue
+        m = re.search(r"`([a-z][a-z0-9-]*)`", s)   # 行内第一个反引号 token = doc_type（兼容 doc_type 在第 1/2 列）
+        if not m:
+            continue
+        allt.add(m.group(1))
+        if "v1" in cells[-1]:
+            v1.add(m.group(1))
+    result = (allt, v1) if allt else (set(_FALLBACK_NINE), set(_FALLBACK_V1))
+    _TAXONOMY_CACHE[key] = result
+    return result
+
+
 def _index_doc_types(main: str) -> set:
     """提取承接索引引用的 doc_type：兼容 `doc_type=X` 行内形式与表格行形式
-    （表格行无 doc_type= 前缀，按九类 token 出现在索引上下文行识别）。"""
-    hits = {t for t in DOC_TYPE_REF.findall(main) if t in NINE_TYPES}
+    （表格行无 doc_type= 前缀，按当前平台 doc_type token 出现在索引上下文行识别）。"""
+    nine, _ = _doc_type_taxonomy()
+    hits = {t for t in DOC_TYPE_REF.findall(main) if t in nine}
     for line in main.splitlines():
         if "L2豁免" in line:
             continue
         if "chapters/" in line or "chapter_target" in line:
-            for t in NINE_TYPES:
+            for t in nine:
                 if re.search(rf"\b{re.escape(t)}\b", line):
                     hits.add(t)
     return hits
@@ -334,14 +378,15 @@ def _check_pending_l2(task_dir: str) -> list:
     pkg = _package_dir(task_dir)
     if not pkg:
         return []
+    nine, v1 = _doc_type_taxonomy()
     main = read(os.path.join(pkg, "design-main.md"))
-    hit = {t for t in _index_doc_types(main) if t not in V1_L2}
+    hit = {t for t in _index_doc_types(main) if t not in v1}
     exempted = set()
     for line in L2_EXEMPT_LINE.findall(main):
-        # 豁免对象只从「理由」之前的声明段取词（且限九类 token）——
+        # 豁免对象只从「理由」之前的声明段取词（且限当前平台 doc_type token）——
         # 理由文本里出现的类型词（如 "this service layer..."）不构成豁免
         head = line.split("理由", 1)[0]
-        exempted.update(t for t in re.findall(r"[a-z][a-z-]*", head) if t in NINE_TYPES)
+        exempted.update(t for t in re.findall(r"[a-z][a-z0-9-]*", head) if t in nine)
     not_exempted = sorted(t for t in hit if t not in exempted)
     if not_exempted:
         return [f"承接索引命中 pending L2 类型且无显式豁免：{', '.join(not_exempted)}"
@@ -448,15 +493,25 @@ def check_implement(task_dir: str) -> int:
 
 
 def resolve_task_dir(arg):
+    # before_start 注入 TASK_JSON_PATH（指向正要 start 的任务）：与显式 arg 不一致时警告，
+    # 避免 check 校验了 A（已确认）却给 B（正要 start、未确认）放行（F4 跨任务错配）。
+    tj = os.environ.get("TASK_JSON_PATH", "")
+    tj_dir = os.path.dirname(tj) if tj and os.path.isfile(tj) else None
     if arg:
         if os.path.isdir(arg):
-            return arg
-        named = os.path.join(".trellis", "tasks", arg)  # 裸任务名
-        return named if os.path.isdir(named) else None
+            resolved = arg
+        else:
+            named = os.path.join(".trellis", "tasks", arg)  # 裸任务名
+            resolved = named if os.path.isdir(named) else None
+        if resolved and tj_dir and os.path.realpath(resolved) != os.path.realpath(tj_dir):
+            sys.stderr.write(
+                f"[guru-gate] 警告：显式 task_dir（{resolved}）与 before_start 注入的 "
+                f"TASK_JSON_PATH（{tj_dir}）指向不同任务，按显式参数校验——若此调用是 "
+                f"task.py start 的前置闸门，请核实校验的是否为正在激活的任务。\n")
+        return resolved
     # before_start 钩子注入 TASK_JSON_PATH（最可靠：指向正要 start 的任务）
-    tj = os.environ.get("TASK_JSON_PATH", "")
-    if tj and os.path.isfile(tj):
-        return os.path.dirname(tj)
+    if tj_dir:
+        return tj_dir
     import subprocess
     try:
         out = subprocess.run(["python3", ".trellis/scripts/task.py", "current"],
@@ -495,6 +550,15 @@ def resolve_task_dir(arg):
 # 设计：阶段跃迁（需求→概要→详细→实现）必须由用户本人确认。confirm 强制 TTY +
 # 交互输入，agent 经工具管道运行必然无 TTY 而被拒；确认落盘 task.json 的
 # guru_gates 键；task.py start 经 before_start 钩子跑 check，缺确认即中止。
+#
+# 安全边界（诚实声明，勿误用）：本机制是「诚实性辅助（integrity aid）」，不是
+# 「安全边界（security boundary）」。它挡得住「无意/图省事跳过评审」（手滑），
+# 挡不住「蓄意绕过」的 agent——判定材料 task.json 与 agent 同处可写信任域，
+# artifact_digest 是无密钥哈希且 `digest` 子命令无门禁，故蓄意者可：(a) 自取
+# digest 伪造一份自洽的 guru_gates；(b) 分配 pty 使 isatty() 误判为人；(c) 自行
+# 把 gate_mode 降 soft 代跑。strict 模式只抬高绕过成本、提供流程纪律，不构成
+# 密码学保证。要升级成真正的安全边界，须把确认信任根移出 agent 可写域（独立
+# 进程/服务签发确认），属架构级改动，不在本脚本范围。
 
 HUMAN_GATES = ("requirements", "overview", "detail")
 GATE_LABEL = {"requirements": "需求", "overview": "概要设计", "detail": "详细设计"}

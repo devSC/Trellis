@@ -475,5 +475,102 @@ if [ "$rc" = 0 ] && python3 "$GATE" check "$PT" >/dev/null 2>&1; then
   pass=$((pass+1)); echo "PASS  TTY 零参数批量确认（pty 三连 y）"
 else failn=$((failn+1)); echo "FAIL  pty 批量 (rc=$rc)"; echo "$out" | tail -3; fi
 
+# ===== light 链 _design_sections 分割正则盲区：'## 详细设计承接索引' 标题 + 行内 §2 不误切（修 #7）=====
+HDR="$TMP/light-hdr-index"; mkdir -p "$HDR"
+cp "$G/prd.md" "$G/implement.md" "$HDR/"
+cat > "$HDR/design.md" <<'EOF'
+## §1 概要设计
+归属表：BHV-001 → owner: UseCase。为什么属于它：业务规则；为什么不属于别人：controller 无规则；是否需独立存在：是。详见 §2。
+归属表：BHV-002 → owner: Controller。三问理由同上格式。
+## 详细设计承接索引
+chapter_target=下单 → doc_type=usecase
+## §2 详细设计
+### UNIT-order-usecase
+承接的行为：BHV-001、BHV-002。失败收口：上抛枚举。测试映射：unit test。不得补造：不决定缓存。
+EOF
+expect "light overview：'## 详细设计承接索引'标题+行内§2 不误拦（#7）" 0 python3 "$GATE" overview "$HDR"
+expect "light detail：同上仍正确从 §2 切出 UNIT（#7）" 0 python3 "$GATE" detail "$HDR"
+
+# ===== check_requirements P0/P1 与 CJK 紧贴（优先级P0）也识别（修 #8，对齐头部反 \b 纪律）=====
+CJKP="$TMP/cjk-p0"; mkdir -p "$CJKP"
+cat > "$CJKP/prd.md" <<'EOF'
+## 行为规格
+### BHV-001 点击
+Given a When b Then c
+## 核心能力
+优先级P0：下单
+## 失败路径
+x
+## 验收场景
+y
+## 未决问题
+无
+EOF
+expect "requirements：'优先级P0' CJK 紧贴被识别（#8）" 0 python3 "$GATE" requirements "$CJKP"
+
+# ===== #2 回归：light 链 §2 标题 CJK 紧贴（## §2详细设计 无空格）detail 仍正确切出 UNIT（修 §\s*2\b 的 CJK 漏切）=====
+NSP="$TMP/light-nospace"; mkdir -p "$NSP"
+cp "$G/prd.md" "$G/implement.md" "$NSP/"
+cat > "$NSP/design.md" <<'EOF'
+## §1 概要设计
+归属表：BHV-001 → owner: UseCase。为什么属于它：业务规则；为什么不属于别人：controller 无规则；是否需独立存在：是。
+归属表：BHV-002 → owner: Controller。三问理由同上格式。
+承接索引：chapter_target=下单 → doc_type=usecase
+## §2详细设计
+### UNIT-order-usecase
+承接的行为：BHV-001、BHV-002。失败收口：上抛枚举。测试映射：unit test。不得补造：不决定缓存。
+EOF
+expect "light detail：'## §2详细设计' CJK 紧贴仍正确从 §2 切出 UNIT（#2 回归）" 0 python3 "$GATE" detail "$NSP"
+
+# ===== #8 假阳性闭合：核心能力段仅含 snake_case 标识符(user_P0_flag)无真实 P0/P1 → 仍被拦 =====
+FP="$TMP/p0-falsepos"; mkdir -p "$FP"
+cat > "$FP/prd.md" <<'EOF'
+## 行为规格
+### BHV-001 点击
+Given a When b Then c
+## 核心能力
+下单功能（见 user_P0_flag 字段控制开关）
+## 失败路径
+x
+## 验收场景
+y
+## 未决问题
+无
+EOF
+expect "requirements：仅 user_P0_flag 无真 P0/P1 被正确拦（#8 假阳性闭合）" 2 python3 "$GATE" requirements "$FP"
+
+# ===== #3 full 链 config-l10n（九类唯一带数字的 doc_type）pending-L2 豁免能放行（修 [a-z][a-z-]* 漏数字）=====
+PKL=$(mk_pkg pkg-l10n)
+printf -- "- chapter_target=l10n → doc_type=config-l10n → chapters/l10n-config.md\n" >> "$PKL-docs/design-main.md"
+cat > "$PKL-docs/chapters/l10n-config.md" <<'EOF'
+### UNIT-l10n-config
+承接的行为：BHV-002。失败收口：上抛。测试映射：unit test。不得补造：无。
+EOF
+expect "full 详细 config-l10n 无豁免被拦（前提）" 2 python3 "$GATE" detail "$PKL"
+printf "L2豁免：config-l10n 理由：本地化资源章节首发按 L1 八问展开\n" >> "$PKL-docs/design-main.md"
+expect "full 详细 config-l10n 显式豁免放行（#3：数字 doc_type 不再死锁）" 0 python3 "$GATE" detail "$PKL"
+
+# ===== #1 跨平台：gate 运行时从已装 SSOT 解析 doc_type，非 flutter(go) 的 pending 类也能拦/豁免 =====
+GOROOT="$TMP/go-proj"; mkdir -p "$GOROOT/.trellis/spec/harness/detail" "$GOROOT/task" "$GOROOT/task-docs/chapters"
+printf '%s\n' '## 2. 七类 detail_doc_type' '| doc_type | 覆盖对象 | 落点 | L2 状态 |' '|---|---|---|---|' '| `biz` | 业务核心 | service/ | **v1 提供** |' '| `domain` | 领域实体 | domain/ | pending |' > "$GOROOT/.trellis/spec/harness/detail/detail-structure-single-source.md"
+cp "$G/prd.md" "$G/implement.md" "$GOROOT/task/"
+printf '{"guru_chain":"full","design_package":"task-docs"}\n' > "$GOROOT/task/task.json"
+echo "# nav" > "$GOROOT/task-docs/README.md"
+printf '%s\n' '# 概要' '## 详细设计承接索引' '- chapter_target=d → doc_type=domain → chapters/d.md' > "$GOROOT/task-docs/design-main.md"
+printf '%s\n' '### UNIT-order-usecase' '承接的行为：BHV-001、BHV-002。失败收口：上抛。测试映射：unit test。不得补造：无。' > "$GOROOT/task-docs/chapters/d.md"
+out=$(cd "$GOROOT" && python3 "$GATE" detail task 2>&1); rc=$?
+{ [ "$rc" = 2 ] && printf '%s' "$out" | grep -q domain; } && { pass=$((pass+1)); echo "PASS  非flutter(go) domain(pending) 无豁免被拦（#1 运行时 SSOT taxonomy）"; } || { failn=$((failn+1)); echo "FAIL  go domain 应被拦 (rc=$rc)"; printf '%s\n' "$out" | head -2; }
+printf 'L2豁免：domain 理由：领域模型首发按八问展开\n' >> "$GOROOT/task-docs/design-main.md"
+out=$(cd "$GOROOT" && python3 "$GATE" detail task 2>&1); rc=$?
+[ "$rc" = 0 ] && { pass=$((pass+1)); echo "PASS  非flutter(go) domain 显式豁免放行（#1）"; } || { failn=$((failn+1)); echo "FAIL  go domain 豁免应放行 (rc=$rc)"; printf '%s\n' "$out" | head -2; }
+
+# ===== #4 制裁 TLD hook：host 段拦截、path 段(.cu 文件)不误拦（host 锚定回归）=====
+TLD="$HERE/../../hooks/platform/block-sanctioned-tlds.sh"
+tld_rc() { printf '{"tool_input":{"content":"%s"}}' "$1" | bash "$TLD" >/dev/null 2>&1; echo $?; }
+[ "$(tld_rc 'https://bank.ir/')" = 2 ] && { pass=$((pass+1)); echo "PASS  制裁TLD host 段 bank.ir 拦截"; } || { failn=$((failn+1)); echo "FAIL  bank.ir 应拦"; }
+[ "$(tld_rc '[doc](https://x.sy)')" = 2 ] && { pass=$((pass+1)); echo "PASS  制裁TLD host 段 markdown ) 收尾拦截"; } || { failn=$((failn+1)); echo "FAIL  x.sy) 应拦"; }
+[ "$(tld_rc 'https://github.com/x/kernel.cu)')" = 0 ] && { pass=$((pass+1)); echo "PASS  制裁TLD path 段 .cu 文件不误拦（host 锚定，修 #4 回归）"; } || { failn=$((failn+1)); echo "FAIL  path .cu 被误拦"; }
+[ "$(tld_rc 'https://iranian-news.com/')" = 0 ] && { pass=$((pass+1)); echo "PASS  制裁TLD 合法域 iranian-news.com 不误拦"; } || { failn=$((failn+1)); echo "FAIL  iranian-news 误拦"; }
+
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]
