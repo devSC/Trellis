@@ -3,6 +3,7 @@
 > 本文是 Go monorepo 后端（safa-land 形态：`net/http` + 严格分层 + 原生 SQL）五阶段方法的唯一权威入口。
 > 阶段子 SSOT 承载规则正文，本文只做编排、装载顺序、Gate 口径与编号纪律的统一索引；冲突时以阶段子 SSOT 为准、本文为辅。
 > 横向硬依赖：通用方法 `.trellis/spec/guides/golden-path.md`（分层依赖律与禁止清单）+ 目标仓库 `.trellis/spec/conventions/project-conventions.md`（项目约定槽位）。
+> 项目实际按层模式见 `.trellis/spec/<layer>/`（by-layer 项目 spec，`backend/`、`shared/`，bootstrap 填实）；本 harness 只承载方法学，不写项目实例。
 
 ## Pre-Development Checklist（每个任务开始前）
 

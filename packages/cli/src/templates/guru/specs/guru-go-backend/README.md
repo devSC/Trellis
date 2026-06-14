@@ -21,18 +21,34 @@
 │   ├── project-conventions.template.md        槽位定义模板（SLOT-01~17，只定义不取值；SLOT-17=存量违例恒为最后槽）
 │   ├── safa-land.project-conventions.md       样例取值（safa-land 实测，只读参考、不参与校验）[规划中]
 │   └── project-conventions.md                 本项目取值唯一权威（硬前置只认此文件）[init 后由模板填写]
-└── harness/
-    ├── index.md                               五阶段方法 SSOT 入口：编排 + 装载顺序 + 编号纪律 + 五道 Gate
-    ├── extraction-template.md                  复盘/萃取九段模板（沉淀「这类任务怎么做好」）
-    ├── overview/
-    │   └── overview-structure-single-source.md 概要设计 SSOT：行为枚举→归属判定→承接索引→架构视图 [规划中]
-    ├── detail/
-    │   ├── detail-structure-single-source.md   详细设计 L1 SSOT：合同八问骨架 + doc_type 七类 [规划中]
-    │   ├── detail-type-entry-api.md            L2：entry-api（internal/transport/http handler 入口行为）
-    │   ├── detail-type-biz.md                  L2：biz（internal/service 业务核心层）
-│   └── detail-type-repository-data.md      L2：repository-data（internal/repository 数据访问合同 + db/migrations）
-    └── implementation/
-        └── implementation-trace-contract.md    实现 trace 合同：必含四节 + 证据感
+├── harness/
+│   ├── index.md                               五阶段方法 SSOT 入口：编排 + 装载顺序 + 编号纪律 + 五道 Gate
+│   ├── extraction-template.md                  复盘/萃取九段模板（沉淀「这类任务怎么做好」）
+│   ├── overview/
+│   │   └── overview-structure-single-source.md 概要设计 SSOT：行为枚举→归属判定→承接索引→架构视图 [规划中]
+│   ├── detail/
+│   │   ├── detail-structure-single-source.md   详细设计 L1 SSOT：合同八问骨架 + doc_type 七类 [规划中]
+│   │   ├── detail-type-entry-api.md            L2：entry-api（internal/transport/http handler 入口行为）
+│   │   ├── detail-type-biz.md                  L2：biz（internal/service 业务核心层）
+│   │   └── detail-type-repository-data.md      L2：repository-data（internal/repository 数据访问合同 + db/migrations）
+│   └── implementation/
+│       └── implementation-trace-contract.md    实现 trace 合同：必含四节 + 证据感
+├── backend/                                    by-layer 项目 spec — backend 层（transport/service/repository/domain 分层）：项目实际模式（bootstrap 从真实项目填实）
+│   ├── index.md                               本层导航入口（链到本层真实存在的 topic 文件）
+│   ├── directory-structure.md                  `services/*/internal` 真实分层目录组织：项目实际模式（bootstrap 从真实项目填实）
+│   ├── api-design.md                           transport 层 entry-api：net/http 路由 / JSON 编解码 / 错误码映射：项目实际模式（bootstrap 从真实项目填实）
+│   ├── service-patterns.md                     service 层 biz：编排与依赖注入边界：项目实际模式（bootstrap 从真实项目填实）
+│   ├── repository-data.md                      repository 层：数据访问与 db 迁移：项目实际模式（bootstrap 从真实项目填实）
+│   ├── domain-model.md                         domain 层：模型与 sentinel error 归属：项目实际模式（bootstrap 从真实项目填实）
+│   ├── config-runtime.md                       config / 启动关闭序列：项目实际模式（bootstrap 从真实项目填实）
+│   ├── error-handling.md                       错误翻译与包装风格：项目实际模式（bootstrap 从真实项目填实）
+│   ├── logging.md                              logger 注入与结构化字段：项目实际模式（bootstrap 从真实项目填实）
+│   └── quality.md                              go build/vet/test/golangci-lint 门禁：项目实际模式（bootstrap 从真实项目填实）
+└── shared/                                     by-layer 项目 spec — shared 层（跨层）：项目实际模式（bootstrap 从真实项目填实）
+    ├── index.md                               本层导航入口（链到本层真实存在的 topic 文件）
+    ├── go-conventions.md                       Go 语言级约定与包可见性：项目实际模式（bootstrap 从真实项目填实）
+    ├── naming-conventions.md                   包/文件/类型/接口/常量命名规律：项目实际模式（bootstrap 从真实项目填实）
+    └── git-conventions.md                      分支/提交/PR 约定：项目实际模式（bootstrap 从真实项目填实）
 ```
 
 > 标注「规划中」的文件被 `harness/index.md` 与各子 SSOT 引用，是当前迭代的待落盘项；在它们落盘前，对应阶段以 index.md 的对应章节为临时权威。标注「init 后填写」的 `project-conventions.md` 是本仓库取值的唯一权威，缺失即硬前置不通过。
@@ -54,6 +70,20 @@
 | `harness/extraction-template.md` | 复盘/萃取九段模板：只沉淀「这类任务如何被做好」（可复用方法），不沉淀本次需求事实 | 审核/复盘阶段 | 萃取产物结构基线 |
 
 `*/index.md` 三个导航文件（`harness/index.md`、`guides/index.md`、`conventions/index.md`）只做目录导航与边界声明，不承载规则正文——避免双真源漂移。
+
+## by-layer 项目 spec（项目实例层）
+
+`backend/` 与 `shared/` 是**按层组织的项目实例 spec**——记录「本项目实际怎么写」，而非通用方法或团队栈级红线。本平台 by-layer 分两层：`backend/`（Go 服务层，按 transport/service/repository/domain 分层）与 `shared/`（跨层：Go 语言级约定、命名、git，对所有 `internal/` 包通用）。它与 harness、conventions 的边界如下：
+
+- **harness（方法学 / HOW）**：承载五阶段方法、合同八问、doc_type 七类、编号纪律与五道 Gate 口径——「这类任务怎么做好」的可复用方法，与具体项目无关。
+- **conventions（钉死的 SLOT 决策 / Gate 硬前置）**：`project-conventions.md` 是 SLOT-01~17 槽位取值的唯一权威，逐条钉死（选哪个 DB 驱动、用 slog 还是标准 `log` 等），C1~C6 校验，是所有阶段的硬前置（任一不过即停）。
+- **by-layer（开放式按层模式 / 项目风格匹配）**：不是钉死的槽位、不是 Gate 硬前置，而是**开放式的按层模式文档**——记录每层真实的目录结构、命名规律、WRONG·CORRECT 代码示例与团队踩过的坑，供 sub-agent 写作/实现前匹配本项目既有风格。
+
+要点纪律：
+
+- **document reality 非理想**：by-layer 由 `00-bootstrap-guidelines` 任务扫真实项目代码填实（记录实际约定与真实文件路径的代码示例），未填实前各 topic 文件标 `To fill`；写的是「这个项目实际怎么做」，不是「应该怎么做」。
+- **不复写、只引用**：分层依赖律、错误三件套、doc_type 口径等正文在 `guides/golden-path.md` 与 `harness/`，by-layer 只引用不复写——避免双真源漂移。
+- **各层 index.md 是导航入口**：`backend/index.md`、`shared/index.md` 只做本层导航与边界声明，链到本层**真实存在**的 topic 文件（如 backend 层链到 `directory-structure.md` / `api-design.md` / `service-patterns.md` / `repository-data.md` / `domain-model.md` / `config-runtime.md` / `error-handling.md` / `logging.md` / `quality.md`；shared 层链到 `go-conventions.md` / `naming-conventions.md` / `git-conventions.md`），不承载规则正文。
 
 ## 与五阶段 workflow 的关系
 
