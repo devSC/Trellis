@@ -81,7 +81,7 @@ golden-path 硬规则违例（锁定项，命中即 P1）：
 按 L1 共享能力条款区分四类，取证其归类与边集合：
 
 - **Utility 纯函数技术能力**：无状态格式化 / 转换（如日期格式化、字符串裁剪）；落 UI 或独立工具，不进 Domain 业务 owner，不参与 DI 业务依赖装配。
-- **下层公用 `usecase` / `repository` 单元**：被多 feature 复用的业务编排 / 数据访问合同（如 story-verse-mac `AppInitializationService` 协调多 usecase、`IStoryRepository` 被多处消费）。
+- **下层公用 `usecase` / `repository` 单元**：被多 feature 复用的业务编排 / 数据访问合同（例如某 `AppInitializationService` 协调多 usecase、`IStoryRepository` 被多处消费）。
 - **普通业务单元**：单 feature 私有的 owner。
 - **横切**：`coordinator`（导航 + FactoryKit DI 装配）/ `external`（网络 / SDK / WCDBSwift / 三方集成）。
 
@@ -108,7 +108,7 @@ golden-path 硬规则违例（锁定项，命中即 P1）：
 
 ## 9. LLM / agent / prompt 承接取证（规则 16，缺口归 G8）
 
-概要出现端侧 / 远程 LLM、agent、prompt 驱动调用时（story-verse-mac 实测 `OnDeviceLLMAdapter` / `LLMUseCase` 链路）：
+概要出现端侧 / 远程 LLM、agent、prompt 驱动调用时（例如 `OnDeviceLLMAdapter` / `LLMUseCase` 链路）：
 
 - 逐次逻辑调用承接、`prompt_owner`、运行期上下文来源、上下文获取 / 编排行为锚点（落 `usecase`，不落 `external`）、prompt 组装 owner、`detail_prompt_target`。
 - provider / model / SDK / invocation mode / config / external / 凭证策略对应的 `technology_decision_handoff[]` 目标。

@@ -6,7 +6,7 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 # H5（Next.js）详细设计审核
 
 > 层级契约：L1（`.trellis/spec/harness/detail/detail-structure-single-source.md`）承载规则正文与 G1~G8 完成条件，L2 承载类型差异，golden-path（`.trellis/spec/guides/golden-path.md`）承载 Next.js 硬规则；本 SKILL.md 只做前置检查、scope 编排与诊断流程，`references/review-baseline.md` 承载逐 doc_type 取证矩阵与严重度判级，`references/review-output.md` 承载输出字段合同。冲突时 L1 > L2 > golden-path > references > 本文件。
-> 平台基线：Next.js App Router 生产形态为目标 + React + TypeScript(strict)。参考示例 `/Users/devSC/Documents/MyProject/next.js/examples/blog` 是 Pages Router + Nextra + MDX + gray-matter 的轻量 blog starter（故意简化）；审核时凡引用该示例的结论必须明确标注「示例实证」，凡 App Router 生产口径必须标注「生产级补充」，不得把示例的 Pages Router / `getStaticProps` / `_app.tsx` 形态当作 App Router 通过证据。
+> 平台生产基线：Next.js App Router + React + TypeScript(strict)。审核一律以 App Router 生产口径为准：server-first / RSC 数据获取经 data-access 封装 / server-action 变更 / route 段约定（page·layout·loading·error·not-found·route）/ `metadata`·`generateMetadata` 标准化 SEO / `next/image` / CSS Modules 或 Tailwind 样式隔离 / `strict: true`。`getStaticProps` / `_app.tsx` / 手写 `<Head>` 等 Pages Router 形态不能当作 App Router 通过证据，出现即按 golden-path 条目判 finding。
 
 ## 目标
 
@@ -52,12 +52,12 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 
 ## golden-path 硬规则（锁定，逐条对照）
 
-- TS strict（示例 tsconfig 是 `strict:false` 的简化态——「示例实证」不可当通过证据；生产级补充要求 `strict:true`）。
+- TS strict：`tsconfig.json` 必须 `strict: true`，不依赖隐式 any。
 - server-first，`'use client'` 最小化：仅在需要状态/事件/浏览器 API 处声明，且声明位置尽量下沉到叶子交互组件。
 - 私有数据获取 / secret 只允许出现在 `server-component` / `data-access` / `server-action`；`client-component` / `ui-component` 禁直取。
 - `route` 段约定：`page.tsx` / `layout.tsx` / `loading.tsx` / `error.tsx` 职责齐全（缺 `error.tsx` 错误边界、缺 `loading.tsx` 流式回退须有 N/A 声明）。
-- `metadata` / SEO 标准化：route 类必须有 `metadata` 或 `generateMetadata` 承接（示例的 `<Head>` + RSS 是「示例实证」，App Router 生产级补充要求用 Metadata API）。
-- 样式隔离：CSS Modules / Tailwind，禁全局污染（示例 `styles/main.css` 全局 + `style jsx` 是「示例实证」，生产级补充要求模块化/原子化）。
+- `metadata` / SEO 标准化：route 类必须用 Metadata API（`metadata` 或 `generateMetadata`）承接 SEO，禁手写 `<Head>`。
+- 样式隔离：CSS Modules / Tailwind，模块化/原子化，禁全局污染（禁裸全局 class 选择器、禁 `style jsx` 全局样式、禁跨组件样式泄漏）。
 - 错误边界：`error.tsx`（段级）+ data-access 错误转换约定齐全。
 
 ## 最小输入与自动补全
@@ -100,7 +100,7 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 12. 补造红线（L1 §6）：概要外结构、改 owner、改 doc_type 名、拍板未选定决策（替概要选内容源/状态管理/UI 库等）、超签名级代码（>15 行实现体视为越界信号）→ P1。
 13. 薄文档判定：≥2 章骨架雷同且无单元级实质内容 → 结论直接「不可进入」+ 文档级重构建议（L1 §9），不逐条列局部 finding。
 14. 详细设计文档无存量豁免；修订形态建议只引用 L1 §9。
-15. 示例实证 vs 生产级补充：凡引用 blog 示例（Pages Router / `getStaticProps` / `_app.tsx` / 全局 css / `<Head>`）得出的结论必须标「示例实证」，且不得用其放行 App Router 生产口径的缺失；App Router 生产要求未落地一律按 golden-path 条目判 finding。
+15. App Router 生产口径未落地（`getStaticProps` / `_app.tsx` / 手写 `<Head>` / 全局 css 等 Pages Router 形态出现，或 server-first / data-access 封装 / metadata 标准化等缺失）一律按 golden-path 条目判 finding，不接受沿用旧形态。
 
 ## 编号纪律（断链拦截）
 
@@ -142,12 +142,12 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 |----------|---------|---------|
 | `server-component`（render，L2: detail-type-server-component） | RSC 默认无 `'use client'`；数据获取经 data-access 编排；私有数据/secret 仅服务端持有；下传 client 的 props 已脱敏；Suspense/loading 边界声明 | 标 `'use client'` 后仍直取 DB/secret；把私有数据原样下传 client；在 RSC 内写交互态 |
 | `client-component`（interactive，L2: detail-type-client-component） | 顶部 `'use client'`；状态/事件/hooks 明确；只消费 props 或调用 server-action；`'use client'` 范围最小化（不裹住可服务端渲染的子树） | 直接 import/调用 data-access；client 内直取 env/secret；把整页提为 client |
-| `data-access`（data，L2: detail-type-data-access） | fetch 封装 / 内容源(MDX·gray-matter·CMS) / ORM 查询；错误转换表逐枚举；缓存/`revalidate`/`cache` 策略归属；返回 domain-type；无业务判定 | 含业务规则判定；被 client-component 直接 import；secret 硬编码 |
+| `data-access`（data，L2: detail-type-data-access） | fetch 封装 / 内容源(MDX·CMS) / ORM 查询；错误转换表逐枚举；缓存/`revalidate`/`cache` 策略归属；返回 domain-type；无业务判定 | 含业务规则判定；被 client-component 直接 import；secret 硬编码 |
 
 ### pending 类型（L1 八问 + 豁免核查）
 
 - 头部 `l2_status: pending` 标注存在；design-main 有对应 `L2豁免：<doc_type> 理由：…`（full 链；无豁免 → P1）。
-- `route`：route 段文件职责（page/layout/loading/error）齐全或 N/A 声明；`metadata`/`generateMetadata` 承接（生产级补充，示例 `<Head>` 不充数）；只编排不承载业务规则；错误边界 owner 唯一。出现业务规则/数据访问实现 → P1（回退到 server-component/data-access）。
+- `route`：route 段文件职责（page/layout/loading/error）齐全或 N/A 声明；`metadata`/`generateMetadata` 承接 SEO（手写 `<Head>` 不充数）；只编排不承载业务规则；错误边界 owner 唯一。出现业务规则/数据访问实现 → P1（回退到 server-component/data-access）。
 - `ui-component`：纯展示，八问 8 必含"不拥有数据获取/业务判定"；样式隔离（CSS Modules/Tailwind，不写全局）；props 签名级。出现取数/业务判定/全局样式 → P1。
 - `domain-type`：TS 类型 / zod schema / 领域模型；无运行层反向依赖；schema 由谁校验写明（server-action/data-access 入口）。type 层 import 组件/动作 → P1。
 - `server-action`：`'use server'` 或 route handler 边界；入参 zod 校验；经 data-access 完成变更；`revalidatePath`/`revalidateTag` 与错误返回约定；认证/授权依据（命中 NextAuth 槽位）。绕过 data-access 直拼查询、在 client 内内联定义 → P1。
@@ -156,7 +156,7 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 
 | 链边界 | 核对项 | 缺口判级 |
 |--------|--------|---------|
-| route→server-component | route 只编排，page 调用的 server-component 存在；metadata/SEO 承接闭合 | route 承载业务/取数 P1；metadata 缺失 P2（生产级补充） |
+| route→server-component | route 只编排，page 调用的 server-component 存在；metadata/SEO 承接闭合 | route 承载业务/取数 P1；metadata 缺失 P2 |
 | server-component→data-access | server-component 声明的数据依赖有承接 data-access 章节；返回类型为 domain-type；错误转换两侧一致 | 依赖无承接 P1；类型不闭合 P2 |
 | data-access→domain-type | 查询返回与 domain-type / zod schema 一致；schema 校验位置写明 | 类型漂移/无 schema P2 |
 | client-component→ui-component | client 只调用 ui-component 展示/server-action 变更；状态订阅有发射方；`'use client'` 不上提 | client 直连 data-access P1；状态无 owner P1 |
@@ -168,7 +168,7 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 1. 概要索引目标集合 vs 现存章节文件：缺失清单（缺失只出"缺失结论+修订方案"，不进 D 诊断）。
 2. UC 承接表 index_refs vs 章节：每个 UC 的链路在详细侧可走通（route→server-component→data-access 或 client-component→server-action 全链可达）。
 3. 概要时序图参与者/调用 vs 详细行为设计：抽查 ≥1 个 UC 的时序步骤在对应章节有同名行为（裸 token 对得上）。
-4. SEO/metadata 覆盖：概要声明需 SEO 的 route 在详细侧有 metadata/generateMetadata 承接（生产级补充）。
+4. SEO/metadata 覆盖：概要声明需 SEO 的 route 在详细侧有 metadata/generateMetadata 承接。
 
 ## 薄文档判定（优先于逐条 finding）
 
@@ -182,7 +182,7 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 
 - **P1（阻断）**：D1~D8 表中标注 P1 的项；分层依赖律违例；编号断链；server/client 边界 secret 越界；跨链 P1 项；薄文档；章节闭合失败（机检并入）。
 - **P2（应修）**：表中 P2 项；粒度局部不达标（单个行为）；类型漂移；metadata/revalidate 缺失；孤儿合同。
-- **P3（建议）**：表述/格式/术语一致性；示例实证未标注来源。
+- **P3（建议）**：表述/格式/术语一致性。
 - 判级冲突取高；同根因合并为一条 finding 列全部位置。
 
 ## 结论判定（互斥三选一）
@@ -247,7 +247,7 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 - 详细设计文档无存量豁免；审核不代写合同正文。
 - 审核项必须能回到 L1/L2/golden-path 的正向方法，不做"有没有写某个词"的形式检查。
 - doc_type 全程只用权威七类；任何改名/增减/换数尝试一律 EX-3 或 D1 拦截。
-- 示例（blog Pages Router）只作内容模型基线与「示例实证」来源，不作为 App Router 生产口径的放行依据。
+- 一律以 App Router 生产口径为放行依据；沿用旧形态（Pages Router / 手写 `<Head>` / 全局 CSS）不构成豁免。
 
 ## 与官方 Trellis skill 的边界
 
@@ -270,6 +270,5 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
   - `.trellis/spec/harness/detail/detail-type-client-component.md`
   - `.trellis/spec/harness/detail/detail-type-data-access.md`
 - golden-path 硬规则：`.trellis/spec/guides/golden-path.md`
-- 内容模型基线（示例实证，blog starter）：`/Users/devSC/Documents/MyProject/next.js/examples/blog/package.json`、`/Users/devSC/Documents/MyProject/next.js/examples/blog/pages/`、`/Users/devSC/Documents/MyProject/next.js/examples/blog/pages/posts/*.md`、`/Users/devSC/Documents/MyProject/next.js/examples/blog/scripts/gen-rss.js`、`/Users/devSC/Documents/MyProject/next.js/examples/blog/theme.config.js`、`/Users/devSC/Documents/MyProject/next.js/examples/blog/tsconfig.json`
 - 取证矩阵与严重度判级：`references/review-baseline.md`
 - 输出字段合同：`references/review-output.md`

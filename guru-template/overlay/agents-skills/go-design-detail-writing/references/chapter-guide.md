@@ -171,7 +171,7 @@ N/A（biz 不持有 SQL/表结构；存储介质与索引归 repository-data 类
 - 八问之 8 必列「不拥有校验/扫描/配置默认值」。
 
 ### 3.5 config（pending，L1 八问 + `L2豁免`）
-- 配置项表（key / env 变量名 + 前缀如 `CONTROL_API_*` / 类型 / 默认值 / 来源 / 校验规则 / 消费方）；集中 `config.Load() (Config, error)`，`main()` 调一次经 `app.New(cfg)` 注入。
+- 配置项表（key / env 变量名 + 前缀如 `<SVC>_*` / 类型 / 默认值 / 来源 / 校验规则 / 消费方）；集中 `config.Load() (Config, error)`，`main()` 调一次经 `app.New(cfg)` 注入。
 - 必填项缺失返回 error（交 `main()` `log.Fatalf`），可恢复默认用 `getEnv(key, fallback)`，启动期不可恢复配置解析失败 `panic`（`mustDuration`/`mustInt`/`mustBool`）。
 - secret 只写 env 变量名/`credential_ref` 引用，**正文/yaml/测试 fixture 均不得出现明文 key/AK/SK/token/私钥**（出现即 P1）；业务规则默认值仍归 `biz`/`domain`，不在 config 拍板。
 

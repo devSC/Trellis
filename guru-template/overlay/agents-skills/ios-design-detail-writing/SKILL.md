@@ -43,8 +43,8 @@ description: 用于把 Guru iOS 原生（SwiftUI + DDD 四层 + FactoryKit DI + 
 
 1. **FactoryKit `@Injected` DI**：依赖注入一律走 `@Injected(\.xxx)` + `Container` 扩展（`Container+Domain/UseCases/ViewModels/Coordinators/Infrastructure`）；**禁手动初始化**依赖（禁 `XxxUseCase()` 直接 new 注入对象）；`coordinator` 类负责 DI 装配 owner。
 2. **Repository 模式强制**：接口在 Domain（`protocol IXxxRepository`），实现在 Infrastructure（`final class XxxRepository: IXxxRepository`）；`usecase` 只持有接口类型。
-3. **`enum Error` 分层定义**：每个 domain 用独立 `enum XxxError: Error`（实测如 `StoryError` / `VoiceConfigurationError` / `ExportTaskManagerError` / `PersistenceError`），需要测试断言时实现 `Equatable`；错误必须分层归属（Domain 错误 owner=Domain，持久化/外部错误 owner=Infrastructure），不得在 UI 层首次发明错误类型。
-4. **WCDBSwift 持久化**：本地持久化一律 WCDBSwift（实测 `Infrastructure/Persistence/DatabaseManager.swift` + `Persistence/Repositories/*`）；**禁 CoreData / SwiftData**；持久化模型落 `external` 或 `repository` 实现侧，不污染 `domain-model`。
+3. **`enum Error` 分层定义**：每个 domain 用独立 `enum XxxError: Error`（示例如 `StoryError` / `VoiceConfigurationError` / `ExportTaskManagerError` / `PersistenceError`），需要测试断言时实现 `Equatable`；错误必须分层归属（Domain 错误 owner=Domain，持久化/外部错误 owner=Infrastructure），不得在 UI 层首次发明错误类型。
+4. **WCDBSwift 持久化**：本地持久化一律 WCDBSwift（示例 `Infrastructure/Persistence/DatabaseManager.swift` + `Persistence/Repositories/*`）；**禁 CoreData / SwiftData**；持久化模型落 `external` 或 `repository` 实现侧，不污染 `domain-model`。
 5. **`ViewModel = ObservableObject + @Published`**：`viewmodel` 必须是 `class … : ObservableObject`，对外状态用 `@Published`，依赖用 `@Injected`，异步用 `Task` + `async/await`，状态写回 `@MainActor`/`MainActor.run`。
 6. **private 方法在 `private extension`**：内部辅助方法收敛到 `private extension <Type>`，正文骨架的「内部方法」小节按此组织。
 7. **UI 框架收敛**：SwiftUI 主 + RxSwift 遗留，新设计一律 **纯 SwiftUI**（RxSwift 仅作为既存改造说明，不作为新单元目标）。

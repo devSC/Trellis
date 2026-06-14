@@ -1,6 +1,6 @@
 ---
 name: go-design-grill
-description: Go 后端 Gate 前拷问会话（grill-with-docs 的 guru-go 适配版）。对照本平台领域模型（golden-path 分层依赖律、project-conventions SLOT-01~SLOT-17、doc_type 七分类、既有 BHV/UNIT 编号）逐分支对抗式拷问 prd 或概要归属表：磨尖术语、压测边界/并发场景、与 safa-land 形态代码现状交叉核对、当场把决策固化进 prd/design/CONTEXT/ADR，并校验是否触碰平台三条最高禁令。运行位置：需求 Gate 前（拷问 prd.md）与概要 Gate 前（拷问 design §1 / design-main.md 归属表逐行核对）。触碰红线时当场 fail 回退，不放行进 Gate。不替代 trellis-brainstorm（探索生成）、go-design-*-writing（撰写）与 *-review（判定）。
+description: Go 后端 Gate 前拷问会话（grill-with-docs 的 guru-go 适配版）。对照本平台领域模型（golden-path 分层依赖律、project-conventions SLOT-01~SLOT-17、doc_type 七分类、既有 BHV/UNIT 编号）逐分支对抗式拷问 prd 或概要归属表：磨尖术语、压测边界/并发场景、与目标仓库代码现状交叉核对、当场把决策固化进 prd/design/CONTEXT/ADR，并校验是否触碰平台三条最高禁令。运行位置：需求 Gate 前（拷问 prd.md）与概要 Gate 前（拷问 design §1 / design-main.md 归属表逐行核对）。触碰红线时当场 fail 回退，不放行进 Gate。不替代 trellis-brainstorm（探索生成）、go-design-*-writing（撰写）与 *-review（判定）。
 ---
 
 # go-design-grill — Go 后端 Gate 前拷问
@@ -9,7 +9,7 @@ description: Go 后端 Gate 前拷问会话（grill-with-docs 的 guru-go 适配
 
 ## 做什么
 
-对当前 task 产物（`prd.md` 或 `design.md` §1 / `design-main.md` 归属表）发起不留情面的逐分支对抗式拷问，直到达成共识：沿设计树逐支走，决策间依赖逐个解开，每个归属判定都经得起"为什么属于它 / 为什么不属于别人 / 为什么独立存在"三问。**一次只问一个问题，每个问题附上你的推荐答案（含依据），等用户反馈再继续。** 能从代码（safa-land `services/<svc>/internal/*`）/spec（golden-path、project-conventions、harness L1）找到答案的问题不要问用户——先自己读取证实再说。
+对当前 task 产物（`prd.md` 或 `design.md` §1 / `design-main.md` 归属表）发起不留情面的逐分支对抗式拷问，直到达成共识：沿设计树逐支走，决策间依赖逐个解开，每个归属判定都经得起"为什么属于它 / 为什么不属于别人 / 为什么独立存在"三问。**一次只问一个问题，每个问题附上你的推荐答案（含依据），等用户反馈再继续。** 能从代码（目标仓库 `services/<svc>/internal/*`）/spec（golden-path、project-conventions、harness L1）找到答案的问题不要问用户——先自己读取证实再说。
 
 拷问的产物不是一份新文档，而是把磨出来的决策**当场固化**回既有产物：行为/范围 → `prd.md`；归属/owner → `design.md` §1 / `design-main.md` 归属表三问理由；纯术语 → 仓库 `CONTEXT.md`；难以回头的架构/契约权衡 → `docs/adr/`。
 
@@ -29,16 +29,16 @@ description: Go 后端 Gate 前拷问会话（grill-with-docs 的 guru-go 适配
 
 ## 会话期间
 
-- **对照术语表挑战**：用语与 `CONTEXT.md` 既有定义冲突时立即点破——"术语表里 `User` 定义为代理用户（proxy user），你这条 BHV 里的『账号』指的是 `User` 还是 `ApplicationAccount`？safa-land 里 `users` 与 `application_accounts` 是两张表、两个概念。"
-- **磨尖模糊语言**：出现含混/过载词汇时给出精确候选——"你说『同步配置』——是 `ConfigSyncService.TouchNodesForUser` 触发期望态重算，还是 proxy-agent 拉取 `packages/contracts/DesiredNodeConfig`？这是 service 编排副作用与跨服务契约两件事。"行为命名同步回写 `BHV-NNN` 标题短名（粒度对齐 L1 §3.1：动词+宾语、可直接实现、有失败路径）。
+- **对照术语表挑战**：用语与 `CONTEXT.md` 既有定义冲突时立即点破——"术语表里 `User` 定义为代理用户（proxy user），你这条 BHV 里的『账号』指的是 `User` 还是 `ApplicationAccount`？目标仓库里 `users` 与 `application_accounts` 是两张表、两个概念。"
+- **磨尖模糊语言**：出现含混/过载词汇时给出精确候选——"你说『同步配置』——是 `ConfigSyncService.TouchNodesForUser` 触发期望态重算，还是数据面 agent 拉取 `packages/contracts/DesiredNodeConfig`？这是 service 编排副作用与跨服务契约两件事。"行为命名同步回写 `BHV-NNN` 标题短名（粒度对齐 L1 §3.1：动词+宾语、可直接实现、有失败路径）。
 - **具体场景压测**：发明探边场景逼出概念边界与唯一写 owner——"两条 BHV 并发改同一 `users` 行的 status，谁是唯一写 owner？service 编排 + repository 落库，还是你打算让两个 handler 各写一次？"；"`POST` 创建后 `ConfigSyncService` 同步失败，事务回滚还是补偿？这条失败路径在 prd 里写了吗？"
-- **与代码交叉核对（safa-land 形态）**：用户陈述与代码现状矛盾时当场摆出证据——"你说 not-found 走 `service.ErrNotFound`，但现状 canonical sentinel 是 `repository.ErrNotFound`（`internal/repository/errors.go`），且被 transport 直接 `errors.Is` 引用——这是 SLOT-17 第 1 条登记的存量违例。新代码按 SLOT-13 在 service 层定义 sentinel，你这条是新增还是触碰存量？"
+- **与代码交叉核对（目标仓库代码现状）**：用户陈述与代码现状矛盾时当场摆出证据——"你说 not-found 走 `service.ErrNotFound`，但现状 canonical sentinel 是 `repository.ErrNotFound`（`internal/repository/errors.go`），且被 transport 直接 `errors.Is` 引用——这是 SLOT-17 第 1 条登记的存量违例。新代码按 SLOT-13 在 service 层定义 sentinel，你这条是新增还是触碰存量？"
 - **决策当场固化（落盘，不口头停留）**：
   - 行为/范围/失败路径决策 → 立即更新 `prd.md`（未决问题 → 已决，附一句依据；保持 Given/When/Then + 失败路径 + 验收场景结构）；
   - 归属/owner/doc_type 决策 → 立即更新 `design.md` §1 / `design-main.md` 归属表的三问理由（owner 落四层之一，doc_type 落七类之一）；
   - 纯术语 → 更新仓库 `CONTEXT.md`（只做术语表，零实现细节，格式见 [CONTEXT-FORMAT.md](./CONTEXT-FORMAT.md)）；
   - 项目级槽位取值变化（如要引入 `wire`/`sqlc`/`slog`、改 env 前缀、改鉴权方案）→ **不当场私改 project-conventions**，提示走槽位修订（需 ADR），并按下方 ADR 条件评估是否当场起草。
-- **克制地提议 ADR**（三条全中才提，格式与编号见 [ADR-FORMAT.md](./ADR-FORMAT.md)）：难以回头 + 缺上下文会令未来读者困惑 + 真实权衡的产物。Go 后端典型可记 ADR：分层依赖律的刻意偏离及其代价、SLOT 级技术栈切换（无 DI→`wire`、原生 SQL→`sqlc`/`ent`、`log`→`slog`、REST→gRPC）、跨服务契约协议形态（`packages/contracts` 同步 JSON vs 事件）、鉴权方案（自实现 HMAC 签名 cookie vs 第三方 JWT 库）、数据归属边界（"`users` 由 control-api 拥有，proxy-agent 只经 contract 按 ID 引用"）。纯遵循 golden-path 默认路径、易回退的决策不记 ADR。
+- **克制地提议 ADR**（三条全中才提，格式与编号见 [ADR-FORMAT.md](./ADR-FORMAT.md)）：难以回头 + 缺上下文会令未来读者困惑 + 真实权衡的产物。Go 后端典型可记 ADR：分层依赖律的刻意偏离及其代价、SLOT 级技术栈切换（无 DI→`wire`、原生 SQL→`sqlc`/`ent`、`log`→`slog`、REST→gRPC）、跨服务契约协议形态（`packages/contracts` 同步 JSON vs 事件）、鉴权方案（自实现 HMAC 签名 cookie vs 第三方 JWT 库）、数据归属边界（"`users` 由其属主服务拥有，其它服务只经 contract 按 ID 引用"）。纯遵循 golden-path 默认路径、易回退的决策不记 ADR。
 
 ## 触碰红线 → 当场 fail 回退（处置规则）
 

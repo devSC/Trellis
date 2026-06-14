@@ -63,7 +63,7 @@ light 链口径（L1 §2b）：第 5 章可简化为一句话架构 + 一张分�
 | `biz` | `internal/service` 业务核心与状态/能力 owner（核心能力正文主承接方） | 每个 service owner 被覆盖；P0/P1 `owner_behaviors` 命中本类 `chapter_target`；条目职责写业务规则/sentinel/终态收口 | 核心能力 owner 行为未落 `biz` chapter_target P1（G9）；service owner 未被覆盖 P1 |
 | `repository-data` | `internal/repository` 数据访问合同 + `db/migrations` 表/迁移（合并为一类） | 存在业务数据库持久化时必含 ≥1 条；条目职责写读写/事务/查询意图/表结构/索引/迁移/错误转换；无持久化时显式声明并标 n/a | 有持久化但无 `repository-data` 条目 P1（G4）；repository owner 未被覆盖 P1 |
 | `domain` | `internal/domain` 实体/值对象/sentinel/不变量 + 被调用包内业务无关纯函数（无 I/O 无副作用） | 命中即标 `l2_status: pending` + 按详细 L1 八问展开的 L2 豁免计划；条目职责不写配置默认值/SQL | pending 缺 `l2_status` 标注 P1；pending 缺 L2 豁免计划 P1；domain 条目承载副作用/I/O P2 |
-| `config` | 运行配置合同（`internal/config` + `config.Load`、env 前缀、默认值、credential 引用策略、超时/重试 profile、feature flag） | 命中即标 `l2_status: pending` + L2 豁免计划；条目只写 env/ref/默认链/运行平台身份注入，**不写真实 secret**；env 前缀区分服务（如 `CONTROL_API_*`） | pending 缺标注/缺计划 P1；条目出现真实 secret value P1；`.env` 当线上配置合同 P1 |
+| `config` | 运行配置合同（`internal/config` + `config.Load`、env 前缀、默认值、credential 引用策略、超时/重试 profile、feature flag） | 命中即标 `l2_status: pending` + L2 豁免计划；条目只写 env/ref/默认链/运行平台身份注入，**不写真实 secret**；env 前缀区分服务（如 `<SVC>_*`） | pending 缺标注/缺计划 P1；条目出现真实 secret value P1；`.env` 当线上配置合同 P1 |
 | `external` | 外部系统/三方 API/对象存储/模型服务/Webhook 出站集成合同 + 跨服务 `packages/contracts` 对外契约 | 命中即标 `l2_status: pending` + L2 豁免计划；条目写协议/鉴权/请求响应错误/SLA限流/超时重试/出站 adapter 消费边界；credential strategy 与 §2.6 一致 | pending 缺标注/缺计划 P1；外部依赖缺超时/重试收口语义 P2；把对外暴露的回调入口误归 external（应属 entry-api）P2 |
 | `runtime` | 进程拓扑 + `app.New/Run/Shutdown` 生命周期（`cmd/<svc>/main.go` 启动顺序、信号关闭、context 超时、健康检查、资源边界、发布/回滚） | 命中即标 `l2_status: pending` + L2 豁免计划；条目不写部署脚本/运维命令 | pending 缺标注/缺计划 P1；runtime 条目写部署脚本/运维命令（越界）P2 |
 

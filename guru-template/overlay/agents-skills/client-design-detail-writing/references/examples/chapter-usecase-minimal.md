@@ -1,6 +1,6 @@
 # 示例：chapters/recognition-usecase.md（缩减成稿样例）
 
-> **成稿形态示例**（取材自 calorie 项目 FoodRecognitionUseCase 详设的缩减改编），演示 usecase 类章节的
+> **成稿形态示例**（取材自参考实现 FoodRecognitionUseCase 详设的缩减改编），演示 usecase 类章节的
 > 完整形态与粒度；不是规则来源。完整模板与逐节要求见 `../chapter-guide.md` §2，完成条件见 L1。
 > 本例即 chapter-guide §2 模板的填充结果——真实成稿通常行为数 ×2~3、错误枚举与测试行更多。
 

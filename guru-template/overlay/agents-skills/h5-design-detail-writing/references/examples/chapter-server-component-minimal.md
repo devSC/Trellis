@@ -1,17 +1,13 @@
 # 示例：chapters/post-index-renderer.md（server-component 类最小成稿样例）
 
-> **成稿形态示例**（取材自参考项目 `/Users/devSC/Documents/MyProject/next.js/examples/blog` 的文章索引内容模型，
-> 改编为 App Router 生产形态的 server-component 详设）；演示 `server-component` 类章节的完整形态与粒度，**不是规则
-> 来源**。完整模板与逐节要求见 `../chapter-guide.md` §2 / §3.4，类型差异见 L2
-> `detail-type-server-component.md`，完成条件见 L1 `detail-structure-single-source.md`。
+> **成稿形态示例**（取材一个通用文章索引内容模型，以 App Router 生产形态展开为 server-component 详设）；演示
+> `server-component` 类章节的完整形态与粒度，**不是规则来源**。完整模板与逐节要求见 `../chapter-guide.md` §2 / §3.4，
+> 类型差异见 L2 `detail-type-server-component.md`，完成条件见 L1 `detail-structure-single-source.md`。
 >
-> **素材证据路径**（[示例实证] 仅限内容模型，路由段/RSC/缓存/SEO 为 [生产级补充]）：
-> - 文章 frontmatter 字段 `title/date/description/tag/author`：`pages/posts/pages.md`、`pages/posts/markdown.md`（真实 frontmatter 块）。
-> - 构建期遍历 `pages/posts/*` 跳过 `index.` + `gray-matter` 解析 `data.title/date/description/tag/author`：`scripts/gen-rss.js`。
->   生产形态把该读取/解析收敛进 `data-access`（`getAllPosts`），本 server-component 只消费返回的领域模型。
-> - 设定（编号取自示例 prd，仅供演示）：`UNIT-post-index-renderer` 承接 `BHV-001`（服务端渲染文章索引列表）。
->   依赖 `getAllPosts`（owner：`data-access` 的 `UNIT-posts-data-access`）与领域类型 `Post`（owner：`domain-type` 的
->   `UNIT-post-type`）；展示交给 `ui-component` 的 `UNIT-post-card`。
+> **示例设定**：内容模型为文章 frontmatter（`title/date/description/tag/author`），读取/解析收敛进 `data-access`
+> （`getAllPosts`），本 server-component 只消费返回的领域模型。`UNIT-post-index-renderer` 承接 `BHV-001`（服务端渲染
+> 文章索引列表，编号仅供演示），依赖 `getAllPosts`（owner：`data-access` 的 `UNIT-posts-data-access`）与领域类型 `Post`
+> （owner：`domain-type` 的 `UNIT-post-type`）；展示交给 `ui-component` 的 `UNIT-post-card`。
 
 ````markdown
 # post-index-renderer 详细设计
@@ -42,12 +38,12 @@ export default async function PostIndexPage(): Promise<JSX.Element>;
 
 ## 3. 核心数据结构
 ### 3.1 数据模型 / Schema
-本组件**不新造**类型，消费 `domain-type` 的 `Post`（owner：`UNIT-post-type`，字段语义实证 frontmatter
+本组件**不新造**类型，消费 `domain-type` 的 `Post`（owner：`UNIT-post-type`，字段语义来自 frontmatter
 `title/date/description/tag/author`）：
 ```ts
 // 来自 domain-type 的 UNIT-post-type（此处仅引用，不在本章定义）
 type Post = {
-  slug: string;        // 由文件名去扩展名得到（gen-rss.js 实证：name.replace(/\.mdx?/, "")）
+  slug: string;        // 由文件名去扩展名得到（如 name.replace(/\.mdx?/, "")）
   title: string;
   date: string;        // ISO 字符串，跨 server→client 可序列化（不传 Date 实例外的类实例）
   description?: string;
@@ -91,8 +87,8 @@ type Post = {
   ```
 - 流程详述（与图编号一一对应，满足 L1 §3.1 粒度）：
   1. `route` 段 `app/posts/page.tsx` 将本组件作为默认导出渲染（本组件即该段的 server-component，不算跳层）。
-  2. `await getAllPosts()`（owner：`data-access` 的 `UNIT-posts-data-access`，唯一取数入口）；**不在本组件内联 `fs`/
-     `gray-matter` 读文件**（取数实现已收敛进 data-access，规则 2）。
+  2. `await getAllPosts()`（owner：`data-access` 的 `UNIT-posts-data-access`，唯一取数入口）；**不在本组件内联 `fs`
+     读文件 / 解析 frontmatter**（取数实现已收敛进 data-access，规则 2）。
   3. 取数成功 → 得 `Post[]`；取数失败 → `getAllPosts` 抛 `ContentSourceError`，本组件不 `try/catch`，自然向上冒泡交
      就近 `error.tsx`（owner：`route` 的 `UNIT-posts-route`）。
   4. 对 `Post[]` 按 `date` 倒序排序（纯函数 `sort`，无 I/O、无状态、无副作用）。
@@ -138,7 +134,7 @@ type Post = {
 
 要点提示（写作时自查，对应 `../chapter-guide.md` §4 检查单与 L2 判级）：
 
-1. **流程详述必须能直接编码**——本例 §4.1 第 2 步写明"经 `getAllPosts`（唯一取数入口），不内联 `fs`/`gray-matter`"，
+1. **流程详述必须能直接编码**——本例 §4.1 第 2 步写明"经 `getAllPosts`（唯一取数入口），不内联 `fs` 读文件"，
    而不是"取数据"。无调用对象/无 owner/无失败分支即粒度不达标（L1 §3.1 反例）。
 2. **server-first 与边界硬信号**——§5 写 `N/A：server_no_client_state` 且文件无 `'use client'`；出现 `useState`/`useEffect`/
    内联取数/secret 进 props 即 P1（L2 server-component 判级）。

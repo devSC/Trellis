@@ -10,7 +10,7 @@
 
 - **判轨**：读 task.json `guru_chain`（`guru_after_create` 默认 `full`）。full → 设计包模式（本指南全部章节，落 `design-main.md` + `chapters/`）；light → 任务内 `design.md` §概要（必含章节第 1~8 条；第 5 章架构总览可简化为一句话架构 + 路由/组件树描述，分层图与时序图策略表不强制；第 9 章自检退为 Gate 前自查不强制成节，见概要 L1 §2b）。
 - **技术栈基线（引用槽位，不另定取值）**：从 `project-conventions.md` 抄录 H5 槽位写进第 1 章「技术栈约束」——内容源（MDX/CMS）、状态管理（none/Zustand/Context）、UI 组件库（shadcn/MUI）、样式方案（Tailwind/CSS Modules）、测试（Vitest+RTL/Playwright）、lint（ESLint+Prettier）、数据库（按需）、认证（NextAuth 按需）、图像优化（next/image）、部署（Vercel）、路由模式（App Router/Pages Router）。取值一律写槽位裸 token（`SLOT-NN`），概要不重新决定技术栈。
-- **生产基线钉死**：`tsconfig.json` `strict: true`、App Router（`app/`）为生产基线；**不沿用** blog 示例的 `strict: false`、`target: es5`、Pages Router（见 §12「示例 vs 生产」）。
+- **生产基线钉死**：`tsconfig.json` `strict: true`、App Router（`app/`）为生产基线（见 §12「App Router 生产基线」）。
 - **术语统一**：先 `rg` 检索需求与既有设计中的实体名、route 段名、组件名、`BHV-NNN` / `UC` / `UNIT-<slug>` 编号，复用既有命名；新术语在第 1 章登记。
 - **路由边界初判**：本任务落在哪个 `app/<seg>/`，复用还是新建 `page/layout/loading/error/not-found/route` 段，内容源/数据源接入点，server/client 切分初判（哪段是 RSC、哪段需 `'use client'`）。
 - **目录动作（full 链）**：
@@ -55,9 +55,9 @@ README 只做导航，不承载事实正文：
 ### 1.1 承接的核心能力
 | 能力编号 | P0/P1 | 一句话 | 需求锚点 |
 ### 1.2 技术栈约束（引用 project-conventions 槽位，不另定取值）
-- 路由模式：App Router（SLOT-13，生产基线；不沿用示例 Pages Router）
+- 路由模式：App Router（SLOT-13，生产基线）
 - 内容源：SLOT-05 / 状态管理：SLOT-03 / UI 库：SLOT-01 / 样式：SLOT-04 / 测试：SLOT-07 …
-- TS：strict: true（生产硬底线，不沿用示例 strict:false）
+- TS：strict: true（生产硬底线）
 ### 1.3 显式假设
 | 假设 | 依据 | 影响范围 | 验证时点 |
 ```
@@ -272,7 +272,7 @@ L2 状态规则（概要 L1 §7.3 / detail L1 §2.5）：
 | G6 六件套 | 满足 | §4 ①~⑥ 齐全，图⊆归属表，箭头合 §4.0 |
 | G7 时序闭合 | 满足 | 非豁免 UC 均有可定位 sequenceDiagram，无占位 |
 | G8 技术决策 | 满足 | §5 逐条字段完整，渲染策略已成决策项 |
-| G9 golden-path 自检 | 满足 | §8 锁定项通过；[示例实证]/[生产级补充] 标签正确 |
+| G9 golden-path 自检 | 满足 | §8 锁定项通过（生产基线 strict:true/App Router/server-first 等均落实） |
 ```
 
 存在未闭合 G 项不得送审，不得用「基本满足」替代逐项证据。
@@ -292,16 +292,22 @@ L2 状态规则（概要 L1 §7.3 / detail L1 §2.5）：
 5. 不在「未选定」技术决策上构建下游设计。
 6. 不用概括性结论替代 G 项逐条证据。
 7. 不违反分层依赖律：禁 `client-component` 直取私有数据/持 secret、禁整页标 `'use client'`、禁 `route` 跳层堆取数、禁 `server-action` 直连 DB driver 绕 data-access、禁 `ui-component` 取数/含业务、禁 `domain-type` 反向依赖。
-8. 不用 blog 示例的简化（`strict:false`、Pages Router、无 server-action、`<style jsx>` 全局样式）反推弱化生产硬规则。
+8. 不写违反生产基线的形态（`strict:false`、Pages Router、无 server-action、`<style jsx>` 全局样式）弱化生产硬规则。
 9. 不照抄 flutter（page-entry/controller/usecase/repository-datasource）或 Go（Entry/Biz/Utility/Data）的类型名，doc_type 只用 H5 七类。
 
-## 12. 示例 vs 生产（引用纪律，概要 L1 §0 分隔线）
+## 12. App Router 生产基线（写作纪律）
 
-参考示例 `/Users/devSC/Documents/MyProject/next.js/examples/blog` 是**故意简化的 Pages Router + Nextra + MDX + gray-matter 轻量 starter**，**不是 golden-path**。引用时必须挂标签并给文件锚点：
+概要一律按 App Router 生产形态落 owner，下列维度为生产锁定项：
 
-| 标签 | 何时用 | 写法约束 | 本示例实证锚点 |
-|------|--------|----------|----------------|
-| `[示例实证]` | 结论可在 blog 示例文件直接验证 | 必须附 `examples/blog/<file>` 路径 | 内容模型：`pages/posts/markdown.md` frontmatter（`title/date/description/tag/author`）；构建期 RSS：`scripts/gen-rss.js`（`fs.readdir(pages/posts)` + `gray-matter` + `rss` → `public/feed.xml`）；`package.json` build=`node ./scripts/gen-rss.js && next build`；客户端取参：`pages/tags/[tag].mdx` 用 `useRouter().query`；RSS link：`pages/_app.tsx` `<Head>`；样式：`theme.config.js` `<style jsx>` |
-| `[生产级补充]` | App Router 生产要求，示例未覆盖或相反 | 必须显式说明「示例为何不适用/已过时」，不得伪装成示例实证 | `strict: true`（示例 `tsconfig.json` 为 `strict:false`/`target:es5`，不沿用）；App Router 段（`page/layout/loading/error/not-found/route`，示例为 Pages Router）；server-first + RSC（示例无）；server-action（示例无）；`metadata`/`generateMetadata` SEO（示例手写 `<Head>`）；data-access 封装内容源读取（示例逻辑散落在 `gen-rss.js`）；`next/image`（示例用 `public/` 静态图）；CSS Modules/Tailwind（示例用 `nextra-theme-blog/style.css` + `<style jsx>`） |
+| 维度 | 生产基线要求 |
+|------|--------------|
+| TS | `tsconfig.json` `strict: true` |
+| 路由段 | App Router 段（`page/layout/loading/error/not-found/route`），归属以 App Router 段为准 |
+| 渲染 | server-first + RSC：默认 `server-component`，`'use client'` 最小化 |
+| 变更 | `server-action`（`'use server'`）/ route handler |
+| SEO | `metadata`/`generateMetadata`（禁手写 `<Head>`） |
+| 数据获取 | `data-access` 封装内容源读取，私有数据/secret 只在 server 侧 owner |
+| 图像 | `next/image` |
+| 样式 | CSS Modules / Tailwind（禁全局污染） |
 
-硬规则：把 `[生产级补充]`（`strict:true`、Server Components、`app/` 路由）写成「示例已实证」即审核 P2；用示例简化反推弱化生产硬规则即 P1。
+硬规则：写违反生产基线的形态（`strict:false`、Pages Router、手写 `<Head>`、全局 CSS、`client-component` 直取私有数据）即 P1。

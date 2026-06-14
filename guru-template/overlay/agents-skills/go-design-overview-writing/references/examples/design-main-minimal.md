@@ -1,21 +1,21 @@
 # 示例：域名黑名单规则管理 design-main（缩减样例）
 
-> 本文件是 **成稿形态示例**（取材自 safa-land `services/control-api` 的域名黑名单规则 feature 缩减改编），只演示各章形态与粒度，
-> 不是规则来源；章节合同以概要 L1 为准。示例为缩减版：真实成稿的 BHV/UC 数量与表行数通常是本例的 2~4 倍。
+> 本文件是 **成稿形态示例**（一个中性 worked example：某后端服务 `services/<svc>` 的域名黑名单规则 feature），只演示各章形态与粒度，
+> 不是规则来源，也不绑定任何具体参考仓库；章节合同以概要 L1 为准。示例为缩减版：真实成稿的 BHV/UC 数量与表行数通常是本例的 2~4 倍。
 >
-> 证据路径（本例所有组件名/SQL/env 前缀均可在以下真实文件核对）：
-> - 实体：`services/control-api/internal/domain/domain_blacklist_rule.go`
-> - 数据访问：`services/control-api/internal/repository/domain_blacklist_repository.go`
-> - 业务编排：`services/control-api/internal/service/domain_blacklist_service.go`
-> - 跨域同步：`services/control-api/internal/service/config_sync_service.go`（`TouchAllEntryNodes`）
-> - 入口路由：`services/control-api/internal/transport/http/router.go`（`handleDomainBlacklistRules` / `handleDomainBlacklistRuleByID`，`requireAdmin`）
-> - 表/迁移：`db/migrations/0010_domain_blacklist_rules.up.sql`
-> - 配置：`services/control-api/internal/config/config.go`（`CONTROL_API_*`）
-> - 会话鉴权：`services/control-api/internal/auth/session_manager.go`（HMAC 签名 cookie）
+> 文件骨架（本例组件名/SQL/env 前缀在目标仓库落到对应相对路径，按代码现状核对）：
+> - 实体：`internal/domain/domain_blacklist_rule.go`
+> - 数据访问：`internal/repository/domain_blacklist_repository.go`
+> - 业务编排：`internal/service/domain_blacklist_service.go`
+> - 跨域同步：`internal/service/config_sync_service.go`（`TouchAllEntryNodes`）
+> - 入口路由：`internal/transport/http/router.go`（`handleDomainBlacklistRules` / `handleDomainBlacklistRuleByID`，`requireAdmin`）
+> - 表/迁移：`db/migrations/<nnnn>_domain_blacklist_rules.up.sql`
+> - 配置：`internal/config/config.go`（`<SVC>_*`）
+> - 会话鉴权：`internal/auth/session_manager.go`（HMAC 签名 cookie）
 
-链型：full ｜ 概要主定义位置：`docs/designs/versions/v1.0.0/design-main.md` ｜ 服务边界：`services/control-api/`（复用既有 `internal/{app,config,transport,service,repository,domain,auth}` 包，无新建）
+链型：full ｜ 概要主定义位置：`docs/designs/versions/v1.0.0/design-main.md` ｜ 服务边界：`services/<svc>/`（复用既有 `internal/{app,config,transport,service,repository,domain,auth}` 包，无新建）
 
-**详细设计执行基线（L1 §6.3）**：`stack_profile_ref=builtin:detail-stack/go-wire-go-guru` ｜ `project_profile_ref=builtin:detail-project/go-guru` ｜ `profile_selection_basis=既有实现证据（control-api 当前 net/http + database/sql + lib/pq）` ｜ `profile_assumption_status=existing_project_evidence` ｜ `detail_stage_impact=新增 DomainBlacklistRepository SQL 列清单/scanDomainBlacklistRule/domain struct 三处同步`
+**详细设计执行基线（L1 §6.3）**：`stack_profile_ref=builtin:detail-stack/go-wire-go-guru` ｜ `project_profile_ref=builtin:detail-project/go-guru` ｜ `profile_selection_basis=既有实现证据（目标仓库当前 net/http + database/sql + lib/pq）` ｜ `profile_assumption_status=existing_project_evidence` ｜ `detail_stage_impact=新增 DomainBlacklistRepository SQL 列清单/scanDomainBlacklistRule/domain struct 三处同步`
 
 ## 1. 设计约束与输入
 
@@ -31,13 +31,13 @@
 - 错误三件套：service sentinel `ErrValidation` + repository sentinel `ErrNotFound` + `%w` 包装 + `errors.Is`。
 - 数据访问 `[SLOT-02]`：`database/sql` + `lib/pq` + PostgreSQL（原生 SQL）。
 - 会话鉴权 `[SLOT-10]`：HMAC-SHA256 签名 cookie + bcrypt（自实现，`requireAdmin` 门禁）。
-- env 前缀 `[SLOT-08]`：`CONTROL_API_*`。API 风格 `[SLOT-05]`：REST JSON。DI `[SLOT-01]`：无 DI 框架，`app.New` 构造注入。
+- env 前缀 `[SLOT-08]`：`<SVC>_*`（按服务区分）。API 风格 `[SLOT-05]`：REST JSON。DI `[SLOT-01]`：无 DI 框架，`app.New` 构造注入。
 
 ### 1.3 显式假设
 
 | 假设 | 依据 | 影响范围 | 验证时点 |
 |------|------|---------|---------|
-| 黑名单规则总量在万级以内，列表无需分页 | 现有 admin-web 一次性加载用法 | List 不引入游标决策 | 详细设计前向需求方确认 |
+| 黑名单规则总量在万级以内，列表无需分页 | 现有管理前端一次性加载用法 | List 不引入游标决策 | 详细设计前向需求方确认 |
 
 ### 1.4 向后兼容性决策（L1 §2.7）
 
@@ -97,7 +97,7 @@ Then service 校验 id>0 → repository `Delete`（0 行→`ErrNotFound`→404�
 
 ## 5. 架构总览（人审视图）
 
-**① 一句话架构**：外部调用方经 `GET/POST/PATCH/DELETE /api/v1/domain-blacklist-rules` 进入 `control-api`，由 `Handler.handleDomainBlacklistRules`/`handleDomainBlacklistRuleByID` 归一化请求并经 `requireAdmin`（HMAC 会话）门禁后分发给 `DomainBlacklistService` 的校验/编排行为，按需经 `DomainBlacklistRepository` 访问 PostgreSQL `domain_blacklist_rules` 表，写操作经 `ConfigSyncService.TouchAllEntryNodes` 推进入口节点 desired_config，以 `domain.DomainBlacklistRule` 与 `ErrValidation`/`ErrNotFound` 语义收口为 HTTP 响应。
+**① 一句话架构**：外部调用方经 `GET/POST/PATCH/DELETE /api/v1/domain-blacklist-rules` 进入 `<svc>`，由 `Handler.handleDomainBlacklistRules`/`handleDomainBlacklistRuleByID` 归一化请求并经 `requireAdmin`（HMAC 会话）门禁后分发给 `DomainBlacklistService` 的校验/编排行为，按需经 `DomainBlacklistRepository` 访问 PostgreSQL `domain_blacklist_rules` 表，写操作经 `ConfigSyncService.TouchAllEntryNodes` 推进入口节点 desired_config，以 `domain.DomainBlacklistRule` 与 `ErrValidation`/`ErrNotFound` 语义收口为 HTTP 响应。
 
 **② 分层架构图**
 
@@ -120,7 +120,7 @@ graph TD
     end
     subgraph 横切
         SM[auth.SessionManager HMAC 纯函数]
-        CFG[config.Config CONTROL_API_*]
+        CFG[config.Config <SVC>_*]
     end
     RA -.调用.-> SM
 ```
@@ -129,11 +129,11 @@ graph TD
 
 ```mermaid
 graph LR
-    Admin[管理员/admin-web] -->|HTTPS + 会话 cookie| Entry[control-api Entry: /api/v1/domain-blacklist-rules]
+    Admin[管理员/管理前端] -->|HTTPS + 会话 cookie| Entry[<svc> Entry: /api/v1/domain-blacklist-rules]
     Entry --> SVC[service/repository 内部]
     SVC -->|读写| PG[(PostgreSQL domain_blacklist_rules)]
     SVC -->|TouchAllEntryNodes 推进| PG2[(PostgreSQL proxy_node_configs)]
-    Agent[proxy-agent] -->|拉取 DesiredNodeConfig 含黑名单| Entry2[control-api 节点配置 Entry]
+    Agent[数据面 agent] -->|拉取 DesiredNodeConfig 含黑名单| Entry2[<svc> 节点配置 Entry]
     Entry2 -.读 packages/contracts.-> CT[contracts.DesiredNodeConfig]
 ```
 
@@ -159,7 +159,7 @@ graph LR
 
 ```mermaid
 sequenceDiagram
-    participant A as 管理员/admin-web
+    participant A as 管理员/管理前端
     participant H as Handler
     participant M as requireAdmin
     participant S as DomainBlacklistService
@@ -188,7 +188,7 @@ sequenceDiagram
 
 | decision_id | trigger_source | decision_point | candidates | selected | selection_status | rationale | runtime_component_boundary | credential_strategy_boundary | detail_expansion_targets | compliance_basis |
 |------------|----------------|----------------|-----------|----------|------------------|-----------|----------------------------|------------------------------|--------------------------|------------------|
-| TECH-01 | architecture_driver | 黑名单变更如何同步到入口节点 | 同步推送给 agent / 推进 desired_config 由 agent 拉取 | 推进 desired_config（复用 ConfigSync.TouchAllEntryNodes） | accepted | 复用既有 desired-config 拉取机制，避免新增推送通道与一致性窗口；代价：变更生效有一次拉取延迟 | service：DomainBlacklistService→ConfigSyncService→ConfigSyncRepository | N/A（无新增外部 provider；会话密钥经 `CONTROL_API_SESSION_SECRET` 注入，非真实值） | domain-blacklist-service(biz), control-api-runtime(runtime) | N/A（无新增数据采集；管理员会话域内鉴权） |
+| TECH-01 | architecture_driver | 黑名单变更如何同步到入口节点 | 同步推送给 agent / 推进 desired_config 由 agent 拉取 | 推进 desired_config（复用 ConfigSync.TouchAllEntryNodes） | accepted | 复用既有 desired-config 拉取机制，避免新增推送通道与一致性窗口；代价：变更生效有一次拉取延迟 | service：DomainBlacklistService→ConfigSyncService→ConfigSyncRepository | N/A（无新增外部 provider；会话密钥经 `<SVC>_SESSION_SECRET` 注入，非真实值） | domain-blacklist-service(biz), <svc>-runtime(runtime) | N/A（无新增数据采集；管理员会话域内鉴权） |
 
 ## 7. 详细设计承接索引
 
@@ -198,7 +198,7 @@ sequenceDiagram
 | domain-blacklist-repository | repository-data | chapters/04-repository-domain-blacklist-design.md | DomainBlacklistRepository + 0010 迁移 | 不决定校验规则（属 biz） | 已出 L2 |
 | domain-blacklist-handler | entry-api | chapters/02-transport-domain-blacklist-design.md | Handler.handleDomainBlacklistRules/ByID | 不拥有业务规则（属 biz） | 已出 L2 |
 | domain-blacklist-rule | domain | chapters/01-domain-domain-blacklist-design.md | domain.DomainBlacklistRule/CreateParams/UpdateStatusParams | 无 I/O、无校验、无副作用 | pending |
-| control-api-runtime | runtime | chapters/07-runtime-control-api-design.md | app.New 装配 DomainBlacklistService/Repository + 连接池 + 信号 | 不写部署脚本/运维命令 | pending |
+| <svc>-runtime | runtime | chapters/07-runtime-<svc>-design.md | app.New 装配 DomainBlacklistService/Repository + 连接池 + 信号 | 不写部署脚本/运维命令 | pending |
 
 L2豁免：domain 理由：实体仅 8 字段 + 2 个 Params，按 L1 八问展开（结构/不变量/序列化/跨层引用）风险低；v1.1 前补齐 domain L2。
 L2豁免：runtime 理由：本 feature 仅在 `app.New` 增一行 wiring，不改生命周期律；按 L1 八问展开装配与连接池边界；v1.1 前补齐 runtime L2。

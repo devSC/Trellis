@@ -13,7 +13,7 @@ description: Gate 前拷问会话（grill-with-docs 的 guru 适配版）。对�
 
 1. `.trellis/spec/guides/golden-path.md` — 分层语义与禁止清单（"这条行为你打算让 controller 拥有规则？分层律不允许"）。
 2. `.trellis/spec/conventions/project-conventions.md` — 槽位取值与 SLOT-15 存量违例（"你说要新建 repository——SLOT-11 钉的目录是哪？"）。
-3. `.trellis/spec/` 项目域（如 himora 的 `ueds/`）与 `_legacy` 之外的既有规范。
+3. `.trellis/spec/` 项目域（如本仓库的 `ueds/` 等子域目录）与 `_legacy` 之外的既有规范。
 4. 当前任务既有产物：prd 的 `BHV-NNN` 行为集合、design §1 归属表（拷问概要时）。
 5. 仓库根 `CONTEXT.md`（术语表，存在则装载；不存在时首个术语敲定时创建）。
 

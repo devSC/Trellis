@@ -19,9 +19,9 @@ description: 按已过 Gate 的 Go 后端详细设计执行编码与自测的执
 ## 边界约束
 
 - 只实现详细设计合同内的内容；合同外结构（新包、新层、新 sentinel error、新 env 前缀、新跨服务契约字段）一律不新增；合同错漏回退详细阶段，trace §4 留回退记录（指向被修订的 `UNIT-<slug>` 与修订动作），不在实现里就地改设计。
-- 严守 golden-path 锁定红线，不可豁免：①框架只用 `net/http ServeMux`，禁新引入 `gin`/`echo` 等重型框架；②分层 `transport(handler) → service → repository → domain` 严格单向无环，除 `domain` 外不跨 `internal` 包导入（handler 不直连 DB、不写 SQL；repository 不反向 import service）；③错误用 sentinel error + `fmt.Errorf("%w: …")` 链式包装 + `errors.Is()` 判定，禁 `fmt.Errorf("...: " + err.Error())` 拼接丢 `%w`、禁 `_ = err` 吞错；④生命周期 `main()` 控信号 → `app.New()` → `app.Run()` → `app.Shutdown()`，Handler 接 `context` 支持 timeout；⑤配置经 `config.Load()` 集中装载（env + 默认值，前缀区分服务如 `CONTROL_API_*`）；⑥`internal/` 隐私、跨服务结构体进 `packages/contracts/`。
+- 严守 golden-path 锁定红线，不可豁免：①框架只用 `net/http ServeMux`，禁新引入 `gin`/`echo` 等重型框架；②分层 `transport(handler) → service → repository → domain` 严格单向无环，除 `domain` 外不跨 `internal` 包导入（handler 不直连 DB、不写 SQL；repository 不反向 import service）；③错误用 sentinel error + `fmt.Errorf("%w: …")` 链式包装 + `errors.Is()` 判定，禁 `fmt.Errorf("...: " + err.Error())` 拼接丢 `%w`、禁 `_ = err` 吞错；④生命周期 `main()` 控信号 → `app.New()` → `app.Run()` → `app.Shutdown()`，Handler 接 `context` 支持 timeout；⑤配置经 `config.Load()` 集中装载（env + 默认值，前缀区分服务如 `<SVC>_*`）；⑥`internal/` 隐私、跨服务结构体进 `packages/contracts/`。
 - 不私自拍板实现中冒出的新决策（是否引入 wire、是否切 sqlc/ent、新增 env 前缀命名、连接池默认值、是否换日志库）→ 记录并升级人工 Gate，落到 project-conventions 槽位或 `technology_decision_handoff` 后再继续。
-- secret/credential 合规：`config.Load()`、`.env.example`、fixtures、代码与 trace 只写环境变量名引用（如 `DATABASE_URL`、`CONTROL_API_SESSION_SECRET`），不落真实 API key、长期 AK/SK、token、session 签名密钥或 bcrypt 明文口令；密码态字段（`proxy_password_secret`、`SessionSecret`）按详细设计指定的脱敏/哈希策略处置。
+- secret/credential 合规：`config.Load()`、`.env.example`、fixtures、代码与 trace 只写环境变量名引用（如 `DATABASE_URL`、`<SVC>_SESSION_SECRET`），不落真实 API key、长期 AK/SK、token、session 签名密钥或 bcrypt 明文口令；密码态字段（`proxy_password_secret`、`SessionSecret`）按详细设计指定的脱敏/哈希策略处置。
 - 不采用默认 TDD/RED-GREEN：默认只运行 project-conventions 测试框架槽位下的既有验证命令，不为驱动结构而先造 fake repo/fake store/fake adapter；高风险切片（DB 迁移、`app.App` 装配与生命周期、跨服务契约变更、并发与 `context` 超时、会话签名）按详细设计测试映射先补失败路径测试再实现。新增测试须可追溯到承接的 `BHV-NNN`/`UNIT-<slug>`。
 - 触碰存量违例（`[SLOT-17]` 清单）按标准包口径分类记录（绕行/顺手修复/记债），不把绕行或顺手修复混入业务 diff。
 - 若其它通用 skill、插件或 agent 习惯（测试优先、自动重构、引入 DI 容器、手写 ORM 包装）与本平台 golden-path / trace 合同冲突，以平台 SSOT 为准，冲突项忽略或向用户确认。
@@ -32,14 +32,14 @@ description: 按已过 Gate 的 Go 后端详细设计执行编码与自测的执
 2. **WX-1 计划（开工前写）**：按 trace 合同 §1 在目标仓库 `implement.md`（建议 `docs/design/<feature>/implementation-trace.md`）产出任务切片。每片含：承接的 `UNIT-<slug>`（幽灵引用被 Gate 拦截）+ 所属服务/层（`services/<svc>/internal/<layer>`）+ 文件范围 + 完成信号 + 验证方式。执行顺序**自下而上**：`domain`（实体/sentinel errors）→ `repository`（SQL/迁移）→ `service`（编排 + `%w` 包装）→ `transport`（ServeMux 路由 + handler）→ `app`/`config`/`main`（装配与启动）；`packages/contracts/` 契约变更排在所有消费方之前。逐条预判高风险点（DB 迁移兼容/回滚、`app.App` 装配生命周期、契约变更消费方编译面、env 前缀冲突、`context` 超时传递、sentinel 重命名导致的 `errors.Is` 断裂）。人工确认从最小可独立编译的切片开始。
 3. **WX-2 逐片实现（随做随记）**：每片对照承接 `UNIT-<slug>` 的合同八问落地——②输入/输出/错误（函数签名、`domain` 结构体、错误枚举与 sentinel 表，对齐如 `service.ErrValidation`、`repository.ErrNotFound`）；④调用关系单向（service 调 repository 不反向，handler 走 service 不直连 DB）；⑤失败收口（`%w` 包装 + `errors.Is` 检查 + HTTP 状态码映射，逐条失败路径）；⑥后置副作用（如 config 同步触发 `configSync.TouchNodesForUser`）。每片完成**立即**更新 trace §2（实际改动文件清单标层、与计划偏差及原因、触碰 `app.New/Run/Shutdown`/`config.Load()`/`cmd/<svc>/main.go` 的共享面单独标注），不积压到批末。
 4. **WX-3 代码生成（仅触发条件满足时）**：按 project-conventions 代码生成相关槽位选型执行并记入 trace §2——选 wire（`[SLOT-01]` DI）→ `go run github.com/google/wire/cmd/wire ./services/<svc>/internal/app/`（记 `wire_gen.go` 是否变更）；选 sqlc（`[SLOT-02]` ORM）→ `sqlc generate`（记生成 `db/*.sql.go` 清单）；选 ent（`[SLOT-02]` ORM）→ `go generate ./services/<svc>/internal/ent`；选 swag（`[SLOT-09]` 文档）/ stringer / mock / protoc 同理逐条记命令与产物。**当前 golden-path 默认无代码生成槽位（原生 SQL + 标准库）→ 本项写「N/A：无代码生成槽位启用」，不留空、不私自引入生成器。**
-5. **WX-4 逐片验证（验证后记）**：按 trace 合同 §3 记入 trace §3——编译 `go build ./...` 或 `go build ./services/<svc>/...`（贴命令 + 退出态，失败写错误摘要 + 处置）；静态检查 `go vet ./...` + `golangci-lint run ./...`（逐条通过/失败，nolint 豁免写理由并指向 `[SLOT-17]`）；测试到**测试名级别**（如 `go test ./services/control-api/internal/service/ -run TestUserService_Create -v` 给出子测试名），竞态敏感切片附 `-race`，新增测试逐条列文件 + 测试函数名 + 承接 `BHV-NNN`/`UNIT-<slug>`；依赖变更跑 `go mod tidy` 记 diff（新增库须落在已批准槽位内，禁被锁框架）。失败先修复再进下一片；未验证项显式列出并指明留给哪个环节（真实 PostgreSQL 集成 → CI 集成测试/容器化 DB；生产负载下连接池与 `context` 超时 → 压测/灰度；跨服务契约运行时兼容 → 集成环境；信号驱动优雅关闭 → Manual QA/staging）。
+5. **WX-4 逐片验证（验证后记）**：按 trace 合同 §3 记入 trace §3——编译 `go build ./...` 或 `go build ./services/<svc>/...`（贴命令 + 退出态，失败写错误摘要 + 处置）；静态检查 `go vet ./...` + `golangci-lint run ./...`（逐条通过/失败，nolint 豁免写理由并指向 `[SLOT-17]`）；测试到**测试名级别**（如 `go test ./services/<svc>/internal/service/ -run TestUserService_Create -v` 给出子测试名），竞态敏感切片附 `-race`，新增测试逐条列文件 + 测试函数名 + 承接 `BHV-NNN`/`UNIT-<slug>`；依赖变更跑 `go mod tidy` 记 diff（新增库须落在已批准槽位内，禁被锁框架）。失败先修复再进下一片；未验证项显式列出并指明留给哪个环节（真实 PostgreSQL 集成 → CI 集成测试/容器化 DB；生产负载下连接池与 `context` 超时 → 压测/灰度；跨服务契约运行时兼容 → 集成环境；信号驱动优雅关闭 → Manual QA/staging）。
 6. **WX-5 存量违例处置**：触碰 `[SLOT-17]` 条目时按标准包口径分类记录到 trace §4（绕行须写"为何不修"；顺手修复须独立标注；记债须给清单编号）。Go 常见存量违例：跨层反向导入（repository 导入 service）、handler 直接拼裸字符串错误未走 sentinel、`gin`/`echo` 历史残留、`fmt.Errorf` 丢 `%w`、`app.Shutdown()` 未释放某资源。
 7. **WX-6 收口自检**：对照实现 Gate G1~G6（见下「质量门禁」）输出自检摘要；上游缺陷已回退修订而非就地改设计；未验证项显式移交（CI 集成 / 压测 / Manual QA / 真机）。
 
 ## 输出
 
 - **实施计划先列**：`implement.md`（trace）路径、`UNIT-<slug>` 承接清单、`chapter_target → detail_doc_type → Go 代码资产`（服务/层/文件）映射、自下而上的阶段顺序与高风险点、阻塞项。
-- **代码改动 + 新增/修订测试**：改动文件按层标注（如 `services/control-api/internal/service/user_service.go`（service 层）、`packages/contracts/proxy_node_config.go`（跨服务契约））。
+- **代码改动 + 新增/修订测试**：改动文件按层标注（如 `services/<svc>/internal/service/user_service.go`（service 层）、`packages/contracts/proxy_node_config.go`（跨服务契约））。
 - **完整的 `implement.md`（trace 四节齐全且非空）**：计划 / 执行 / 证据 / 阻塞与偏差；证据节带命令级记录与测试名，无阻塞则显式写「无」。
 - **Gate G1~G6 自检摘要 + 移交清单**：逐项给结论（pass / 阻塞 / 移交环节）；交付时说明修改文件、对应设计锚点（`UNIT-<slug>` / `BHV-NNN`）、验证命令、未验证项与剩余阻塞。
 - **若无法完成**：明确输出 `blocked` 的具体详细设计文件、缺失合同锚点（如八问缺错误枚举）与需要回修的合同项；环境阻塞写准确命令、错误摘要、缺失依赖与恢复条件，结论不得标 `pass`。
@@ -62,13 +62,13 @@ description: 按已过 Gate 的 Go 后端详细设计执行编码与自测的执
 ✅ **合格切片登记与证据**（粒度可独立 review、命令级证据、可追溯）：
 
 ```
-切片 S2 | 承接 UNIT-user-repository | services/control-api/internal/repository/user_repository.go + db/migrations/0011_users_xxx.up.sql
+切片 S2 | 承接 UNIT-user-repository | services/<svc>/internal/repository/user_repository.go + db/migrations/0011_users_xxx.up.sql
   范围：UserRepository 原生 SQL（lib/pq），sql.ErrNoRows → domain/repository.ErrNotFound 转换
-  完成信号：go build ./services/control-api/... 退出 0；迁移可 up/down；无跨层导入
+  完成信号：go build ./services/<svc>/... 退出 0；迁移可 up/down；无跨层导入
   证据：
-    - go build ./services/control-api/... → 退出 0
-    - go vet ./services/control-api/... → 退出 0；golangci-lint run → 0 issues
-    - go test ./services/control-api/internal/repository/ -run TestUserRepository -v
+    - go build ./services/<svc>/... → 退出 0
+    - go vet ./services/<svc>/... → 退出 0；golangci-lint run → 0 issues
+    - go test ./services/<svc>/internal/repository/ -run TestUserRepository -v
         --- PASS: TestUserRepository_GetByID/found (0.01s)
         --- PASS: TestUserRepository_GetByID/not_found_maps_ErrNotFound (0.01s)
       新增测试：user_repository_test.go::TestUserRepository_GetByID（承接 UNIT-user-repository / BHV-012 成功+失败路径）
@@ -89,4 +89,4 @@ description: 按已过 Gate 的 Go 后端详细设计执行编码与自测的执
 
 ## 与官方 Trellis skill 的边界
 
-本 skill 是官方 `trellis-implement` 在 Guru Go 后端（safa-land 形态：`net/http` + 严格分层 + 原生 SQL）项目的领域化执行口径：sub-agent 实现时按本 skill 的 WX 流程、golden-path 红线与 trace 合同四节工作；Phase 2 dispatch 时在 prompt 中指明加载本 skill 口径。`trellis-implement` 负责通用任务编排与状态机推进，本 skill 不重复其职责，只补齐 Go 平台的分层依赖律、错误链契约、生命周期装配与 trace 证据要求。规则正文不在本 skill 复写，住 `.trellis/spec/harness/implementation/` 与 `.trellis/spec/guides/golden-path.md`。
+本 skill 是官方 `trellis-implement` 在 Guru Go 后端（典型形态：`net/http` + 严格分层 + 原生 SQL）项目的领域化执行口径：sub-agent 实现时按本 skill 的 WX 流程、golden-path 红线与 trace 合同四节工作；Phase 2 dispatch 时在 prompt 中指明加载本 skill 口径。`trellis-implement` 负责通用任务编排与状态机推进，本 skill 不重复其职责，只补齐 Go 平台的分层依赖律、错误链契约、生命周期装配与 trace 证据要求。规则正文不在本 skill 复写，住 `.trellis/spec/harness/implementation/` 与 `.trellis/spec/guides/golden-path.md`。

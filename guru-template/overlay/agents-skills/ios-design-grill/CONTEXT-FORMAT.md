@@ -1,6 +1,6 @@
 # CONTEXT.md 格式（Guru iOS 原生平台）
 
-拷问会话中敲定的**纯领域术语**固化进仓库根 `CONTEXT.md`（术语表，零实现细节）。story-verse-mac 当前**无** `CONTEXT.md`——首个领域术语在拷问中敲定时按下方结构懒创建在仓库根。
+拷问会话中敲定的**纯领域术语**固化进仓库根 `CONTEXT.md`（术语表，零实现细节）。仓库尚无 `CONTEXT.md` 时，首个领域术语在拷问中敲定时按下方结构懒创建在仓库根。
 
 > 落位区分：`CONTEXT.md` 只放**领域术语**（`Story` / `Chapter` 是什么、与谁有什么关系）；分层归属、`@Published` 字段、`enum Error` case、FactoryKit 注册条目这类**实现 / 设计细节不进 CONTEXT.md**——它们分别归 design §归属表与详细设计合同。doc_type 七类（`viewmodel` / `usecase` / `repository` / `domain-model` / `view` / `coordinator` / `external`）是架构口径，也不是领域术语，不入表。
 
@@ -62,7 +62,7 @@ _避免_：声音、配音设置
 
 ## 单上下文 vs 多上下文
 
-**单上下文（多数情况，story-verse-mac 即单上下文）**：仓库根一个 `CONTEXT.md`。
+**单上下文（多数情况）**：仓库根一个 `CONTEXT.md`。
 
 **多上下文**：仓库根放 `CONTEXT-MAP.md`，列出各上下文、所在位置与关系：
 
@@ -71,9 +71,9 @@ _避免_：声音、配音设置
 
 ## Contexts
 
-- [Story 创作](./StoryVerse/CONTEXT.md) — Story / Chapter / Section 的创作与编辑
-- [Voice 配音](./StoryVerse/Voice/CONTEXT.md) — VoiceProfile 与朗读配置
-- [Export 导出](./StoryVerse/Export/CONTEXT.md) — 导出任务与产物
+- [Story 创作](./Story/CONTEXT.md) — Story / Chapter / Section 的创作与编辑
+- [Voice 配音](./Voice/CONTEXT.md) — VoiceProfile 与朗读配置
+- [Export 导出](./Export/CONTEXT.md) — 导出任务与产物
 
 ## Relationships
 

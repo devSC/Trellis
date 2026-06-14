@@ -20,24 +20,24 @@ _避免_：账号、客户、buyer
 _避免_：账号、租户
 
 **ProxyNode**：
-被 control-api 渲染期望态、由 proxy-agent 消费拉取的代理节点。
+被控制面服务渲染期望态、由数据面 agent 消费拉取的代理节点。
 _避免_：服务器、机器、实例
 
 ## Relationships
 
 - 一个 **ApplicationAccount** 拥有零到多个 **User**
 - 一个 **User** 的变更会触发其相关 **ProxyNode** 的期望态（DesiredNodeConfig）重算
-- **DesiredNodeConfig** 由 control-api 生成、proxy-agent 消费（跨服务契约，单向）
+- **DesiredNodeConfig** 由控制面服务生成、数据面 agent 消费（跨服务契约，单向）
 
 ## Example dialogue
 
 > **开发：**"管理员创建一个 **User** 时，要不要立刻把它下发到 **ProxyNode**？"
-> **领域专家：**"不立刻下发——创建只触发期望态重算（`ConfigSyncService.TouchNodesForUser`），proxy-agent 下一轮按自己的节奏拉 **DesiredNodeConfig**。"
+> **领域专家：**"不立刻下发——创建只触发期望态重算（`ConfigSyncService.TouchNodesForUser`），数据面 agent 下一轮按自己的节奏拉 **DesiredNodeConfig**。"
 
 ## Flagged ambiguities
 
 - "账号"曾同时指 **User** 与 **ApplicationAccount**——裁定：二者是不同表、不同概念，术语表分别固定，prd/design 不得混用。
-- "同步"曾同时指 service 内部的期望态重算（`ConfigSyncService`）与 proxy-agent 的契约拉取——裁定：前者写 service 编排副作用，后者写跨服务契约消费，分别归属。
+- "同步"曾同时指 service 内部的期望态重算（`ConfigSyncService`）与数据面 agent 的契约拉取——裁定：前者写 service 编排副作用，后者写跨服务契约消费，分别归属。
 ```
 
 ## 规则
@@ -54,15 +54,15 @@ _避免_：服务器、机器、实例
 
 **单 context（多数仓库）：** 仓库根一个 `CONTEXT.md`。
 
-**多 context（如 safa-land monorepo 多服务）：** 仓库根放一份 `CONTEXT-MAP.md`，列出各 context 落在哪个 `services/<svc>/`、彼此如何关联：
+**多 context（如 monorepo 多服务）：** 仓库根放一份 `CONTEXT-MAP.md`，列出各 context 落在哪个 `services/<svc>/`、彼此如何关联：
 
 ```md
 # Context Map
 
 ## Contexts
 
-- [Control](./services/control-api/CONTEXT.md) — 管理面：User/ApplicationAccount 主数据、鉴权会话、渲染节点期望态
-- [Proxy](./services/proxy-agent/CONTEXT.md) — 数据面：消费 DesiredNodeConfig，落地代理监听与路由
+- [Control](./services/<control-svc>/CONTEXT.md) — 管理面：User/ApplicationAccount 主数据、鉴权会话、渲染节点期望态
+- [Proxy](./services/<proxy-svc>/CONTEXT.md) — 数据面：消费 DesiredNodeConfig，落地代理监听与路由
 
 ## Relationships
 

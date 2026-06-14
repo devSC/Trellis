@@ -2,7 +2,7 @@
 
 拷问会话中达成的、值得留痕的架构决策固化成 ADR。ADR 存放在仓库 `docs/adr/`，顺序编号：`0001-slug.md`、`0002-slug.md` ……
 
-`docs/adr/` 目录**懒创建**——仅当出现第一条需要记录的 ADR 时才建立（story-verse-mac 当前无 `docs/adr/`，首条 ADR 落盘时新建）。
+`docs/adr/` 目录**懒创建**——仅当出现第一条需要记录的 ADR 时才建立（仓库尚无 `docs/adr/` 时，首条 ADR 落盘时新建）。
 
 > 与"项目约定取值"的关系：ADR 记录**决策本身与理由**；当决策改变的是 `project-conventions.md` 的某个 SLOT 取值（如 SLOT-08 网络栈、SLOT-14 测试框架）时，ADR 是修订该槽位的前置依据（conventions 修订须挂 ADR 链接），但 ADR 不替代槽位取值正文——取值仍写在 `project-conventions.md`。
 

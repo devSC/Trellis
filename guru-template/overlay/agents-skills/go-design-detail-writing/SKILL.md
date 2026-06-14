@@ -30,7 +30,7 @@ description: 用于把 Go monorepo 后端概要设计展开为可编码合同（
 | `biz` | service — `internal/service` 业务规则/状态机/编排、入参校验、sentinel error 定义与 `%w` 包装、事务边界决策 | `.trellis/spec/harness/detail/detail-type-biz.md` | **v1** |
 | `repository-data` | repository — `internal/repository` 数据访问合同、原生 SQL/驱动、行映射、`ErrNotFound` 转换；含 `domain`/Data 字段级落盘语义承接 | `.trellis/spec/harness/detail/detail-type-repository-data.md` | **v1** |
 | `domain` | domain — `internal/domain` 业务实体、值对象、参数结构体（`CreateUserParams` 等）、序列化 tag | 无（pending） | pending |
-| `config` | — `internal/config` env 装载、默认值、env 前缀（`CONTROL_API_*`）、校验；secret 引用边界 | 无（pending） | pending |
+| `config` | — `internal/config` env 装载、默认值、env 前缀（按服务区分，如 `<SVC>_*`）、校验；secret 引用边界 | 无（pending） | pending |
 | `external` | — 外部 provider / 第三方 API / SDK client / outbound 集成契约、credential strategy、调用模式、限流/SLA | 无（pending） | pending |
 | `runtime` | — `internal/app` + `cmd/<svc>/main.go` 装配（`New/Run/Shutdown`）、信号处理、连接池参数、线上注入/短期凭证、部署契约 | 无（pending） | pending |
 

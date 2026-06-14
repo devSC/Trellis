@@ -7,7 +7,7 @@ description: 用于审核 H5（Next.js + React + TypeScript）概要设计文档
 
 > 层级契约：L1（`.trellis/spec/harness/overview/overview-structure-single-source.md`）承载规则正文与 G1~G8 完成条件；本 SKILL.md 只做前置判定、执行规则与审核流程；`references/review-baseline.md` 承载逐章取证矩阵与严重度判级，`references/review-output.md` 承载输出字段合同。冲突时 L1 > references > 本文件。
 >
-> 平台基线：Next.js（App Router 生产形态为目标）+ React + TypeScript(strict)。golden-path 以 App Router 生产最佳实践为权威；参考示例 `/Users/devSC/Documents/MyProject/next.js/examples/blog`（Pages Router + Nextra + MDX + gray-matter 的轻量 blog starter，故意简化）只作内容模型基线，**审核时必须区分「next.js blog 示例实证」与「App Router 生产级补充」**——示例用 Pages Router/`getStaticProps`/MDX 文件源不能当作生产分层合同的反例依据。
+> 平台生产基线：Next.js App Router + React + TypeScript(strict)。审核一律以 App Router 生产口径为权威：server-first / RSC 数据获取经 data-access 封装 / server-action 变更 / route 段约定 / `metadata`·`generateMetadata` SEO / `next/image` / CSS Modules 或 Tailwind / `strict: true`。`getStaticProps` / 手写 `<Head>` / 全局 CSS 等 Pages Router 形态出现即按 golden-path 条目判 finding，不接受沿用旧形态。
 >
 > doc_type 七类一律以 H5_BRIEF 为权威，禁止照抄 flutter（controller/usecase/repository）或 Go（entry-api/biz/repository-data）的类型名。
 
@@ -76,7 +76,7 @@ description: 用于审核 H5（Next.js + React + TypeScript）概要设计文档
 17. 命名按 L1 §4.1 抽查：组件 = 定语 + 名词 + 类型语义（如 `PostListServer` 服务端、`PostFilterClient` 交互、`PostCard` 展示、`fetchPosts` data-access）；含混 Manager/Helper 后缀或名词先行结构 → P2；client-component 名未体现交互语义而实为纯展示 → 结合规则 5 复核归类。
 18. 概要越界（出现方法签名 / 字段级 props 合同 / fetch 参数 / zod schema 字段级定义 / SQL / DDL，L1 §5）→ P2 起步，并给最小回收方案（移入承接索引的 `detail_expansion_targets`）。
 19. 若概要出现 LLM/agent/prompt 驱动调用：按 L1 LLM 承接条款核查逐次逻辑调用承接、`prompt_owner`、运行期上下文来源、上下文获取 / 编排行为锚点（须落在 server-component / server-action / data-access，不在 client-component）、prompt 组装 owner、`detail_prompt_target`，及 provider / model / SDK / invocation mode / config / external / runtime / 凭证策略对应的 `technology_decision_handoff[]` 目标；缺口归入 G8。
-20. **示例实证 vs 生产级补充必查**：若概要引用 next.js blog 示例（Pages Router / `getStaticProps` / Nextra / `gray-matter` / `gen-rss.js`）作为依据，必须标注其为「示例实证（Pages Router 简化形态）」而非生产分层合同；用示例的 Pages Router 结构当作 App Router route 段约定的替代、或用示例无 server-first 边界当作豁免 client/server 分层的理由 → P2 起步（导致分层律或私有数据边界被绕开时升 P1）。
+20. **App Router 生产基线必查**：概要归属与技术决策一律按 App Router 生产口径核查；出现 Pages Router 结构当作 route 段约定的替代、用「无 server-first 边界」豁免 client/server 分层、`getStaticProps`/手写 `<Head>`/全局 CSS 等旧形态 → P2 起步（导致分层律或私有数据边界被绕开时升 P1）。
 21. 发现需求层缺陷（行为缺失 / 矛盾 / 范围漂移）→ 结论标注「回退需求阶段」，不建议在概要补造业务规则。
 22. 审核不重写设计：只给证据、影响与最小修订方案，不代写正文；修订形态按 L1 §8 区分局部修订 vs 文档级重构——结构 / 归属 / 合同缺陷不得建议用局部补写保留错误模型。
 23. 概要文档无存量豁免：新文档必须全量符合 L1（存量豁免仅适用于实现阶段代码）。
@@ -94,14 +94,14 @@ description: 用于审核 H5（Next.js + React + TypeScript）概要设计文档
 9. **技术决策与合规核查**（G3/G8）：`technology_decision_handoff[]` 逐条字段 + `compliance_basis` + 凭证策略 + secret value / `.env` 扫描；LLM 触发时按规则 19 核查承接链。
 10. **共享能力归属核查**（G5）：ui-component 纯展示 / 纯函数技术能力 / 下层 data-access 公用 / 普通 unit / 横切归类与边集合（规则 14）。
 11. **承接索引核查**（G4）：owner 覆盖、七类 doc_type 合法（无 flutter/Go 类型名）、逐文件、`l2_status: pending` 标注与 L2 豁免计划、已出 3 类回指 L2 三元组。
-12. **示例实证核查**：扫描对 next.js blog 示例的引用，核对「示例实证 vs 生产级补充」标注（规则 20）。
+12. **生产基线核查**：扫描归属与技术决策是否按 App Router 生产口径落地，旧形态（Pages Router/`getStaticProps`/手写 `<Head>`/全局 CSS）出现即判 finding（规则 20）。
 13. **越界核查**：L1 §5 禁写项扫描（方法签名 / props 合同 / fetch 参数 / zod 字段 / SQL / DDL）。
 14. **汇总**：G1~G8 状态表（已闭合 / 需修订）+ findings 分级 + 互斥结论（输出合同见 review-output.md）。
 
 ## findings 与结论口径
 
 - 每条 finding **三要素**：**严重度**（P0 阻断 / P1 阻断 / P2 非阻断）、**证据**（章节锚点 + 表格行 / 裸 token BHV-NNN·UNIT-<slug>，或明确缺失对象）、**最小修订**（局部补写还是文档级重构按 L1 §8）。
-- 严重度判级：分层依赖律违例、浏览器/client-component 直取私有数据或持有 secret、外部直连 data-access/server-action 越过 route、非豁免 UC 时序图缺失、缺 `compliance_basis`、出现 secret value / `.env` 误用、粗粒度核心行为、doc_type 用错类型名、缺 `l2_status` 标注 → P1（阻断）；`'use client'` 误用未污染主链、命名反模式、三问空洞、metadata/SEO 缺失、样式污染、轻度越界、共享能力误归类、示例实证未标注 → P2（非阻断，影响主链时升 P1）；需求层缺陷 → 不在概要修，标注「回退需求阶段」。
+- 严重度判级：分层依赖律违例、浏览器/client-component 直取私有数据或持有 secret、外部直连 data-access/server-action 越过 route、非豁免 UC 时序图缺失、缺 `compliance_basis`、出现 secret value / `.env` 误用、粗粒度核心行为、doc_type 用错类型名、缺 `l2_status` 标注 → P1（阻断）；`'use client'` 误用未污染主链、命名反模式、三问空洞、metadata/SEO 缺失、样式污染、轻度越界、共享能力误归类、旧形态未按生产基线纠正 → P2（非阻断，影响主链时升 P1）；需求层缺陷 → 不在概要修，标注「回退需求阶段」。
 - **是否可进详细设计结论（三选一，互斥）**：
   - **可进入详细设计**：G1~G8 全部已闭合，无 P0/P1。
   - **带明确假设可进入**：仅余已落盘的显式假设（列假设、依据、影响范围、验证时点），无 P0/P1。
@@ -120,7 +120,7 @@ description: 用于审核 H5（Next.js + React + TypeScript）概要设计文档
 - 发现需求层缺陷（行为缺失 / 矛盾）→ 结论标注「回退需求阶段」，不建议在概要补造。
 - 只审概要主定义（full = design-main.md；light = design.md §1）与第 1~7 章，不审详细设计正文，不审代码。
 - doc_type 一律用 H5 七类（H5_BRIEF 权威）；不照抄 flutter（controller/usecase/repository-datasource）或 Go（entry-api/biz/repository-data）类型名。
-- next.js blog 示例只作内容模型基线（Pages Router 简化形态），不当作 App Router 生产分层合同；引用须标「示例实证 vs 生产级补充」。
+- 一律以 App Router 生产口径为分层合同；沿用旧形态（Pages Router / `getStaticProps` / 手写 `<Head>` / 全局 CSS）不构成豁免。
 
 ## 与官方 Trellis skill 及姊妹 skill 的边界
 
@@ -145,4 +145,3 @@ description: 用于审核 H5（Next.js + React + TypeScript）概要设计文档
 - 取证矩阵与严重度判级：`references/review-baseline.md`
 - 输出字段合同：`references/review-output.md`
 - 通用方法 SSOT：`.trellis/spec/guides/golden-path.md`；项目取值：`.trellis/spec/conventions/project-conventions.md`
-- next.js blog 示例（内容模型基线，示例实证）：`/Users/devSC/Documents/MyProject/next.js/examples/blog/`（`package.json` / `pages/`（Pages Router）/ `pages/posts/*.mdx` / `scripts/gen-rss.js` / `theme.config.js` / `tsconfig.json`）

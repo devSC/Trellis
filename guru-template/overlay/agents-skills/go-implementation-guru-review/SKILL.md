@@ -39,7 +39,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
    - **轻框架锁定**：路由必须是 `net/http` `ServeMux`；新引入 `gin`/`echo` 等重型框架 = P1（红线，不可豁免）。
    - **错误处理范式**：服务级 sentinel errors + `fmt.Errorf("%w: ...")` 链式包装 + `errors.Is()` 检查；丢 `%w`（`fmt.Errorf("...: " + err.Error())` 拼接）、`_ = err` 吞错、裸字符串比较错误、`panic` 作控制流 = P1（破坏 `errors.Is` 链）。错误→HTTP 状态码映射须在 `transport` 层用 `errors.Is()` 完成（SLOT-13）。
    - **启动/关闭生命周期**：`main()` 控信号（`SIGINT`/`SIGTERM`）→ `app.New()` → `app.Run()` → `app.Shutdown(ctx)`；handler 接收 `context.Context` 并尊重 deadline；优雅关闭幂等。触碰这些跨切片共享面（`app.go`/`main.go`）须 trace 单独标注。
-   - **配置律**：连接串/池参数/密钥引用集中经 `config.Load()`；其它层读 `os.Getenv` = 违例。env 前缀须区分服务（如 `CONTROL_API_*`）。
+   - **配置律**：连接串/池参数/密钥引用集中经 `config.Load()`；其它层读 `os.Getenv` = 违例。env 前缀须区分服务（如 `<SVC>_*`）。
    - **隐私与契约边界**：`internal/` 隐私不被跨服务 import；跨服务数据结构只走 `packages/contracts/`，契约变更须排在所有消费方编译面之前。
    - **DB 句柄边界**：`*sql.DB`/驱动 import 只允许出现在 `repository`/`app` 层（SLOT-02/SLOT-06）；service 直接持有连接 = 违例。
 
@@ -102,7 +102,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
 
 ## 好例 / 坏例（审核判读对照）
 
-- ✅ 合格切片（放行）：`切片 S2 | 承接 UNIT-user-repository | repository/user_repository.go + db/migrations/0003_users.up.sql`；证据节贴 `go build ./services/control-api/... → 退出 0`、`golangci-lint run → 0 issues`、`go test -run TestUserRepository_FindByEmail -v` 含 `not_found_maps_ErrUserNotFound` 子测试，新增测试映射到 `UNIT-user-repository` 覆盖 `BHV-012` 成功 + 失败路径，未验证项（真实 PG 唯一约束触发 `ErrEmailTaken`）显式留 CI 集成。审核判：可进入 PR。
+- ✅ 合格切片（放行）：`切片 S2 | 承接 UNIT-user-repository | repository/user_repository.go + db/migrations/0003_users.up.sql`；证据节贴 `go build ./services/<svc>/... → 退出 0`、`golangci-lint run → 0 issues`、`go test -run TestUserRepository_FindByEmail -v` 含 `not_found_maps_ErrUserNotFound` 子测试，新增测试映射到 `UNIT-user-repository` 覆盖 `BHV-012` 成功 + 失败路径，未验证项（真实 PG 唯一约束触发 `ErrEmailTaken`）显式留 CI 集成。审核判：可进入 PR。
 - ❌ 坏例（不可进入）：handler 内直接 `db.QueryRowContext(...)` 跳过 service 层（D2 分层反向，P1）；service 用 `fmt.Errorf("login failed: " + err.Error())` 拼接丢 `%w`（D2 错误链断裂，P1）；trace 证据节只写「全部编译通过，测试通过」无命令无测试名（D4，P2）；新引入 `github.com/gin-gonic/gin`（D2 轻框架红线，P1）。
 - ❌ 坏例（八问断链）：切片挂 `UNIT-user-cache` 但详细设计无此单元（幽灵单元，P1）；或 `BHV-012` 在概要有 owner 但无任何 `UNIT-<slug>` 承接（断链，P1）。
 

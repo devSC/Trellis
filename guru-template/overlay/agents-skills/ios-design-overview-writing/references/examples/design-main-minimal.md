@@ -1,18 +1,18 @@
 # 示例：首页故事概览 design-main（iOS 原生 · 缩减成稿样例）
 
-> 本文件是 **成稿形态示例**，取材自 `story-verse-mac` 真实 Home feature 的缩减改编，只演示 iOS 原生概要各章形态与粒度，
+> 本文件是 **成稿形态示例**（虚构的 Home feature 缩减演示），只演示 iOS 原生概要各章形态与粒度，
 > **不是规则来源**；章节合同以概要 L1（`.trellis/spec/harness/overview/overview-structure-single-source.md`）为准，
 > 分层依赖律以 `.trellis/spec/guides/golden-path.md` 为准。
 > 示例为缩减版：真实成稿的 BHV/UC 数量与表行数通常是本例的 2~4 倍。
 >
-> **取证锚点（均为参考项目真实文件 / 类型，先读取证实再写）**：
-> - `view` → `StoryVerse/StoryVerse/UI/Features/Home/Views/HomeView.swift`（`struct HomeView: View`，`@InjectedObject(\.homeViewModel)`、`@Injected(\.navigateToStoryDetail)`、`.onAppear { viewModel.onViewAppera() }`）
+> **取证锚点（落地时替换为目标仓库真实文件 / 类型，先读取证实再写；下列为通用相对路径骨架与示例命名）**：
+> - `view` → `UI/Features/Home/Views/HomeView.swift`（`struct HomeView: View`，`@InjectedObject(\.homeViewModel)`、`@Injected(\.navigateToStoryDetail)`、`.onAppear { viewModel.onViewAppera() }`）
 > - `viewmodel` → `UI/Features/Home/ViewModels/HomeViewModel.swift`（`class HomeViewModel: ObservableObject`，`@Published var recentStories: [Story]`、`@Injected(\.storyManageUseCase)`、`loadStorys()`/`onTapStoryDelete(_:)`/`onTapStoryExport(_:format:)`）
 > - `usecase` → `App/UseCases/StoryManagement/{IStoryManagementUseCase.swift,StoryManagementUseCase.swift,StoryManagementError.swift}`（`fetchAllFullStories()`/`deleteStory(storyId:)`，注入 `any IStoryRepository`，把 `PersistenceError` 转 `StoryManagementError.repositoryError`）
 > - `repository` → `Domain/Repositories/IStoryRepository.swift`（接口，只 `import Foundation`，含 `PersistenceError`）+ `Infrastructure/Persistence/Repositories/StoryRepository.swift`（实现，`import WCDBSwift`，注入 `EnhancedDatabaseManager`）
 > - `domain-model` → `Domain/Entities/Story.swift`（`struct Story: Identifiable, Codable`）+ `Domain/Errors/StoryError.swift`（`enum StoryError: Error, Equatable`）
 > - `coordinator` → `App/Coordinators/AppCoordinator.swift`（`@Published activeDestination`、`enum NavigationDestination`）+ `App/DependencyInjection/Container+Coordinators.swift`（`navigateToStoryDetail: Factory<(String) -> Void>`）+ `Container+UseCases.swift`（`storyManageUseCase`/`storyRepository` 注册 `.singleton`）
-> - 技术栈槽位 → `.trellis/spec/conventions/project-conventions.md`（story-verse 取值：`SLOT-01` 纯 SwiftUI 且 `ObservableObject`+`@Published`、`SLOT-14` XCTest，存量违例 `SLOT-16`）
+> - 技术栈槽位 → `.trellis/spec/conventions/project-conventions.md`（示例取值：`SLOT-01` 纯 SwiftUI 且 `ObservableObject`+`@Published`、`SLOT-14` XCTest，存量违例 `SLOT-16`）
 
 **交付范围**：全稿（缩减）｜**执行模式**：一次性交付｜**链型**：full｜**概要主定义位置**：`design-main.md`
 
@@ -36,7 +36,7 @@ DDD 四层；UI 纯 SwiftUI（`SLOT-01`）；ViewModel = `ObservableObject` + `@
 
 | 假设 | 依据 | 影响范围 | 验证时点 |
 |------|------|---------|---------|
-| 首页只展示前 4 条最近故事（`prefix(4)`） | 既有 `HomeView` 实测 UI 约定 | BHV-012 后置展示量 | 详细设计前与产品确认 |
+| 首页只展示前 4 条最近故事（`prefix(4)`） | 既有 `HomeView` 示例 UI 约定 | BHV-012 后置展示量 | 详细设计前与产品确认 |
 
 ## 2. 行为集合
 
@@ -53,7 +53,7 @@ Given 首页已展示故事卡片 When 点未完成故事卡片（`story.isCompl
 Given 故事卡片菜单展开 When 点删除 Then `HomeViewModel.onTapStoryDelete(id)` 调 `IStoryManagementUseCase.deleteStory(storyId:)` → `IStoryRepository.delete(id:)` 写 WCDBSwift；成功经仓储 CRUD 事件回流（`autoObserve` → `handleStoryEvent` → 重新 `loadStorys()`）。涉及状态：`recentStories`（经事件刷新）；数据：`Story`。
 
 ### BHV-016 加载失败处置（失败路径）
-Given BHV-012 进行中 When `findAll()` 抛 `PersistenceError` Then `StoryManagementUseCase` 归一为 `StoryManagementError.repositoryError` 上抛；ViewModel 应置错误态展示重试。**实测存量违例**：当前 `loadStorys()` 内 `catch { }` 空吞错误，无错误状态机（`SLOT-16 #5`）；本概要要求详细阶段补错误态（见 §7 未决）。涉及状态：`recentStories`（错误态由详细 home-viewmodel 章补齐）；数据：`Story`。
+Given BHV-012 进行中 When `findAll()` 抛 `PersistenceError` Then `StoryManagementUseCase` 归一为 `StoryManagementError.repositoryError` 上抛；ViewModel 应置错误态展示重试。**示例存量违例**：当前 `loadStorys()` 内 `catch { }` 空吞错误，无错误状态机（`SLOT-16 #5`）；本概要要求详细阶段补错误态（见 §7 未决）。涉及状态：`recentStories`（错误态由详细 home-viewmodel 章补齐）；数据：`Story`。
 
 ## 3. 归属判定表
 
@@ -75,7 +75,7 @@ Given BHV-012 进行中 When `findAll()` 抛 `PersistenceError` Then `StoryManag
 | `HomeViewModel.creations`（`@Published`） | UNIT-home-viewmodel | `HomeView`（`myCreationsSection`） |
 | `AppCoordinator.activeDestination`（`@Published`） | UNIT-app-coordinator | 根视图导航绑定 |
 
-**分层依赖律四红线自检**：① Domain 零依赖——`Story`/`StoryError`/`IStoryRepository` 只 `import Foundation`（实测）✔；② 单向无环——`StoryRepository`（Infra 实现）经 DI 注入 `IStoryRepository`（Domain 接口），上层只依赖接口 ✔；③ View 不直接导航——`HomeView` 经 `@Injected(\.navigateToStoryDetail)` 闭包 / `AppCoordinator`，无跨 feature `NavigationLink` ✔；④ View 不直接访问持久化——`HomeView`/`HomeViewModel` 不 import `WCDBSwift`/`StoryRepository` 实现，经 `IStoryManagementUseCase` ✔。**遗留提示**：`HomeView` 实测同时注入了 `@Injected(\.storyRepository)` 供 `autoObserve` 订阅 CRUD 事件——订阅观察接口（`IObservableRepository`）属允许，但应避免在 View 直接调用其数据方法；本概要要求详细阶段确认订阅边界（见 §7）。
+**分层依赖律四红线自检**：① Domain 零依赖——`Story`/`StoryError`/`IStoryRepository` 只 `import Foundation`（示例）✔；② 单向无环——`StoryRepository`（Infra 实现）经 DI 注入 `IStoryRepository`（Domain 接口），上层只依赖接口 ✔；③ View 不直接导航——`HomeView` 经 `@Injected(\.navigateToStoryDetail)` 闭包 / `AppCoordinator`，无跨 feature `NavigationLink` ✔；④ View 不直接访问持久化——`HomeView`/`HomeViewModel` 不 import `WCDBSwift`/`StoryRepository` 实现，经 `IStoryManagementUseCase` ✔。**遗留提示**：`HomeView` 示例中同时注入了 `@Injected(\.storyRepository)` 供 `autoObserve` 订阅 CRUD 事件——订阅观察接口（`IObservableRepository`）属允许，但应避免在 View 直接调用其数据方法；本概要要求详细阶段确认订阅边界（见 §7）。
 
 **唯一写 owner 自检**：`recentStories` 仅 `HomeViewModel` 写，无第二 ViewModel 重复写 ✔。
 

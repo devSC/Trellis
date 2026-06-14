@@ -7,8 +7,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Guru H5（Next.j
 
 > 用于用户要求「审核 H5/Next.js 实现是否对齐详细设计」「检查代码是否按详细设计落地」「实现阶段门禁审核」「review H5 implementation / review Next.js PR」时。
 > 本 skill 只做审核与取证，不默认改代码。若用户要求「审核并修复」，先输出 Findings，再按用户确认或明确指令进入修复。
-> 平台形态：Next.js（App Router 生产形态为目标）+ React + TypeScript(strict)。代码在 `app/`（route 段 page/layout/loading/error.tsx）、`components/`（client-component 与 ui-component）、`lib/`（data-access）、`actions/`（server-action）、`types/`（domain-type，含 zod schema）；约定槽位与目录映射以 project-conventions 为准。
-> 参考工程 `next.js/examples/blog` 是 **Pages Router + Nextra + MDX + gray-matter** 的轻量 blog starter（故意简化、`tsconfig.json` 里 `strict: false`、`build` 阶段用 `scripts/gen-rss.js` 跑 `gray-matter` 解析 frontmatter）。它只作**内容模型基线的示例实证**；判定基准一律以 App Router 生产 golden-path 为准，审核时必须明确区分「示例实证」与「生产级补充」（见 D2 末节）。
+> 平台生产基线：Next.js App Router + React + TypeScript(strict)。代码在 `app/`（route 段 page/layout/loading/error.tsx）、`components/`（client-component 与 ui-component）、`lib/`（data-access）、`actions/`（server-action）、`types/`（domain-type，含 zod schema）；约定槽位与目录映射以 project-conventions 为准。判定基准一律以 App Router 生产 golden-path 为准（server-first / RSC 数据获取经 data-access 封装 / server-action 变更 / route 段约定 / metadata-SEO / 样式隔离 / `strict: true`）。
 
 ## 装载顺序（硬前置，任一失败即终止并仅输出前置缺口）
 
@@ -16,7 +15,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Guru H5（Next.j
 2. 读取同级标准包 `.trellis/spec/harness/implementation/implementation-trace-contract.md`（实现 trace 过程合同 + 实现 Gate G1~G6 口径）与 `.trellis/spec/harness/index.md`（编号纪律 BHV/UNIT、doc_type 七类、Gate 4 脚本判定项、统一红线）。
 3. 读取目标仓库 `.trellis/spec/conventions/project-conventions.md`，先跑校验清单 C1~C5；**重点装载 SLOT-15 存量违例清单**（存量豁免判定的唯一数据源）与本项目的 project-conventions 槽位取值：内容源（MDX/CMS）、状态管理（none/Zustand/Context）、UI 组件库（shadcn/MUI）、样式方案（Tailwind/CSS Modules）、测试（Vitest+RTL/Playwright）、lint（ESLint+Prettier）、数据库、认证（NextAuth）、图像优化（next/image）、部署（Vercel）、路由模式（App vs Pages）。槽位缺失或待定超限 → 前置失败。
 4. 定位审核对象：被审改动（diff/分支）、本任务承接的详细设计单元（full 链 `design_package/chapters/*.md` 的 `UNIT-<slug>`；light 链 `design.md` §详细）、`implement.md`（trace）。trace 缺失 → 前置失败（实现 Gate 的证据载体不存在，不进入符合性判断）。
-5. 命中需要项目级取值才能判定的项（如 lint 是否真按 `ESLint + Prettier` 跑、样式是否真按 Tailwind/CSS Modules 隔离、状态管理是否真用约定的 none/Zustand/Context、认证是否真走 NextAuth、路由模式是否真是 App Router），其取值只能来自 project-conventions 槽位与仓库真实代码，不得从详细设计正文或 `next.js/examples/blog` 示例习惯推断（示例是 Pages Router，绝不能据此判 App Router 项目合规）。
+5. 命中需要项目级取值才能判定的项（如 lint 是否真按 `ESLint + Prettier` 跑、样式是否真按 Tailwind/CSS Modules 隔离、状态管理是否真用约定的 none/Zustand/Context、认证是否真走 NextAuth、路由模式是否真是 App Router），其取值只能来自 project-conventions 槽位与仓库真实代码，不得从详细设计正文推断；仓库内残留的 Pages Router/旧形态代码不能据此放行 App Router 项目合规。
 
 前置全部通过后，才进入下面的执行流程。
 
@@ -66,10 +65,10 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
    - **route 段约定**：`route` 单元须落在 App Router 约定文件（`page.tsx`/`layout.tsx`/`loading.tsx`/`error.tsx`），约定文件职责不混（数据获取编排在 server-component/page，交互降级在 client、`error.tsx` 必须是 `'use client'`）。
    - **metadata / SEO 标准化**：`route` 须导出标准 `metadata` 或 `generateMetadata`；动态路由缺 metadata、SEO 字段（title/description/og）与详细设计合同不符、硬编码而非按约定生成 = 违例（缺失关键 SEO 合同 P2，与设计明确冲突 P1）。
    - **错误边界**：需要兜底的 route 段须有 `error.tsx`（`'use client'`，含 reset），异步加载段须有 `loading.tsx` 或显式 Suspense；server-action/data-access 异常不得静默吞（`catch` 后空处理、`catch {}`、错误降级为 `null` 而丢失语义）= 违例（关键链路 P1）。
-   - **样式隔离**：按 project-conventions 样式槽位（Tailwind / CSS Modules）落地；引入全局样式污染（非约定的全局 CSS、内联 `<style>` 注入全局、跨组件泄漏的非 scoped class）= 违例。注意 `next.js/examples/blog` 用 `style jsx` 是 Pages Router/Nextra 示例习惯，不能据此放行 App Router 项目的全局样式注入。
+   - **样式隔离**：按 project-conventions 样式槽位（Tailwind / CSS Modules）落地；引入全局样式污染（非约定的全局 CSS、内联 `<style>`/`style jsx` 注入全局、跨组件泄漏的非 scoped class）= 违例。
    - **状态管理边界**：按 project-conventions 状态槽位（none / Zustand / Context）落地；新引入未批准的状态库、把服务端可得数据塞进客户端全局态 = 违例。
    - **图像 / 资源**：按图像优化槽位用 `next/image`（约定启用时）；裸 `<img>` 绕过优化、未约定的远程域 = 违例（按槽位判级）。
-   - **示例实证 vs 生产级补充（必须显式区分）**：凡判定依据来自 `next.js/examples/blog` 的（内容模型：MDX 文件、frontmatter 经 `gray-matter` 解析、RSS 由 `scripts/gen-rss.js` 在 build 前生成、Pages Router 目录形态、示例 `tsconfig` 的 `strict: false`），只能作为「示例实证」引用其内容模型，**不能据此判 App Router 生产合规**；凡 golden-path 的「生产级补充」（App Router 目录、server-first、TS strict、错误边界、metadata 标准、样式隔离）才是判定基准。审核时若 finding 依据示例习惯，必须在证据里标「示例实证（非生产基准）」，避免把示例的简化当作合规模板。
+   - **生产基线为唯一判定基准**：判定基准一律为 App Router 生产 golden-path（App Router 目录、server-first、TS strict、错误边界、metadata 标准、样式隔离、data-access 封装内容源读取）；仓库内残留的旧形态（Pages Router 目录、`strict: false`、`style jsx` 全局注入、构建期裸读文件取数）不构成合规依据，出现即按对应 golden-path 条目判违例。
 
 3. **D3 存量豁免判定**（逐违例必做，对应 Gate 5）：D1/D2 发现的每个违例对照 SLOT-15 清单——
    - **命中清单且未扩大违例面** → tech-debt 注记，**不阻塞**（标注关联 `[SLOT-NN]` 编号与计划处置）。
@@ -79,7 +78,7 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
 
 4. **D4 证据核查**（对应 Gate 4 G2/G3/G4 + trace §3，强调「证据感而非做完感」）：
    - **trace 四节齐全且非空**：计划节有 `UNIT-<slug>` 承接与完成信号、执行节有改动清单与偏差说明、证据节有命令级记录、阻塞节如无则显式写「无」。缺任一节 = 实现 Gate 不放行（P1）。
-   - **类型检查证据**（G2）：`tsc --noEmit`（或 `next build` 内含类型检查）贴命令 + 退出态；项目须为 TS strict（与示例 `strict: false` 相反），出现 `any` 泛滥、`@ts-ignore`/`@ts-expect-error` 无理由、关闭 strict 子项 = 证据不可信（P2 起步，关闭 strict 倒退 P1）。只写「类型通过」无命令/退出态 = 证据不可信（P2 起步）。引入的类型失败未收口 = P1。
+   - **类型检查证据**（G2）：`tsc --noEmit`（或 `next build` 内含类型检查）贴命令 + 退出态；项目须为 TS strict，出现 `any` 泛滥、`@ts-ignore`/`@ts-expect-error` 无理由、关闭 strict 子项 = 证据不可信（P2 起步，关闭 strict 倒退 P1）。只写「类型通过」无命令/退出态 = 证据不可信（P2 起步）。引入的类型失败未收口 = P1。
    - **静态检查证据**（G3）：`eslint`（含 `eslint-config-next` 规则，按 lint 槽位）+ `prettier --check` 逐条通过/失败 + 处理；`eslint-disable` 豁免须写理由并指向 `[SLOT-15]`；`next lint` / build 的 RSC 边界告警（如 client 引服务端模块）须收口。
    - **构建证据**：`next build` 贴命令 + 退出态 + 关键告警处理（"use client" 边界、动态/静态渲染、Image 域）；build 失败未收口 = P1。
    - **测试证据**（G4，按测试槽位 Vitest+RTL / Playwright）：测试名级别结果（如 `✓ PostList renders empty state`、Playwright `✓ [chromium] › detail page shows 404`），不只写「全部通过」；覆盖承接 UNIT/BHV 的成功路径 + **全部失败路径**（错误边界触发、空数据、加载态、表单校验失败、未授权）；新增测试清单可追溯到 `UNIT-<slug>`/`BHV-NNN`。漏失败路径用例 = P2 起步；高风险链路（认证 / server-action 变更 / server-client 边界 / 私有数据获取 / SEO 关键页）漏测 = P1。client-component 交互应有 RTL/事件测试；route 关键流应有 e2e。
@@ -115,7 +114,6 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
    - 设计证据：`<UNIT-<slug>#八问几 / BHV-NNN / detail_doc_type（七类之一）/ 详细设计文件:章节>`
    - 代码证据：`<app|components|lib|actions|types/<file>:行 / 组件 / 函数 / 'use client' 边界位置 / metadata / 验证位置>`
    - 存量证据：`<命中的 [SLOT-NN] 条目 / 清单外；不适用写 N/A>`
-   - 示例 vs 生产：`<依据为示例实证（非生产基准）/ 生产级 golden-path 基准；不涉及写 N/A>`
    - 问题：`<代码与详细设计或 golden-path 红线的具体偏离>`
    - 影响：`<为何导致合同不闭合 / 验证不可信 / 边界·红线破坏 / 无法判断>`
    - 建议（最小修订）：`<修代码 | 补/复跑验证 | 移除越界结构 | 回退详细阶段修订 | 挂 SLOT-15 记债 | 恢复验证环境>`
@@ -135,14 +133,14 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
 
 - ✅ 合格切片（放行）：`切片 S3 | 承接 UNIT-post-data-access（detail_doc_type=data-access）| lib/posts.ts`；证据节贴 `tsc --noEmit → 退出 0`、`eslint . → 0 problems`、`prettier --check → 0`、`next build → 退出 0（无 'use client' 边界告警）`、`vitest run posts.test.ts` 含 `✓ getPostBySlug 命中`、`✓ getPostBySlug not_found 返回 null（失败路径）`，新增测试映射到 `UNIT-post-data-access` 覆盖 `BHV-007` 成功 + 失败路径；私有内容源（DB 连接串）只在 data-access 经服务端 env 读取，未透传 client；未验证项（真实 CMS 联调）显式留 Preview 部署。审核判：可进入 PR。
 - ❌ 坏例（不可进入）：`client-component`（`'use client'` 文件）里直接 `import { db } from '@/lib/db'` 并读私有数据（D2/D5 server-client 边界破坏，P1）；server-component 把 `process.env.API_SECRET` 经 props 透传给 `'use client'` 子组件（D5 私密 env 外泄，P1）；`error.tsx` 漏写或未标 `'use client'`、catch 后空处理吞掉变更失败（D2 错误边界，关键链路 P1）；trace 证据节只写「编译通过、测试通过」无命令无退出态无测试名（D4，P2）；详细设计单元把 `detail_doc_type` 写成 `repository`/`controller`（照搬 flutter/Go 类型名，非七类，D6，P1）。
-- ❌ 坏例（八问断链 / 示例误用）：切片挂 `UNIT-photo-gallery` 但详细设计无此单元（幽灵单元，P1）；或以 `next.js/examples/blog` 的 `style jsx` 全局注入、Pages Router 目录、`strict: false` 作为合规依据放行 App Router 项目（D2 示例误用为生产基准，按所掩盖的违例判级）。
+- ❌ 坏例（八问断链 / 旧形态误放行）：切片挂 `UNIT-photo-gallery` 但详细设计无此单元（幽灵单元，P1）；或以 `style jsx` 全局注入、Pages Router 目录、`strict: false` 等旧形态作为合规依据放行 App Router 项目（D2 旧形态非生产基准，按所掩盖的违例判级）。
 
 ## 边界约束
 
 - 只审改动面 + 其直接依赖；不对存量代码做全量审计（存量违例只走 SLOT-15 豁免判定）。
 - 审核不代写代码；每条 finding 给最小修订方案。
 - 规则正文不在本 skill 复写——分层依赖律、各层迷你路径、server-client 边界规则、禁止清单以 `.trellis/spec/guides/golden-path.md` 为准；trace 四节、Gate G1~G6 以 `.trellis/spec/harness/implementation/implementation-trace-contract.md` 为准；BHV/UNIT 编号纪律、doc_type 七类、统一红线以 `.trellis/spec/harness/index.md` 为准；槽位取值与 SLOT-15 以 project-conventions 为准。
-- `next.js/examples/blog` 只作内容模型基线的示例实证，不作生产合规基准；任何把示例简化当合规模板的放行都视为误判。
+- 判定基准一律为 App Router 生产 golden-path；任何把仓库内残留旧形态（Pages Router / `strict: false` / 全局样式注入）当合规模板的放行都视为误判。
 - 未执行的验证不得写成通过；测试失败/证据缺失/环境阻塞如实输出，不降级结论。
 - 新增测试不能替代设计或实现证据；通过业务流程/集成/e2e/mock/fake 测试反向定义业务语义、测试补写详细设计 = P1，应回退详细或测试计划阶段。
 

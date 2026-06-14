@@ -4,9 +4,9 @@
 > `.trellis/spec/harness/overview/overview-structure-single-source.md`（概要 L1）为准；分层依赖律与四条硬红线以
 > `.trellis/spec/guides/golden-path.md` 为准；项目取值以 `.trellis/spec/conventions/project-conventions.md` 槽位为准。
 > 冲突时：golden-path 硬红线 > L1 章节合同 > project-conventions 槽位 > 本指南 > SKILL.md。
-> 平台档案证据基准：`story-verse-mac`（DDD 四层实测仓库）。本指南所有真实组件名（`HomeView` / `HomeViewModel` /
-> `StoryManagementUseCase` / `IStoryRepository` / `StoryRepository` / `AppCoordinator` / `Story` / `StoryError`）均取自该仓库，
-> 不照抄 flutter（Page/Controller/Service/DataSource/Dao/Api）或 Go（Entry/Biz/IC/Utility/Data）类型名。
+> 本指南所有示例组件名（`HomeView` / `HomeViewModel` /
+> `StoryManagementUseCase` / `IStoryRepository` / `StoryRepository` / `AppCoordinator` / `Story` / `StoryError`）均为
+> DDD 四层的通用示例命名（落地时替换为目标仓库的真实领域名），不照抄 flutter（Page/Controller/Service/DataSource/Dao/Api）或 Go（Entry/Biz/IC/Utility/Data）类型名。
 
 ## 0. 写作前准备
 
@@ -118,11 +118,11 @@ iOS 专属遗漏自查：
 
 - **一个状态只能有一个写 owner**：页面态写 owner 是对应 viewmodel（`@Published`），业务态写 owner 是对应 usecase；其余层只读 / 订阅。同一 `@Published` 状态在两个 ViewModel 里写 = P1，回退重判。状态归属单独列小节，每个状态字段一行（状态名 / 写 owner / 读取方）。
 - **分层依赖律自检（四条硬红线，golden-path 锁定，违反直接 fail）**，归属表后逐条核对：
-  1. **Domain 零依赖**：`usecase` / `IXxxRepository` 接口 / 实体 / 值对象 / `enum Error` 不 import `App` / `Infrastructure` / `UI`，也不 import SwiftUI / WCDBSwift / 网络 SDK（实测 `Domain/Repositories/IStoryRepository.swift` 只 `import Foundation`）。把 WCDBSwift 写入、SwiftUI 类型塞进 Domain 即归属错误，回退重判。
+  1. **Domain 零依赖**：`usecase` / `IXxxRepository` 接口 / 实体 / 值对象 / `enum Error` 不 import `App` / `Infrastructure` / `UI`，也不 import SwiftUI / WCDBSwift / 网络 SDK（示例 `Domain/Repositories/IStoryRepository.swift` 只 `import Foundation`）。把 WCDBSwift 写入、SwiftUI 类型塞进 Domain 即归属错误，回退重判。
   2. **单向无环**：依赖方向 `Domain → App → Infrastructure → UI`；`Repository` 接口在 Domain、实现在 Infrastructure，上层只依赖接口（依赖倒置）。
   3. **View 不直接导航**：View → View 直接 push/present 即违例，必经 `AppCoordinator`（改 `@Published activeDestination` 或注入 `navigateToXxx` Factory 闭包）。
   4. **View 不直接访问持久化**：View / ViewModel 直接 import `DatabaseManager` / WCDBSwift / repository 实现类即违例，必经 `IXxxRepository` 接口。
-- **FactoryKit DI 强制**：跨层依赖一律 `@Injected`（实测 `HomeViewModel` 全 `@Injected(\.storyManageUseCase)` 等），禁手动 `init` 硬编码依赖；DI 装配归 `coordinator`。
+- **FactoryKit DI 强制**：跨层依赖一律 `@Injected`（示例 `HomeViewModel` 全 `@Injected(\.storyManageUseCase)` 等），禁手动 `init` 硬编码依赖；DI 装配归 `coordinator`。
 - 争议行先加载 `client-grill`（或同等拷问）再定稿。
 
 ### 4.5 纯函数技术能力（不是层、不是依赖对象）
@@ -228,14 +228,14 @@ sequenceDiagram
 ```markdown
 | decision_id | decision_point | candidates | selected | rationale | detail_expansion_targets（→ chapters/<slug>.md + doc_type） | compliance_basis（credential strategy） |
 |------------|----------------|-----------|----------|-----------|--------------------------------------------------------------|------------------------------------------|
-| TD-01 | 端侧 LLM 适配选型 | OnDeviceLLMAdapter（实测） / 远程 LLM | OnDeviceLLMAdapter（端侧） | 离线优先 + 隐私约束，避免上传用户创作 | story-llm-external（external） | 不联网无凭证；如远程则 api_key_keychain_ref，不写 secret value |
+| TD-01 | 端侧 LLM 适配选型 | OnDeviceLLMAdapter（示例） / 远程 LLM | OnDeviceLLMAdapter（端侧） | 离线优先 + 隐私约束，避免上传用户创作 | story-llm-external（external） | 不联网无凭证；如远程则 api_key_keychain_ref，不写 secret value |
 | TD-02 | 持久化引擎 | WCDBSwift（golden-path 钉死） | WCDBSwift | 禁 CoreData/SwiftData（全局约定） | story-repository（repository 实现） | N/A |
 ```
 
 两条易错点：
 - `rationale` 必须从约束 / 驱动推到选择，不得反向倒推。
 - 命中外部 provider / LLM / 对象存储 / 云服务 / 三方 SDK / 推送 / IAP / 权限（麦克风 / 相册 / 文件）时必填 `compliance_basis` 与 credential strategy：**不保存任何 secret value**，只写引用方式（`api_key_keychain_ref` / Info.plist 或 xcconfig 注入 / 默认凭证来源 / Keychain 引用 / `NSMicrophoneUsageDescription` 用途串），出现真实 key 即 P1。
-- `未选定` 必须显式标注，禁止让下游引用未选定决策。查询分页先判定普通分页还是连续消费语义（实测 `findAllSummaries(criteria:page:pageSize:)` 是普通分页），普通分页不触发游标决策。
+- `未选定` 必须显式标注，禁止让下游引用未选定决策。查询分页先判定普通分页还是连续消费语义（示例 `findAllSummaries(criteria:page:pageSize:)` 是普通分页），普通分页不触发游标决策。
 
 ## 9. 第 6 章「详细设计承接索引」写法（L1 §2.7）
 

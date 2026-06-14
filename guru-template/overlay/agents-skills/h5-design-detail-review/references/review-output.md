@@ -88,7 +88,7 @@
 ｜ 受影响 G 项：G2
 
 **P2-1** ｜ location：chapters/post-list-server.md §6 UNIT-post-list-server
-｜ problem：动态 route 缺 generateMetadata 承接（metadata/SEO 缺失，生产级补充）
+｜ problem：动态 route 缺 generateMetadata 承接（metadata/SEO 缺失）
 ｜ evidence：§6 路由/渲染/SEO 节只写 page 渲染，无 metadata/generateMetadata 导出
 ｜ suggestion：补 generateMetadata（title/description/openGraph）（局部修订，L1 §9）
 ｜ rule_ref：golden-path.md#26-metadata--seo-标准化

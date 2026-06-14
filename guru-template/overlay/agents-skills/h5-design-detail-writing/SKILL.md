@@ -6,7 +6,7 @@ description: 用于把 Guru H5/Next.js 概要设计展开为可编码合同（�
 # H5/Next.js 详细设计撰写
 
 > 层级契约：L1（`.trellis/spec/harness/detail/detail-structure-single-source.md`）承载规则正文与完成条件，L2（`detail-type-server-component.md` / `detail-type-client-component.md` / `detail-type-data-access.md`）承载类型差异；本 SKILL.md 只做装载顺序、前置检查、chapter_loop 编排与输出要求；`references/` 只承载逐类写法细则、模板与示例。冲突时 **L1 > L2 > references > 本文件**。
-> 平台基线：Next.js（**App Router 生产形态为目标**）+ React + TypeScript(strict)。参考示例 `/Users/devSC/Documents/MyProject/next.js/examples/blog` 是 **Pages Router + Nextra + MDX + gray-matter** 的轻量 blog starter（故意简化），golden-path 以 App Router 生产最佳实践为准、把该示例作为**内容模型基线**，并明确区分"示例实证 vs 生产级补充"（见 L1 §10、本文「示例实证纪律」节）。
+> 平台生产基线：Next.js **App Router** + React + TypeScript(strict)。golden-path 锁定 App Router 生产形态：server-first / 默认 `server-component` + RSC 数据获取经 `data-access` 封装 / `server-action` 变更 / route 段约定（page·layout·loading·error·not-found·route）+ `metadata`·`generateMetadata` SEO / `next/image` / CSS Modules 或 Tailwind 样式隔离 / `strict: true`。详细设计一律按此生产基线书写（见 L1 §10、本文「App Router 生产基线」节）。
 > 对标：本 skill 对标 backend `backend-design-detail-writing` 与 flutter `client-design-detail-writing` 的 `directory_precheck + chapter_loop` 编排同口径，仅把分层投影到 H5 七类。
 
 ## 目标
@@ -93,8 +93,8 @@ light 链执行 WX-3/WX-4/WX-5/WX-6 的等价检查（索引在 `design.md` §1�
 6. **分层依赖律（L1 §2.1，违反 fail）**：服务端链 `route → server-component → data-access → domain-type`；交互链 `client-component → ui-component`；变更链 `server-action → data-access`。`domain-type` 是叶子合同不反向依赖任何运行层；`ui-component` 是纯展示叶子不反向依赖上层；出现 `data-access → server-component`、`ui-component → client-component`、`domain-type → 任意运行层` 等反向边 → 归属漂移 → fail，回退概要修订。
 7. **server-first + 私有数据/secret 边界（L1 §2.2 硬规则，P1）**：默认 `server-component`，`'use client'` 最小化仅在确需交互处声明；私有数据获取、API key、token、私钥、session **只能**出现在 `server-component`/`data-access`/`server-action`，`client-component`/`ui-component` 禁直取，只能接收脱敏后的 props 或调用暴露的 action 引用。`client-component` 不得直接 import `data-access`/`server-action` 的私有取数实现。
 8. **错误边界**：渲染失败路径必须落到 `route` 的 `error.tsx` 或 `data-access` 的错误转换点，不得静默吞错；异常表逐行可对应一条失败路径 BHV 或八问 1 的行为分支。
-9. **样式隔离**：CSS Modules / Tailwind，禁全局污染（禁裸全局 class 选择器、禁跨组件样式泄漏）；不沿用 blog 示例的全局 CSS 形态（示例实证 ≠ 生产合同，见 L1 §10）。
-10. **TS strict**：详细设计接口/类型签名按 `tsconfig.json` `"strict": true` 假设书写，不依赖隐式 any；**不沿用 blog 示例的 `strict: false`/`target: es5`** 宽松配置（示例实证 ≠ 生产合同）。
+9. **样式隔离**：CSS Modules / Tailwind，禁全局污染（禁裸全局 class 选择器、禁 `style jsx` 全局样式、禁跨组件样式泄漏）。
+10. **TS strict**：详细设计接口/类型签名按 `tsconfig.json` `"strict": true` 假设书写，不依赖隐式 any。
 11. `partial_scope` 只收窄不扩展；不改变 `chapter_target` / `detail_doc_type` / owner / 完整章节责任；未覆盖项必须显式回填 `not_covered_items[]`，保留 `covered_items[]` 与 `canonical_publish_status=not_applicable_by_partial_scope`，不得静默丢弃，也不得声明 canonical 目标完整通过。
 12. 状态写 owner 必须与概要归属一致（回指归属表行）；发现归属错误 → 回退概要修订，不就地改。
 13. 每行为测试映射覆盖成功 + 全部失败路径（八问之 7，映射到 unit/component-RTL/e2e-Playwright/manual）；写不出测试点的行为视为粒度不达标，回到执行流程第 3 步。
@@ -104,26 +104,19 @@ light 链执行 WX-3/WX-4/WX-5/WX-6 的等价检查（索引在 `design.md` §1�
 17. 中断升级仅限四种情形：**概要源缺失 / 业务语义必须人工确认 / 技术决策未选定 / 修复无法收敛**；其余情况自动闭环推进，不等用户人工 review。
 18. 写作结果不得输出审核矩阵或二元放行结论；全目录完成后提示送审：加载 `h5-design-detail-review`，Gate 结论"可进入编码"后按 gate_mode 完成 confirm 人工收口。
 
-## 示例实证 vs App Router 生产级补充（写作纪律）
+## App Router 生产基线（写作纪律）
 
-参考示例 `/Users/devSC/Documents/MyProject/next.js/examples/blog` 是 **Pages Router + Nextra + MDX + gray-matter** 的轻量 starter，仅作**内容模型基线**。写作时严格区分（完整逐项对照见 L1 §10）：
+详细设计一律按 App Router 生产形态书写，下列维度为生产锁定项（完整规则见 L1 §10）：
 
-- **[示例实证]** 可在 starter 中找到对应物，只用于佐证"内容模型 / frontmatter 形态 / MDX 取数"等内容层基线：
-  - frontmatter（`title/date/description/tag/author`）见 `pages/posts/*.md`、`pages/posts/pages.md`。
-  - `gray-matter` 解析 frontmatter、构建期文件读取见 `scripts/gen-rss.js`。
-  - 依赖 `nextra`/`nextra-theme-blog`/`gray-matter`/`rss` 见 `package.json`。
-  - 手写 `<Head>`（RSS link / font preload）见 `pages/_app.tsx`；`<style jsx>` 全局样式见 `theme.config.js`。
-  - TS 宽松配置 `strict: false` / `target: es5` 见 `tsconfig.json`。
-- **[生产级补充]** starter 不具备、按 golden-path 锁定，凡涉及以下一律按生产基线书写并标注证据来源：
-  - 路由段：App Router `app/` + `route` 类 `page/layout/loading/error.tsx` 段约定（非 `pages/`）。
-  - RSC 边界：server-first、默认 `server-component`、`'use client'` 最小化（starter 全量客户端 React，无 RSC）。
-  - 数据获取：`data-access` 封装 + Next fetch cache / `revalidateTag` + 错误转换点（非构建期裸读文件）。
-  - 严格类型：`strict: true` + zod 运行期校验（非 starter 的无 schema）。
-  - SEO：`metadata`/`generateMetadata` + `generateStaticParams`（非手写 `<Head>`）。
-  - 样式隔离：CSS Modules / Tailwind 禁全局污染（非 starter 全局 CSS）。
-  - 变更：`server-action`（`'use server'`）/ route handlers + `revalidatePath`（starter 纯静态无 mutation）。
-  - 测试：Vitest+RTL / Playwright（starter 无测试目录）。
-- **混用即缺陷**：把 `getStaticProps`/`getStaticPaths` 当 RSC 写、在 `server-component` 内调 `useState`、把 starter 的全局 CSS / `strict: false` 当生产合同——均按 P1 处理。文档中每处涉及上述维度须标注 `[示例实证]` 或 `[生产级补充]`，不混用。
+- **路由段**：App Router `app/` + `route` 类段约定（`page/layout/loading/error/not-found.tsx` + route handler `route.ts`）。
+- **RSC 边界**：server-first、默认 `server-component` 在服务端渲染并编排数据获取；`'use client'` 仅在需交互处声明并最小化。
+- **数据获取**：`data-access` 封装内容源读取（MDX / CMS·API / ORM-DB）+ Next fetch cache / `revalidateTag` + 错误转换点；私有数据/secret 只落服务端，禁内联裸 `fetch`/`fs`。
+- **严格类型**：`strict: true` + zod 运行期校验。
+- **SEO**：`metadata`/`generateMetadata` + `generateStaticParams`（禁手写 `<Head>`）。
+- **样式隔离**：CSS Modules / Tailwind 禁全局污染（禁裸全局 class、禁 `style jsx` 全局样式）。
+- **变更**：`server-action`（`'use server'`）/ route handlers + `revalidatePath`。
+- **测试**：Vitest+RTL / Playwright。
+- **混用即缺陷**：把 `getStaticProps`/`getStaticPaths` 当 RSC 写、在 `server-component` 内调 `useState`、写全局 CSS / `strict: false` ——均按 P1 处理。
 
 ## 输出要求（writing 专属）
 
@@ -155,5 +148,4 @@ light 链执行 WX-3/WX-4/WX-5/WX-6 的等价检查（索引在 `design.md` §1�
 - pending 类（按 L1 §3 八问展开 + §2.5 L2 豁免）：`route` / `ui-component` / `domain-type` / `server-action`，暂无独立 L2
 - 通用方法 SSOT：`.trellis/spec/guides/golden-path.md`；项目取值：`.trellis/spec/conventions/project-conventions.md`
 - 逐类写法细则与章节模板、章节成稿样例：`references/chapter-guide.md` / `references/examples/`
-- 内容模型基线示例（仅 [示例实证]）：`/Users/devSC/Documents/MyProject/next.js/examples/blog` 的 `package.json` / `tsconfig.json` / `theme.config.js` / `scripts/gen-rss.js` / `pages/_app.tsx` / `pages/posts/*.md`
 - 对标参照：backend `backend-design-detail-writing` SKILL、flutter `client-design-detail-writing` SKILL（同口径 `directory_precheck + chapter_loop`，分层投影到 H5 七类）

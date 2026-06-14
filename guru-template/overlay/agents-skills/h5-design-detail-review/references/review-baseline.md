@@ -66,13 +66,13 @@ L1 §8 钉死的完成条件为 **G1~G8**（G1~G5 两轨共用；G6~G8 仅 full 
 |----------|--------------------------|---------|----------|
 | `server-component`（render，L2: detail-type-server-component） | RSC 默认无 `'use client'`；数据获取经 `data-access` 编排（`async` 内 `await` 或下沉封装），不在此写 `useState/useEffect`；私有数据/secret 仅服务端持有；下传 client 的 props 已脱敏且可序列化；Suspense/loading 边界声明；只 import `data-access`/`domain-type`/`ui-component`/`client-component`（嵌入）。 | 标 `'use client'` 后仍直取 DB/secret；把私有数据原样下传 client；在 RSC 内写交互态；import client-component 内部状态做数据获取主链 | `detail-type-server-component.md`、`golden-path.md#server-component-迷你路径` |
 | `client-component`（interactive，L2: detail-type-client-component） | 顶部 `'use client'`；状态字段 + 初始态 + 三态（loading/success/error）显式，写 owner 声明；只消费 props 或调用 server-action 暴露引用；只依赖 `ui-component`(+`domain-type` 仅类型导入)；`'use client'` 范围最小化（不裹可服务端渲染子树）；状态管理选型符合 L1 §6 状态槽位。 | 直接 import/调用 `data-access` 私有取数；client 内直取 env/secret / `useEffect+fetch` 取首屏私有数据；把整页提为 client；import `server-component` | `detail-type-client-component.md`、`golden-path.md#client-component-迷你路径` |
-| `data-access`（data，L2: detail-type-data-access） | fetch 封装 / 内容源（MDX·gray-matter·CMS）/ ORM 查询；显式缓存语义（`fetch` 带 `cache`/`next.revalidate`，禁隐式默认）；错误转换表逐枚举并向上抛（不静默吞错返回空冒充成功）；返回值可序列化、按 `domain-type` 收敛；可读私有 env/凭证（`import 'server-only'` 保险栓）；无业务规则判定；不 import `server-component`/`route`（反向）；不被 `client-component`/`ui-component` import。 | 含业务规则判定；被 client-component 直接 import；secret 硬编码；catch 后返回 `[]` 冒充成功；缺显式缓存语义 | `detail-type-data-access.md`、`golden-path.md#data-access-迷你路径`、`golden-path.md#23-数据获取data-fetchingcanonical` |
+| `data-access`（data，L2: detail-type-data-access） | fetch 封装 / 内容源（MDX·CMS）/ ORM 查询；显式缓存语义（`fetch` 带 `cache`/`next.revalidate`，禁隐式默认）；错误转换表逐枚举并向上抛（不静默吞错返回空冒充成功）；返回值可序列化、按 `domain-type` 收敛；可读私有 env/凭证（`import 'server-only'` 保险栓）；无业务规则判定；不 import `server-component`/`route`（反向）；不被 `client-component`/`ui-component` import。 | 含业务规则判定；被 client-component 直接 import；secret 硬编码；catch 后返回 `[]` 冒充成功；缺显式缓存语义 | `detail-type-data-access.md`、`golden-path.md#data-access-迷你路径`、`golden-path.md#23-数据获取data-fetchingcanonical` |
 
 ### 3.2 pending 类型（L1 八问 + 豁免核查；不装 L2）
 
 通用先核：头部 `l2_status: pending` 标注存在；full 链 design-main 须有对应 `L2豁免：<doc_type> 理由：…`（无豁免 → gate 拦截 P1，L1 §2.5）。各类附加取证：
 
-- **`route`**：route 段文件职责（`page/layout/loading/error.tsx`）齐全或 N/A 声明；`metadata`/`generateMetadata` 承接（生产级补充，示例手写 `<Head>` 不充数）；动态段声明 `generateStaticParams` 策略；只编排 + SEO，不承载业务规则或数据访问实现细节（数据编排下放 `server-component`，简单页 page.tsx 自身充当 server-component 不算跳层）；`error.tsx` 必 `'use client'`、错误边界 owner 唯一；保留文件名不可改名。出现业务规则/数据访问实现 → P1（回退到 server-component/data-access）。
+- **`route`**：route 段文件职责（`page/layout/loading/error.tsx`）齐全或 N/A 声明；`metadata`/`generateMetadata` 承接 SEO（手写 `<Head>` 不充数）；动态段声明 `generateStaticParams` 策略；只编排 + SEO，不承载业务规则或数据访问实现细节（数据编排下放 `server-component`，简单页 page.tsx 自身充当 server-component 不算跳层）；`error.tsx` 必 `'use client'`、错误边界 owner 唯一；保留文件名不可改名。出现业务规则/数据访问实现 → P1（回退到 server-component/data-access）。
 - **`ui-component`**：纯展示，八问 8 必含「不拥有数据获取/业务判定/状态」；样式隔离（CSS Modules/Tailwind，不写全局污染）；props 签名级、可序列化；不 import `data-access`、不依赖 `client-component`（交互链反向）；默认不标 `'use client'`（如需局部交互态应升级为 client-component）。出现取数/业务判定/全局样式/反向依赖 → P1。
 - **`domain-type`**：TS 类型 / zod schema / 领域模型；跨 server→client 对象在此定义可序列化形态（如 `date` 用 ISO 字符串）；schema 由谁校验写明（server-action/data-access 入口）；零副作用、零 I/O、零 React，不 import 任何其他六类。type 层反向依赖任意运行层 / 带 I/O → P1。
 - **`server-action`**：`'use server'` 或 route handler 边界；入参 zod 校验回指 `domain-type` schema；经 `data-access` 完成变更（不直连 DB driver、不重复写 data-access 逻辑）；`revalidatePath`/`revalidateTag` 与错误返回约定，消费方闭合；认证/授权依据（命中认证槽位，session 只在服务端读）。绕过 data-access 直拼查询 / 在 client 内内联定义 server 逻辑 / 被 data-access 反向依赖 → P1。
@@ -81,7 +81,7 @@ L1 §8 钉死的完成条件为 **G1~G8**（G1~G5 两轨共用；G6~G8 仅 full 
 
 | 链边界 | 核对项 | 缺口判级 | rule_ref |
 |--------|--------|---------|----------|
-| route→server-component（route checkpoint） | route 只编排 + 段约定（page/layout/loading/error）+ metadata/SEO；page 调用的 server-component 存在；错误边界 owner 唯一；不跳层直堆复杂取数 | route 承载业务/取数 P1；段约定缺承接 P2（核心入口升 P1）；metadata 缺失 P2（生产级补充） | `detail-structure-single-source.md#§54-层级-checkpoint`（路由层后） |
+| route→server-component（route checkpoint） | route 只编排 + 段约定（page/layout/loading/error）+ metadata/SEO；page 调用的 server-component 存在；错误边界 owner 唯一；不跳层直堆复杂取数 | route 承载业务/取数 P1；段约定缺承接 P2（核心入口升 P1）；metadata 缺失 P2 | `detail-structure-single-source.md#§54-层级-checkpoint`（路由层后） |
 | server-component→data-access（数据层/渲染层 checkpoint） | server-component 声明的数据依赖有承接 `data-access` 章节；返回类型为 `domain-type`；错误转换两侧一致；缓存/重验证决策只在 data-access；私有数据/secret 不外泄 | 依赖无承接 P1；secret 外泄 P1；类型不闭合 P2；错误转换位置失配 P2 | `detail-structure-single-source.md#§54-层级-checkpoint`（数据层/渲染层后） |
 | data-access→domain-type（合同层 checkpoint） | 查询返回与 `domain-type`/zod schema 一致；schema 校验位置写明；domain-type 被引用方 import 路径成立、不反向依赖 | 类型漂移/无 schema P2；domain-type 反向依赖运行层 P1 | `detail-structure-single-source.md#§54-层级-checkpoint`（合同层后） |
 | client-component→ui-component（交互层/展示层 checkpoint） | client 只调用 ui-component 展示 / server-action 变更；状态订阅有发射方；`'use client'` 不上提；三态完整；ui-component 纯展示无 fetch/无业务/样式隔离 | client 直连 data-access P1；状态无 owner P1；ui-component 取数/业务/全局样式 P1 | `detail-structure-single-source.md#§54-层级-checkpoint`（交互层/展示层后） |
@@ -94,7 +94,7 @@ L1 §8 钉死的完成条件为 **G1~G8**（G1~G5 两轨共用；G6~G8 仅 full 
 2. **归属表 owner 覆盖**：每个 owner（七类 doc_type）被至少一个 `UNIT-<slug>` 覆盖。
 3. **UC 链路抽查**：UC 承接表 `index_refs`/`bhv_refs` vs 章节：每个 UC 的链路在详细侧（服务端链 `route→server-component→data-access→domain-type` 或交互/变更链 `client-component→server-action→data-access`）全链可达、无断点。
 4. **时序↔行为抽查**：概要时序图参与者/调用 vs 详细逐行为设计：抽查 ≥1 个 UC 的时序步骤在对应章节有同名行为（裸 token 对得上）且调用方向一致；`sequenceDiagram` 不得出现 `client-component → data-access` 直连边（交互取/写数据须经 server-action 或经 route 的 server-component 加载链）。
-5. **SEO/metadata 覆盖**：概要声明需 SEO 的 route 在详细侧有 `metadata`/`generateMetadata` 承接（生产级补充）；`technology_decision_handoff[].detail_expansion_targets` 有承担它的目标 doc_type 章节。
+5. **SEO/metadata 覆盖**：概要声明需 SEO 的 route 在详细侧有 `metadata`/`generateMetadata` 承接；`technology_decision_handoff[].detail_expansion_targets` 有承担它的目标 doc_type 章节。
 
 ## 6. 薄文档判定（优先于逐条 finding）
 
@@ -110,7 +110,7 @@ L1 §8 钉死的完成条件为 **G1~G8**（G1~G5 两轨共用；G6~G8 仅 full 
 
 - **P1（阻断）**：D1~D8 表中标注 P1 的项；§4 跨链 P1 项；薄文档；章节闭合失败、编号断链（机检并入，幽灵/悬空/重号/方向违例）；§2.1 分层依赖律违例；§2.2 硬规则违例（非 strict、`'use client'` 取私有数据、secret 边界泄漏、route 段约定缺、错误边界静默吞错）；doc_type 越七类；八问缺项；pending L2 缺 `L2豁免`——红线违例不可豁免、不给通过性结论。
 - **P2（应修）**：表中 P2 项；粒度局部不达标（单个行为）；类型漂移；`metadata`/`revalidate` 缺失（非核心入口）；错误转换位置缺标；异常表逐行失配；样式污染；不可序列化 props；孤儿合同；`'use client'` 误用未污染主链；测试漏普通失败路径。
-- **P3（建议）**：表述/格式/术语一致性；命名规范建议；示例实证未标注来源（不做「有没有写某个词」的纯形式检查）。
+- **P3（建议）**：表述/格式/术语一致性；命名规范建议（不做「有没有写某个词」的纯形式检查）。
 - 判级冲突取高；同根因合并为一条 finding 列全部位置；影响主链的 P2 升 P1。
 - 详细设计文档无存量豁免（存量豁免只在实现阶段对代码生效，不为详细设计缺陷开口）。
 
@@ -128,9 +128,9 @@ L1 §8 钉死的完成条件为 **G1~G8**（G1~G5 两轨共用；G6~G8 仅 full 
 - **文档级重构**：合同与概要 owner 系统性脱节、单元划分跟随名词而非行为、八问大面积空缺、多章雷同骨架（薄文档）、doc_type 系统性误用、依赖方向系统性违例（client 普遍直取数据 / server-action 普遍绕 data-access）。
 - 概要缺陷（归属错、索引漏、技术决策/槽位未选定）→ 回退概要修订，禁止在详细阶段就地改归属或私自拍板。
 
-## 9. 最小成稿样例（`server-component` + `data-access` 双单元，锚定 blog 示例真实单元）
+## 9. 最小成稿样例（`server-component` + `data-access` 双单元）
 
-> 证据基准：blog 示例 `/Users/devSC/Documents/MyProject/next.js/examples/blog` 的内容读取逻辑实证于 `scripts/gen-rss.js`（`fs.readdir(pages/posts)` + `gray-matter` 解析 frontmatter，取 `frontmatter.data.title/date/description/tag/author`），frontmatter 字段模型实证于 `pages/posts/pages.md`（`title/date/description/tag/author`）。该示例本体是 Pages Router 简化形态（`tsconfig.json` 实证 `strict:false`/`target:es5`，无 `data-access` 模块、无 server-component），下方把同一**内容模型**（列出全部文章 / 按 slug 取单篇）重投影为 **App Router 生产形态**的 `data-access`（`getAllPosts`/`getPostBySlug`）+ `server-component`（`PostListServer`）双单元，凡示例可直接验证处标 `[示例实证]` 并给文件锚点，凡生产补充处标 `[生产级补充]`。**这是表达形态示例，不是要审核者照抄；审核仍以本文件 §2~§8 矩阵为准。**
+> 取材一个通用内容模型（列出全部文章 / 按 slug 取单篇），以 **App Router 生产形态**展开为 `data-access`（`getAllPosts`/`getPostBySlug`）+ `server-component`（`PostListServer`）双单元，演示一个真实功能单元的章节骨架长什么样、审核取证时锚点应落在哪里。**这是表达形态示例，不是要审核者照抄；审核仍以本文件 §2~§8 矩阵为准。**
 
 ### 9.1 章节头（D1 取证点）
 
@@ -149,7 +149,7 @@ L1 §8 钉死的完成条件为 **G1~G8**（G1~G5 两轨共用；G6~G8 仅 full 
 ```markdown
 ## 1. 单元职责
 UNIT-posts-source：文章内容源访问 owner（data-access，server-only）。封装 MDX frontmatter 读取与 zod 校验，对外暴露按 domain-type 收敛的结果。
-- 调用：内容源读取（MDX/gray-matter，[示例实证] scripts/gen-rss.js）、UNIT-post-schema（domain-type，zod 校验）。
+- 调用：内容源读取（MDX 文件 + frontmatter 解析）、UNIT-post-schema（domain-type，zod 校验）。
 - 被调用：UNIT-post-list-server（server-component）经 import 消费；不被 client-component/ui-component import。
 - 依赖方向：只依赖 domain-type（符合 §2.1 服务端链底层，零反向）。
 
@@ -172,7 +172,7 @@ export function getPostBySlug(slug: string): Promise<Post | null>;
 ```markdown
 ## 3. 核心数据结构
 ### 3.1 数据模型（owner=UNIT-post-schema，domain-type）
-Post = PostFrontmatter & { slug: string; content: string }；PostFrontmatter = { title; date(ISO 字符串，跨 server→client 可序列化); description?; tag; author }（字段模型 [示例实证] pages/posts/pages.md）。
+Post = PostFrontmatter & { slug: string; content: string }；PostFrontmatter = { title; date(ISO 字符串，跨 server→client 可序列化); description?; tag; author }。
 ### 3.2 错误类型表
 | 错误名 | 错误码/枚举 | 语义 | 上抛/收口位置 |
 |--------|-----------|------|--------------|
@@ -180,7 +180,7 @@ Post = PostFrontmatter & { slug: string; content: string }；PostFrontmatter = {
 | PostNotFound | （getPostBySlug 返回 null，非异常）| slug 无命中 | server-component 调 notFound() |
 ```
 
-审核：D8——`date` 取 ISO 字符串保证跨界可序列化（生产级补充，[示例实证] gen-rss.js 用 `frontmatter.data.date` 字符串）；校验失败向上抛（不静默吞错返回 `[]` 冒充成功，通过 data-access L2 与 golden-path §2.3）；异常表逐行对应一条失败路径（D8 逐行可对应通过）。若此处 catch 后返回 `[]` → **D8/D7 P1（吞错冒充成功）**。
+审核：D8——`date` 取 ISO 字符串保证跨界可序列化；校验失败向上抛（不静默吞错返回 `[]` 冒充成功，通过 data-access L2 与 golden-path §2.3）；异常表逐行对应一条失败路径（D8 逐行可对应通过）。若此处 catch 后返回 `[]` → **D8/D7 P1（吞错冒充成功）**。
 
 ### 9.4 逐行为设计（D2-④⑤⑥/D5 取证点，示 getPostBySlug + PostListServer 渲染）
 
@@ -196,10 +196,10 @@ Post = PostFrontmatter & { slug: string; content: string }；PostFrontmatter = {
   participant DA as getPostBySlug(data-access)
   participant Schema as UNIT-post-schema(domain-type)
   SC->>DA: getPostBySlug(slug)
-  DA->>DA: 读 pages/posts/<slug>.md（gray-matter 解析 frontmatter）—— 文件不存在 → return null
+  DA->>DA: 读 <slug>.md（解析 frontmatter）—— 文件不存在 → return null
   DA->>Schema: PostFrontmatterSchema.parse(data) —— 失败 → throw ContentParseError
   DA-->>SC: 返回 Post（含 slug/content）
-- 流程详述（与图编号一一对应，§3.1 粒度）：1. 拼路径读文件，不存在返回 null；2. gray-matter 解析；3. 调 UNIT-post-schema 校验，失败上抛 ContentParseError；4. 收敛为 Post 返回（缓存语义见 §5）。
+- 流程详述（与图编号一一对应，§3.1 粒度）：1. 拼路径读文件，不存在返回 null；2. 解析 frontmatter；3. 调 UNIT-post-schema 校验，失败上抛 ContentParseError；4. 收敛为 Post 返回（缓存语义见 §5）。
 - 异常处理表：| 异常 | 处置 | 错误转换位置 | ｜ 文件不存在 | 返回 null（由 server-component 调 notFound()）| data-access | ｜ 校验失败 | 上抛 ContentParseError | data-access 转换点 → route error.tsx |
 ```
 

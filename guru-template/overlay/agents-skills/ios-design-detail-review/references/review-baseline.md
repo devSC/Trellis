@@ -89,9 +89,9 @@
 - 无 P1/P2 → **可进入实现编码**。
 - 结论后必须给 Gate 收口指引（用户终端 `guru_gate.py confirm detail <task_dir>`，通道见 SKILL.md「Gate 收口」节）。修订形态判定只引用 L1 §9（局部修订 / 文档级重构）。
 
-## 9. 最小成稿样例（`usecase` doc_type，锚定 story-verse-mac 真实单元）
+## 9. 最小成稿样例（`usecase` doc_type，虚构单元演示）
 
-> 证据基准：`story-verse-mac` 的 `App/UseCases/ManageAIModels/`（`IManageAIModelsUseCase.swift` / `ManageAIModelsUseCase.swift` / `ManageAIModelsError.swift`）+ 测试 `StoryVerseTests/UseCases/ManageAIModels/ManageAIModelsUseCaseTests.swift` + DI `App/DependencyInjection/Container+UseCases.swift` 的 `manageAIModelsUseCase` 工厂 + 接口 `Infrastructure/Persistence/Repositories/AIModelRepository.swift` 的 `protocol IAIModelRepository`。本样例演示 `usecase` 章节如何落地合同八问与逐行为设计（取真实签名与真实 `enum Error` case，按详细设计「签名级、零实现体」口径裁剪），并演示审核侧如何据此取证。**这是表达形态示例，不是要审核者照抄；审核仍以本文件 §2~§8 矩阵为准。**
+> 证据锚点为通用相对路径骨架（落地时替换为目标仓库真实文件 / 类型）：`App/UseCases/ManageAIModels/`（`IManageAIModelsUseCase.swift` / `ManageAIModelsUseCase.swift` / `ManageAIModelsError.swift`）+ 测试 `<AppTests>/UseCases/ManageAIModels/ManageAIModelsUseCaseTests.swift` + DI `App/DependencyInjection/Container+UseCases.swift` 的 `manageAIModelsUseCase` 工厂 + 接口 `Infrastructure/Persistence/Repositories/AIModelRepository.swift` 的 `protocol IAIModelRepository`。本样例演示 `usecase` 章节如何落地合同八问与逐行为设计（取签名级与 `enum Error` case，按详细设计「签名级、零实现体」口径裁剪），并演示审核侧如何据此取证。**这是表达形态示例，不是要审核者照抄；审核仍以本文件 §2~§8 矩阵为准。**
 
 ### 9.1 章节头（D1 取证点）
 

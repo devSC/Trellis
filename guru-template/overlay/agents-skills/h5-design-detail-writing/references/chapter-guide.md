@@ -14,10 +14,9 @@
 - 目标：把"按当前批次命中装载 → 逐章八问展开 → 批内自动审修 → 层级 checkpoint"变成稳定可重复的写作流水线。
 - 范围：装载矩阵、章节模板、七类写法细则、批次收敛操作。**不**重定义八问/粒度/编号/checkpoint 完成条件（回 L1）。
 - 不做：一轮全量生成全部章节；输出审核矩阵或二元放行结论（那是 `h5-design-detail-review` 的事）。
-- 示例实证纪律：参考示例 `/Users/devSC/Documents/MyProject/next.js/examples/blog` 是 **Pages Router + Nextra + MDX +
-  gray-matter** 的轻量 starter，仅作**内容模型基线**。凡涉及路由段 / RSC 边界 / 严格类型 / 缓存重验证 / SEO 标准化 /
-  变更 / 测试，一律按 **[生产级补充]** 写并标注证据来源；只有 frontmatter 形态 / MDX 取数 / 内容字段语义可标
-  **[示例实证]**（完整逐项对照见 L1 §10）。
+- 生产基线纪律：本平台生产基线是 **Next.js App Router**。凡涉及路由段 / RSC 边界 / 严格类型 / 缓存重验证 /
+  SEO 标准化 / 变更 / 测试，一律按 App Router 生产形态书写（server-first / data-access 封装 / `metadata`·`generateMetadata` /
+  `server-action` / `strict: true` / CSS Modules·Tailwind，完整规则见 L1 §10）。
 
 ## 1. 规范装载矩阵（按当前批次命中装载，**不全量装**）
 
@@ -106,7 +105,7 @@ generateStaticParams/动态段策略、缓存与重验证（force-static / reval
   定义"可序列化"形态（基本类型/纯对象/数组/Date；不含函数、class 实例、Symbol——对齐 golden-path §2.2 序列化边界）。
 - 八问之 4：**不 import 任何其他六类**；八问之 8 必列"零副作用、零 I/O、零 React——不拥有取数/渲染/状态"。
 - 易错点：在 `domain-type` 写校验失败的处置流程（属 `data-access`/`server-action` 的错误收口）；反向 import 运行层
-  （L1 §2.1 反向边 → fail）。frontmatter 字段语义可标 [示例实证]（见 §5 证据）。
+  （L1 §2.1 反向边 → fail）。
 
 ### 3.2 `data-access`（数据层，v1，按 L2 `detail-type-data-access.md`）
 
@@ -140,7 +139,7 @@ generateStaticParams/动态段策略、缓存与重验证（force-static / reval
 - 八问之 5：取数失败**向上抛**交就近 `error.tsx`；资源不存在调 `notFound()` 触发 `not-found.tsx`；不 `try/catch` 吞错渲染空白。
 - 八问之 4：只调 `data-access`（唯一取数入口）+ `domain-type` + 子 `server-component` + `ui-component` + 把 `client-component`
   当子节点渲染（只透传可序列化 props，**不传函数/secret**）；八问之 8 列"不决定交互/缓存 TTL/数据源/metadata 全集"。
-- 易错点：内联裸 `fetch`/ORM/`fs`+`gray-matter` 取数（应收敛进 `data-access`）；把 `getStaticProps` 心智当 RSC 写（[混用即缺陷]）。
+- 易错点：内联裸 `fetch`/ORM/`fs` 取数（应收敛进 `data-access`）；把 `getStaticProps` 心智当 RSC 写（混用即缺陷）。
 
 ### 3.5 `client-component`（交互层，v1，按 L2 `detail-type-client-component.md`）
 
@@ -172,8 +171,7 @@ generateStaticParams/动态段策略、缓存与重验证（force-static / reval
 - 八问之 5：渲染失败路径必落 `error.tsx`（错误边界）或下层 `data-access` 错误转换点，不静默吞错。
 - 八问之 4：数据编排**下放给 `server-component`**（简单页 `page.tsx` 自身充当 server-component，此时它**就是**
   server-component，不算跳层）；**禁止**在 route 段跳过 server-component 直堆复杂取数逻辑。
-- 易错点：改 route 保留文件名；`error.tsx` 不标 `'use client'`；手写 `<Head>` 做 SEO（[示例实证] 的 Pages Router 写法，
-  生产改 metadata 对象）。
+- 易错点：改 route 保留文件名；`error.tsx` 不标 `'use client'`；手写 `<Head>`/`<meta>` 做 SEO（生产一律走 `metadata`/`generateMetadata` 对象）。
 
 ## 4. 批次收敛与 checkpoint 操作细则
 
@@ -197,22 +195,7 @@ generateStaticParams/动态段策略、缓存与重验证（force-static / reval
   失效，重新进入当前小批次写审修闭环。
 - 单章/单批通过 ≠ 全目录通过；最终目录级复审仍由 `h5-design-detail-review` 执行（写作期不输出审核矩阵或二元放行结论）。
 
-## 5. 示例素材证据（blog starter，仅 [示例实证] 内容层基线）
-
-写作引用示例时只用于佐证"内容模型 / frontmatter 形态 / MDX 取数"，证据路径：
-
-- frontmatter 字段 `title/date/description/tag/author`：`/Users/devSC/Documents/MyProject/next.js/examples/blog/pages/posts/pages.md`、
-  `pages/posts/markdown.md`（真实 frontmatter 块实证）；page-type frontmatter `type/title/date` 见 `pages/index.mdx`、`pages/posts/index.md`。
-- `gray-matter` 解析 frontmatter + 构建期文件读取（`fs.readdir(pages/posts)` 跳过 `index.` + `matter(content)` 取
-  `data.title/date/description/tag/author`）：`scripts/gen-rss.js`。**这是 `data-access` 取数与 `server-component` 文章索引渲染
-  的真实数据模型来源**（生产里收敛进 `data-access`，server-component 只消费返回的领域模型）。
-- 依赖 `nextra`/`nextra-theme-blog`/`gray-matter`/`rss`、build 脚本 `node ./scripts/gen-rss.js && next build`：`package.json`。
-- 手写 `<Head>`（RSS link / font preload）：`pages/_app.tsx`；`<style jsx>` 全局样式：`theme.config.js`。
-- TS 宽松配置 `strict: false` / `target: es5` / `typescript ^4.7.4`：`tsconfig.json`（**生产基线一律 `strict: true`，不沿用**）。
-
-完整的"示例实证 vs App Router 生产级补充"逐项对照见 L1 §10；成稿样例见 `examples/`。
-
-## 6. 禁止事项（写作期红线速查，详见 SKILL.md 强制约束 + L1 §9）
+## 5. 禁止事项（写作期红线速查，详见 SKILL.md 强制约束 + L1 §9）
 
 1. 一轮全量生成全部章节（每批 ≤3 章，批内审修后才进下一批；违反 → L1 §8 G7 拦截、§9.2 文档级重构）。
 2. 越过签名级写实现代码/伪代码（TS 方法签名、数据结构/zod schema 定义为上限）。
@@ -222,5 +205,5 @@ generateStaticParams/动态段策略、缓存与重验证（force-static / reval
 6. 用 backend/flutter 类型名替代 L1 §1 七类 token（doc_type 漂移红线）。
 7. 把私有数据获取/secret 下沉到 `client-component`/`ui-component`（L1 §2.2 边界红线）。
 8. 引入违反 L1 §2.1 依赖律的反向边或越层调用（如 `data-access → server-component`、`ui-component → client-component`）。
-9. 把 blog starter 的全局 CSS / `strict: false` / `getStaticProps` / 手写 `<Head>` 当生产合同（示例实证 ≠ 生产合同，L1 §10）。
+9. 写全局 CSS / `strict: false` / `getStaticProps` / 手写 `<Head>` 等违反 App Router 生产基线的形态（L1 §10）。
 10. 写作结果输出审核矩阵或二元放行结论（送审交 `h5-design-detail-review`）。

@@ -1,6 +1,6 @@
 ---
 name: go-design-overview-writing
-description: 用于撰写 Go monorepo 后端（safa-land 形态：net/http ServeMux + 严格分层 transport→service→repository→domain + 原生 SQL）概要设计文档。按"判轨与设计包骨架、技术栈与约束确认（project-conventions C1~C5）、行为枚举（BHV 编号，按协议端点/编排步骤/数据访问/失败收口四类）、owner 归属判定（三问 + 分层依赖律自检，落 transport/service/repository/domain 四层）、架构总览人审视图（一句话架构/分层架构图/系统边界图/核心 UC 表/UC 承接表/时序图策略表）、technology_decision_handoff 技术决策承接清单（含 credential strategy）、详细设计承接索引（doc_type 七分类 entry-api/biz/repository-data/domain/config/external/runtime，逐章落 chapters/<slug>.md）、架构就绪自检 G1~G8"的顺序推进；把概要写到"详细设计可直接展开而不需要重新决定边界"，但不进入可编码合同层（方法签名/sentinel error 全集/SQL/DDL/env 取值/SDK 参数/secret value 禁写）。规则唯一来源是 .trellis/spec/harness/overview/ 的 L1 SSOT 与 .trellis/spec/guides/golden-path.md；本 skill 只编排写作动作，不复写规范正文。
+description: 用于撰写 Go monorepo 后端（典型形态：net/http ServeMux + 严格分层 transport→service→repository→domain + 原生 SQL）概要设计文档。按"判轨与设计包骨架、技术栈与约束确认（project-conventions C1~C5）、行为枚举（BHV 编号，按协议端点/编排步骤/数据访问/失败收口四类）、owner 归属判定（三问 + 分层依赖律自检，落 transport/service/repository/domain 四层）、架构总览人审视图（一句话架构/分层架构图/系统边界图/核心 UC 表/UC 承接表/时序图策略表）、technology_decision_handoff 技术决策承接清单（含 credential strategy）、详细设计承接索引（doc_type 七分类 entry-api/biz/repository-data/domain/config/external/runtime，逐章落 chapters/<slug>.md）、架构就绪自检 G1~G8"的顺序推进；把概要写到"详细设计可直接展开而不需要重新决定边界"，但不进入可编码合同层（方法签名/sentinel error 全集/SQL/DDL/env 取值/SDK 参数/secret value 禁写）。规则唯一来源是 .trellis/spec/harness/overview/ 的 L1 SSOT 与 .trellis/spec/guides/golden-path.md；本 skill 只编排写作动作，不复写规范正文。
 ---
 
 # Go 后端概要设计撰写
@@ -94,7 +94,7 @@ description: 用于撰写 Go monorepo 后端（safa-land 形态：net/http Serve
 | `biz` | `service` — `internal/service` 业务编排、入参校验、sentinel error 定义与 `%w` 包装、状态终态推进、跨 repository/下层 service 协调 | `service/user_service.go`、`service/errors.go` | **已出 L2** |
 | `repository-data` | `repository` — `internal/repository` 数据访问合同、原生 SQL（`lib/pq`）、行映射、`ErrNotFound` 转换、DDL/迁移 | `repository/user_repository.go`、`db/migrations/NNNN_*.up.sql` | **已出 L2** |
 | `domain` | `domain` — `internal/domain` 业务实体、值对象、参数结构体（`CreateUserParams` 等）、序列化 tag、跨服务契约（`packages/contracts/`） | `domain/user.go`、`packages/contracts/*.go` | pending（L1 八问 + `L2豁免`） |
-| `config` | 横切 — `internal/config` 环境变量装载、默认值、env 前缀（`CONTROL_API_*`）、必填校验 fail-fast | `config/config.go` | pending（L1 八问 + `L2豁免`） |
+| `config` | 横切 — `internal/config` 环境变量装载、默认值、env 前缀（按服务区分，如 `<SVC>_*`）、必填校验 fail-fast | `config/config.go` | pending（L1 八问 + `L2豁免`） |
 | `external` | 横切 — 外部既有边界：三方 API / 对象存储 / 云服务 / DB 驱动 / 会话鉴权算法（HMAC-SHA256、bcrypt）封装的出站合同 | `external/*.go`、`auth/session_manager.go` | pending（L1 八问 + `L2豁免`） |
 | `runtime` | 横切 — `internal/app` 装配（`New`/`Run`/`Shutdown`）、DI 接线、连接池参数、信号处理、`cmd/<svc>/main.go` 启动序列 | `app/app.go`、`cmd/<svc>/main.go` | pending（L1 八问 + `L2豁免`） |
 

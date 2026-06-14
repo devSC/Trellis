@@ -69,7 +69,7 @@ D1/D2 发现的每个违例对照 SLOT-16 清单——
 > 构建系统二选一按目标仓库实际形态：CocoaPods 工作区（`xcodebuild`，SwiftLint 经 Pods 集成）或纯 SPM 包（`swift build`/`swift test`）。trace 记录实际所用那套。
 
 - **trace 四节齐全且非空（GI-1）**：计划节有 `UNIT-<slug>` 承接 + doc_type/文件范围 + 完成信号 + 验证方式；执行节有改动文件清单 + 偏差原因 + DI 装配登记；证据节有命令级记录；阻塞节如无则显式写「无」。缺任一节或留 TODO 占位 = 实现 Gate 不放行（P1）。
-- **编译证据**：`xcodebuild build -workspace StoryVerse.xcworkspace -scheme StoryVerse -destination 'platform=macOS'`（或 SPM 包 `swift build`）贴命令 + 结果（`BUILD SUCCEEDED`/退出态）；只写「编译通过」无命令 = 证据不可信（P2 起步）。引入的编译失败未收口 = P1。
+- **编译证据**：`xcodebuild build -workspace <App>.xcworkspace -scheme <App> -destination 'platform=macOS'`（或 SPM 包 `swift build`）贴命令 + 结果（`BUILD SUCCEEDED`/退出态）；只写「编译通过」无命令 = 证据不可信（P2 起步）。引入的编译失败未收口 = P1。
 - **静态检查证据**：SwiftLint（`Pods/SwiftLint/swiftlint lint --strict` 或 `swiftlint`，按 `[SLOT-lint]`）逐条通过/失败 + 新增文件零新增违例；存量违例按 D3 记债。只写「lint 通过」无命令/无 violations 计数 = P2 起步。
 - **测试证据（GI-3）**：测试名级别结果（XCTest 如 `test_createStory_校验失败_抛StoryManagementError.validationFailed`；Quick/Nimble 到 example 名级），**不只写「全部通过」**；覆盖承接 UNIT/BHV 的成功路径 + **全部失败路径**；新增测试清单（`XCTestCase` 子类名 + `test*` 方法名）可追溯到 `UNIT-<slug>`/`BHV-NNN`。按 doc_type↔测试分层映射核对——
   - `domain-model`：unit（不变量/`enum Error` 等值/值对象构造，纯逻辑无 mock）。
@@ -130,7 +130,7 @@ PR diff 与计划逐项可对；所有计划外改动均有原因记录（如「
 
 ## 好例 / 坏例（审核判读对照）
 
-- ✅ **合格切片（放行）**：`切片 S2 | 承接 UNIT-story-repository | doc_type=repository | Domain/Repositories/IStoryRepository.swift + Infrastructure/Persistence/Repositories/StoryRepository.swift + Infrastructure/Persistence/Models/StoryObject.swift + Container+UseCases.swift`；证据节贴 `xcodebuild build ... → BUILD SUCCEEDED`、`swiftlint --strict → 0 violations（新增 3 文件）`、`xcodebuild test ... -only-testing:StoryVerseTests/StoryRepositoryTests` 含 `test_save_找不到ID_映射PersistenceError.notFound` 等测试名，新增测试映射到 `UNIT-story-repository` 覆盖 `BHV-012` 成功 + 失败路径，DI 装配登记 `Container+UseCases.swift:42 var storyRepository: Factory<any IStoryRepository>`，未验证项（真实 WCDBSwift 唯一约束触发）显式留 Manual QA。审核判：可进入 PR。
+- ✅ **合格切片（放行）**：`切片 S2 | 承接 UNIT-story-repository | doc_type=repository | Domain/Repositories/IStoryRepository.swift + Infrastructure/Persistence/Repositories/StoryRepository.swift + Infrastructure/Persistence/Models/StoryObject.swift + Container+UseCases.swift`；证据节贴 `xcodebuild build ... → BUILD SUCCEEDED`、`swiftlint --strict → 0 violations（新增 3 文件）`、`xcodebuild test ... -only-testing:<App>Tests/StoryRepositoryTests` 含 `test_save_找不到ID_映射PersistenceError.notFound` 等测试名，新增测试映射到 `UNIT-story-repository` 覆盖 `BHV-012` 成功 + 失败路径，DI 装配登记 `Container+UseCases.swift var storyRepository: Factory<any IStoryRepository>`（见对应文件），未验证项（真实 WCDBSwift 唯一约束触发）显式留 Manual QA。审核判：可进入 PR。
 - ❌ **坏例（不可进入）**：`HomeViewModel` 里 `let repo = StoryRepository(databaseManager: ...)` 手动 `new` 并 `import WCDBSwift`（D2 §2.3 手动初始化 + §2.1 viewmodel 直连持久化，P1）；`StoryRepository` 把 WCDBSwift 原始 `Error` 直接 `throw` 到 ViewModel（D2 §2.5 裸抛，P1）；trace 证据节只写「全部编译通过，测试通过」无命令无测试名（D4，P2）；新引入 CoreData 替代 WCDBSwift（D2/D5 红线，P1）；`HomeView` 里 `NavigationLink(destination: SettingView())` 跨 feature 硬跳绕过 `AppCoordinator`（D2 §2.1，P1）。
 - ❌ **坏例（八问断链）**：切片挂 `UNIT-home-cache` 但详细设计无此单元（幽灵单元 `slice_ghost_unit`，P1）；或 `BHV-012` 在概要有 owner 但无任何 `UNIT-<slug>` 承接（断链 `bhv_no_unit`，P1）。
 - ❌ **坏例（doc_type 自创）**：trace 把切片 doc_type 写成 `service`/`db-dao`/`transport-handler`（非 iOS 七类，归属红线，P1，应回退用 `usecase`/`repository`/`external`）。

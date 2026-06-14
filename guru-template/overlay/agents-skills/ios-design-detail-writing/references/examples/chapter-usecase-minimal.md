@@ -1,15 +1,15 @@
 # 示例：chapters/manage-ai-models-usecase.md（缩减成稿样例 · usecase 类）
 
-> **成稿形态示例**（取材自参考项目 story-verse-mac 真实模块 `ManageAIModelsUseCase` 的缩减改编），演示 `usecase` 类章节的
+> **成稿形态示例**（虚构模块 `ManageAIModelsUseCase` 的缩减演示），演示 `usecase` 类章节的
 > 完整形态与粒度；**不是规则来源**。完整模板与逐节要求见 `../chapter-guide.md` §2，类型差异见 `detail-type-usecase.md`（L2），
 > 完成条件见 `.trellis/spec/harness/detail/detail-structure-single-source.md`（L1）。
-> 取证均为参考项目中确实存在的文件/类型（写作前先读证实）：
+> 取证锚点为通用相对路径骨架与示例命名（落地时替换为目标仓库真实文件 / 类型，写作前先读证实）：
 >
-> - 接口 `IManageAIModelsUseCase` + `AIModelDownloadStatus`：`StoryVerse/StoryVerse/App/UseCases/ManageAIModels/IManageAIModelsUseCase.swift`
-> - 实现 `ManageAIModelsUseCase`（构造注入 / `mapDownloaderErrorToUseCaseError` / `observeModelDownloadStatus` / `private actor StateManager`）：`StoryVerse/StoryVerse/App/UseCases/ManageAIModels/ManageAIModelsUseCase.swift`
-> - 错误 `enum ManageAIModelsError: Error, Equatable`：`StoryVerse/StoryVerse/App/UseCases/ManageAIModels/ManageAIModelsError.swift`
-> - DI 装配 `Container.manageAIModelsUseCase`（`.singleton`）：`StoryVerse/StoryVerse/App/DependencyInjection/Container+UseCases.swift`
-> - 测试 `ManageAIModelsUseCaseTests`（真实 repository + `MockAIModelDownloaderService` 注入、成功/失败成对、流时序）：`StoryVerse/StoryVerseTests/UseCases/ManageAIModels/ManageAIModelsUseCaseTests.swift`
+> - 接口 `IManageAIModelsUseCase` + `AIModelDownloadStatus`：`App/UseCases/ManageAIModels/IManageAIModelsUseCase.swift`
+> - 实现 `ManageAIModelsUseCase`（构造注入 / `mapDownloaderErrorToUseCaseError` / `observeModelDownloadStatus` / `private actor StateManager`）：`App/UseCases/ManageAIModels/ManageAIModelsUseCase.swift`
+> - 错误 `enum ManageAIModelsError: Error, Equatable`：`App/UseCases/ManageAIModels/ManageAIModelsError.swift`
+> - DI 装配 `Container.manageAIModelsUseCase`（`.singleton`）：`App/DependencyInjection/Container+UseCases.swift`
+> - 测试 `ManageAIModelsUseCaseTests`（真实 repository + `MockAIModelDownloaderService` 注入、成功/失败成对、流时序）：`<AppTests>/UseCases/ManageAIModels/ManageAIModelsUseCaseTests.swift`
 >
 > 本例 BHV-30x 为示例编号（演示承接形态），实际写作时一律引用 prd 中真实存在的 `BHV-NNN` 裸 token，幽灵引用被 gate 断链拦截。
 

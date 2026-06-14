@@ -51,7 +51,7 @@
 命中 `domain`/`config`/`external`/`runtime` 时：头部须 `l2_status: pending`；full 链 design-main 须有对应 `L2豁免：<doc_type> 理由：…`（无豁免 → P1）。各类附加取证：
 
 - `domain`：实体/值对象/参数结构体（`<Entity>` / `<Entity>Params`）+ JSON tag；sentinel errors（`var ErrXxx = errors.New("...")`）唯一定义；纯函数业务规则、构造校验；八问 8 必含「无 I/O、无副作用、不导入任何 internal 兄弟包」。出现 `Validate()` 在 domain（应属 service）、`Scan()`（应属 repository）、import 兄弟包、ORM tag（未切 SLOT-02 前）→ P1。
-- `config`：配置键 + env 变量名（前缀按服务区分 SLOT-08，如 `CONTROL_API_*`）+ 默认值 + `config.Load()` 装载 + 校验/启动失败行为 + 消费方引用；secret 只写 env 变量名/引用（不落明文）；业务规则默认值仍归 biz/domain。出现明文 secret、`.env` 当线上合同、配置反向依赖业务包 → P1。
+- `config`：配置键 + env 变量名（前缀按服务区分 SLOT-08，如 `<SVC>_*`）+ 默认值 + `config.Load()` 装载 + 校验/启动失败行为 + 消费方引用；secret 只写 env 变量名/引用（不落明文）；业务规则默认值仍归 biz/domain。出现明文 secret、`.env` 当线上合同、配置反向依赖业务包 → P1。
 - `external`：本系统出站调用外部系统的协议 / 请求·响应·错误 / 鉴权边界 / SLA·限流 / 超时重试 / adapter 消费边界；凭证只写 `api_key_env_name`/`credential_ref`/默认凭证链；跨服务契约落 `packages/contracts/`（零行为零业务依赖）。把本系统自有能力伪装成外部依赖、把对外暴露入口（Webhook/回调）误归 external（应归 entry-api 的 http_endpoint 子类）、真实 key → P1。
 - `runtime`：进程/服务拓扑 + `main()→app.New()→app.Run()→app.Shutdown()` 生命周期 + 信号处理（SIGINT/SIGTERM）+ context 超时来自 config + 健康检查 + 启动顺序 + 发布/回滚边界。缺生命周期四步、`*http.Server` 无 timeout、Shutdown 漏关 db、把 `http.ErrServerClosed` 当致命错误、写部署脚本/Dockerfile/CI/Runbook 正文 → P1（最后一项属 L1 §10 不适用场景越界）。
 

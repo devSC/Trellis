@@ -6,7 +6,7 @@ description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript str
 # H5 实现执行（Next.js / React / TypeScript）
 
 > 层级契约：规则正文与完成条件住 `.trellis/spec/guides/golden-path.md`（编码红线唯一来源）与 `.trellis/spec/harness/implementation/implementation-trace-contract.md`（过程合同）；doc_type 七类取值与分层依赖律住 `.trellis/spec/harness/index.md` 与 detail L2（render/interactive/data 三元组）。本 SKILL.md 只承载装载顺序、边界约束、WX 编排、Gate 自检与输出要求。冲突时以阶段子 SSOT 为准，本文件为辅；规则疑义回 SSOT 并引章节号，不在本文件就地裁决。
-> 平台形态：Next.js（App Router 生产形态为目标）+ React + TypeScript(strict)。`app/` 承载 route 段（`page/layout/loading/error.tsx` + `metadata`），数据访问与 Server Actions 在服务端模块，`'use client'` 仅出现在需要交互的组件。**证据基线说明**：参考示例 `/Users/devSC/Documents/MyProject/next.js/examples/blog` 是 Pages Router + Nextra + MDX + gray-matter 的轻量 blog starter（`package.json` 用 `nextra`/`nextra-theme-blog`，`pages/` 为 Pages Router，`pages/posts/*.md(x)` 为内容源，`scripts/gen-rss.js` 用 `gray-matter` 解析 frontmatter，`tsconfig.json` 里 `strict: false`、`target: es5`），**故意简化**；本平台 golden-path 以 App Router 生产最佳实践为准，把该示例仅作为「内容模型基线」消费。凡示例与生产红线冲突（Pages vs App、`strict:false` vs `strict:true`），一律以生产红线为准并在 trace 中标注「示例实证 vs 生产级补充」。
+> 平台生产基线：Next.js App Router + React + TypeScript(strict)。`app/` 承载 route 段（`page/layout/loading/error.tsx` + `metadata`），数据访问与 Server Actions 在服务端模块，`'use client'` 仅出现在需要交互的组件。编码一律以 App Router 生产 golden-path 为准：server-first / RSC 数据获取经 data-access 封装 / server-action 变更 / route 段约定 / metadata-SEO / 样式隔离 / `strict: true`。仓库内若残留旧形态（Pages Router、`strict: false`、构建期裸读文件取数）一律按生产红线修正或挂存量违例记债，不沿用。
 
 ## doc_type 权威七类（全程唯一，禁止改名/增减/换数）
 
@@ -38,7 +38,7 @@ description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript str
 2. 读 `.trellis/spec/harness/implementation/implementation-trace-contract.md`（过程合同 §0~§7）与 `.trellis/spec/harness/index.md` 的实现 Gate 定义、doc_type 七类、编号纪律（行为 `BHV-NNN`、设计单元 `UNIT-<slug>`，下游引用裸 token，不带前缀解释）。
 3. 读 `.trellis/spec/conventions/project-conventions.md` 并校验项目约定槽位均已选定且未留空：内容源（MDX/CMS）、状态管理（none/Zustand/Context）、UI 组件库（shadcn/MUI）、样式方案（Tailwind/CSS Modules）、测试（Vitest+RTL/Playwright）、lint（ESLint+Prettier）、数据库、认证（NextAuth）、图像优化（`next/image`）、部署（Vercel）、路由模式（App vs Pages）。任一未填 → 停止先定槽位，不在实现里私自拍板（尤其「路由模式」必须显式确认为 App Router 才走生产链，留空或为 Pages 须升级人工 Gate）。
 4. 定位本任务承接的、已过详细 Gate 且人工确认已落盘的详细设计单元（full=L2 章节 `detail-type-*.md` 对应的设计章节；light=`design.md` §详细），建立 `UNIT-<slug>` 单元清单 + 合同八问 + 测试映射；缺失或单元为幽灵引用（无对应详细文档）→ 终止并提示回退设计阶段（探索性 spike 除外，须显式声明、隔离、不并入交付）。
-5. 建立构建基线：`package.json`（确认 scripts：`dev`/`build`/`start` 等）与 `tsconfig.json`（确认 `strict: true`；若示例残留 `strict:false` 须以 golden-path 为准修正或升级人工 Gate）可读，记录改动前 `tsc --noEmit` 与 `next build`（或 `next lint`）的基线状态（用于区分「我引入的失败」与「既有失败」）；不可建立基线 → 记录环境阻塞，不得把未验证当通过。
+5. 建立构建基线：`package.json`（确认 scripts：`dev`/`build`/`start` 等）与 `tsconfig.json`（确认 `strict: true`；若残留 `strict:false` 须以 golden-path 为准修正或升级人工 Gate）可读，记录改动前 `tsc --noEmit` 与 `next build`（或 `next lint`）的基线状态（用于区分「我引入的失败」与「既有失败」）；不可建立基线 → 记录环境阻塞，不得把未验证当通过。
 
 ## 边界约束
 
@@ -56,7 +56,7 @@ description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript str
 1. **WX-0 判定实现模式与构建基线**：判定空项目初始化 / 已有项目增量 / 重构校准；确定本任务落在哪个 route 段与模块目录，复用还是新建 `server-component`/`client-component`/`data-access`/`ui-component`/`domain-type`/`server-action` 资产，是否触碰共享面（`layout.tsx`、`globals.css`、`metadata` 基线、`next.config`）。记录改动前 `tsc --noEmit` + `next lint`（或 `eslint`）基线退出态。
 2. **WX-1 计划（开工前写）**：按 trace 合同 §1 在目标仓库 `implement.md`（建议 `docs/design/<feature>/implementation-trace.md`）产出任务切片。每片含：承接的 `UNIT-<slug>`（幽灵引用被 Gate 拦截）+ 所属 doc_type + 文件范围 + 完成信号 + 验证方式。执行顺序**自底向上**（钉死）：`domain-type`（TS 类型/zod schema）→ `data-access`（fetch/内容源/查询封装）→ `server-action`（变更/handler）→ `server-component`（渲染编排）→ `client-component`（交互）→ `ui-component`（展示复用）→ `route`（段装配 + metadata）。逐条预判高风险点（server/client 边界划分、私有 secret 是否会越界进客户端 bundle、`fetch` 缓存与 `revalidate` 语义、`error.tsx`/`loading.tsx` 边界、`generateMetadata` 与动态参数、hydration 不匹配）。人工确认从最小可独立通过 `tsc` 的切片开始。
 3. **WX-2 逐片实现（随做随记）**：每片对照承接 `UNIT-<slug>` 的合同八问落地——②输入/输出/错误（组件 props 类型、`server-action` 入参与返回、`data-access` 函数签名、zod schema 校验失败分支）；④调用关系单向（`server-component` 调 `data-access` 不反向、`client-component` 只组合 `ui-component`、`server-action` 走 `data-access`）；⑤失败收口（`error.tsx` 错误边界、`data-access` 失败抛错或返回判别联合、`server-action` 校验失败的结构化返回）；⑥后置副作用（`server-action` 后 `revalidatePath`/`revalidateTag`、`redirect`）。每片完成**立即**更新 trace §2（实际改动文件清单标 doc_type、与计划偏差及原因、触碰 `layout.tsx`/`globals.css`/`metadata` 基线/共享 `ui-component` 的共享面单独标注），不积压到批末。
-4. **WX-3 代码生成 / 内容流水线（仅触发条件满足时）**：按 project-conventions 选型执行并记入 trace §2——内容源为 MDX → 记 MDX 编译/`gray-matter` frontmatter 解析约定（示例 `scripts/gen-rss.js` 用 `gray-matter` 提取 `title/date/description/tag/author`，生产侧若保留 RSS/sitemap 生成须把命令与产物记清）；启用 ORM 代码生成（如 Prisma `prisma generate`）→ 记命令与产物；zod schema 推导类型 → 记 `z.infer` 落点。**当前 golden-path 默认无强制代码生成槽位 → 本项写「N/A：无代码生成槽位启用」，不留空、不私自引入生成器。**
+4. **WX-3 代码生成 / 内容流水线（仅触发条件满足时）**：按 project-conventions 选型执行并记入 trace §2——内容源为 MDX → 记 MDX 编译/frontmatter 解析约定（如提取 `title/date/description/tag/author`；若保留 RSS/sitemap 生成须把命令与产物记清）；启用 ORM 代码生成（如 Prisma `prisma generate`）→ 记命令与产物；zod schema 推导类型 → 记 `z.infer` 落点。**当前 golden-path 默认无强制代码生成槽位 → 本项写「N/A：无代码生成槽位启用」，不留空、不私自引入生成器。**
 5. **WX-4 逐片验证（验证后记）**：按 trace 合同 §3 记入 trace §3——类型检查 `tsc --noEmit`（贴命令 + 退出态，失败写错误摘要 + 处置；strict 下不得用 `any`/`@ts-ignore` 掩盖）；构建/lint `next build` 或 `next lint`（或 `eslint .`，逐条通过/失败，eslint-disable 豁免写理由并指向存量违例清单）；测试到**测试名级别**（Vitest+RTL：`vitest run src/components/PostCard.test.tsx -t "renders title"` 给出用例名；Playwright：`playwright test post-detail.spec.ts --grep "loads post"`），新增测试逐条列文件 + 用例名 + 承接 `BHV-NNN`/`UNIT-<slug>`；依赖变更跑包管理器安装记 diff（新增库须落在已批准槽位内，禁被锁红线绕开，如擅自引入状态库/UI 库）。失败先修复再进下一片；未验证项显式列出并指明留给哪个环节（真实数据源/CMS 联调 → 集成环境；SEO/metadata 实际抓取 → 部署后 Lighthouse/抓取验证；hydration/交互真机表现 → Manual QA / 真机；缓存与 `revalidate` 生产行为 → 灰度/预发）。
 6. **WX-5 存量违例处置**：触碰存量违例清单条目时按标准包口径分类记录到 trace §4（绕行须写「为何不修」；顺手修复须独立标注；记债须给清单编号）。H5 常见存量违例：整页 `'use client'` 历史残留、`client-component` 直取私有 `fetch`、全局 `*.css` 组件样式污染、`metadata` 缺失/手写裸 `<head>`、缺 `error.tsx`/`loading.tsx`、`tsconfig` 残留 `strict:false` 或散落 `any`。
 7. **WX-6 收口自检**：对照实现 Gate G1~G6（见下「质量门禁」）输出自检摘要；上游缺陷已回退修订而非就地改设计；未验证项显式移交（集成环境 / Lighthouse / Manual QA / 真机 / 灰度）。
@@ -88,7 +88,7 @@ description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript str
 
 ```
 切片 S2 | 承接 UNIT-post-data-access (doc_type: data-access)
-  范围：lib/posts.ts —— getPostBySlug(slug) 用 gray-matter 解析 MDX frontmatter（title/date/description/tag/author），
+  范围：lib/posts.ts —— getPostBySlug(slug) 读取并解析 MDX frontmatter（title/date/description/tag/author），
         失败返回判别联合 { ok:false; reason:'not-found' }；类型来自 UNIT-post-type(domain-type)
   完成信号：tsc --noEmit 退出 0；私有读取仅在服务端模块；无被 client-component import
   证据：
@@ -98,7 +98,7 @@ description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript str
         ✓ getPostBySlug > returns post when slug exists
         ✓ getPostBySlug > returns not-found when missing
       新增测试：lib/posts.test.ts（承接 UNIT-post-data-access / BHV-014 成功+失败路径）
-    - 未验证：真实 CMS 源联调 → 留给集成环境；RSS/sitemap 生成（参考示例 gen-rss.js）本切片不涉
+    - 未验证：真实 CMS 源联调 → 留给集成环境；RSS/sitemap 生成本切片不涉
 ```
 
 ❌ **不合格**：「实现文章详情页，改 page 和组件，写完跑一下」——无 `UNIT` 编号、无 doc_type、无文件范围、无完成信号、跨多层无法独立 review；证据「全部编译通过，测试通过，lint 无问题」——无命令、无退出态、无测试名、无新增测试映射、未声明未验证项。

@@ -19,9 +19,9 @@ L1 §6 钉死的完成条件为 **G1~G9**（G1~G5 两轨共用；G6~G9 仅 full 
 | G6 | 架构总览六件套 | §2.5 ①~⑥ 齐全，图中组件与归属表一致、依赖箭头合 §4.0 |
 | G7 | 时序图策略闭合 | 非豁免 UC 有可定位 sequenceDiagram；合并图列覆盖清单；豁免有理由；无占位残留 |
 | G8 | 技术决策承接字段完整 | `technology_decision_handoff[]` 逐条字段齐（§2.6）；渲染策略/缓存已成决策项；无「未选定但已被下游引用」 |
-| G9 | golden-path 硬规则 + 标签 | §8 锁定项自检通过；`[示例实证]`/`[生产级补充]` 标签使用正确 |
+| G9 | golden-path 硬规则 | §8 锁定项自检通过（生产基线 strict:true/App Router/server-first/私有数据边界等均落实） |
 
-> 注：SKILL.md 正文个别处写「G1~G8」，以 L1 §6 的 **G1~G9** 为准（G9 = golden-path 硬规则自检 + 标签纪律）。
+> 注：SKILL.md 正文个别处写「G1~G8」，以 L1 §6 的 **G1~G9** 为准（G9 = golden-path 硬规则自检）。
 
 ## 1. 取证准备
 
@@ -83,26 +83,25 @@ L1 §6 钉死的完成条件为 **G1~G9**（G1~G5 两轨共用；G6~G9 仅 full 
 
 ## 5. H5 硬规则专项取证（L1 §8 锁定项 / G9，全部 P1 起步）
 
-逐项核查 owner 与技术决策是否违反 L1 §8 锁定项；同时核对 `[示例实证]`/`[生产级补充]` 标签纪律（L1 §0.2）：
+逐项核查 owner 与技术决策是否违反 L1 §8 锁定项：
 
 | 锁定项（L1 §8） | 取证操作 | 判级 |
 |----------------|---------|------|
-| TS strict | 第 1 章技术栈约束声明 `strict: true`；若引用 blog 示例 `tsconfig.json`（实证 `strict:false`/`target:es5`）须标 `[示例实证]` 且不作生产基线 | 概要把 `strict:false` 当生产基线 P1（G9）；把 `strict:true` 写成「示例已实证」P2（G9 标签误用） |
+| TS strict | 第 1 章技术栈约束声明 `strict: true` | 概要把 `strict:false` 当生产基线 P1（G9） |
 | server-first / `'use client'` 最小化 | `rg -n "'use client'"`；归类为 client-component 的单元须有真实交互理由（状态/事件/浏览器 API/hooks） | 纯展示/可服务端渲染单元误标 client-component P2（污染主链或导致私有数据下放升 P1，G2/G9）；server-component 内出现浏览器运行时逻辑 P1（G2/G9） |
 | 私有数据 / secret 隔离 | 私有数据获取/内容源访问/secret 读取只能归 server-component / data-access / server-action | client-component 直取私有数据 / 持 secret / 直连 DB 或 CMS 私有端点 P1（G3/G2）；真实 `api_key`/`access_key`/`token`/NextAuth secret 落正文/示例/fixture P1（G3） |
 | route 段约定 | route owner 承接 `page/layout/loading/error.tsx` 存在性与职责 | 缺段约定承接 P2（核心入口升 P1，G6）；缺 `error.tsx` 错误边界归属 P2（G6） |
 | metadata / SEO | 核心可索引页 `generateMetadata`/静态 `metadata` 归属到 route owner | 缺 metadata/SEO 承接 P2（影响核心入口可达性升 P1，G6） |
 | 样式隔离 | 样式方案按 project-conventions 锁定（Tailwind / CSS Modules）；归属表/技术决策出现全局样式污染或方案不一致 | 全局裸 CSS 覆盖 / 跨组件样式泄漏 / 方案与约定不一致 P2（G9） |
 | 错误边界 | 渲染失败路径落 `error.tsx`；数据缺失走 `notFound()` | 失败路径无承接 owner P2（影响主链升 P1，G6） |
-| 内容源 | MDX/CMS 经 data-access 封装；引用 blog 示例 Nextra MDX + `gray-matter` 直读须标 `[示例实证]` | 把示例 MDX 直读当 App Router 生产取数合同 P2（绕开 data-access 封装边界升 P1，G2） |
+| 内容源 | MDX/CMS 经 data-access 封装 | 内容源直读绕开 data-access 封装边界 P2（影响私有数据边界升 P1，G2） |
 | 图像优化 | 生产用 `next/image` | 缺承接 P3（非阻断，影响主链升 P2，G9） |
 
-### 5.1 「示例实证 vs 生产级补充」标签核查（L1 §0.2 / §10，G9）
+### 5.1 App Router 生产基线核查（L1 §10，G9）
 
-- 凡概要引用 blog 示例（Pages Router / `getStaticProps` / Nextra / `gray-matter` / `gen-rss.js` / `_app.tsx` 手写 `<Head>`）作依据，必须挂 `[示例实证]` 并给文件锚点（如 `examples/blog/scripts/gen-rss.js`）。
-- 凡 App Router 生产形态结论（`strict: true` / Server Components / `app/` 段约定 / `metadata` API / data-access 封装 / `server-action` 变更）必须挂 `[生产级补充]`，且不得伪装成示例实证。
-- 用示例 Pages Router 结构当 App Router route 段约定的替代、或用示例无 server-first 边界当作豁免 client/server 分层的理由 → P2 起步（导致分层律或私有数据边界被绕开升 P1，G9/G2）。
-- 把 `[生产级补充]` 系统性写成 `[示例实证]` → P2 起步（系统性误标按 L1 §9 文档级重构）。
+- 概要归属与技术决策一律按 App Router 生产口径核查：`strict: true` / Server Components / `app/` 段约定 / `metadata` API / data-access 封装 / `server-action` 变更均为生产锁定项。
+- 出现 Pages Router 结构当 route 段约定的替代、用「无 server-first 边界」豁免 client/server 分层、`getStaticProps`/手写 `<Head>`/全局 CSS 等旧形态 → P2 起步（导致分层律或私有数据边界被绕开升 P1，G9/G2）。
+- 系统性写入旧形态弱化生产硬规则 → 按 L1 §9 文档级重构。
 
 ## 6. 行为粒度判定细则（L1 §3.1，G1）
 
@@ -138,7 +137,7 @@ L1 §5 禁写项扫描——出现即概要越界，P2 起步并给最小回收�
 ## 10. 严重度判级规则（L1 §6）
 
 - **P1（阻断，不可进入详细设计）**：违反 §4.0 分层依赖律；client-component / 浏览器直取私有数据或持 secret；外部直连 data-access/server-action 越过 route；G1~G9 任一 Gate 项缺失；非豁免 UC 时序图缺失或时序图占位残留；缺 `compliance_basis`；真实 secret value / `.env` 误用；粗粒度核心行为；doc_type 用错类型名（flutter/Go/自造）；pending 四类缺 `l2_status` 标注或缺八问展开计划；双向断链（行为↔UC、owner↔索引）；双主定义（README/design.md 与 design-main 两套正文）；高风险未决未关闭；写生产基线为示例简化值（如把 `strict:false` 当生产基线）。
-- **P2（应修，可带明确假设进入）**：`'use client'` 误用未污染主链；命名反模式；三问空洞；metadata/SEO 缺失（非核心入口）；样式污染；轻度越界（给回收方案）；共享能力误归类；执行边标注缺失；图文局部不一致；`technology_decision_handoff[]` 字段不全且未被下游引用；`[示例实证]`/`[生产级补充]` 标签误用（非系统性）。
+- **P2（应修，可带明确假设进入）**：`'use client'` 误用未污染主链；命名反模式；三问空洞；metadata/SEO 缺失（非核心入口）；样式污染；轻度越界（给回收方案）；共享能力误归类；执行边标注缺失；图文局部不一致；`technology_decision_handoff[]` 字段不全且未被下游引用；旧形态未按生产基线纠正（非系统性）。
 - **P3（建议）**：表述与术语一致性；格式偏离模板但语义完整；图像优化等非主链承接缺失。
 - 判级冲突时取高；同一根因多处表现合并为一条 finding（列全部位置）；影响主链的 P2 升 P1。
 
@@ -152,14 +151,12 @@ L1 §5 禁写项扫描——出现即概要越界，P2 起步并给最小回收�
 ## 12. 修订形态判定（L1 §9）
 
 - **局部修订**：补一条行为、补归属三问、补一条索引、补一张图、补 `l2_status`、改措辞、修标签、补执行边标注 → 在原文档上改。
-- **文档级重构**：归属模型错误（owner 大面积错位/违反 §4.0）、行为枚举从名词倒推、索引与归属表系统性脱节、架构总览与正文两套口径、把 `[生产级补充]` 系统性当 `[示例实证]` → 重做对应章节，禁止用局部补丁掩盖错误模型。
+- **文档级重构**：归属模型错误（owner 大面积错位/违反 §4.0）、行为枚举从名词倒推、索引与归属表系统性脱节、架构总览与正文两套口径、系统性写入旧形态弱化生产基线 → 重做对应章节，禁止用局部补丁掩盖错误模型。
 - 发现上游需求缺陷（行为缺失/矛盾/范围漂移）→ 结论标注「回退需求阶段」，禁止在概要补造业务规则。
 
-## 13. 最小成稿示例（取证锚点演示，对照参考项目）
+## 13. 最小成稿示例（取证锚点演示）
 
-> 用途：演示一个**真实功能单元**的概要骨架长什么样、审核取证时锚点应落在哪里。功能取自参考项目 `/Users/devSC/Documents/MyProject/next.js/examples/blog` 真实存在的「按标签筛选文章列表」单元（`pages/tags/[tag].mdx` 用 `useRouter().query` 在客户端按 `tag` 过滤；内容源 frontmatter 模型见 `pages/posts/pages.md` 的 `title/date/description/tag/author`；列表数据读取逻辑实证于 `scripts/gen-rss.js` 的 `fs.readdir(pages/posts)` + `gray-matter`）。
->
-> **示例性质声明**：blog 示例本体是 Pages Router 简化形态（`tsconfig.json` 实证 `strict:false`/`target:es5`，`_app.tsx` 手写 `<Head>` 注入 RSS link）。下方骨架把同一**内容模型**（按 tag 筛选文章）重投影为 **App Router 生产形态**，凡示例可直接验证处标 `[示例实证]` 并给文件锚点，凡生产补充处标 `[生产级补充]`。本示例只示形态与取证锚点，不是审核对象本身。
+> 用途：演示一个**真实功能单元**的概要骨架长什么样、审核取证时锚点应落在哪里。功能取一个通用的「按标签筛选文章列表」单元（内容源 frontmatter 模型 `title/date/description/tag/author`，按 `tag` 过滤），以 **App Router 生产形态**展开。本示例只示形态与取证锚点，不是审核对象本身。
 
 ### 13.1 一句话架构（L1 §2.5①）
 
@@ -167,7 +164,7 @@ L1 §5 禁写项扫描——出现即概要越界，P2 起步并给最小回收�
 
 ### 13.2 行为集合骨架（L1 §3，节选 BHV 编号）
 
-- `BHV-001 按标签筛选并渲染文章列表`：Given route `app/tags/[tag]/page.tsx`、`params.tag` 已知 When SSR 首屏 Then [server] `PostListServer` 调 `getPostsByTag(tag)` 取 frontmatter 命中文章（内容源模型 `title/date/description/tag/author` `[示例实证]` `examples/blog/pages/posts/pages.md`），命中则渲染列表，零命中走 `notFound()`，生成 metadata。涉及状态：文章列表（服务端数据，无客户端状态）。执行边：server。
+- `BHV-001 按标签筛选并渲染文章列表`：Given route `app/tags/[tag]/page.tsx`、`params.tag` 已知 When SSR 首屏 Then [server] `PostListServer` 调 `getPostsByTag(tag)` 取 frontmatter 命中文章（内容源模型 `title/date/description/tag/author`），命中则渲染列表，零命中走 `notFound()`，生成 metadata。涉及状态：文章列表（服务端数据，无客户端状态）。执行边：server。
 - `BHV-002 客户端切换可见标签`：Given 列表已 SSR 渲染、当前 tag 已知 When 用户点击另一标签 chip Then [client] `TagFilterClient` 用 `useState` 切换路由 `/tags/<newTag>`（`useRouter().push`），不在客户端直取私有数据。涉及状态：当前选中 tag（client 态，写 owner = `TagFilterClient`）。执行边：client。
 - `BHV-003 标签下无文章的空态`：Given `params.tag` 无任何文章 When SSR 取数返回空 Then [server] `getPostsByTag` 返回空数组、`PostListServer` 调 `notFound()` 命中 `app/tags/[tag]/not-found.tsx` 边界。执行边：server。
 
@@ -176,10 +173,10 @@ L1 §5 禁写项扫描——出现即概要越界，P2 起步并给最小回收�
 | BHV | owner（UNIT-<slug>） | doc_type | 三问要点（节选） |
 |-----|----------------------|----------|------------------|
 | BHV-001 | `UNIT-post-list-server` | `server-component` | ①属于它：server-first 渲染 + 数据编排是 server-component 本质职责；②不属于别人：不属于 route（route 只装配段与 metadata，不做取数编排）、不属于 client-component（私有内容源访问不能下放客户端）；③需独立：被 `/tags/[tag]` 与 `/posts` 两处复用，值得独立 UNIT |
-| BHV-001 | `UNIT-posts-by-tag-source` | `data-access` | ①属于它：内容源（MDX/`gray-matter`）访问 + 缓存语义是 data-access 本质职责；②不属于别人：不属于 server-component（编排不拥有取数合同）、不属于 client-component（禁直取私有内容源）；③需独立：取数合同跨页复用 |
+| BHV-001 | `UNIT-posts-by-tag-source` | `data-access` | ①属于它：内容源（MDX 读取 + frontmatter 解析）访问 + 缓存语义是 data-access 本质职责；②不属于别人：不属于 server-component（编排不拥有取数合同）、不属于 client-component（禁直取私有内容源）；③需独立：取数合同跨页复用 |
 | BHV-002 | `UNIT-tag-filter-client` | `client-component` | ①属于它：`useState` + 点击事件 + `useRouter` 是交互 owner 职责；②不属于别人：不属于 server-component（含浏览器运行时交互）、不属于 ui-component（持状态非纯展示）；③需独立：交互边界最小化叶子 |
 | BHV-001 | `UNIT-post-card` | `ui-component` | ①属于它：纯展示文章卡片、props 进 JSX 出；②不属于别人：不取数（属 data-access）、不持状态（属 client-component）；③需独立：列表项复用 |
-| — | `UNIT-post-frontmatter-schema` | `domain-type` | ①属于它：`title/date/tag/...` 字段语义 + zod 校验 `[示例实证]` frontmatter 模型；②不属于别人：横切被依赖，不归任何运行层；③需独立：跨 data-access/页面共享合同 |
+| — | `UNIT-post-frontmatter-schema` | `domain-type` | ①属于它：`title/date/tag/...` 字段语义 + zod 校验 frontmatter 模型；②不属于别人：横切被依赖，不归任何运行层；③需独立：跨 data-access/页面共享合同 |
 
 > 取证演示：若把 `UNIT-tag-filter-client` 的取数职责写成「直接 `fetch` 文章数据」→ **P1（G2，client-component 直取私有数据，违反 §4.0）**；若把 `UNIT-post-card` 标注承接「按 tag 过滤逻辑」→ P2（G2，业务下放 ui-component，影响主链升 P1）。
 

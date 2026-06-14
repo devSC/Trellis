@@ -4,12 +4,12 @@
 > `.trellis/spec/harness/overview/overview-structure-single-source.md`（概要 L1）为准；分层依赖律与硬红线以
 > `.trellis/spec/guides/golden-path.md` 为准；项目槽位取值以 `.trellis/spec/conventions/project-conventions.md` 为准。
 > 冲突时 golden-path 硬红线 > L1 章节合同 > project-conventions 槽位 > 本指南 > SKILL.md。
-> 本指南所有锚点（组件名、SQL、env 前缀、目录）取材自实测基准仓库 safa-land `services/control-api`（net/http + 原生 SQL + PostgreSQL）。
+> 本指南所有锚点（组件名、SQL、env 前缀、目录）取材自一个中性 worked example：某后端服务 `services/<svc>`（net/http + 原生 SQL + PostgreSQL）的「域名黑名单规则」feature，仅示范形态与粒度，非任何具体参考仓库。
 
 ## 0. 写作前准备
 
 - **判轨**：读 task.json `guru_chain`。full → 目录级设计包（本指南全部章节，落 `design-main.md` + `chapters/` 空目录 + 任务内 `design.md` 指针）；light → 任务内 `design.md` §1 概要（跳过 README/设计包动作，第 5 章按 L1 §2b 简化：保留一句话架构 + 一张分层架构图 + 核心 UC 表，系统边界图/时序图策略表在无外部依赖/无异步时标 `N/A 依据`，但分层依赖律归属表与承接索引仍必须保留）。
-- **技术栈基线（从槽位抄录，不另定）**：从 project-conventions 抄录槽位取值写进第 1 章「技术栈约束」——`[SLOT-01]` DI（当前无 DI，构造注入；可 wire）、`[SLOT-02]` 数据访问（当前 `database/sql` + `lib/pq` + PostgreSQL；可 ent/sqlc）、`[SLOT-03]` 日志（当前 `log`；可 slog/zap）、`[SLOT-04]` 测试（当前 `testing`；可 testify/ginkgo）、`[SLOT-10]` 会话鉴权（当前 HMAC-SHA256 签名 cookie + bcrypt，自实现）、`[SLOT-08]` env 前缀（实测 `CONTROL_API_*`）、`[SLOT-05]` API 风格（当前 REST JSON）。概要不重新决定技术栈，引用裸 `SLOT-NN` token。
+- **技术栈基线（从槽位抄录，不另定）**：从 project-conventions 抄录槽位取值写进第 1 章「技术栈约束」——`[SLOT-01]` DI（当前无 DI，构造注入；可 wire）、`[SLOT-02]` 数据访问（当前 `database/sql` + `lib/pq` + PostgreSQL；可 ent/sqlc）、`[SLOT-03]` 日志（当前 `log`；可 slog/zap）、`[SLOT-04]` 测试（当前 `testing`；可 testify/ginkgo）、`[SLOT-10]` 会话鉴权（当前 HMAC-SHA256 签名 cookie + bcrypt，自实现）、`[SLOT-08]` env 前缀（按服务区分，如 `<SVC>_*`）、`[SLOT-05]` API 风格（当前 REST JSON）。概要不重新决定技术栈，引用裸 `SLOT-NN` token。
 - **服务边界确认**：本任务落在哪个 `services/<svc>/`，复用还是新建 `internal/{app,config,transport,service,repository,domain,auth}` 包，跨服务结构是否需进 `packages/contracts/`。
 - **术语统一**：先 `rg` 检索 prd 与既有设计中的实体名、`BHV-NNN`/`UC`/`UNIT-<slug>`、服务名、接口名，复用既有命名；新术语在第 1 章登记。
 - **目录动作（full 链）**：
@@ -60,7 +60,7 @@ README 只做导航，不承载事实正文（L1 §2a：README 不得作为详�
 - 错误三件套：service sentinel（ErrValidation）+ repository sentinel（ErrNotFound）+ `%w` 包装 + `errors.Is`
 - 数据访问 [SLOT-02]：database/sql + lib/pq + PostgreSQL（原生 SQL）
 - 会话鉴权 [SLOT-10]：HMAC-SHA256 签名 cookie + bcrypt
-- env 前缀 [SLOT-08]：CONTROL_API_*
+- env 前缀 [SLOT-08]：<SVC>_*（按服务区分）
 ### 1.3 显式假设（无则写"无"）
 | 假设 | 依据 | 影响范围 | 验证时点 |
 ### 1.4 向后兼容性决策（L1 §2.7，默认 no，须用户显式确认）
@@ -81,7 +81,7 @@ repository 在 `domain_blacklist_rules` 插入一行（唯一冲突 23505 → 40
 涉及实体：DomainBlacklistRule；持久化状态：domain_blacklist_rules 行新增 + 入口节点 desired_config 版本推进。
 ```
 
-四类枚举锚点（取自 control-api domain_blacklist 真实链路）：
+四类枚举锚点（取自 domain_blacklist 示例链路）：
 
 - **协议端点**：`### BHV-040 新增域名黑名单规则`（POST）、`### BHV-041 列出域名黑名单规则`（GET）、`### BHV-042 更新规则状态`（PATCH）、`### BHV-043 删除规则`（DELETE）——每条带 method+path、入参、鉴权门禁。
 - **编排步骤**：归一化/校验/枚举判定（service 内 `normalizeDomainBlacklistPattern` + match_type/status switch）；副作用编排（`TouchAllEntryNodes` 同步入口节点）。
@@ -138,7 +138,7 @@ repository 在 `domain_blacklist_rules` 插入一行（唯一冲突 23505 → 40
 
 按 L1 固定格式填空，组件名用真实名：
 
-> 外部调用方经 `POST/GET/PATCH/DELETE /api/v1/domain-blacklist-rules` 进入 `control-api`，由 `Handler.handleDomainBlacklistRules` / `handleDomainBlacklistRuleByID` 归一化请求并经 `requireAdmin`（HMAC 会话）门禁后分发给 `DomainBlacklistService` 的校验/编排行为，按需经 `DomainBlacklistRepository` 访问 PostgreSQL `domain_blacklist_rules` 表，写操作经 `ConfigSyncService.TouchAllEntryNodes` 推进入口节点 desired_config，以 `domain.DomainBlacklistRule` 结构与 `ErrValidation`/`ErrNotFound` 语义收口为 HTTP 响应。
+> 外部调用方经 `POST/GET/PATCH/DELETE /api/v1/domain-blacklist-rules` 进入 `<svc>`，由 `Handler.handleDomainBlacklistRules` / `handleDomainBlacklistRuleByID` 归一化请求并经 `requireAdmin`（HMAC 会话）门禁后分发给 `DomainBlacklistService` 的校验/编排行为，按需经 `DomainBlacklistRepository` 访问 PostgreSQL `domain_blacklist_rules` 表，写操作经 `ConfigSyncService.TouchAllEntryNodes` 推进入口节点 desired_config，以 `domain.DomainBlacklistRule` 结构与 `ErrValidation`/`ErrNotFound` 语义收口为 HTTP 响应。
 
 ### 6.2 分层架构图模板（subgraph 表达 Go 分层）
 
@@ -161,7 +161,7 @@ graph TD
     end
     subgraph 横切
         SM[auth.SessionManager 纯函数 HMAC 校验]
-        CFG[config.Config CONTROL_API_*]
+        CFG[config.Config <SVC>_*]
     end
     RA --> H
     H --> DBS
@@ -179,15 +179,15 @@ graph TD
 
 ```mermaid
 graph LR
-    Admin[管理员/admin-web] -->|HTTPS + 会话 cookie| Entry[control-api Entry: /api/v1/domain-blacklist-rules]
+    Admin[管理员/管理前端] -->|HTTPS + 会话 cookie| Entry[<svc> Entry: /api/v1/domain-blacklist-rules]
     Entry --> SVC[service/repository 内部]
     SVC -->|读写| PG[(PostgreSQL domain_blacklist_rules)]
     SVC -->|TouchAllEntryNodes 推进 desired_config| PG2[(PostgreSQL proxy_node_configs)]
-    Agent[proxy-agent] -->|拉取 DesiredNodeConfig| Entry2[control-api 节点配置 Entry]
+    Agent[数据面 agent] -->|拉取 DesiredNodeConfig| Entry2[<svc> 节点配置 Entry]
     Entry2 -.读 packages/contracts.-> CT[packages/contracts.DesiredNodeConfig]
 ```
 
-要点：外部系统（admin-web、proxy-agent）画在边界外，不画成 control-api 内部组件；数据/权限出入边界标方向与用途（请求进入、会话门禁、状态写入 DB、跨服务契约消费）。其协议/鉴权/SLA 需详细展开时承接到 `external`，跨服务契约结构承接到 `external` 或 `domain`（`packages/contracts`）。
+要点：外部系统（管理前端、数据面 agent）画在边界外，不画成 `<svc>` 内部组件；数据/权限出入边界标方向与用途（请求进入、会话门禁、状态写入 DB、跨服务契约消费）。其协议/鉴权/SLA 需详细展开时承接到 `external`，跨服务契约结构承接到 `external` 或 `domain`（`packages/contracts`）。
 
 ### 6.4 核心 UC 表 / 6.5 UC 承接表
 
@@ -199,7 +199,7 @@ graph LR
 
 ```mermaid
 sequenceDiagram
-    participant A as 管理员/admin-web
+    participant A as 管理员/管理前端
     participant H as Handler
     participant M as requireAdmin
     participant S as DomainBlacklistService
@@ -232,8 +232,8 @@ sequenceDiagram
 
 - `rationale` 必须从约束/驱动推到选择（"因跨服务消费 ListActive 需稳定 JSON 契约，选 packages/contracts 承接"），不得反向倒推（"选了 X 所以 X 好"）；必含备选、选定、原因、主要代价/限制。
 - `selection_status` 最终概要不得停留在 `needs_validation`；只能 `accepted` 或 `explicit_assumption`。未选定项显式标 `selected=未选定`，禁止让下游引用未选定决策。
-- 命中外部 provider/LLM/对象存储/云服务时 `credential_strategy_boundary` 必填：**不保存任何 secret value**，只写 `api_key_env_name`（如 `CONTROL_API_*`）/`credential_ref`/默认凭证链/运行平台身份注入短期凭证（AWS 优先 SDK default chain/IRSA/instance role，阿里云优先 Credentials default provider chain/RRSA/ECS RAM Role）。`config.Load()` 默认值不得是真实凭证。出现真实 key/AK/SK/token 即审核 P1。
-- 涉鉴权/数据采集/三方域名/PII 时 `compliance_basis` 写最小权限与用途可解释依据（如"会话 cookie 仅管理员域内签发，HMAC 密钥经 `CONTROL_API_SESSION_SECRET` 注入，非真实值"）；否则写 N/A。
+- 命中外部 provider/LLM/对象存储/云服务时 `credential_strategy_boundary` 必填：**不保存任何 secret value**，只写 `api_key_env_name`（如 `<SVC>_*`）/`credential_ref`/默认凭证链/运行平台身份注入短期凭证（AWS 优先 SDK default chain/IRSA/instance role，阿里云优先 Credentials default provider chain/RRSA/ECS RAM Role）。`config.Load()` 默认值不得是真实凭证。出现真实 key/AK/SK/token 即审核 P1。
+- 涉鉴权/数据采集/三方域名/PII 时 `compliance_basis` 写最小权限与用途可解释依据（如"会话 cookie 仅管理员域内签发，HMAC 密钥经 `<SVC>_SESSION_SECRET` 注入，非真实值"）；否则写 N/A。
 - 查询分页先判定普通分页还是连续消费语义，普通分页不触发游标决策。
 
 ## 8. 第 7 章「详细设计承接索引」写法
@@ -247,9 +247,9 @@ sequenceDiagram
 | domain-blacklist-repository | repository-data | chapters/04-repository-domain-blacklist-design.md | DomainBlacklistRepository + domain_blacklist_rules 迁移 | 不决定校验规则（属 biz） | 已出 L2 |
 | domain-blacklist-handler | entry-api | chapters/02-transport-domain-blacklist-design.md | Handler.handleDomainBlacklistRules/ByID | 不拥有业务规则（属 biz） | 已出 L2 |
 | domain-blacklist-rule | domain | chapters/01-domain-domain-blacklist-design.md | domain.DomainBlacklistRule/CreateParams/UpdateStatusParams | 无 I/O、无校验、无副作用 | pending（L2豁免） |
-| control-api-config | config | chapters/05-config-control-api-design.md | config.Config（CONTROL_API_* + SessionSecret 引用） | 不写真实 secret value | pending（L2豁免） |
+| <svc>-config | config | chapters/05-config-<svc>-design.md | config.Config（<SVC>_* + SessionSecret 引用） | 不写真实 secret value | pending（L2豁免） |
 | session-auth | external | chapters/06-external-session-auth-design.md | auth.SessionManager（HMAC 签名 cookie）+ packages/contracts | 不写真实 HMAC 密钥 | pending（L2豁免） |
-| control-api-runtime | runtime | chapters/07-runtime-control-api-design.md | app.New/Run/Shutdown + 连接池 + 信号 | 不写部署脚本/运维命令 | pending（L2豁免） |
+| <svc>-runtime | runtime | chapters/07-runtime-<svc>-design.md | app.New/Run/Shutdown + 连接池 + 信号 | 不写部署脚本/运维命令 | pending（L2豁免） |
 ```
 
 自检（L1 §6.1 / G4）：
@@ -266,7 +266,7 @@ sequenceDiagram
 - `biz`：承接 `internal/service` 业务核心与状态/能力 owner——`<Domain>Service` 核心行为、sentinel error（ErrValidation）、跨实体/跨 service 协作（TouchAllEntryNodes）、终态收口、内部能力组件 `IC-*`。**核心能力正文主承接方**，每个 P0/P1 owner 行为必落 biz chapter_target（L1 §6.2）。
 - `repository-data`：承接 `internal/repository` 数据访问合同 + `db/migrations` canonical 表/迁移（合并为一类）——Repo 读写/事务/查询意图、表结构、索引、迁移合同、`sql.ErrNoRows`→`ErrNotFound` 转换、domain 字段语义来源。存在业务持久化时必含至少一条。
 - `domain`（pending L2）：承接 `internal/domain` 实体/值对象/Params/sentinel/不变量（唯一允许跨层导入），及落在被调用包内的业务无关纯函数技术能力；无 I/O、无副作用。
-- `config`（pending L2）：承接 `internal/config` + `config.Load`、env 前缀（`CONTROL_API_*`）、默认值、credential 引用策略、超时/重试 profile、校验与失败行为；不写真实 secret。
+- `config`（pending L2）：承接 `internal/config` + `config.Load`、env 前缀（`<SVC>_*`）、默认值、credential 引用策略、超时/重试 profile、校验与失败行为；不写真实 secret。
 - `external`（pending L2）：承接外部系统/三方 API/对象存储/模型服务/Webhook 集成合同（协议、鉴权、请求/响应/错误、SLA/限流、超时重试、出站 adapter），及跨服务 `packages/contracts` 对外契约；会话鉴权算法（HMAC-SHA256/bcrypt）封装的出站合同亦在此。
 - `runtime`（pending L2）：承接进程拓扑 + `app.New/Run/Shutdown`（`cmd/<svc>/main.go` 启动顺序、信号关闭、context 超时、健康检查、连接池/资源边界、发布/回滚）；不写部署脚本与运维命令。
 
@@ -287,7 +287,7 @@ sequenceDiagram
 |------|------|----------|
 | G1 行为覆盖 | 满足 | BHV-040~043 覆盖 P0×1（§2），粒度自检通过 |
 | G2 归属完整 | 满足 | §3 全行三问，无分层律违例，无 gin/echo |
-| G3 凭证合规 | 满足 | 会话 HMAC 经 CONTROL_API_SESSION_SECRET 注入，无 secret value |
+| G3 凭证合规 | 满足 | 会话 HMAC 经 <SVC>_SESSION_SECRET 注入，无 secret value |
 | G4 索引覆盖 | 满足 | §7 覆盖 4 层 owner + config/external/runtime，逐文件，含 repository-data |
 | G5 未决无高风险 | 满足 | §8 仅中风险且有显式假设；执行基线五字段齐全 |
 | G6 六件套 | 满足 | §5 ①~⑥ 齐全，图组件 ⊆ 归属表 |

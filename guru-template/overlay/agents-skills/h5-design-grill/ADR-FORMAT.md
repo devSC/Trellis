@@ -12,7 +12,7 @@ ADR 落在目标仓库 `docs/adr/`，顺序编号：`0001-slug.md`、`0002-slug.
 {1~3 句：上下文是什么、我们决定了什么、为什么。}
 ```
 
-就这样。一条 ADR 可以只有一段。价值在于记录**做了一个决策**以及**为什么**——而不是把章节填满。正文中文优先，代码标识符/库名/路径/框架字段保留原文（如 `'use client'`、`server-only`、`generateMetadata`、`revalidateTag`、`next/image`、`app/feed.xml/route.ts`、`NEXT_PUBLIC_*`、`gray-matter`）。
+就这样。一条 ADR 可以只有一段。价值在于记录**做了一个决策**以及**为什么**——而不是把章节填满。正文中文优先，代码标识符/库名/路径/框架字段保留原文（如 `'use client'`、`server-only`、`generateMetadata`、`revalidateTag`、`next/image`、`app/feed.xml/route.ts`、`NEXT_PUBLIC_*`）。
 
 ## 可选章节
 
@@ -38,13 +38,13 @@ ADR 落在目标仓库 `docs/adr/`，顺序编号：`0001-slug.md`、`0002-slug.
 
 拷问中命中以下情形、且三条全中时，当场起草 ADR（用户确认后落盘）：
 
-- **内容源选型（SLOT-H1，带锁定成本）**：本地 MDX + `gray-matter` vs Headless CMS vs ORM(DB)。内容源决定 data-access 形态与 domain-type 建模方式，迁移成本高（blog 示例用本地 MDX 内容模型基线，见 `pages/posts/*.md` + `scripts/gen-rss.js:22` 的 `matter(content)`；切到 CMS 是架构级变更）。
+- **内容源选型（内容源槽位，带锁定成本）**：本地 MDX vs Headless CMS vs ORM(DB)。内容源决定 data-access 形态与 domain-type 建模方式，迁移成本高（如本地 MDX 经 frontmatter 解析建模，切到 CMS 是架构级变更）。
 - **渲染策略（SSR / SSG / ISR + 缓存语义）**：每页选哪种渲染、`fetch` 的 `cache`/`next.revalidate` 周期、按需失效靠 `revalidatePath`/`revalidateTag`。渲染策略与缓存语义是 server-component / route / server-action 的合同锁定点（overview L1 §2.6 要求其成为 `technology_decision_handoff` 决策项）。
-- **路由模式（SLOT-H11）**：App Router（golden-path 默认）vs Pages Router。偏离 App Router 默认必须记理由（blog 示例为 Pages Router，SLOT-H15 第 5 条已登记为相对 golden-path 的偏离；新项目退回 Pages 属架构决策 + 升级 SLOT-H11）。
-- **状态管理引入（SLOT-H2）**：默认 none（server-first）→ 引入 Zustand / 把 Context 包到某子树。把全局状态库或根级 Context 引进来会改变 `'use client'` 边界与 hydration 形态，是锁定决策（默认应优先用最小 client 叶子的 `useState`）。
-- **认证 / 会话方案（SLOT-H8）**：无 → 引入 NextAuth(Auth.js) 或自实现 session。鉴权校验只在 server 侧（server-component/data-access/server-action/route handler），session/token 禁止暴露给 client-component 直取；切换方案记 ADR + 升级 SLOT-H8。
+- **路由模式（路由模式槽位）**：App Router（golden-path 默认）vs Pages Router。偏离 App Router 默认必须记理由（新项目退回 Pages 属架构决策 + 更新路由模式槽位；既有 Pages Router 扁平结构属存量违例清单登记的偏离形态）。
+- **状态管理引入（状态管理槽位）**：默认 none（server-first）→ 引入 Zustand / 把 Context 包到某子树。把全局状态库或根级 Context 引进来会改变 `'use client'` 边界与 hydration 形态，是锁定决策（默认应优先用最小 client 叶子的 `useState`）。
+- **认证 / 会话方案（认证槽位）**：无 → 引入 NextAuth(Auth.js) 或自实现 session。鉴权校验只在 server 侧（server-component/data-access/server-action/route handler），session/token 禁止暴露给 client-component 直取；切换方案记 ADR + 更新认证槽位。
 - **数据 / 范围归属边界（显式的"不做"和"谁拥有"）**：如"front-matter 内容由 server-only 的 data-access（`lib/posts.ts`，`import 'server-only'`）拥有，client-component 只经可序列化 props 读，不反向 import 取数模块"；"私有 env / 凭证只经 `process.env.X` 在 server 边装载，不下发到 client bundle（`NEXT_PUBLIC_` 仅限非敏感公开值）"。显式的边界与拒绝和肯定同样有价值。
-- **样式方案（SLOT-H4）**：Tailwind vs CSS Modules（单项目内统一）。混用与切换有迁移成本；偏离受控隔离（裸全局 CSS）是硬红线、应回退而非记 ADR。
+- **样式方案（样式方案槽位）**：Tailwind vs CSS Modules（单项目内统一）。混用与切换有迁移成本；偏离受控隔离（裸全局 CSS）是硬红线、应回退而非记 ADR。
 - **代码不可见的约束**：合规/法规导致的技术选择（如"Cookie 同意横幅前不得加载第三方分析脚本""不可采集某类用户数据"）、外部契约的 SLA（如"首屏须 < 200ms 因合作方接口约束，故该页强制 SSG"）。
 - **非显然的被否决备选**：评估过却否决、且半年后会有人再提的方案（如"评估过把整页标 `'use client'` 用纯客户端取数，否决，坚持 server-first + RSC 取数以保 SEO 与首屏"）——记下来，免得下次再被提一遍。
 

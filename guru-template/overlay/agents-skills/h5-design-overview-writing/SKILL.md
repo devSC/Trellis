@@ -21,22 +21,18 @@ description: 用于撰写 Guru H5/Next.js 平台（App Router 生产形态：Nex
 - 命中外部 provider / CMS / 对象存储 / 云服务 / 三方 API / 数据库 / 认证 provider（NextAuth）等架构显著技术选择时进入 `technology_decision_handoff[]`（含 credential strategy：不保存 secret value，只写 `api_key_env_name` / `credential_ref` / 默认凭证链 / 运行平台身份注入；私有数据获取与 secret 只在 server 侧 owner，禁 client-component 直取）。
 - 在进入详细设计前完成架构就绪收敛（L1 §6 G1~G8）。
 
-## 平台档案：示例实证 vs 生产级补充（务必先读，避免拿轻量 starter 当 golden-path）
+## 平台生产基线（务必先读）
 
-H5 平台基线是 **Next.js App Router 生产形态** + React + TypeScript(strict)。参考示例 `/Users/devSC/Documents/MyProject/next.js/examples/blog` 是一个**故意简化**的轻量 blog starter，**不是 golden-path**：它是 **Pages Router + Nextra + MDX + gray-matter**（见 `package.json`：`next` + `nextra` + `nextra-theme-blog` + `gray-matter` + `rss`，无 App Router、无 server-action、无 RSC 数据获取层；`tsconfig.json` 还是 `strict: false` + `target: es5`）。写概要时必须显式区分两类证据，禁止把示例的简化做法当作生产约束：
+H5 平台生产基线是 **Next.js App Router** + React + TypeScript(strict)。概要写作一律以此为准，下列维度为生产锁定项：
 
-- **「next.js blog 示例实证」（可引用为内容模型基线，标注来源 + 「示例为 Pages Router 简化形态」）**：
-  - 内容源模型：MDX 文章 + frontmatter（`pages/posts/*.md(x)` + `gray-matter` 解析 `title/date/description/tag/author`），可作为 `domain-type`（文章 frontmatter schema）与 `data-access`（内容读取）的**内容模型参考**。
-  - 派生产物：构建期 RSS 生成（`scripts/gen-rss.js` 读 `pages/posts/` 目录 → `gray-matter` 取 frontmatter → 写 `public/feed.xml`），可作为「构建期/副产物生成」承接的实证锚点。
-  - 路由形态：`pages/_app.tsx`、`pages/_document.tsx`、`pages/index.mdx`、`pages/posts/`、`pages/tags/`（**Pages Router**，仅作内容组织参考，不作 route 段约定基线）。
-  - 主题/页脚：`theme.config.js` 用 `style jsx` 局部样式（仅证明样式隔离意图，不作样式方案基线）。
-- **「App Router 生产级补充」（golden-path 锁定，示例没有但生产必须，标注「示例未覆盖，按 App Router 生产最佳实践补充」）**：
-  - `tsconfig.json` 必须 `strict: true`（示例为 `false`，生产**不沿用**）；目标运行时按生产 baseline，不沿用示例的 `target: es5`。
-  - App Router route 段约定：`app/<seg>/page.tsx`、`layout.tsx`、`loading.tsx`、`error.tsx`、`not-found.tsx`、`route.ts`（示例 Pages Router 未覆盖，归属一律以 App Router 段为准）。
-  - server-first 与 RSC：默认 `server-component` 在服务端渲染 + 编排数据获取；`'use client'` 只在需交互处声明、最小化（示例无此分层）。
-  - `server-action`（`'use server'` 变更）/ route handler（API endpoint）：示例完全没有，生产的写入/变更/表单提交承接均落此类。
-  - `metadata`/SEO 标准化、错误边界（`error.tsx`）、`next/image` 图像优化、CSS Modules/Tailwind 样式隔离（禁全局污染）：均为生产补充。
-- 引用纪律：凡用到示例做实证，必须写明「示例（Pages Router 简化形态）」并指明它**不构成生产约束**；凡 golden-path 要求示例未覆盖的项，必须写明「示例未覆盖，按 App Router 生产最佳实践补充」。不得用示例的简化（`strict:false`、Pages Router、无 server-action）反推弱化生产硬规则。
+- **TS strict**：`tsconfig.json` 必须 `strict: true`，按生产 baseline 运行时。
+- **App Router route 段约定**：`app/<seg>/page.tsx`、`layout.tsx`、`loading.tsx`、`error.tsx`、`not-found.tsx`、`route.ts`，归属一律以 App Router 段为准。
+- **server-first 与 RSC**：默认 `server-component` 在服务端渲染 + 编排数据获取；`'use client'` 只在需交互处声明、最小化。
+- **数据获取**：`data-access` 封装内容源读取（MDX / CMS / ORM-DB）；私有数据获取与 secret 只在 server 侧 owner（`server-component`/`data-access`/`server-action`），禁 `client-component` 直取。
+- **变更**：`server-action`（`'use server'`）/ route handler（API endpoint）承接所有写入/变更/表单提交。
+- **SEO / 边界 / 样式**：`metadata`/`generateMetadata` 标准化 SEO（禁手写 `<Head>`）、错误边界 `error.tsx`、`next/image` 图像优化、CSS Modules/Tailwind 样式隔离（禁全局污染）。
+
+内容模型可按需建模（如 MDX 文章 + frontmatter `title/date/description/tag/author` → `domain-type` schema + `data-access` 读取；构建期 RSS 等派生产物 → route handler/构建脚本承接），但其取数、缓存、SEO、变更一律按上述生产基线落 owner，不得弱化生产硬规则。
 
 ## 与官方 trellis 工具的职责边界（务必先读，避免越权）
 
@@ -83,7 +79,7 @@ H5 平台基线是 **Next.js App Router 生产形态** + React + TypeScript(stri
 - **server-first 与 'use client' 最小化（硬红线）**：默认 `server-component`（RSC）渲染 + 编排数据获取；`'use client'` 只在确有交互（状态/事件/hooks/浏览器 API）处声明，且下沉到最小叶子组件。把整页标 `'use client'`、或为「省事」让父级客户端化，即违反红线，归属判定阶段必须拦下。
 - **私有数据获取与 secret 边界（硬红线）**：私有数据获取、API key、DB 连接、认证 secret 只能在 `server-component` / `data-access` / `server-action`；**禁** `client-component` 直接读取私有源或持有 secret（client bundle 会泄露）。需要在客户端展示的数据，必须由 server 侧获取后以 props/初始数据下传，或经 `server-action`/route handler 暴露受控接口。
 - **route 段约定与外部触发边界**：App Router 段按 `page` / `layout` / `loading` / `error` / `not-found` / `route` 约定承接；架构图与 sequenceDiagram 中外部角色/浏览器请求只能进入 `route` 段（或其 `page`/`route handler`），**不能**直接调用 `data-access` / `server-action` / `domain-type`；发现直连先补显式 route 段入口。`metadata`/SEO 落 route/server-component，错误边界落 `error.tsx`（归 route），样式隔离用 CSS Modules/Tailwind（禁全局污染）。
-- **示例 vs 生产边界**：凡引用 blog 示例（Pages Router 简化形态）做实证，不得用其简化反推弱化生产硬规则（`strict:true`、App Router、server-first、server-action、私有数据获取边界均不可因「示例没有」而豁免）——见「平台档案」节。
+- **生产基线不可弱化**：`strict:true`、App Router、server-first、server-action、私有数据获取边界均为生产硬规则，不可豁免——见「平台生产基线」节。
 - **修订纪律**：按 L1 先判定局部修订 vs 文档级重构；发现需求缺陷回退需求阶段（brainstorm），不在概要补造业务规则；发现归属错回退第 3 章重判，不在下游补救。
 
 ## 执行规则
@@ -92,7 +88,7 @@ H5 平台基线是 **Next.js App Router 生产形态** + React + TypeScript(stri
 2. 默认一次性交付模式：按阶段内部推进，不要求用户逐阶段确认；只在出现高风险未决项时暂停提问（一次 1~4 个）。
 3. 显式假设必须标注依据、影响范围、验证时点，并落盘到 `design-main.md`（或 light 链 `design.md` §概要）对应章节——不允许只在会话输出里口头声明。
 4. 阶段 0 必须完成判轨落盘：full 链建立设计包骨架（`README.md` + `design-main.md` + `chapters/` 空目录）并把包路径写入 task.json `design_package`；任务内 `design.md` 只写指针 + 摘要。light 链直接写 `design.md` §概要。
-5. 阶段 0 必须确认技术栈基线并明确路由边界：本任务落在哪个 `app/<seg>/`，复用还是新建 `page/layout/loading/error/not-found/route` 段，内容源（MDX/CMS）与数据源接入点，server/client 切分初判；取值（内容源、状态管理、UI 库、样式方案、测试、lint、数据库、认证、图像优化、部署、路由模式）一律引用 project-conventions 槽位 `SLOT-NN`，不在概要另定。`strict: true` 与 App Router 为生产基线，不沿用示例的 `strict:false`/Pages Router。
+5. 阶段 0 必须确认技术栈基线并明确路由边界：本任务落在哪个 `app/<seg>/`，复用还是新建 `page/layout/loading/error/not-found/route` 段，内容源（MDX/CMS）与数据源接入点，server/client 切分初判；取值（内容源、状态管理、UI 库、样式方案、测试、lint、数据库、认证、图像优化、部署、路由模式）一律引用 project-conventions 槽位 `SLOT-NN`，不在概要另定。`strict: true` 与 App Router 为生产基线。
 6. 行为枚举（阶段 2）按 H5 四类顺序（**用户操作 → 系统反应（渲染与数据获取）→ 失败路径（error/notFound 边界）→ 生命周期与导航**），逐条 Given/When/Then + `### BHV-NNN <短名>` 编号标题；每条满足 L1 粒度标准（有前置、有触发/导航、有渲染或状态变化、有失败路径）；禁止从组件/route 名出发。`BHV-NNN` 创建后不复用、不重排，删除留洞。
    - ✅ `### BHV-008 渲染文章详情页` — Given 用户访问 `/posts/[slug]` When `server-component` 经 `data-access` 按 slug 读内容源 Then RSC 渲染正文 + `metadata` 注入 SEO；slug 不存在时由 `not-found.tsx` 收口返回 404。
    - ❌ `### BHV-008 显示文章` — Given 有页面 When 渲染 Then 显示。（无前置、无路由/触发、无失败路径、无数据获取语义）
@@ -105,9 +101,8 @@ H5 平台基线是 **Next.js App Router 生产形态** + React + TypeScript(stri
 13. 概要禁写项（见「边界约束」）全程生效：发现自己在写组件 props 合同、zod schema 正文、fetch/SDK 参数、metadata 字段表、env 取值即停下，回收到「交给详细设计展开」的索引条目。
 14. UC 与行为双向回指：每条 `BHV-NNN` 回指 ≥1 个 UC；UC 承接表 `bhv_refs` 与行为集合双向核对，不留孤儿行为、不留空 UC。
 15. 阶段 9 自检按 L1 §6 G1~G8 逐项输出（满足/缺口 + 闭合计划），full 链写成 `design-main` 的「架构就绪自检」章节；存在未闭合 G 项不得送审，不得用概括性「基本满足」替代逐项证据。
-16. 引用纪律：引用 blog 示例时显式标注「示例（Pages Router 简化形态），不构成生产约束」；golden-path 要求而示例未覆盖项标注「示例未覆盖，按 App Router 生产最佳实践补充」（见「平台档案」节）。
-17. 产物语言：辅助性正文一律中文；英文仅限代码标识符、命令、路径、框架/库名（`Next.js`、`React`、`zod`、`next/image`、`NextAuth`、`gray-matter`）、路由段/组件名、缩写与原文引用。
-18. 完稿后提示送审：加载 `h5-design-overview-review` 过概要 Gate；Gate 结论「可进入」后按 gate_mode 完成人工收口（人工 Gate 判「能否进详细」，区别于 `trellis-check` 代码质检——见上「职责边界」节）。
+16. 产物语言：辅助性正文一律中文；英文仅限代码标识符、命令、路径、框架/库名（`Next.js`、`React`、`zod`、`next/image`、`NextAuth`）、路由段/组件名、缩写与原文引用。
+17. 完稿后提示送审：加载 `h5-design-overview-review` 过概要 Gate；Gate 结论「可进入」后按 gate_mode 完成人工收口（人工 Gate 判「能否进详细」，区别于 `trellis-check` 代码质检——见上「职责边界」节）。
 
 ## H5 详细 doc_type 七分类（承接索引取值，H5_BRIEF 钉死，禁改名/增减/换数）
 
@@ -146,7 +141,7 @@ H5 平台基线是 **Next.js App Router 生产形态** + React + TypeScript(stri
 7. **阶段 6 技术决策承接**：第 5 章 `technology_decision_handoff[]`（决策点/选定值或未选定/owner doc_type/详细落点/credential strategy；secret 与私有数据获取只在 server 侧）。
 8. **阶段 7 承接索引**：第 6 章 `chapter_target → detail_doc_type`（→ `chapters/<slug>.md`）；覆盖七类 doc_type 全部 owner；回填 UC 承接表 `index_refs`；render/interactive/data 三元组走已出 L2，pending L2（route/ui-component/domain-type/server-action）处写 `L2豁免` 或先补 L2。
 9. **阶段 8 未决问题**：第 7 章显式列出 + 风险等级；无未决也须显式声明「无未决」。
-10. **阶段 9 架构就绪收敛**：回填全部时序图占位 → 第 8 章 G1~G8 自检 → 送审提示（规则 18）。
+10. **阶段 9 架构就绪收敛**：回填全部时序图占位 → 第 8 章 G1~G8 自检 → 送审提示（规则 17）。
 
 ## 输出要求（writing 专属）
 
@@ -156,7 +151,7 @@ H5 平台基线是 **Next.js App Router 生产形态** + React + TypeScript(stri
   - `链型`（full/light）与 `概要主定义位置`（`design-main.md` / `design.md` §概要）
   - `路由边界`（落在哪个 `app/<seg>/`，复用/新建段清单 page/layout/loading/error/not-found/route）
   - `内容源/数据源`（MDX/CMS/DB 接入点，引用 `SLOT-NN`）
-  - `示例 vs 生产标注状态`（引用 blog 示例处是否均标「Pages Router 简化形态」；生产补充项是否均标「示例未覆盖」）
+  - `生产基线符合状态`（`strict:true` / App Router 段 / server-first / 私有数据获取边界 / metadata SEO / 样式隔离是否均按生产基线落 owner）
   - `显式假设`（无/有：假设、依据、影响范围、验证时点）及 `落盘状态`
   - `项目约定校验状态`（C1~C5 逐项 通过/不过；不过即标终止原因）
   - `行为集合状态`（`BHV-NNN` 条数、四类分布、粒度自检结论）
@@ -167,7 +162,7 @@ H5 平台基线是 **Next.js App Router 生产形态** + React + TypeScript(stri
   - `承接索引状态`（七类 doc_type owner 覆盖率；full 链逐文件 `chapters/<slug>.md` 清单；doc_type 分布；render/interactive/data 走 L2、pending L2 命中与 `L2豁免`/补 L2 计划）
   - `架构就绪结论`（仅阶段 9 或全稿完成时输出 G1~G8 逐项 满足/缺口；草稿阶段只说明不可送审原因）
   - `需用户确认项`（若有）
-- 完稿输出末尾给出送审与人工确认指引（规则 18）：加载 `h5-design-overview-review` 过概要 Gate；提示该 Gate 是人工判「能否进详细」，区别于 `trellis-check` 代码质检。
+- 完稿输出末尾给出送审与人工确认指引（规则 17）：加载 `h5-design-overview-review` 过概要 Gate；提示该 Gate 是人工判「能否进详细」，区别于 `trellis-check` 代码质检。
 
 ## 参考资料
 
@@ -177,4 +172,3 @@ H5 平台基线是 **Next.js App Router 生产形态** + React + TypeScript(stri
 - 项目约定取值（C1~C5 硬前置）：`.trellis/spec/conventions/project-conventions.md`
 - 分章写法细则与模板：`references/chapter-guide.md`
 - 最小成稿样例：`references/examples/design-main-minimal.md`
-- 内容模型基线实证（blog 示例，Pages Router 简化形态，**非 golden-path**）：`/Users/devSC/Documents/MyProject/next.js/examples/blog/package.json`、`pages/`（Pages Router）、`pages/posts/*.md(x)`（MDX + frontmatter）、`scripts/gen-rss.js`（构建期 RSS 副产物）、`theme.config.js`、`tsconfig.json`（`strict:false`，生产不沿用）

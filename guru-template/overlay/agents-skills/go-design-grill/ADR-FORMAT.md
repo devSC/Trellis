@@ -12,7 +12,7 @@ ADR 落在目标仓库 `docs/adr/`，顺序编号：`0001-slug.md`、`0002-slug.
 {1~3 句：上下文是什么、我们决定了什么、为什么。}
 ```
 
-就这样。一条 ADR 可以只有一段。价值在于记录**做了一个决策**以及**为什么**——而不是把章节填满。正文中文优先，代码标识符/库名/路径/协议字段保留原文（如 `database/sql`、`net/http`、`packages/contracts`、`CONTROL_API_*`）。
+就这样。一条 ADR 可以只有一段。价值在于记录**做了一个决策**以及**为什么**——而不是把章节填满。正文中文优先，代码标识符/库名/路径/协议字段保留原文（如 `database/sql`、`net/http`、`packages/contracts`、`<SVC>_*`）。
 
 ## 可选章节
 
@@ -40,8 +40,8 @@ ADR 落在目标仓库 `docs/adr/`，顺序编号：`0001-slug.md`、`0002-slug.
 
 - **架构形态与分层偏离**：刻意偏离 golden-path 分层依赖律的决策及其代价（注意：分层律本身是不可豁免硬红线，"偏离"通常应回退而非记 ADR；只有经用户确认的、有边界证据的合法例外才记，如 transport 仅为 `errors.Is(err, repository.ErrNotFound)` 这一类哨兵判定而 import repository——这本身已是 SLOT-17 登记项，扩散到新代码须 ADR 背书）。
 - **技术栈槽位切换（SLOT 升级，带锁定成本）**：`SLOT-01` 无 DI → 引入 `wire`；`SLOT-02` 原生 `database/sql` → `sqlc`/`ent`；`SLOT-03` 标准 `log` → `log/slog`/`zap`；`SLOT-05` REST JSON → gRPC；`SLOT-04` `testing` → `testify`/`ginkgo`。这些都"要一个季度才换得动"，必须 ADR + 升级对应槽位后才能引入，拷问/实现阶段不得私自拍板。
-- **跨服务契约协议形态**：control-api 与 proxy-agent 经 `packages/contracts/DesiredNodeConfig` 同步 JSON 期望态 vs 改走事件/消息——契约协议是双方合同的锁定点。
-- **数据/范围归属边界（显式的"不做"和"谁拥有"）**：如"`users` 数据由 control-api 拥有，proxy-agent 只经 `packages/contracts` 按 ID 引用，不反向写库"；"会话密钥只经 `CONTROL_API_SESSION_SECRET` 注入，不入库"。显式的边界与拒绝和肯定同样有价值。
+- **跨服务契约协议形态**：控制面服务与数据面 agent 经 `packages/contracts/DesiredNodeConfig` 同步 JSON 期望态 vs 改走事件/消息——契约协议是双方合同的锁定点。
+- **数据/范围归属边界（显式的"不做"和"谁拥有"）**：如"`users` 数据由其属主服务拥有，其它服务只经 `packages/contracts` 按 ID 引用，不反向写库"；"会话密钥只经 `<SVC>_SESSION_SECRET` 注入，不入库"。显式的边界与拒绝和肯定同样有价值。
 - **鉴权/会话方案**：现状自实现 HMAC-SHA256 签名 cookie + bcrypt（`internal/auth/session_manager.go`、`admin_auth_service.go`）；切换到第三方会话/JWT 库属架构决策，记 ADR + 升级 `SLOT-10`。
 - **代码不可见的约束**：合规/法规导致的技术选择（如"不可采集某类用户数据"）、外部契约的 SLA（如"响应须 < 200ms 因合作方接口约束"）。
 - **非显然的被否决备选**：评估过却否决、且半年后会有人再提的方案（如"评估过 chi 路由，否决，坚持 `net/http ServeMux` 保持零运行时魔法"）——记下来，免得下次再被提一遍。
