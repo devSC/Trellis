@@ -30,24 +30,28 @@ git checkout guru/main && git merge upstream/main                               
 | 日期 | 改动 | 关联 issue |
 |------|------|-----------|
 | 2026-06-12 | 建立 guru/main 基线 + 本说明文件 | client_agent#2 |
+| 2026-06-14 | 多平台扩展：go/ios/h5 三平台 spec+workflow+skills（references/grill 全套）；CLI 数据驱动 wiring + OCR 加固；bump `guru.2` | client_agent#1 |
 
 ## 包发布（GitHub Packages）
 
 | 包 | 用途 |
 |----|------|
-| `@devsc/trellis` | CLI（bin: `trellis`/`tl`），内置 guru-client workflow 与 guru-flutter-client spec（离线可用） |
+| `@devsc/trellis` | CLI（bin: `trellis`/`tl`），内置 4 平台 workflow（guru-client/go/ios/h5）与 spec（guru-flutter-client/go-backend/ios-native/h5-web），离线可用 |
 | `@devsc/trellis-core` | CLI 的运行时依赖（经 npm alias `@mindfoldhq/trellis-core` 引用，源码 import 零改动） |
 
-版本策略：跟随上游 + guru 后缀（如 `0.6.0-rc.0-guru.1`）。
+版本策略：跟随上游 + guru 后缀（如 `0.6.0-rc.0-guru.1`）。当前 **`0.6.0-rc.0-guru.2`**（新增 go/ios/h5 三平台 bundled spec+workflow+skills）。
 
 ```bash
-# 发布（需 PAT 含 write:packages；prepublishOnly 自动 test+build）
-npm login --registry=https://npm.pkg.github.com   # 或 ~/.npmrc 配 _authToken
+# 发布（需 PAT 含 write:packages；用 --ignore-scripts 跳过会跑测试的 prepublishOnly）
+npm login --registry=https://npm.pkg.github.com   # 或 ~/.npmrc 配 //npm.pkg.github.com/:_authToken=<PAT>
 # prerelease 版本必须带 --tag（实测：缺省报 "must specify a tag"）
+# 先发 core（cli 的运行时依赖）：
 pnpm -C packages/core publish --tag guru --no-git-checks
-# cli 的 prepublishOnly 跑全量测试（含 3 个环境性预存失败会中断）：
-# 先手动等价执行（build 已新鲜 + cp README/LICENSE），再 --ignore-scripts
-cd packages/cli && cp ../../README.md ../../LICENSE . && npm publish --tag guru --ignore-scripts
+# 再发 cli。务必先 build 新鲜 dist + cp README/LICENSE，且必须用 pnpm publish（非 npm publish）——
+# pnpm 会把 workspace:@devsc/trellis-core@* 替换成已发布的具体版本，npm publish 不会替换，
+# 会把 workspace: 协议带进发布产物，下游 `npm i` 直接失败。
+pnpm -C packages/cli build && cp README.md LICENSE packages/cli/
+pnpm -C packages/cli publish --tag guru --ignore-scripts --no-git-checks
 # 注意：需 PAT(classic) 含 write:packages —— gh CLI 的 OAuth token 无此 scope（实测 403）
 
 # 团队安装（一次性 ~/.npmrc）：
