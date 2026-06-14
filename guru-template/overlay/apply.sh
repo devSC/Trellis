@@ -381,8 +381,16 @@ fi
 if grep -q "run_blocking_task_hooks" "$TARGET/.trellis/scripts/common/task_utils.py" 2>/dev/null; then
   echo "  ✓ core 支持 before_start 阻断钩子"
 else
-  printf '  \033[31m⚠ core 缺 before_start 支持：硬 Gate 不会拦截 task.py start！\033[0m\n'
-  echo "    升级：npm i -g @devsc/trellis@guru && cd $TARGET && trellis update"
+  # §7 刚把 before_start→guru_gate.py 写进 config.yaml。若 core 不支持阻断钩子，该 Gate 被静默忽略
+  # → 用户以为有硬 Gate、实则 task.py start 拦不住（最危险的失败：假安全）。故硬失败，不软警告。
+  # 根因不在本 overlay：core 脚本归 trellis update 的哈希三方合并管理（见脚本头部边界），本 overlay
+  # 按设计不碰 core。此缺口=项目用「上游」CLI init/update（.trellis/.version 不带 -guru），其 core 无此能力。
+  ver="$(cat "$TARGET/.trellis/.version" 2>/dev/null || echo '未知')"
+  printf '  \033[31m✗ core 缺 before_start 阻断支持：guru 硬 Gate 已接线但不会生效（task.py start 拦不住）！\033[0m\n'
+  echo "    根因：本项目用上游 CLI 装的（.trellis/.version=${ver}，非 -guru）。修复=用 guru CLI 重新基线 core（可复现、哈希追踪）："
+  echo "      npm i -g @devsc/trellis@guru   # 或用 fork 本地 bin：node <fork>/packages/cli/bin/trellis.js"
+  echo "      cd $TARGET && trellis update    # 交互式：对 task.py / common/task_utils.py 选「取模板版」"
+  FAIL=1
 fi
 
 if [ -f "$TARGET/scripts/check_workflow_compliance.py" ]; then
