@@ -45,14 +45,17 @@ git checkout guru/main && git merge upstream/main                               
 # 发布（需 PAT 含 write:packages；用 --ignore-scripts 跳过会跑测试的 prepublishOnly）
 npm login --registry=https://npm.pkg.github.com   # 或 ~/.npmrc 配 //npm.pkg.github.com/:_authToken=<PAT>
 # prerelease 版本必须带 --tag（实测：缺省报 "must specify a tag"）
+# 坑：`pnpm -C <dir> publish` 在 pnpm 10 + npm 11 下会把 -C/--no-git-checks 透传给 npm 报 EUSAGE；
+# 必须 `cd <dir> && pnpm publish`（用子 shell 括起来不污染当前目录）。
 # 先发 core（cli 的运行时依赖）：
-pnpm -C packages/core publish --tag guru --no-git-checks
+( cd packages/core && pnpm publish --tag guru --no-git-checks )
 # 再发 cli。务必先 build 新鲜 dist + cp README/LICENSE，且必须用 pnpm publish（非 npm publish）——
-# pnpm 会把 workspace:@devsc/trellis-core@* 替换成已发布的具体版本，npm publish 不会替换，
-# 会把 workspace: 协议带进发布产物，下游 `npm i` 直接失败。
+# pnpm 会把 workspace:@devsc/trellis-core@* 替换成已发布的具体版本（实测产物 = npm:@devsc/trellis-core@<ver>），
+# npm publish 不替换，会把 workspace: 协议带进发布产物，下游 `npm i` 直接失败。
 pnpm -C packages/cli build && cp README.md LICENSE packages/cli/
-pnpm -C packages/cli publish --tag guru --ignore-scripts --no-git-checks
-# 注意：需 PAT(classic) 含 write:packages —— gh CLI 的 OAuth token 无此 scope（实测 403）
+( cd packages/cli && pnpm publish --tag guru --ignore-scripts --no-git-checks )
+# 注意：需 PAT(classic) 含 write:packages —— gh CLI 的 OAuth token 无此 scope（实测 403）；
+# 凭证落 ~/.npmrc：//npm.pkg.github.com/:_authToken=<PAT>。已发布 guru.2（core+cli）于 2026-06-14。
 
 # 团队安装（一次性 ~/.npmrc）：
 #   @devsc:registry=https://npm.pkg.github.com
