@@ -251,7 +251,9 @@ done
 # 缺失则从 spec 包补装（不覆盖已被 bootstrap 填实的内容——目录已存在就跳过）。
 mkdir -p "$TARGET/.trellis/spec"   # 非标准 target 可能有 .trellis 无 spec，先建父目录免 cp -R 失败
 for L in $LAYERS; do
-  if [ -d "$SPEC_SRC/$L" ] && [ ! -d "$TARGET/.trellis/spec/$L" ]; then
+  # 缺失、或目录存在但为空（被外部清空 / 未填）都补装骨架；已被 bootstrap 填实(非空)的保留不覆盖。
+  if [ -d "$SPEC_SRC/$L" ] && { [ ! -d "$TARGET/.trellis/spec/$L" ] || [ -z "$(ls -A "$TARGET/.trellis/spec/$L" 2>/dev/null)" ]; }; then
+    rm -rf "$TARGET/.trellis/spec/$L"
     cp -R "$SPEC_SRC/$L" "$TARGET/.trellis/spec/$L"
     echo "  by-layer: 补装 spec/$L/（骨架）"
   fi
