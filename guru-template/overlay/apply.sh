@@ -407,6 +407,17 @@ if [ "$USED_PROJECT_MIRROR" = 1 ]; then
   else
     echo "  ✗ 平台 skill 镜像漂移（python3 scripts/sync_platform_skills.py --check）"; FAIL=1
   fi
+else
+  # §4.5 双面对齐的不变量：.agents/skills 与 .claude/skills 集合必须完全一致。
+  # 平台 configurator / trellis update 会向单面写 skill（如 Codex 的 trellis-start 只进 .agents），
+  # 制造漂移；本检查在每次 apply 后断言两面已拉平，并兜底捕获 §4.5 自身的 bug。
+  if diff <(ls "$TARGET/.agents/skills" 2>/dev/null | sort) <(ls "$TARGET/.claude/skills" 2>/dev/null | sort) >/dev/null 2>&1; then
+    echo "  ✓ skill 两面一致（.agents/skills == .claude/skills）"
+  else
+    echo "  ✗ skill 两面不一致（§4.5 对齐异常，见 diff）："
+    diff <(ls "$TARGET/.agents/skills" 2>/dev/null | sort) <(ls "$TARGET/.claude/skills" 2>/dev/null | sort) | sed 's/^/      /'
+    FAIL=1
+  fi
 fi
 
 echo ""
@@ -419,3 +430,7 @@ echo "1) 项目约定：确认 $TARGET/.trellis/spec/conventions/project-convent
 echo "2) SLOT-12：填 $TARGET/.claude/hooks/block-legacy-dirs.sh 的 LEGACY_PATTERNS"
 echo "3) Codex hooks：用户级 ~/.codex/config.toml 开 [features].hooks=true，并在 Codex /hooks 中 trust 本项目 hooks"
 echo "4) 人工 Gate 通道：默认 strict（用户终端）；如需对话确认+agent 代跑，在 config.yaml 顶层加 guru.gate_mode: soft（见 workflow 机制节）"
+echo ""
+echo "维护规约：每次 trellis update / 平台 reconfigure 后补跑一次本脚本。"
+echo "  原因：平台 configurator 会向单面写 skill（如 Codex 的 trellis-start 只进 .agents/skills），"
+echo "  使 .agents/skills 与 .claude/skills 漂移；重跑 apply.sh 的 §4.5 双面对齐即拉平（幂等）。"
