@@ -20,6 +20,26 @@
 ├─ conventions/
 │  ├─ index.md                       # 项目约定入口                              [规划中]
 │  └─ project-conventions.md         # 本项目取值（init 后填写，硬前置 C1~C6）   [规划中]
+├─ frontend/                         # by-layer 项目 spec：前端层（server/client component）
+│  ├─ index.md                       # 本层导航入口（链到本层真实存在的 topic 文件）
+│  ├─ directory-structure.md         # 项目实际模式（bootstrap 从真实项目填实）
+│  ├─ server-components.md           # 项目实际模式（bootstrap 从真实项目填实）
+│  ├─ client-components.md           # 项目实际模式（bootstrap 从真实项目填实）
+│  ├─ ui-components.md               # 项目实际模式（bootstrap 从真实项目填实）
+│  ├─ state.md                       # 项目实际模式（bootstrap 从真实项目填实）
+│  ├─ type-safety.md                 # 项目实际模式（bootstrap 从真实项目填实）
+│  └─ quality.md                     # 项目实际模式（bootstrap 从真实项目填实）
+├─ backend/                          # by-layer 项目 spec：backend/server 层（route/data-access/server-action）
+│  ├─ index.md                       # 本层导航入口（链到本层真实存在的 topic 文件）
+│  ├─ route-handlers.md              # 项目实际模式（bootstrap 从真实项目填实）
+│  ├─ data-access.md                 # 项目实际模式（bootstrap 从真实项目填实）
+│  ├─ server-actions.md              # 项目实际模式（bootstrap 从真实项目填实）
+│  └─ error-handling.md              # 项目实际模式（bootstrap 从真实项目填实）
+├─ shared/                           # by-layer 项目 spec：跨层通用（语言级 / 命名 / 协作）
+│  ├─ index.md                       # 本层导航入口（链到本层真实存在的 topic 文件）
+│  ├─ ts-conventions.md              # 项目实际模式（bootstrap 从真实项目填实）
+│  ├─ naming-conventions.md          # 项目实际模式（bootstrap 从真实项目填实）
+│  └─ git-conventions.md             # 项目实际模式（bootstrap 从真实项目填实）
 └─ harness/                          # 五阶段方法 SSOT
    ├─ index.md                       # L1 入口：阶段映射 / doc_type 七类 / 编号纪律 / Gate 口径 [已交付]
    ├─ overview/
@@ -35,6 +55,25 @@
 ```
 
 > 状态标记说明：`[已交付]` = 本库已写入并可被 jsonl 装载；`[规划中]` = 模型已钉死（见 harness/index.md 与本文 §3/§4），文件待 guru-template 后续批次补齐。`route` / `ui-component` / `domain-type` / `server-action` 四类的 L2（`detail/detail-type-<doc_type>.md`）属 `l2_status: pending`：full 链命中须显式 `L2豁免` 或先补 L2（见 §4、§6）。
+
+---
+
+## by-layer 项目 spec（项目实例层）
+
+`frontend/` `backend/` `shared/` 三个层目录是**按层组织的项目实例 spec**——记录「**这个项目实际**怎么写代码」，与 harness、conventions 是三类边界清晰、互不复写的文档：
+
+- **harness（方法学 / HOW）**：五阶段方法 SSOT（阶段映射、doc_type 七类、合同八问、编号纪律、五道 Gate），写「任何 H5/Next.js 项目都该怎么走流程」，不写任何单个项目的实例。
+- **conventions（钉死的 SLOT 决策）**：本项目的槽位取值（`SLOT-01~SLOT-18`：路由模式/内容源/状态管理/UI 库/样式/测试…），是**封闭式**的判定基线、所有阶段的 Gate 硬前置（C1~C6 未填即停），每个槽位只有一个被钉死的取值。
+- **by-layer 项目 spec（本节，项目实例层 / 本项目实际长什么样）**：**开放式**的按层模式文档，承载本项目真实的**目录结构、命名、WRONG·CORRECT 代码**，供 sub-agent 匹配本项目风格落地实现，而非靠通用规则臆测。
+
+边界纪律：
+
+- **document reality 非理想**：by-layer 写「项目实际怎么做」，不写「应该怎么做」；三层目录由 `00-bootstrap-guidelines` 任务扫真实项目代码填实（当前 topic 文件多为 `To fill` 骨架，待 bootstrap 落地）。
+- **不复写、只引用**：harness 的方法学正文与 `guides/golden-path.md` 的硬规则（TS strict / server-first / `'use client'` 最小化 / secret 只在 server 侧 / doc_type 七类 / 分层依赖律）一律只引用不照搬；项目级槽位取值以 `conventions/project-conventions.md` 为唯一权威，不在 by-layer 重复。
+- **层划分**：`frontend/`（server-component / client-component，含目录结构、UI 组件、客户端状态、类型安全、质量门禁）、`backend/`（route-handler / data-access / server-action 及 server/client 错误边界）、`shared/`（跨层通用：TS 语言级 / 命名 / git 协作，不分 doc_type）。
+- **各层 index.md 是导航入口**：`<layer>/index.md` 用 Guidelines Index 表链到**本层真实存在的** topic 文件（如 `frontend/index.md` → `directory-structure.md` / `server-components.md` / …），只做层内导航，不承载规则正文。
+
+> 装载与引用一律用安装路径 `.trellis/spec/<layer>/...`（如 `.trellis/spec/frontend/server-components.md`）。
 
 ---
 

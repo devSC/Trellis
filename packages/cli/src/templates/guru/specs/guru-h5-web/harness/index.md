@@ -6,6 +6,7 @@
 > 层级契约：本文（L1 入口）承载阶段映射、doc_type 表、编号纪律、Gate 口径；
 > 详细分层规则正文与 L2 类型差异由 `detail/*` 承载；writing/review skill 的 `references/` 只做编排与判定。
 > 冲突时 **L1 > L2 > references > SKILL.md**。
+> 项目实际按层模式见 `.trellis/spec/<layer>/`（by-layer 项目 spec：`frontend/` `backend/` `shared/`，由 `00-bootstrap-guidelines` 扫真实项目填实）；本 harness 只承载方法学，不写项目实例。
 
 ---
 
