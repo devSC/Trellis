@@ -19,13 +19,14 @@ TARGET="$(cd "$TARGET" && pwd)"
 # 平台选择（第二位置参数，默认 flutter）：决定 spec 包 / workflow / verify analyze 命令。
 PLATFORM="${2:-flutter}"
 case "$PLATFORM" in
-  flutter) SPEC_NAME="guru-flutter-client"; WF_NAME="guru-client"; ANALYZE_CMD="flutter analyze" ;;
-  go)      SPEC_NAME="guru-go-backend";     WF_NAME="guru-go";     ANALYZE_CMD="go build ./... && go vet ./..." ;;
-  ios)     SPEC_NAME="guru-ios-native";     WF_NAME="guru-ios";    ANALYZE_CMD="xcodebuild build -quiet || swift build" ;;
-  h5)      SPEC_NAME="guru-h5-web";         WF_NAME="guru-h5";     ANALYZE_CMD="pnpm exec tsc --noEmit" ;;
+  flutter) SPEC_NAME="guru-flutter-client"; WF_NAME="guru-client"; ANALYZE_CMD="flutter analyze"; LAYERS="flutter service shared" ;;
+  go)      SPEC_NAME="guru-go-backend";     WF_NAME="guru-go";     ANALYZE_CMD="go build ./... && go vet ./..."; LAYERS="backend shared" ;;
+  ios)     SPEC_NAME="guru-ios-native";     WF_NAME="guru-ios";    ANALYZE_CMD="xcodebuild build -quiet || swift build"; LAYERS="ios shared" ;;
+  h5)      SPEC_NAME="guru-h5-web";         WF_NAME="guru-h5";     ANALYZE_CMD="pnpm exec tsc --noEmit"; LAYERS="frontend backend shared" ;;
   *) echo "ERROR: 未知平台 '$PLATFORM'（支持 flutter|go|ios|h5）"; exit 1 ;;
 esac
 [ -d "$ROOT/specs/$SPEC_NAME" ] || { echo "ERROR: spec 包不存在: specs/${SPEC_NAME}（先 pnpm -C packages/cli sync:guru 或确认 guru-template/specs/）"; exit 1; }
+BOOTSTRAP_PRD="$HERE/bootstrap/${PLATFORM}-bootstrap-prd.md"
 
 echo "== guru overlay 装配 → ${TARGET} （平台: ${PLATFORM} → spec=${SPEC_NAME} workflow=${WF_NAME}）=="
 
@@ -179,6 +180,98 @@ merge(os.path.join(t, ".trellis", "config.yaml"),
   before_start:
     - "python3 .trellis/scripts/guru/guru_gate.py check\"""")
 PYEOF
+
+# 7.5) by-layer 项目 spec 骨架 + bootstrap 任务接线
+# 平台切换检测：.trellis/spec 下若有非当前平台、非方法学的层目录（前一平台残留），
+# guru_after_create 会把它误注入后续任务基线（混入他平台上下文）→ 警告（不自动删，
+# 用户可能有意保留多平台；如确属残留请手动归档/迁移）。
+for D in "$TARGET/.trellis/spec"/*/; do
+  [ -d "$D" ] || continue
+  name="$(basename "$D")"
+  case " $LAYERS harness conventions guides " in
+    *" $name "*) ;;
+    *) echo "  by-layer: ⚠ 检测到非当前平台层 spec/$name/（疑似前一平台残留，后续任务可能误加载，请确认是否归档/迁移）" ;;
+  esac
+done
+# by-layer 空骨架随 spec 包由 `trellis init -t` 装入 .trellis/spec/<layer>/；此处兜底：
+# 缺失则从 spec 包补装（不覆盖已被 bootstrap 填实的内容——目录已存在就跳过）。
+mkdir -p "$TARGET/.trellis/spec"   # 非标准 target 可能有 .trellis 无 spec，先建父目录免 cp -R 失败
+for L in $LAYERS; do
+  if [ -d "$SPEC_SRC/$L" ] && [ ! -d "$TARGET/.trellis/spec/$L" ]; then
+    cp -R "$SPEC_SRC/$L" "$TARGET/.trellis/spec/$L"
+    echo "  by-layer: 补装 spec/$L/（骨架）"
+  fi
+done
+# bootstrap prd：init 生成的 native 版指向 guru 不安装的 backend/frontend（错配）；
+# 覆盖成 guru 平台感知版（引导 agent 扫真实项目填 by-layer + conventions 槽位）。
+BOOT_DIR="$TARGET/.trellis/tasks/00-bootstrap-guidelines"
+# 写最小 task.json（对齐 init 的 24 字段）；新建任务、或目录已存在但缺 task.json 时复用。
+write_boot_task_json() {
+  local dev; dev="$(cat "$TARGET/.trellis/.developer" 2>/dev/null || echo guru)"
+  python3 - "$BOOT_DIR" "$dev" "$PLATFORM" "$LAYERS" "$(date +%F)" <<'PYEOF'
+import json, os, sys
+boot_dir, dev, platform, layers, today = sys.argv[1:6]
+related = [f".trellis/spec/{l}/" for l in layers.split()] + [".trellis/spec/conventions/project-conventions.md"]
+task = {
+    "id": "00-bootstrap-guidelines", "name": "00-bootstrap-guidelines",
+    "title": "Bootstrap Guidelines",
+    "description": "Fill in project development guidelines for AI agents",
+    "status": "in_progress", "dev_type": "docs", "scope": None, "package": None,
+    "priority": "P1", "creator": dev, "assignee": dev,
+    "createdAt": today, "completedAt": None, "branch": None, "base_branch": None,
+    "worktree_path": None, "commit": None, "pr_url": None,
+    "subtasks": [], "children": [], "parent": None,
+    "relatedFiles": related,
+    "notes": f"guru bootstrap task (overlay-created, {platform} project)",
+    "meta": {},
+}
+with open(os.path.join(boot_dir, "task.json"), "w", encoding="utf-8") as fh:
+    json.dump(task, fh, ensure_ascii=False, indent=2)
+PYEOF
+}
+if [ -f "$BOOTSTRAP_PRD" ]; then
+  if [ -d "$BOOT_DIR" ]; then
+    # 部分 init 可能留下任务目录却缺 task.json → 补建，避免下游任务工具见到非法任务目录
+    if [ ! -f "$BOOT_DIR/task.json" ]; then
+      echo "  bootstrap: ⚠ task.json 缺失，补建任务元数据"
+      write_boot_task_json
+    fi
+    if [ -f "$BOOT_DIR/prd.md" ] && cmp -s "$BOOTSTRAP_PRD" "$BOOT_DIR/prd.md"; then
+      echo "  bootstrap: prd.md 已是 guru ${PLATFORM} 版（幂等跳过）"
+    elif [ -f "$BOOT_DIR/prd.md" ] && grep -q guru "$BOOT_DIR/prd.md"; then
+      # 已是 guru 版（用户可能已编辑 / 他平台 guru 版）：不覆盖在制内容，仅备份留痕 + 提示手动切换。
+      # （native 版无 "guru" 标记，必被下面 else 覆盖以修正错配；guru 版才走这里保留。）
+      backup="$(mktemp "$BOOT_DIR/prd.md.pre-guru.$(date +%Y%m%d%H%M%S).XXXXXX")"
+      cp "$BOOT_DIR/prd.md" "$backup"
+      echo "  bootstrap: prd.md 已是 guru 版（保留在制内容，不覆盖）；备份 → ${backup#$TARGET/}"
+      echo "  bootstrap: 如需重置为 guru ${PLATFORM} 模板：cp $BOOTSTRAP_PRD ${BOOT_DIR#$TARGET/}/prd.md"
+    else
+      # native 错配版（无 "guru" 标记，指向 guru 不装的 backend/frontend）或无 prd：覆盖成 guru 版。
+      # 有旧文件先 mktemp 备份（防同秒重复 apply 覆盖上一份备份）。
+      if [ -f "$BOOT_DIR/prd.md" ]; then
+        backup="$(mktemp "$BOOT_DIR/prd.md.pre-guru.$(date +%Y%m%d%H%M%S).XXXXXX")"
+        cp "$BOOT_DIR/prd.md" "$backup"
+        echo "  bootstrap: 备份 native prd.md → ${backup#$TARGET/}"
+      fi
+      cp "$BOOTSTRAP_PRD" "$BOOT_DIR/prd.md"
+      echo "  bootstrap: prd.md → guru ${PLATFORM} 平台感知版（覆盖 native 错配）"
+    fi
+  else
+    # init 未建该任务（非首次 init / 已 archive）。先查归档：已归档=用户做完过，绝不复活成 in_progress。
+    archived="$(find "$TARGET/.trellis/tasks/archive" -mindepth 2 -maxdepth 2 -type d -name '00-bootstrap-guidelines' -print -quit 2>/dev/null || true)"
+    if [ -n "$archived" ]; then
+      echo "  bootstrap: 已归档（${archived#$TARGET/}），跳过重建（避免复活已完成任务）"
+    else
+      # 按需建最小骨架
+      mkdir -p "$BOOT_DIR"
+      cp "$BOOTSTRAP_PRD" "$BOOT_DIR/prd.md"
+      write_boot_task_json
+      echo "  bootstrap: init 未建任务 → 已创建 00-bootstrap-guidelines（guru ${PLATFORM}）"
+    fi
+  fi
+else
+  echo "  ⚠ bootstrap prd 缺失: $BOOTSTRAP_PRD（跳过 bootstrap 接线）"
+fi
 
 # 8) 装配自检（失败即非零退出；警告不阻塞）
 echo ""

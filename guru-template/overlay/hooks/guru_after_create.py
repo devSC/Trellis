@@ -32,6 +32,29 @@ CHECK_EXTRA = [
      "reason": "审核 trace 四节与证据口径"},
 ]
 
+# 方法学目录（harness/conventions/guides）= 配置包维护，非项目 by-layer 实例。
+# 其余 .trellis/spec/<layer>/ 顶层目录视作 by-layer 项目 spec（flutter/service/shared、
+# backend、frontend、ios… 随平台不同），其 index.md 进基线导航。
+METHODOLOGY_DIRS = {"harness", "conventions", "guides"}
+
+
+def bylayer_index_entries(project_root: str) -> list:
+    """发现已安装的 by-layer 项目 spec 层目录，把各层 index.md 作为基线导航条目。
+    自适应平台（按 .trellis/spec/ 实际目录），缺失则返回空表。
+    用 project_root（从 TASK_JSON_PATH 解出）定位 spec，不依赖进程 cwd；
+    jsonl 条目仍写 project-relative 路径（注入侧按项目根解析）。"""
+    spec = os.path.join(project_root, ".trellis", "spec")
+    out = []
+    if os.path.isdir(spec):
+        for name in sorted(os.listdir(spec)):
+            d = os.path.join(spec, name)
+            if name in METHODOLOGY_DIRS or not os.path.isdir(d):
+                continue
+            if os.path.isfile(os.path.join(d, "index.md")):
+                out.append({"file": f".trellis/spec/{name}/index.md",
+                            "reason": f"项目 {name} 层实际模式导航（by-layer 项目 spec）"})
+    return out
+
 
 def append_unique(jsonl_path: str, entries: list) -> int:
     existing = set()
@@ -61,15 +84,20 @@ def main() -> int:
         sys.stderr.write("[guru-after-create] 未获得 TASK_JSON_PATH，跳过\n")
         return 0
     task_dir = os.path.dirname(task_json)
+    # 从 TASK_JSON_PATH 解项目根（<root>/.trellis/tasks/<task>/task.json），
+    # 使后续 spec 扫描不依赖进程 cwd。
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(task_dir)))
 
-    conv = ".trellis/spec/conventions/project-conventions.md"
+    conv = os.path.join(project_root, ".trellis", "spec", "conventions",
+                        "project-conventions.md")
     if not os.path.isfile(conv):
         sys.stderr.write(
             "[guru-after-create] 警告：项目约定文件缺失（%s）。"
             "writing/review 硬前置与 Gate 将拦截，请先按模板填写。\n" % conv)
 
-    a = append_unique(os.path.join(task_dir, "implement.jsonl"), BASELINE)
-    b = append_unique(os.path.join(task_dir, "check.jsonl"), BASELINE + CHECK_EXTRA)
+    bylayer = bylayer_index_entries(project_root)
+    a = append_unique(os.path.join(task_dir, "implement.jsonl"), BASELINE + bylayer)
+    b = append_unique(os.path.join(task_dir, "check.jsonl"), BASELINE + CHECK_EXTRA + bylayer)
 
     # 判轨安全默认：guru_chain=full（轻量链须显式降级）
     chain_note = ""

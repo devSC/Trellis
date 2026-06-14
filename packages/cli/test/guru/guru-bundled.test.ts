@@ -131,6 +131,23 @@ describe("bundled multi-platform guru spec packages", () => {
       ).toBe(true);
     }
   });
+
+  it("each platform spec ships its by-layer project-spec index files", () => {
+    const BYLAYER: Record<string, string[]> = {
+      "guru-flutter-client": ["flutter", "service", "shared"],
+      "guru-go-backend": ["backend", "shared"],
+      "guru-ios-native": ["ios", "shared"],
+      "guru-h5-web": ["frontend", "backend", "shared"],
+    };
+    for (const [id, layers] of Object.entries(BYLAYER)) {
+      const files = getBundledSpecFiles(id);
+      if (files === null) throw new Error(`expected bundled spec ${id}`);
+      const keys = [...files.keys()];
+      for (const layer of layers) {
+        expect(keys).toContain(`${layer}/index.md`);
+      }
+    }
+  });
 });
 
 describe("bundled guru-flutter-client spec", () => {
