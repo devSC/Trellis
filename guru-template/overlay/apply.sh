@@ -29,7 +29,7 @@ esac
 BOOTSTRAP_PRD="$HERE/bootstrap/${PLATFORM}-bootstrap-prd.md"
 
 # guru-managed skill 全集（剪枝白名单：只删这些里的"非本平台"项，绝不碰用户自有/官方 trellis-* skill）
-GURU_SKILLS="$(ls -d "$HERE"/agents-skills/*/ 2>/dev/null | xargs -n1 basename)"
+GURU_SKILLS="$(ls -d "$HERE"/agents-skills/*/ 2>/dev/null | xargs -n1 basename || true)"
 # 平台无关 shared skill（每平台都装、不剪）：需求三件套被所有 workflow 的 Phase1(需求) 硬前置依赖。
 SHARED_SKILLS="requirement-doc-standard requirement-writing requirement-review"
 # skill 名是否该装：shared 始终装；否则按当前平台 SKILL_GLOBS 任一 glob 匹配。
@@ -43,6 +43,26 @@ skill_in_scope() {
   return 1
 }
 
+# skill 目录安装：rm-then-cp 刷新 + 清理 macOS/py 脏文件（.DS_Store/__pycache__ 不随 cp -R 泄漏进目标）
+install_skill_dir() {  # $1=源目录（内容到末尾）  $2=目标目录
+  rm -rf "$2"; mkdir -p "$2"
+  cp -R "$1/." "$2/"
+  find "$2" \( -name .DS_Store -o -name __pycache__ \) -exec rm -rf {} + 2>/dev/null || true
+}
+
+# 平台-项目类型一致性兜底：漏传/传错第二位置参数会静默装错平台（默认 flutter）。
+# 检测明显的项目标志文件，与 PLATFORM 矛盾时警告（不硬失败：monorepo/特殊布局可能合法）。
+detect_hint=""
+if [ -f "$TARGET/pubspec.yaml" ]; then detect_hint="${detect_hint:+$detect_hint,}flutter"; fi
+if [ -f "$TARGET/go.mod" ]; then detect_hint="${detect_hint:+$detect_hint,}go"; fi
+if [ -f "$TARGET/Package.swift" ] || ls "$TARGET"/*.xcodeproj >/dev/null 2>&1; then detect_hint="${detect_hint:+$detect_hint,}ios"; fi
+if [ -f "$TARGET/package.json" ] && [ ! -f "$TARGET/pubspec.yaml" ]; then detect_hint="${detect_hint:+$detect_hint,}h5"; fi
+case ",${detect_hint}," in
+  ,,) ;;                          # 无可识别标志（空/特殊项目）：不校验
+  *",${PLATFORM},"*) ;;           # 一致
+  *) echo "  ⚠ 平台校验：传入平台 '${PLATFORM}' 与检测到的项目类型（${detect_hint}）不符——确认第二位置参数是否传错（apply.sh <目标> <flutter|go|ios|h5>）" ;;
+esac
+
 echo "== guru overlay 装配 → ${TARGET} （平台: ${PLATFORM} → spec=${SPEC_NAME} workflow=${WF_NAME}）=="
 
 # 1) skills → .agents/skills/（装本平台集合 + shared 需求三件套，剪枝他平台 guru skill）
@@ -51,9 +71,7 @@ agent_skill_n=0
 # 单遍历 guru-managed 全集：属本平台或 shared → rm-then-cp 刷新装；否则剪枝（不碰用户自有/官方 trellis-*）
 for gs in $GURU_SKILLS; do
   if skill_in_scope "$gs"; then
-    rm -rf "$TARGET/.agents/skills/$gs"
-    mkdir -p "$TARGET/.agents/skills/$gs"
-    cp -R "$HERE/agents-skills/$gs/." "$TARGET/.agents/skills/$gs/"
+    install_skill_dir "$HERE/agents-skills/$gs" "$TARGET/.agents/skills/$gs"
     agent_skill_n=$((agent_skill_n + 1))
   else
     rm -rf "$TARGET/.agents/skills/$gs"
@@ -72,13 +90,31 @@ mkdir -p "$TARGET/.claude/hooks" "$TARGET/.claude/skills/trellis-local"
 SHARED_HOOKS="block-legacy-dirs.sh block-sanctioned-tlds.sh block-unconfirmed-start.sh"
 INSTALLED_HOOKS="$SHARED_HOOKS grill-nudge.sh $XTRA_HOOKS"
 # 剪枝：删目标里 guru-managed 但不属当前平台的旧 hook（含历史名 client-grill-nudge.sh、非 flutter 的 block-l10n-sync.sh）
-GURU_HOOKS="$(ls "$HERE"/hooks/platform/*.sh 2>/dev/null | xargs -n1 basename) client-grill-nudge.sh"
+GURU_HOOKS="$(ls "$HERE"/hooks/platform/*.sh 2>/dev/null | xargs -n1 basename || true) client-grill-nudge.sh"
 for gh in $GURU_HOOKS; do
   case " $INSTALLED_HOOKS " in *" $gh "*) ;; *) rm -f "$TARGET/.claude/hooks/$gh" ;; esac
 done
-# 装共享 + 平台专属 hook
+# 装共享 + 平台专属 hook。block-legacy-dirs.sh 含用户必填的 SLOT-12（LEGACY_PATTERNS）：
+# cp 模板刷新脚本主体，但回填用户既有的非空值——否则二次 apply 用模板空值覆盖、老目录拦截静默失效。
 for h in $SHARED_HOOKS $XTRA_HOOKS; do
+  prev_slot12=""
+  if [ "$h" = "block-legacy-dirs.sh" ] && [ -f "$TARGET/.claude/hooks/$h" ]; then
+    prev_slot12="$(grep -m1 '^LEGACY_PATTERNS=' "$TARGET/.claude/hooks/$h" 2>/dev/null || true)"
+  fi
   cp "$HERE/hooks/platform/$h" "$TARGET/.claude/hooks/$h"
+  if [ -n "$prev_slot12" ] && [ "$prev_slot12" != "LEGACY_PATTERNS=''" ] && [ "$prev_slot12" != 'LEGACY_PATTERNS=""' ]; then
+    python3 - "$TARGET/.claude/hooks/$h" "$prev_slot12" <<'PYEOF'
+import sys
+path, prev = sys.argv[1], sys.argv[2]
+lines = open(path, encoding="utf-8").read().splitlines(keepends=True)
+for i, ln in enumerate(lines):
+    if ln.startswith("LEGACY_PATTERNS="):
+        lines[i] = prev + "\n"
+        break
+open(path, "w", encoding="utf-8").write("".join(lines))
+PYEOF
+    echo "  hooks: 保留用户既有 SLOT-12（block-legacy-dirs.sh 的 LEGACY_PATTERNS 未被模板空值覆盖）"
+  fi
 done
 # grill-nudge 平台化：占位符替换成本平台 grill skill 名（flutter→client-grill、h5→h5-design-grill…）
 sed "s/__GRILL_SKILL__/${GRILL_SKILL}/g" "$HERE/hooks/platform/grill-nudge.sh" > "$TARGET/.claude/hooks/grill-nudge.sh"
@@ -99,9 +135,7 @@ else
   claude_skill_n=0
   for gs in $GURU_SKILLS; do
     if skill_in_scope "$gs"; then
-      rm -rf "$TARGET/.claude/skills/$gs"
-      mkdir -p "$TARGET/.claude/skills/$gs"
-      cp -R "$HERE/agents-skills/$gs/." "$TARGET/.claude/skills/$gs/"
+      install_skill_dir "$HERE/agents-skills/$gs" "$TARGET/.claude/skills/$gs"
       claude_skill_n=$((claude_skill_n + 1))
     else
       rm -rf "$TARGET/.claude/skills/$gs"
@@ -118,29 +152,66 @@ fi
 #   guru 越界项已在 §1/§4 从两面同时剪掉、且并集只补「非 guru」项，故不会复活被裁剪的他平台 guru skill。
 if [ "$USED_PROJECT_MIRROR" = 0 ]; then
   mkdir -p "$TARGET/.agents/skills" "$TARGET/.claude/skills"
-  recon_n=0
-  reconcile_skills() {  # $1=源 skills 目录  $2=目标 skills 目录：把源里"非 guru、目标缺失"的 skill 补到目标
-    local sd nm
+  recon_n=0; drift_n=0
+  put_skill() {  # $1=源 skill 目录  $2=目标 skill 目录：rm-then-cp + 清理脏文件
+    rm -rf "$2"; mkdir -p "$2"; cp -R "$1." "$2/"
+    find "$2" \( -name .DS_Store -o -name __pycache__ \) -exec rm -rf {} + 2>/dev/null || true
+  }
+  drift_dir() {  # $1=src skill 目录  $2=dst skill 目录 → 输出 src|dst|equal（按整棵子树最新文件 mtime，排除脏文件）
+    python3 - "$1" "$2" <<'PY'
+import os, sys
+def newest(root):
+    best = -1.0
+    for dp, dns, fns in os.walk(root):
+        dns[:] = [d for d in dns if d != "__pycache__"]
+        for n in fns:
+            if n == ".DS_Store":
+                continue
+            try:
+                best = max(best, os.stat(os.path.join(dp, n)).st_mtime)
+            except OSError:
+                pass
+    return best
+a, b = newest(sys.argv[1]), newest(sys.argv[2])
+print("src" if a > b else "dst" if b > a else "equal")
+PY
+  }
+  reconcile_skills() {  # $1=源 skills 目录  $2=目标 skills 目录
+    # 把源里"非 guru"的 skill 对齐到目标：缺失→补；两面都有但内容漂移→以「整棵子树最新文件 mtime」
+    # 较新一侧为权威覆盖较旧侧（不只看 SKILL.md/目录 mtime——多文件 skill 改内部文件不会 bump 二者，
+    #   旧实现会漏同步且可能判反方向）。mtime 严格相等无法判向时按当前源侧优先同步并告警。
+    #   diff 排除脏文件，避免"源带 .DS_Store / 目标已清理"造成的假漂移破坏幂等。反向调用处理另一方向。
+    local sd nm dir
     [ -d "$1" ] || return 0
     for sd in "$1"/*/; do
       [ -d "$sd" ] || continue
       nm="$(basename "$sd")"
       case " $GURU_SKILLS " in *" $nm "*) continue ;; esac   # guru-managed 由 §1/§4 按平台权威管理，不在此并集
       if [ ! -d "$2/$nm" ]; then
-        mkdir -p "$2/$nm"; cp -R "$sd." "$2/$nm/"; recon_n=$((recon_n + 1))
+        put_skill "$sd" "$2/$nm"; recon_n=$((recon_n + 1))
+      elif ! diff -rq -x .DS_Store -x __pycache__ "$sd" "$2/$nm" >/dev/null 2>&1; then
+        dir="$(drift_dir "$sd" "$2/$nm")"
+        if [ "$dir" = src ]; then
+          put_skill "$sd" "$2/$nm"; drift_n=$((drift_n + 1))
+        elif [ "$dir" = equal ]; then
+          put_skill "$sd" "$2/$nm"; drift_n=$((drift_n + 1))
+          echo "  ⚠ skill 双面对齐: $nm 两面内容不同但最新 mtime 相等，按当前源侧优先同步——如方向有误请手动核对" >&2
+        fi
+        # dir=dst：目标侧更新，反向调用会处理（此处不动）
       fi
     done
   }
   reconcile_skills "$TARGET/.claude/skills" "$TARGET/.agents/skills"   # 引擎 trellis-* / trellis-local → .agents
   reconcile_skills "$TARGET/.agents/skills" "$TARGET/.claude/skills"   # .agents 侧用户自有 skill → .claude
-  echo "  skill 双面对齐: 补齐 ×${recon_n}（引擎 trellis-*/trellis-local/用户自有，两面一致）"
+  echo "  skill 双面对齐: 补齐 ×${recon_n} + 内容同步 ×${drift_n}（引擎 trellis-*/trellis-local/用户自有，两面一致）"
 fi
 
 # 5) Claude settings.json hooks 接线（自动幂等合并：按 matcher 定位、按 command 去重，保留用户既有内容）
-python3 - "$TARGET" "$HERE/config-snippets/claude-settings.hooks.json" "$INSTALLED_HOOKS" <<'PYEOF'
+python3 - "$TARGET" "$HERE/config-snippets/claude-settings.hooks.json" "$INSTALLED_HOOKS" "$GURU_HOOKS" <<'PYEOF'
 import json, os, re, sys
 target_root, snippet_path = sys.argv[1], sys.argv[2]
 installed_hooks = set(sys.argv[3].split()) if len(sys.argv) > 3 else None
+managed_hooks = set(sys.argv[4].split()) if len(sys.argv) > 4 else None
 settings_path = os.path.join(target_root, ".claude", "settings.json")
 snippet = json.load(open(snippet_path, encoding="utf-8"))
 if os.path.isfile(settings_path):
@@ -158,6 +229,41 @@ hooks = settings.setdefault("hooks", {})
 if not isinstance(hooks, dict):
     print("  ERROR: .claude/settings.json 的 hooks 必须是对象", file=sys.stderr)
     sys.exit(1)
+# 清理 guru-managed 但本平台未安装的悬空引用：切平台后 §3 已删该 hook 脚本，settings 不应再引用它
+# （否则 PreToolUse 每次触发都跑一个不存在的脚本）。只动 guru-managed 集合内的引用，绝不碰用户自定义 hook。
+removed = 0
+if managed_hooks is not None and installed_hooks is not None:
+    stale = managed_hooks - installed_hooks
+    for event in list(hooks.keys()):
+        entries = hooks.get(event)
+        if not isinstance(entries, list):
+            continue
+        cleaned = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                cleaned.append(entry)
+                continue
+            eh = entry.get("hooks")
+            if isinstance(eh, list):
+                kept = []
+                dropped = 0
+                for h in eh:
+                    cmd = h.get("command", "") if isinstance(h, dict) else ""
+                    # 锚定到 guru 项目命令形态 $CLAUDE_PROJECT_DIR/.claude/hooks/<name>：既避免误删 basename
+                    # 同名但别处路径的用户 hook，也不误删指向 $HOME/.claude/hooks 的用户全局 hook
+                    m = re.search(r'CLAUDE_PROJECT_DIR"?/\.claude/hooks/([A-Za-z0-9_.-]+\.sh)', cmd)
+                    if m and m.group(1) in stale:
+                        removed += 1
+                        dropped += 1
+                        continue   # 丢弃悬空 guru hook 引用
+                    kept.append(h)
+                # 仅当本轮确有 guru 悬空被剔除且导致该 entry 变空，才移除空壳；
+                # 用户原本就空的 hooks 条目（占位）原样保留，不越界。
+                if not kept and dropped > 0:
+                    continue
+                entry = {**entry, "hooks": kept}
+            cleaned.append(entry)
+        hooks[event] = cleaned
 added = 0
 for event, entries in snippet.get("hooks", {}).items():
     cur = hooks.setdefault(event, [])
@@ -169,7 +275,7 @@ for event, entries in snippet.get("hooks", {}).items():
         if installed_hooks is not None:
             kept = []
             for h in entry.get("hooks", []):
-                m = re.search(r"([A-Za-z0-9_.-]+\.sh)", h.get("command", "") if isinstance(h, dict) else "")
+                m = re.search(r'CLAUDE_PROJECT_DIR"?/\.claude/hooks/([A-Za-z0-9_.-]+\.sh)', h.get("command", "") if isinstance(h, dict) else "")
                 if m and m.group(1) not in installed_hooks:
                     continue
                 kept.append(h)
@@ -192,7 +298,7 @@ for event, entries in snippet.get("hooks", {}).items():
                     added += 1
 os.makedirs(os.path.dirname(settings_path), exist_ok=True)
 open(settings_path, "w", encoding="utf-8").write(json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
-print(f"  settings.json: hooks 接线完成（新增 {added} 条，已有内容保留）")
+print(f"  settings.json: hooks 接线完成（新增 {added} 条、清理悬空 {removed} 条，已有内容保留）")
 PYEOF
 
 # 6) workflow + SSOT 同步（升级通道：CLI update 不跟踪非 native workflow，spec/ 又是其保护路径）
@@ -211,6 +317,10 @@ if [ -f "$SPEC_SRC/RECONCILE.md" ]; then
 else
   rm -f "$TARGET/.trellis/spec/RECONCILE.md"
 fi
+# 切平台残留治理：先清掉目标里他平台的样例 *.project-conventions.md（与 RECONCILE.md 同等对待，避免
+# go 项目里躺着 flutter 的 calorie/seek 样例孤儿）。project-conventions.md 无前缀、不被该 glob 匹配，
+# 且下方循环显式保护，用户权威取值绝不受损。
+rm -f "$TARGET/.trellis/spec/conventions/"*.project-conventions.md 2>/dev/null || true
 # conventions：项目取值（project-conventions.md）绝不覆盖；模板/样例/索引可刷新
 for f in "$SPEC_SRC/conventions/"*.md; do
   base="$(basename "$f")"
@@ -247,6 +357,18 @@ merge(os.path.join(t, ".trellis", "worktree.yaml"),
 f'''verify:
   - "python3 .trellis/scripts/guru/guru_gate.py auto"
   - "{analyze}"''')
+
+# config.yaml 若在 marker 块外已有未注释的顶层 hooks: 键，guru 块注入的 hooks: 会与之形成重复顶层键，
+# YAML last-wins 会静默吞掉用户的 after_*/before_* → 警告（不自动解析合并用户 YAML，避免误判其结构）。
+_cfg_path = os.path.join(t, ".trellis", "config.yaml")
+if os.path.isfile(_cfg_path):
+    import re as _re
+    _outside = _re.sub(rf"{MARK}.*?{END}\n?", "", open(_cfg_path, encoding="utf-8").read(), flags=_re.S)
+    if _re.search(r"(?m)^hooks\s*:", _outside):
+        sys.stderr.write(
+            "  ⚠ config.yaml 在 guru marker 块外已有顶层 hooks: 键：guru 注入的 hooks"
+            "(after_create/before_start) 会形成重复顶层键，YAML last-wins 将静默覆盖你的 "
+            "after_*/before_* hook。请把你的 hook 手动并入 guru-overlay marker 块内（或确认无冲突）。\n")
 
 merge(os.path.join(t, ".trellis", "config.yaml"),
 """hooks:
@@ -285,7 +407,12 @@ done
 BOOT_DIR="$TARGET/.trellis/tasks/00-bootstrap-guidelines"
 # 写最小 task.json（对齐 init 的 24 字段）；新建任务、或目录已存在但缺 task.json 时复用。
 write_boot_task_json() {
-  local dev; dev="$(cat "$TARGET/.trellis/.developer" 2>/dev/null || echo guru)"
+  # .developer 是多行 key=value（name=.. / initialized_at=..）：只取 name= 值（对齐官方 get_developer）。
+  # cat 全文会把整文件塞进 task.json 的 creator/assignee（嵌字面换行 + name= 前缀），破坏 task.py --mine 过滤。
+  # || true：.developer 缺失时 sed 经 pipefail 返回非 0，裸赋值在 set -e 下会中止脚本；缺失则 fallback guru。
+  local dev
+  dev="$(sed -n 's/^name=//p' "$TARGET/.trellis/.developer" 2>/dev/null | head -1)" || true
+  [ -n "$dev" ] || dev=guru
   python3 - "$BOOT_DIR" "$dev" "$PLATFORM" "$LAYERS" "$(date +%F)" <<'PYEOF'
 import json, os, sys
 boot_dir, dev, platform, layers, today = sys.argv[1:6]
@@ -317,11 +444,10 @@ if [ -f "$BOOTSTRAP_PRD" ]; then
     if [ -f "$BOOT_DIR/prd.md" ] && cmp -s "$BOOTSTRAP_PRD" "$BOOT_DIR/prd.md"; then
       echo "  bootstrap: prd.md 已是 guru ${PLATFORM} 版（幂等跳过）"
     elif [ -f "$BOOT_DIR/prd.md" ] && grep -q guru "$BOOT_DIR/prd.md"; then
-      # 已是 guru 版（用户可能已编辑 / 他平台 guru 版）：不覆盖在制内容，仅备份留痕 + 提示手动切换。
-      # （native 版无 "guru" 标记，必被下面 else 覆盖以修正错配；guru 版才走这里保留。）
-      backup="$(mktemp "$BOOT_DIR/prd.md.pre-guru.$(date +%Y%m%d%H%M%S).XXXXXX")"
-      cp "$BOOT_DIR/prd.md" "$backup"
-      echo "  bootstrap: prd.md 已是 guru 版（保留在制内容，不覆盖）；备份 → ${backup#$TARGET/}"
+      # 已是 guru 版（用户可能已编辑 / 他平台 guru 版）：保留在制内容，不覆盖、不备份。
+      # （此分支无覆盖动作，备份纯属多余且每次 apply 累积一份 → 破坏幂等；native 错配版无 "guru"
+      #   标记，走下面 else 覆盖修正，那里才有真实覆盖、才需备份。）
+      echo "  bootstrap: prd.md 已是 guru 版（保留在制内容，不覆盖）"
       echo "  bootstrap: 如需重置为 guru ${PLATFORM} 模板：cp $BOOTSTRAP_PRD ${BOOT_DIR#$TARGET/}/prd.md"
     else
       # native 错配版（无 "guru" 标记，指向 guru 不装的 backend/frontend）或无 prd：覆盖成 guru 版。
@@ -408,14 +534,15 @@ if [ "$USED_PROJECT_MIRROR" = 1 ]; then
     echo "  ✗ 平台 skill 镜像漂移（python3 scripts/sync_platform_skills.py --check）"; FAIL=1
   fi
 else
-  # §4.5 双面对齐的不变量：.agents/skills 与 .claude/skills 集合必须完全一致。
+  # §4.5 双面对齐的不变量：.agents/skills 与 .claude/skills 必须内容一致（名字+内容，排除脏文件）。
   # 平台 configurator / trellis update 会向单面写 skill（如 Codex 的 trellis-start 只进 .agents），
-  # 制造漂移；本检查在每次 apply 后断言两面已拉平，并兜底捕获 §4.5 自身的 bug。
-  if diff <(ls "$TARGET/.agents/skills" 2>/dev/null | sort) <(ls "$TARGET/.claude/skills" 2>/dev/null | sort) >/dev/null 2>&1; then
-    echo "  ✓ skill 两面一致（.agents/skills == .claude/skills）"
+  # 制造漂移；本检查在每次 apply 后做【内容级】断言（非仅目录名），兜底捕获 §4.5 自身的 bug（含
+  # mtime 启发式在 equal-mtime / 多文件内部漂移下的盲区）。
+  if diff -rq -x .DS_Store -x __pycache__ "$TARGET/.agents/skills" "$TARGET/.claude/skills" >/dev/null 2>&1; then
+    echo "  ✓ skill 两面一致（.agents/skills == .claude/skills，含内容）"
   else
     echo "  ✗ skill 两面不一致（§4.5 对齐异常，见 diff）："
-    diff <(ls "$TARGET/.agents/skills" 2>/dev/null | sort) <(ls "$TARGET/.claude/skills" 2>/dev/null | sort) | sed 's/^/      /'
+    diff -rq -x .DS_Store -x __pycache__ "$TARGET/.agents/skills" "$TARGET/.claude/skills" 2>&1 | sed 's/^/      /'
     FAIL=1
   fi
 fi
