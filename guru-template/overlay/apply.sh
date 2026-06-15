@@ -19,10 +19,10 @@ TARGET="$(cd "$TARGET" && pwd)"
 # 平台选择（第二位置参数，默认 flutter）：决定 spec 包 / workflow / verify analyze 命令。
 PLATFORM="${2:-flutter}"
 case "$PLATFORM" in
-  flutter) SPEC_NAME="guru-flutter-client"; WF_NAME="guru-client"; ANALYZE_CMD="flutter analyze"; LAYERS="flutter service shared"; SKILL_GLOBS="client-* flutter-implementation-guru-*"; GRILL_SKILL="client-grill"; XTRA_HOOKS="block-l10n-sync.sh" ;;
-  go)      SPEC_NAME="guru-go-backend";     WF_NAME="guru-go";     ANALYZE_CMD="go build ./... && go vet ./..."; LAYERS="backend shared"; SKILL_GLOBS="go-*"; GRILL_SKILL="go-design-grill"; XTRA_HOOKS="" ;;
-  ios)     SPEC_NAME="guru-ios-native";     WF_NAME="guru-ios";    ANALYZE_CMD="xcodebuild build -quiet || swift build"; LAYERS="ios shared"; SKILL_GLOBS="ios-*"; GRILL_SKILL="ios-design-grill"; XTRA_HOOKS="" ;;
-  h5)      SPEC_NAME="guru-h5-web";         WF_NAME="guru-h5";     ANALYZE_CMD="pnpm exec tsc --noEmit"; LAYERS="frontend backend shared"; SKILL_GLOBS="h5-*"; GRILL_SKILL="h5-design-grill"; XTRA_HOOKS="" ;;
+  flutter) SPEC_NAME="guru-flutter-client"; WF_NAME="guru-client"; ANALYZE_CMD="flutter analyze"; LAYERS="flutter service shared"; SKILL_GLOBS="client-* flutter-implementation-guru-*"; XTRA_HOOKS="block-l10n-sync.sh" ;;
+  go)      SPEC_NAME="guru-go-backend";     WF_NAME="guru-go";     ANALYZE_CMD="go build ./... && go vet ./..."; LAYERS="backend shared"; SKILL_GLOBS="go-*"; XTRA_HOOKS="" ;;
+  ios)     SPEC_NAME="guru-ios-native";     WF_NAME="guru-ios";    ANALYZE_CMD="xcodebuild build -quiet || swift build"; LAYERS="ios shared"; SKILL_GLOBS="ios-*"; XTRA_HOOKS="" ;;
+  h5)      SPEC_NAME="guru-h5-web";         WF_NAME="guru-h5";     ANALYZE_CMD="pnpm exec tsc --noEmit"; LAYERS="frontend backend shared"; SKILL_GLOBS="h5-*"; XTRA_HOOKS="" ;;
   *) echo "ERROR: 未知平台 '$PLATFORM'（支持 flutter|go|ios|h5）"; exit 1 ;;
 esac
 [ -d "$ROOT/specs/$SPEC_NAME" ] || { echo "ERROR: spec 包不存在: specs/${SPEC_NAME}（先 pnpm -C packages/cli sync:guru 或确认 guru-template/specs/）"; exit 1; }
@@ -31,7 +31,10 @@ BOOTSTRAP_PRD="$HERE/bootstrap/${PLATFORM}-bootstrap-prd.md"
 # guru-managed skill 全集（剪枝白名单：只删这些里的"非本平台"项，绝不碰用户自有/官方 trellis-* skill）
 GURU_SKILLS="$(ls -d "$HERE"/agents-skills/*/ 2>/dev/null | xargs -n1 basename || true)"
 # 平台无关 shared skill（每平台都装、不剪）：需求三件套被所有 workflow 的 Phase1(需求) 硬前置依赖。
-SHARED_SKILLS="requirement-doc-standard requirement-writing requirement-review"
+SHARED_SKILLS="requirement-doc-standard requirement-writing requirement-review design-grill"
+for s in $SHARED_SKILLS; do
+  [ -d "$HERE/agents-skills/$s" ] || { echo "ERROR: shared skill 目录缺失: agents-skills/$s"; exit 1; }
+done
 # skill 名是否该装：shared 始终装；否则按当前平台 SKILL_GLOBS 任一 glob 匹配。
 skill_in_scope() {
   local n="$1" g
@@ -89,8 +92,9 @@ echo "  scripts: guru_gate.py, guru_after_create.py → .trellis/scripts/guru/"
 mkdir -p "$TARGET/.claude/hooks" "$TARGET/.claude/skills/trellis-local"
 SHARED_HOOKS="block-legacy-dirs.sh block-sanctioned-tlds.sh block-unconfirmed-start.sh"
 INSTALLED_HOOKS="$SHARED_HOOKS grill-nudge.sh $XTRA_HOOKS"
-# 剪枝：删目标里 guru-managed 但不属当前平台的旧 hook（含历史名 client-grill-nudge.sh、非 flutter 的 block-l10n-sync.sh）
-GURU_HOOKS="$(ls "$HERE"/hooks/platform/*.sh 2>/dev/null | xargs -n1 basename || true) client-grill-nudge.sh"
+# 剪枝：删目标里 guru-managed 但不属当前平台的旧 hook（含历史 grill nudge 名、非 flutter 的 block-l10n-sync.sh）
+LEGACY_GRILL_HOOK="client""-grill-nudge.sh"
+GURU_HOOKS="$(ls "$HERE"/hooks/platform/*.sh 2>/dev/null | xargs -n1 basename || true) $LEGACY_GRILL_HOOK"
 for gh in $GURU_HOOKS; do
   case " $INSTALLED_HOOKS " in *" $gh "*) ;; *) rm -f "$TARGET/.claude/hooks/$gh" ;; esac
 done
@@ -116,8 +120,8 @@ PYEOF
     echo "  hooks: 保留用户既有 SLOT-12（block-legacy-dirs.sh 的 LEGACY_PATTERNS 未被模板空值覆盖）"
   fi
 done
-# grill-nudge 平台化：占位符替换成本平台 grill skill 名（flutter→client-grill、h5→h5-design-grill…）
-sed "s/__GRILL_SKILL__/${GRILL_SKILL}/g" "$HERE/hooks/platform/grill-nudge.sh" > "$TARGET/.claude/hooks/grill-nudge.sh"
+# grill-nudge 统一提示 design-grill；旧四名 skill 仅作为过渡 wrapper 保留。
+cp "$HERE/hooks/platform/grill-nudge.sh" "$TARGET/.claude/hooks/grill-nudge.sh"
 chmod +x "$TARGET/.claude/hooks/"*.sh
 cp "$HERE/trellis-local/SKILL.md" "$TARGET/.claude/skills/trellis-local/"
 echo "  hooks(platform): ${INSTALLED_HOOKS} + trellis-local"

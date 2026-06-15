@@ -135,7 +135,7 @@ Error: task activation blocked by before_start hook
 | skills（两面 19 个对齐） | ✅ |
 | conventions + by-layer（Codex 真实扫描填，0 残留） | ✅ |
 | hooks ×4 + settings.json（无悬空引用） | ✅ |
-| grill-nudge→h5-design-grill / AGENTS.md / bootstrap(已归档) | ✅ |
+| grill-nudge→design-grill / AGENTS.md / bootstrap(已归档) | ✅ |
 | **core before_start 阻断** | ✅ 已修，端到端实测可拦截 |
 | SLOT-12 空 | ✅ 纯新项目合规（无老目录） |
 

@@ -123,7 +123,7 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 
 - 需求不清 → `trellis-brainstorm`（前置探索）；full 链正式需求 → `requirement-writing` / `requirement-review`（guru-ai-guides）。
 - 概要/详细撰写 → `client-design-overview-writing` / `client-design-detail-writing`；Gate 判定 → 对应 `*-review`。
-- Gate 前拷问/术语磨尖 → `client-grill`。
+- Gate 前拷问/术语磨尖 → `design-grill`。
 - `in_progress` 实现/质检 → dispatch `trellis-implement` / `trellis-check`（guru 口径）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`（萃取九段）。
 
@@ -132,7 +132,7 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 [codex-inline, Kilo, Antigravity, Windsurf]
 
 - 需求不清 → `trellis-brainstorm`；full 链正式需求 → `requirement-writing/review`；概要/详细 → `client-design-*-writing/review`。
-- Gate 前拷问 → `client-grill`。
+- Gate 前拷问 → `design-grill`。
 - 编辑前 → `trellis-before-dev`；编辑后 → `trellis-check`（guru 口径）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`。
 
@@ -166,7 +166,7 @@ after_create 钩子默认写入 `guru_chain: full`；按 Request Triage 判定�
 **full 链**：先加载 `requirement-writing`（guru-ai-guides，硬前置=其标准包 requirement-doc-standard 可读，缺即停）撰写/补齐**正式需求包**（项目 docs 需求目录），全稿后加载 `requirement-review` 做门禁审核；review 通过后把行为规格抽取为任务内 `prd.md`（BHV 编号承接需求包场景）。`trellis-brainstorm` 仅作前置探索，不替代正式需求链。
 **light 链**：加载 `trellis-brainstorm` 探索需求，直接产出 `prd.md`。
 两轨 `prd.md` 口径一致：必含行为规格（Given/When/Then）、核心能力清单（P0/P1）、失败路径、验收场景、显式未决问题（一次问用户 1~4 个，不私自拍板）。
-prd 草稿成形后加载 `client-grill` 拷问（对照 golden-path/项目约定/既有 BHV 磨术语、压测边界，决策当场固化进 prd），然后才提交需求 Gate。
+prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path/项目约定/既有 BHV 磨术语、压测边界，决策当场固化进 prd），然后才提交需求 Gate。
 **需求 Gate**：上述五要素缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），完成 **confirm 人工收口**（通道按 gate_mode，见 Trellis System 节）；确认落盘后方可进 1.3。
 
 #### 1.2 研究 `[optional · repeatable]`
@@ -175,7 +175,7 @@ prd 草稿成形后加载 `client-grill` 拷问（对照 golden-path/项目约�
 
 #### 1.3 概要设计 `[required · repeatable]`
 
-归属有争议时加载 `client-grill` 对归属表逐行拷问（唯一写 owner、并发场景、与代码现状核对）后再送审。
+归属有争议时加载 `design-grill` 对归属表逐行拷问（唯一写 owner、并发场景、与代码现状核对）后再送审。
 加载 `client-design-overview-writing`（`.agents/skills/`），硬前置装载 `.trellis/spec/harness/overview/overview-structure-single-source.md` + golden-path + 项目约定。
 **full 链**：建立设计包骨架（`README.md` + `design-main.md` + `chapters/`），把包路径写入 task.json `design_package`，产出 `design-main.md` 概要主定义（含架构就绪自检与逐文件承接索引）；任务内 `design.md` 写指针+摘要。
 **light 链**：产出 `design.md` **§1 概要设计**。

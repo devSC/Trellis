@@ -40,7 +40,7 @@ describe("bundled guru-client workflow", () => {
       const resolved = await resolveWorkflowTemplate(GURU_CLIENT_WORKFLOW_ID);
       expect(resolved.source).toBe("bundled");
       expect(resolved.content).toContain("五阶段");
-      expect(resolved.content).toContain("client-grill");
+      expect(resolved.content).toContain("design-grill");
     } finally {
       vi.unstubAllGlobals();
     }

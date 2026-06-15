@@ -125,7 +125,7 @@ Phase 3: Finish  → 验证（go build/vet/test + golangci-lint）→ 萃取回�
 
 - 需求不清 → `trellis-brainstorm`（前置探索）；full 链正式需求 → `requirement-writing` / `requirement-review`（guru-ai-guides）。
 - 概要/详细撰写 → `go-design-overview-writing` / `go-design-detail-writing`（Go 平台专属设计 skill，按 Go doc_type 七分类展开）；Gate 判定 → 对应 `*-review`。
-- Gate 前拷问/术语磨尖/归属逐行核对 → `go-design-grill`。
+- Gate 前拷问/术语磨尖/归属逐行核对 → `design-grill`。
 - `in_progress` 实现/质检 → dispatch `trellis-implement`（按 `go-implementation-guru-writing` 口径）/ `trellis-check`（按 `go-implementation-guru-review` 口径）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`（萃取九段）。
 
@@ -134,7 +134,7 @@ Phase 3: Finish  → 验证（go build/vet/test + golangci-lint）→ 萃取回�
 [codex-inline, Kilo, Antigravity, Windsurf]
 
 - 需求不清 → `trellis-brainstorm`；full 链正式需求 → `requirement-writing/review`；概要/详细 → `go-design-*-writing/review`（按 Go doc_type 展开）。
-- Gate 前拷问 → `go-design-grill`。
+- Gate 前拷问 → `design-grill`。
 - 编辑前 → `trellis-before-dev`（读 golden-path + project-conventions + harness SSOT）；编辑按 `go-implementation-guru-writing` 口径；编辑后 → `trellis-check`（按 `go-implementation-guru-review` 口径）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`。
 
@@ -168,7 +168,7 @@ python3 ./.trellis/scripts/get_context.py --mode phase --step <step>
 **full 链**：先加载 `requirement-writing`（guru-ai-guides，硬前置=其标准包 requirement-doc-standard 可读，缺即停）撰写/补齐**正式需求包**（项目 docs 需求目录），全稿后加载 `requirement-review` 做门禁审核；review 通过后把行为规格抽取为任务内 `prd.md`（BHV 编号承接需求包场景）。`trellis-brainstorm` 仅作前置探索，不替代正式需求链。
 **light 链**：加载 `trellis-brainstorm` 探索需求，直接产出 `prd.md`。
 两轨 `prd.md` 口径一致：必含行为规格（Given/When/Then）、核心能力清单（P0/P1）、失败路径、验收场景、显式未决问题（无未决也须显式声明「无未决」；一次问用户 1~4 个，不私自拍板）。Go 行为枚举到「协议端点 / 编排步骤 / 数据访问 / 失败收口」，例：`### BHV-012 创建代理用户` — Given 管理员会话有效 When `POST /api/users` 携带 `display_name`/`proxy_username` Then service 校验入参→repository 落库→触发 config 同步→返回 201；校验失败返回 400 携带 `ErrValidation`。反例 `### BHV-012 处理用户`（无前置/无协议/无失败路径）被需求 Gate 拒。
-prd 草稿成形后加载 `go-design-grill` 拷问（对照 golden-path/项目约定/既有 BHV 磨术语、压测边界，决策当场固化进 prd），然后才提交需求 Gate。
+prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path/项目约定/既有 BHV 磨术语、压测边界，决策当场固化进 prd），然后才提交需求 Gate。
 **需求 Gate**：五要素（行为编号 `BHV-NNN`、Given/When/Then、P0/P1 清单、失败路径章节、验收场景章节、未决问题章节）缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），完成 **confirm 人工收口**（通道按 gate_mode，见 Trellis System 节）；确认落盘后方可进 1.3。
 
 #### 1.2 研究 `[optional · repeatable]`
@@ -177,7 +177,7 @@ prd 草稿成形后加载 `go-design-grill` 拷问（对照 golden-path/项目�
 
 #### 1.3 概要设计 `[required · repeatable]`
 
-归属有争议时加载 `go-design-grill` 对归属表逐行拷问（唯一写 owner、并发场景、与代码现状核对、不让 handler 持有数据访问）后再送审。
+归属有争议时加载 `design-grill` 对归属表逐行拷问（唯一写 owner、并发场景、与代码现状核对、不让 handler 持有数据访问）后再送审。
 加载 `go-design-overview-writing`（`.agents/skills/`），硬前置装载 `.trellis/spec/harness/overview/overview-structure-single-source.md` + `.trellis/spec/guides/golden-path.md` + `.trellis/spec/conventions/project-conventions.md`。
 按行为枚举 → 分层归属判定 → 承接索引展开：每条 `BHV-NNN` 给唯一 owner（doc_type 取七类之一：`entry-api`/`biz`/`repository-data`/`domain`/`config`/`external`/`runtime`）+ 三问理由（为什么属于它 / 为什么不属于别人 / 为什么需独立存在）。归属示例：路由注册/请求解析/JSON 编解码/状态码 → `entry-api`；业务编排/入参校验/sentinel error → `biz`；SQL/行映射/`ErrNotFound` 转换 → `repository-data`。把数据访问归给 handler 或让 repository 反向 import service 即违反单向依赖律，直接 fail。
 **full 链**：建立设计包骨架（`README.md` + `design-main.md` + `chapters/`），把包路径写入 task.json `design_package`，产出 `design-main.md` 概要主定义（含架构就绪自检 G1~G8、mermaid 架构图、时序图或时序图策略表、逐文件承接索引落到 `chapters/<file>.md`）；任务内 `design.md` 写指针+摘要。

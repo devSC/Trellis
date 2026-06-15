@@ -144,7 +144,7 @@ Phase 3: Finish  → 验证（swift build/test）→ 萃取回写 spec → commi
 
 - 需求不清 → `trellis-brainstorm`（前置探索）；full 链正式需求 → `requirement-writing` / `requirement-review`（guru-ai-guides）。
 - 概要/详细撰写 → `ios-design-overview-writing` / `ios-design-detail-writing`；Gate 判定 → 对应 `ios-design-overview-review` / `ios-design-detail-review`。
-- Gate 前拷问/术语磨尖（归属表逐行、分层律核对）→ `ios-design-grill`。
+- Gate 前拷问/术语磨尖（归属表逐行、分层律核对）→ `design-grill`。
 - `in_progress` 实现/质检 → dispatch `trellis-implement` / `trellis-check`（口径 = `ios-implementation-guru-writing` / `ios-implementation-guru-review`）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`（萃取九段）。
 
@@ -153,7 +153,7 @@ Phase 3: Finish  → 验证（swift build/test）→ 萃取回写 spec → commi
 [codex-inline, Kilo, Antigravity, Windsurf]
 
 - 需求不清 → `trellis-brainstorm`；full 链正式需求 → `requirement-writing/review`；概要/详细 → `ios-design-*-writing/review`。
-- Gate 前拷问 → `ios-design-grill`。
+- Gate 前拷问 → `design-grill`。
 - 编辑前 → `trellis-before-dev`（读 iOS spec）；编辑后 → `trellis-check`（口径 = `ios-implementation-guru-review`）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`。
 
@@ -187,7 +187,7 @@ after_create 钩子默认写入 `guru_chain: full`；按 Request Triage 判定�
 **full 链**：先加载 `requirement-writing`（guru-ai-guides，硬前置=其标准包 requirement-doc-standard 可读，缺即停）撰写/补齐**正式需求包**（项目 docs 需求目录），全稿后加载 `requirement-review` 做门禁审核；review 通过后把行为规格抽取为任务内 `prd.md`（BHV 编号承接需求包场景）。`trellis-brainstorm` 仅作前置探索，不替代正式需求链。
 **light 链**：加载 `trellis-brainstorm` 探索需求，直接产出 `prd.md`。
 两轨 `prd.md` 口径一致，**需求五要素**：① 行为规格（Given/When/Then，每条 `BHV-NNN` 标题）② 核心能力清单（P0/P1）③ 失败路径（含 `enum Error` 预期分支，如校验失败 / 持久化失败 / 网络失败）④ 验收场景（可被 `swift test` 断言的可验证信号）⑤ 显式未决问题（一次问用户 1~4 个，不私自拍板）。
-prd 草稿成形后加载 `ios-design-grill` 拷问（对照 golden-path / 项目约定 / 既有 BHV 磨术语、压测边界，决策当场固化进 prd），然后才提交需求 Gate。
+prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path / 项目约定 / 既有 BHV 磨术语、压测边界，决策当场固化进 prd），然后才提交需求 Gate。
 **需求 Gate**：五要素缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），完成 **confirm 人工收口**（通道按 gate_mode，见 Trellis System 节）；确认落盘后方可进 1.3。
 
 #### 1.2 研究 `[optional · repeatable]`
@@ -196,7 +196,7 @@ prd 草稿成形后加载 `ios-design-grill` 拷问（对照 golden-path / 项�
 
 #### 1.3 概要设计 `[required · repeatable]`
 
-归属有争议时加载 `ios-design-grill` 对**归属表逐行拷问**（唯一 owner、并发/线程场景、与代码现状核对、是否触碰 Domain 零依赖红线）后再送审。
+归属有争议时加载 `design-grill` 对**归属表逐行拷问**（唯一 owner、并发/线程场景、与代码现状核对、是否触碰 Domain 零依赖红线）后再送审。
 加载 `ios-design-overview-writing`（`.agents/skills/`），硬前置装载 `.trellis/spec/harness/overview/overview-structure-single-source.md` + `.trellis/spec/guides/golden-path.md` + `.trellis/spec/conventions/project-conventions.md`。
 概要必含**归属表 + 三问 + 承接索引**：
 - **归属表**：每个待建/改动单元 → doc_type（限七类）→ owner 层（UI/App/Domain/Infrastructure）→ 落地文件路径；每行通过分层依赖律自检（依赖方向 Domain→App→Infrastructure→UI 单向、Domain 零依赖、View 不直连持久化/网络、View 间不直接导航）。
