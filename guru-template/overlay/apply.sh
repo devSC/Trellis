@@ -30,6 +30,9 @@ BOOTSTRAP_PRD="$HERE/bootstrap/${PLATFORM}-bootstrap-prd.md"
 
 # guru-managed skill 全集（剪枝白名单：只删这些里的"非本平台"项，绝不碰用户自有/官方 trellis-* skill）
 GURU_SKILLS="$(ls -d "$HERE"/agents-skills/*/ 2>/dev/null | xargs -n1 basename || true)"
+# 阶段 C 收尾：旧 4 名 grill wrapper 已从模板删除，不再属于 GURU_SKILLS。
+# 仅对这个显式 legacy 列表做存量清理；删除前先备份，避免误伤用户自建同名 skill 后不可恢复。
+LEGACY_GRILL_SKILLS="client-grill go-design-grill h5-design-grill ios-design-grill"
 # 平台无关 shared skill（每平台都装、不剪）：需求三件套被所有 workflow 的 Phase1(需求) 硬前置依赖。
 SHARED_SKILLS="requirement-doc-standard requirement-writing requirement-review design-grill"
 for s in $SHARED_SKILLS; do
@@ -51,6 +54,39 @@ install_skill_dir() {  # $1=源目录（内容到末尾）  $2=目标目录
   rm -rf "$2"; mkdir -p "$2"
   cp -R "$1/." "$2/"
   find "$2" \( -name .DS_Store -o -name __pycache__ \) -exec rm -rf {} + 2>/dev/null || true
+}
+
+cleanup_legacy_grill_skills() {
+  local ts backup_root touched_names="" side_name side_path skill_name skill_dir backup_skill_dir expected_agents expected_claude
+  [ -n "${TARGET:-}" ] && [ "$TARGET" != "/" ] || { echo "ERROR: TARGET 非法，拒绝清理 legacy grill skill"; exit 1; }
+
+  for skill_name in $LEGACY_GRILL_SKILLS; do
+    for side_name in agents claude; do
+      side_path="$TARGET/.$side_name/skills"
+      skill_dir="$side_path/$skill_name"
+      [ -d "$skill_dir" ] || continue
+      expected_agents="$TARGET/.agents/skills/$skill_name"
+      expected_claude="$TARGET/.claude/skills/$skill_name"
+      if [ "$skill_dir" != "$expected_agents" ] && [ "$skill_dir" != "$expected_claude" ]; then
+        echo "ERROR: legacy grill skill 路径非法，拒绝删除: $skill_dir"
+        exit 1
+      fi
+      if [ -z "${backup_root:-}" ]; then
+        ts="$(date +%Y%m%d%H%M%S)"
+        backup_root="$TARGET/.trellis/backup/guru-legacy-skills/$ts"
+        mkdir -p "$backup_root"
+      fi
+      backup_skill_dir="$backup_root/$skill_name/$side_name"
+      mkdir -p "$(dirname "$backup_skill_dir")"
+      cp -R "$skill_dir" "$backup_skill_dir"
+      case " $touched_names " in *" $skill_name "*) ;; *) touched_names="${touched_names:+$touched_names }$skill_name" ;; esac
+      rm -rf "$skill_dir"
+    done
+  done
+
+  if [ -n "$touched_names" ]; then
+    echo "  已备份并移除 legacy grill skill: $touched_names → ${backup_root#$TARGET/}；如系你自建的同名 skill，请从备份恢复"
+  fi
 }
 
 # 平台-项目类型一致性兜底：漏传/传错第二位置参数会静默装错平台（默认 flutter）。
@@ -120,7 +156,7 @@ PYEOF
     echo "  hooks: 保留用户既有 SLOT-12（block-legacy-dirs.sh 的 LEGACY_PATTERNS 未被模板空值覆盖）"
   fi
 done
-# grill-nudge 统一提示 design-grill；旧四名 skill 仅作为过渡 wrapper 保留。
+# grill-nudge 统一提示 design-grill；旧四名 skill 由下方 legacy 清理负责备份移除。
 cp "$HERE/hooks/platform/grill-nudge.sh" "$TARGET/.claude/hooks/grill-nudge.sh"
 chmod +x "$TARGET/.claude/hooks/"*.sh
 cp "$HERE/trellis-local/SKILL.md" "$TARGET/.claude/skills/trellis-local/"
@@ -160,6 +196,8 @@ else
   done
   echo "  platform mirror: skills ×${claude_skill_n} → .claude/skills/（${PLATFORM} 平台 + shared）"
 fi
+
+cleanup_legacy_grill_skills
 
 # 4.5) 两个 skill 面双向对齐（修「换客户端就少一批 skill」）：
 #   trellis init 只把引擎 skill（trellis-*）装进 --client 对应目录（如 --claude → .claude/skills），

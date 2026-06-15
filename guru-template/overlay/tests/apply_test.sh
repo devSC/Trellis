@@ -42,6 +42,9 @@ diff -r "$T1/.agents/skills/client-design-overview-writing" "$T1/.claude/skills/
   && diff -r "$T1/.agents/skills/design-grill" "$T1/.claude/skills/design-grill" >/dev/null 2>&1 \
   && ok "场景1 design-grill 两面存在且字节一致" || bad "场景1 design-grill 两面缺失或不一致"
 
+[ ! -d "$T1/.trellis/backup/guru-legacy-skills" ] \
+  && ok "场景1 无 legacy grill skill 不创建空备份" || bad "场景1 无旧名时不应创建 legacy 备份目录"
+
 [ ! -e "$T1/.trellis/tasks/old-grill-marker/.grilled-prd" ] \
   && ok "场景1 清理旧 .grilled-* 提示标记" || bad "场景1 旧 .grilled-* 标记未清理"
 
@@ -254,6 +257,33 @@ T15=$(mk_target cfghooks yes)
 printf 'hooks:\n  after_finish:\n    - "echo done"\n' > "$T15/.trellis/config.yaml"
 out=$(bash "$APPLY" "$T15" flutter 2>&1)
 printf '%s' "$out" | grep -q "已有顶层 hooks" && ok "场景15 检测到 marker 块外用户 hooks: 并警告（#2）" || bad "场景15 未警告重复 hooks 键风险"
+
+# ============ 场景 16：阶段 C legacy grill wrapper 安全清理：先备份再移除，二跑不建空备份 ============
+T16=$(mk_target legacygrill yes)
+legacy_client="client""-grill"
+legacy_go="go""-design-grill"
+legacy_h5="h5""-design-grill"
+legacy_ios="ios""-design-grill"
+mkdir -p "$T16/.agents/skills/$legacy_client" "$T16/.claude/skills/$legacy_client"
+printf 'LEGACY agents side\n' > "$T16/.agents/skills/$legacy_client/SKILL.md"
+printf 'LEGACY claude side\n' > "$T16/.claude/skills/$legacy_client/SKILL.md"
+out=$(bash "$APPLY" "$T16" flutter 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "场景16 legacy 清理 apply 退出码 0" || { bad "场景16 apply 失败 (rc=$rc)"; echo "$out" | tail -5; }
+[ ! -d "$T16/.agents/skills/$legacy_client" ] && [ ! -d "$T16/.claude/skills/$legacy_client" ] \
+  && ok "场景16 旧 legacy client skill 从两面移除" || bad "场景16 legacy client skill 未从两面移除"
+backup_agents=$(find "$T16/.trellis/backup/guru-legacy-skills" -path "*/$legacy_client/agents/SKILL.md" -print -quit 2>/dev/null || true)
+backup_claude=$(find "$T16/.trellis/backup/guru-legacy-skills" -path "*/$legacy_client/claude/SKILL.md" -print -quit 2>/dev/null || true)
+[ -n "$backup_agents" ] && grep -q "LEGACY agents side" "$backup_agents" \
+  && [ -n "$backup_claude" ] && grep -q "LEGACY claude side" "$backup_claude" \
+  && ok "场景16 legacy client skill 两面先备份" || bad "场景16 legacy 备份缺失或内容不对"
+printf '%s' "$out" | grep -q "已备份并移除 legacy grill skill: $legacy_client" \
+  && ok "场景16 输出 legacy 备份恢复提示" || bad "场景16 缺 legacy 备份提示"
+before_backup_n=$(find "$T16/.trellis/backup/guru-legacy-skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+bash "$APPLY" "$T16" flutter >/dev/null 2>&1
+after_backup_n=$(find "$T16/.trellis/backup/guru-legacy-skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+[ "$before_backup_n" = "$after_backup_n" ] && ok "场景16 无旧名二跑不创建新 legacy 备份" || bad "场景16 二跑创建了空/多余 legacy 备份"
+old_grill_n=$(find "$T16/.agents/skills" "$T16/.claude/skills" \( -name "$legacy_client" -o -name "$legacy_go" -o -name "$legacy_h5" -o -name "$legacy_ios" \) -type d 2>/dev/null | wc -l | tr -d ' ')
+[ "$old_grill_n" = 0 ] && ok "场景16 四个旧 grill 名均不在两面 skills" || bad "场景16 仍有旧 grill 名目录 ×$old_grill_n"
 
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]
