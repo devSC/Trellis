@@ -291,7 +291,8 @@ T17=$(mk_target legacyuserskill yes)
 mkdir -p "$T17/.agents/skills/$legacy_go" "$T17/.claude/skills/$legacy_go"
 printf '# my own go-design-grill\nuser custom skill, not guru managed\n' > "$T17/.agents/skills/$legacy_go/SKILL.md"
 printf '# my own go-design-grill\nuser custom skill, not guru managed\n' > "$T17/.claude/skills/$legacy_go/SKILL.md"
-out=$(bash "$APPLY" "$T17" go 2>&1)
+out=$(bash "$APPLY" "$T17" go 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "场景17 apply 退出码 0" || { bad "场景17 apply 失败 (rc=$rc)"; echo "$out" | tail -5; }
 [ -d "$T17/.agents/skills/$legacy_go" ] && [ -d "$T17/.claude/skills/$legacy_go" ] \
   && ok "场景17 无 guru 特征同名 skill 受保护未删" || bad "场景17 误删了用户自建同名 skill"
 printf '%s' "$out" | grep -q "跳过疑似用户自建同名 skill" \
