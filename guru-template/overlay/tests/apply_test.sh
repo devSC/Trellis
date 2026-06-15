@@ -265,8 +265,9 @@ legacy_go="go""-design-grill"
 legacy_h5="h5""-design-grill"
 legacy_ios="ios""-design-grill"
 mkdir -p "$T16/.agents/skills/$legacy_client" "$T16/.claude/skills/$legacy_client"
-printf 'LEGACY agents side\n' > "$T16/.agents/skills/$legacy_client/SKILL.md"
-printf 'LEGACY claude side\n' > "$T16/.claude/skills/$legacy_client/SKILL.md"
+# 真实旧 wrapper 含 guru 特征（frontmatter「兼容 wrapper」描述），身份判断据此识别为 guru 托管、可清理
+printf '# client-grill\n兼容 wrapper：加载 design-grill\nLEGACY agents side\n' > "$T16/.agents/skills/$legacy_client/SKILL.md"
+printf '# client-grill\n兼容 wrapper：加载 design-grill\nLEGACY claude side\n' > "$T16/.claude/skills/$legacy_client/SKILL.md"
 out=$(bash "$APPLY" "$T16" flutter 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "场景16 legacy 清理 apply 退出码 0" || { bad "场景16 apply 失败 (rc=$rc)"; echo "$out" | tail -5; }
 [ ! -d "$T16/.agents/skills/$legacy_client" ] && [ ! -d "$T16/.claude/skills/$legacy_client" ] \
@@ -284,6 +285,17 @@ after_backup_n=$(find "$T16/.trellis/backup/guru-legacy-skills" -mindepth 1 -max
 [ "$before_backup_n" = "$after_backup_n" ] && ok "场景16 无旧名二跑不创建新 legacy 备份" || bad "场景16 二跑创建了空/多余 legacy 备份"
 old_grill_n=$(find "$T16/.agents/skills" "$T16/.claude/skills" \( -name "$legacy_client" -o -name "$legacy_go" -o -name "$legacy_h5" -o -name "$legacy_ios" \) -type d 2>/dev/null | wc -l | tr -d ' ')
 [ "$old_grill_n" = 0 ] && ok "场景16 四个旧 grill 名均不在两面 skills" || bad "场景16 仍有旧 grill 名目录 ×$old_grill_n"
+
+# ============ 场景 17：legacy 清理身份判断——无 guru 特征的同名 skill（疑似用户自建）受保护不被删除 ============
+T17=$(mk_target legacyuserskill yes)
+mkdir -p "$T17/.agents/skills/$legacy_go" "$T17/.claude/skills/$legacy_go"
+printf '# my own go-design-grill\nuser custom skill, not guru managed\n' > "$T17/.agents/skills/$legacy_go/SKILL.md"
+printf '# my own go-design-grill\nuser custom skill, not guru managed\n' > "$T17/.claude/skills/$legacy_go/SKILL.md"
+out=$(bash "$APPLY" "$T17" go 2>&1)
+[ -d "$T17/.agents/skills/$legacy_go" ] && [ -d "$T17/.claude/skills/$legacy_go" ] \
+  && ok "场景17 无 guru 特征同名 skill 受保护未删" || bad "场景17 误删了用户自建同名 skill"
+printf '%s' "$out" | grep -q "跳过疑似用户自建同名 skill" \
+  && ok "场景17 输出用户自建跳过警告" || bad "场景17 缺用户自建跳过警告"
 
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]

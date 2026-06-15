@@ -169,8 +169,8 @@ then pass=$((pass+1)); echo "PASS  grill-skip 命令写入 guru_gates[overview].
 else failn=$((failn+1)); echo "FAIL  grill-skip 命令写入 (rc=$rc)"; echo "$out" | head -4; fi
 
 # status #1 回归保护：confirm 全绿但 grill 缺失时，footer 不得提示"可 task.py start"
-SS=$(mk_good)
-python3 - "$SS" "$GATE" >/dev/null <<'PY'
+SS=$(make_gate_case statusfooter)
+if python3 - "$SS" "$GATE" >/dev/null <<'PY'
 import sys, json, os, importlib.util
 ss, gp = sys.argv[1], sys.argv[2]
 spec = importlib.util.spec_from_file_location("gg", gp); gg = importlib.util.module_from_spec(spec); spec.loader.exec_module(gg)
@@ -179,12 +179,14 @@ for g in ("requirements", "overview", "detail"):
     gates[g] = {"confirmed_by": "T", "confirmed_at": "2026", "artifact_digest": gg._gate_digest(ss, g)}
 json.dump(d, open(tj, "w"))
 PY
-out=$(python3 "$GATE" status "$SS" 2>&1)
-if printf '%s' "$out" | grep -q "可 task.py start"; then
-  failn=$((failn+1)); echo "FAIL  status confirm全绿+grill缺失误报可start"; printf '%s\n' "$out" | tail -2
-else pass=$((pass+1)); echo "PASS  status confirm全绿+grill缺失不误报可start"; fi
+then
+  out=$(python3 "$GATE" status "$SS" 2>&1)
+  if printf '%s' "$out" | grep -q "可 task.py start"; then
+    failn=$((failn+1)); echo "FAIL  status confirm全绿+grill缺失误报可start"; printf '%s\n' "$out" | tail -2
+  else pass=$((pass+1)); echo "PASS  status confirm全绿+grill缺失不误报可start"; fi
+else failn=$((failn+1)); echo "FAIL  status footer 测试 setup 失败（task.json 未就绪）"; fi
 # status grill 渲染：done → ✅
-SS2=$(mk_good); write_grills_all_done "$SS2"
+SS2=$(make_gate_case statusrender); write_grills_all_done "$SS2"
 out=$(python3 "$GATE" status "$SS2" 2>&1)
 if printf '%s' "$out" | grep -q "grill ✅"; then pass=$((pass+1)); echo "PASS  status 渲染 grill ✅(done)"
 else failn=$((failn+1)); echo "FAIL  status 未渲染 grill ✅"; printf '%s\n' "$out" | tail -4; fi

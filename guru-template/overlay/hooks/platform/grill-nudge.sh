@@ -11,12 +11,13 @@ case "$FP" in
   *".trellis/tasks/"*"/design.md") KIND=overview;     ART=design ;;
   *) exit 0 ;;
 esac
+# 锚定项目根：先 cd，再解析 TASK_DIR/MARK。GATE 是相对路径，且 file_path 可能是相对项目根的相对路径——
+# 必须先 cd 到项目根，相对 TASK_DIR/MARK 才能被正确解析（否则 cwd 非项目根时相对 file_path 会漏判已有标记）。
+# 与兄弟 hook block-unconfirmed-start.sh 一致，遵循「不依赖进程 cwd」不变量。
+cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 TASK_DIR=$(dirname "$FP")
 MARK="$TASK_DIR/.grill-nudged-$ART"
 [ -f "$MARK" ] && exit 0
-# 锚定项目根：GATE 是相对路径，CWD 非项目根时会找不到而静默失效（FP 是绝对路径，不受 cd 影响）。
-# 与兄弟 hook block-unconfirmed-start.sh 一致，遵循「不依赖进程 cwd」不变量。
-cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 GATE=".trellis/scripts/guru/guru_gate.py"
 [ -f "$GATE" ] || exit 0
 if python3 "$GATE" "$KIND" "$TASK_DIR" >/dev/null 2>&1; then

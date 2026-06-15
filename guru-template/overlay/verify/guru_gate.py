@@ -727,6 +727,7 @@ def _record_grill(task_dir: str, gate: str, status: str, via: str, user_quote=No
     elif status == "skipped":
         reason = (user_quote or "").strip()
         record["reason"] = reason[:500]
+        record["digest"] = _gate_digest(task_dir, gate)
     if via == "agent":
         record["mode"] = "soft"
         record["via"] = "agent"
@@ -749,7 +750,7 @@ def _grill_ok(task_dir: str, gate: str) -> bool:
     if not isinstance(grill, dict):
         return False
     if grill.get("status") == "skipped":
-        return bool((grill.get("reason") or "").strip())
+        return bool((grill.get("reason") or "").strip()) and grill.get("digest") == _gate_digest(task_dir, gate)
     if grill.get("status") == "done" and grill.get("digest") == _gate_digest(task_dir, gate):
         return True
     return False
@@ -766,7 +767,11 @@ def _grill_problem(task_dir: str, gate: str) -> str:
         if grill.get("digest") != _gate_digest(task_dir, gate):
             return "design-grill digest 失配（产物在 grill 后被修改）"
     if grill.get("status") == "skipped":
-        return "" if (grill.get("reason") or "").strip() else "design-grill 跳过记录缺理由（reason）"
+        if not (grill.get("reason") or "").strip():
+            return "design-grill 跳过记录缺理由（reason）"
+        if grill.get("digest") != _gate_digest(task_dir, gate):
+            return "design-grill 跳过后产物被修改（digest 失配），需重新 grill-skip/grill-done"
+        return ""
     return "design-grill 状态非法（必须是 done 或 skipped）"
 
 
@@ -777,7 +782,9 @@ def _grill_status_mark(task_dir: str, gate: str) -> str:
     if not isinstance(grill, dict):
         return "grill ⬜ 待拷问"
     if grill.get("status") == "skipped":
-        return "grill ⏭ 跳过" if (grill.get("reason") or "").strip() else "grill ⚠️ 跳过缺理由"
+        if not (grill.get("reason") or "").strip():
+            return "grill ⚠️ 跳过缺理由"
+        return "grill ⏭ 跳过" if grill.get("digest") == _gate_digest(task_dir, gate) else "grill ⚠️ 跳过后产物已改"
     if grill.get("status") == "done":
         return "grill ✅" if grill.get("digest") == _gate_digest(task_dir, gate) else "grill ⚠️ digest 失配"
     return "grill ⚠️ 状态非法"

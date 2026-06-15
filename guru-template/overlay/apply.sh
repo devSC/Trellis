@@ -71,6 +71,13 @@ cleanup_legacy_grill_skills() {
         echo "ERROR: legacy grill skill 路径非法，拒绝删除: $skill_dir"
         exit 1
       fi
+      # 托管身份判断：只清理 guru 装的 grill（wrapper 的「兼容 wrapper」描述 / 旧 grill 的 grill-with-docs·Gate 前拷问）。
+      # 特征用精确短语，绝不用裸 'design-grill'——那会匹配 skill 名自身（go-design-grill 等）误删用户同名 skill。
+      # 无 guru grill 特征 = 疑似用户自建同名 skill，跳过不删、仅警告，避免误删用户数据。
+      if ! grep -qE 'grill-with-docs|兼容 wrapper|Gate 前拷问' "$skill_dir/SKILL.md" 2>/dev/null; then
+        echo "  ⚠ 跳过疑似用户自建同名 skill（无 guru grill 特征，未删，请自行确认）: .$side_name/skills/$skill_name"
+        continue
+      fi
       if [ -z "${backup_root:-}" ]; then
         ts="$(date +%Y%m%d%H%M%S)"
         backup_root="$TARGET/.trellis/backup/guru-legacy-skills/$ts"
