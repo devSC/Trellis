@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # PostToolUse(Write|Edit|MultiEdit)：prd/归属表草稿"成形"后自动提示加载 design-grill 拷问。
 # 平台旧名 skill 仅保留为 design-grill wrapper。
-# 成形判定 = guru_gate 对应结构检查通过（半成品不打扰）；.grilled-<artifact> 标记幂等（只提示一次，
-# 删除标记可重新触发）。exit 2 的 stderr 会反馈给 agent（PostToolUse 不阻塞已完成的写入）。
+# 成形判定 = guru_gate 对应结构检查通过（半成品不打扰）；.grill-nudged-<artifact> 标记仅用于提示幂等
+#（只提示一次，删除标记可重新触发）。真正的 grill 完成状态只由 guru_gate.py grill-done/skip 写入 task.json。
+# exit 2 的 stderr 会反馈给 agent（PostToolUse 不阻塞已完成的写入）。
 INPUT=$(cat)
 FP=$(printf '%s' "$INPUT" | grep -oE '"file_path"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed 's/.*:[[:space:]]*"//; s/"$//')
 case "$FP" in
@@ -11,7 +12,7 @@ case "$FP" in
   *) exit 0 ;;
 esac
 TASK_DIR=$(dirname "$FP")
-MARK="$TASK_DIR/.grilled-$ART"
+MARK="$TASK_DIR/.grill-nudged-$ART"
 [ -f "$MARK" ] && exit 0
 # 锚定项目根：GATE 是相对路径，CWD 非项目根时会找不到而静默失效（FP 是绝对路径，不受 cd 影响）。
 # 与兄弟 hook block-unconfirmed-start.sh 一致，遵循「不依赖进程 cwd」不变量。

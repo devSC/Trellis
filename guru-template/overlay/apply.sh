@@ -126,11 +126,24 @@ chmod +x "$TARGET/.claude/hooks/"*.sh
 cp "$HERE/trellis-local/SKILL.md" "$TARGET/.claude/skills/trellis-local/"
 echo "  hooks(platform): ${INSTALLED_HOOKS} + trellis-local"
 
+# 历史 `.grilled-*` 是旧 nudge 的"已提示"幂等标记，不再代表 design-grill 已完成。
+# 阶段 B 起真正完成/跳过状态只认 task.json 的 guru_gates[gate].grill（由 guru_gate.py grill-done/skip 写入）。
+old_grilled_n=0
+if [ -d "$TARGET/.trellis/tasks" ]; then
+  old_grilled_n="$(find "$TARGET/.trellis/tasks" -type f -name '.grilled-*' 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "$old_grilled_n" != 0 ]; then
+    find "$TARGET/.trellis/tasks" -type f -name '.grilled-*' -exec rm -f {} + 2>/dev/null || true
+    echo "  grill markers: 已清理旧 .grilled-* 提示标记 ×${old_grilled_n}（不再表示完成）"
+  fi
+fi
+
 # 4) 平台 skill 镜像（Claude Code 只读 .claude/skills；Codex 等读 .agents/skills）
 MIRROR_SCRIPT="$TARGET/scripts/sync_platform_skills.py"
 USED_PROJECT_MIRROR=0
 if [ -f "$MIRROR_SCRIPT" ]; then
-  # 项目自带镜像系统（如 himora）是该项目平台镜像的权威，交给它统一处理
+  # 项目自带镜像系统（如 himora）是该项目平台镜像的权威，交给它统一处理。
+  # 契约：脚本的 --sync/--check 必须覆盖 SHARED_SKILLS（尤其 design-grill）在 .agents/.claude 两面存在。
+  # 本脚本 §8 会显式校验 design-grill 两面存在，防止镜像脚本假绿。
   python3 "$MIRROR_SCRIPT" --sync --root "$TARGET"
   USED_PROJECT_MIRROR=1
   echo "  platform mirror: 项目镜像脚本 --sync 完成"
@@ -536,6 +549,11 @@ if [ "$USED_PROJECT_MIRROR" = 1 ]; then
     echo "  ✓ 平台 skill 镜像无漂移"
   else
     echo "  ✗ 平台 skill 镜像漂移（python3 scripts/sync_platform_skills.py --check）"; FAIL=1
+  fi
+  if [ -d "$TARGET/.agents/skills/design-grill" ] && [ -d "$TARGET/.claude/skills/design-grill" ]; then
+    echo "  ✓ design-grill 两面存在（项目镜像模式）"
+  else
+    echo "  ✗ design-grill 两面缺失（项目镜像脚本必须同步 shared skill 到 .agents/.claude）"; FAIL=1
   fi
 else
   # §4.5 双面对齐的不变量：.agents/skills 与 .claude/skills 必须内容一致（名字+内容，排除脏文件）。

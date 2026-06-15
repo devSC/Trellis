@@ -31,7 +31,9 @@
 - **人工 Gate 机制**：阶段跃迁（需求→概要→详细→实现）必须人工确认落盘，通道按 config `guru.gate_mode`（**本节是通道唯一主定义**，其余处写"confirm 收口"均指此处）：
   - **strict（默认）**：用户本人在交互式终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm`（零参数=批量确认待确认 Gate，逐个 y/n）；agent 经工具运行因无 TTY 被拒，**不得代跑、不得以自写 review 记录替代**。
   - **soft**：用户在对话中明确确认后，agent 运行 `guru_gate.py confirm --via-agent --user-quote "<用户确认原话>"` 代跑（`--user-quote` 必填，留痕标注 soft/agent + 用户原话）；**未获用户本轮明确确认不得执行**。
-  - 两种模式下确认快照（累积 digest）、结构 Gate 复跑、`task.py start` 的 before_start 强制校验均生效；进度随时 `guru_gate.py status` 查。
+  - **design-grill 硬前置**：每道 Gate 结构通过后、confirm 前必须先记录 grill 凭据。strict：用户终端运行 `python3 .trellis/scripts/guru/guru_gate.py grill-done <gate> <task_dir>`；soft：用户本轮明确确认后 agent 可加 `--via-agent --user-quote "<用户确认原话>"` 代跑；用户明确跳过时运行 `python3 .trellis/scripts/guru/guru_gate.py grill-skip <gate> <task_dir> --user-quote "<跳过理由>"`。不得手写 `.grilled-*` / `.grill-nudged-*` 标记。
+  - BLOCK 提示样例：`[guru-gate:check] 拦截：需求 Gate 未完成 design-grill 前置` → 先跑 `python3 .trellis/scripts/guru/guru_gate.py grill-done requirements <task_dir>`（或 `grill-skip requirements <task_dir> --user-quote "<跳过理由>"`），再重跑 confirm/check。
+  - 两种模式下 grill digest、确认快照（累积 digest）、结构 Gate 复跑、`task.py start` 的 before_start 强制校验均生效；进度随时 `guru_gate.py status` 查。
 
 ### Planning Artifacts（guru 五阶段语义，双轨制）
 
@@ -187,8 +189,8 @@ after_create 钩子默认写入 `guru_chain: full`；按 Request Triage 判定�
 **full 链**：先加载 `requirement-writing`（guru-ai-guides，硬前置=其标准包 requirement-doc-standard 可读，缺即停）撰写/补齐**正式需求包**（项目 docs 需求目录），全稿后加载 `requirement-review` 做门禁审核；review 通过后把行为规格抽取为任务内 `prd.md`（BHV 编号承接需求包场景）。`trellis-brainstorm` 仅作前置探索，不替代正式需求链。
 **light 链**：加载 `trellis-brainstorm` 探索需求，直接产出 `prd.md`。
 两轨 `prd.md` 口径一致，**需求五要素**：① 行为规格（Given/When/Then，每条 `BHV-NNN` 标题）② 核心能力清单（P0/P1）③ 失败路径（含 `enum Error` 预期分支，如校验失败 / 持久化失败 / 网络失败）④ 验收场景（可被 `swift test` 断言的可验证信号）⑤ 显式未决问题（一次问用户 1~4 个，不私自拍板）。
-prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path / 项目约定 / 既有 BHV 磨术语、压测边界，决策当场固化进 prd），然后才提交需求 Gate。
-**需求 Gate**：五要素缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），完成 **confirm 人工收口**（通道按 gate_mode，见 Trellis System 节）；确认落盘后方可进 1.3。
+prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path / 项目约定 / 既有 BHV 磨术语、压测边界，决策当场固化进 prd），然后记录 `guru_gate.py grill-done requirements <task_dir>`（或用户明确跳过时 `grill-skip requirements <task_dir> --user-quote "<跳过理由>"`），再提交需求 Gate。
+**需求 Gate**：五要素缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），先确保 grill 凭据已记录，再完成 **confirm 人工收口**（通道按 gate_mode，见 Trellis System 节）；确认落盘后方可进 1.3。若 BLOCK 提示缺 grill，按提示先跑 `grill-done requirements` 或 `grill-skip requirements`。
 
 #### 1.2 研究 `[optional · repeatable]`
 
@@ -204,7 +206,7 @@ prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path / 项目约
 - **承接索引**：逐文件列出"由哪个 BHV 驱动、对应哪个 doc_type、详细阶段在哪展开"，作为详细阶段 directory_precheck 的输入。
 **full 链**：建立设计包骨架（`README.md` + `design-main.md` + `chapters/`），把包路径写入 task.json `design_package`，产出 `design-main.md` 概要主定义（含架构就绪自检与逐文件承接索引）；任务内 `design.md` 写指针+摘要。
 **light 链**：产出 `design.md` **§1 概要设计**。
-**概要 Gate**：加载 `ios-design-overview-review` 审核，结论"可进入详细设计"后，完成 **confirm 人工收口**（通道按 gate_mode）；确认落盘后方可进 1.4。**归属违反分层依赖律 = 直接 fail**（不放行、回本步重排归属）。
+**概要 Gate**：加载 `ios-design-overview-review` 审核，结论"可进入详细设计"后，先完成 `design-grill` 拷问并记录 `guru_gate.py grill-done overview <task_dir>`（或 `grill-skip overview <task_dir> --user-quote "<跳过理由>"`），再完成 **confirm 人工收口**（通道按 gate_mode）；确认落盘后方可进 1.4。**归属违反分层依赖律 = 直接 fail**（不放行、回本步重排归属）。
 
 #### 1.4 详细设计 `[required · repeatable]`
 
@@ -220,7 +222,7 @@ prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path / 项目约
 8. Gate 判定 —— 本单元过详细 Gate 的判据（合同字段齐全、归属合法、可验证信号可执行）。
 **full 链**：directory_precheck（design-main 承接索引存在且非空，否则回退概要）→ chapter_loop **逐章/小批次**生成 `chapters/<slug>.md`（禁止一次性全量输出）；命中 pending L2 类型（`domain-model`/`view`/`coordinator`/`external`）须显式 `L2豁免：<doc_type> 理由：…` 或先补 L2（gate 拦截）。
 **light 链**：展开 `design.md` **§2 详细设计**（单文档多章节，逐 `UNIT-<slug>` 合同八问）。
-**详细 Gate**：加载 `ios-design-detail-review` 审核，结论"可进入编码"后，完成 **confirm 人工收口**（通道按 gate_mode）；确认落盘后方可进 1.5/1.6。
+**详细 Gate**：加载 `ios-design-detail-review` 审核，结论"可进入编码"后，先完成 `design-grill` 拷问并记录 `guru_gate.py grill-done detail <task_dir>`（或 `grill-skip detail <task_dir> --user-quote "<跳过理由>"`），再完成 **confirm 人工收口**（通道按 gate_mode）；确认落盘后方可进 1.5/1.6。
 
 #### 1.5 配置上下文 `[required · once]`
 
@@ -228,15 +230,15 @@ prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path / 项目约
 
 #### 1.6 激活任务 `[required · once]`
 
-前置 = 三道人工确认均已落盘（`guru_gate.py check <task_dir>` 通过）。然后 `task.py start <task-dir>`——其 before_start 钩子会再次强制校验，缺确认直接失败；此时回到对应阶段补 review + confirm 人工收口，禁止绕过。
+前置 = 三道 grill 凭据与人工确认均已落盘（`guru_gate.py check <task_dir>` 通过）。然后 `task.py start <task-dir>`——其 before_start 钩子会再次强制校验，缺 grill/缺确认直接失败；此时回到对应阶段补 design-grill + review + confirm 人工收口，禁止绕过。
 
 #### 1.7 完成判定
 
 | 条件 | 必须 |
 |------|:---:|
-| 需求产物过需求 Gate + 用户 confirm requirements（full 链含正式需求包 review 通过） | ✅ |
-| 概要主定义过概要 Gate + 用户 confirm overview（full=design-main.md；light=design.md §1；归属表无分层律违规） | ✅ |
-| 详细设计过详细 Gate + 用户 confirm detail（full=chapters/ 闭合；light=design.md §2；doc_type 限七类，pending 类已豁免或补 L2） | ✅ |
+| 需求产物过需求 Gate + grill-done/skip requirements + 用户 confirm requirements（full 链含正式需求包 review 通过） | ✅ |
+| 概要主定义过概要 Gate + grill-done/skip overview + 用户 confirm overview（full=design-main.md；light=design.md §1；归属表无分层律违规） | ✅ |
+| 详细设计过详细 Gate + grill-done/skip detail + 用户 confirm detail（full=chapters/ 闭合；light=design.md §2；doc_type 限七类，pending 类已豁免或补 L2） | ✅ |
 | `implement.md`（trace §1）存在 | ✅ |
 | jsonl 含 harness SSOT + golden-path + iOS 项目约定条目 | ✅（inline 平台除外） |
 | `task.py start` 已执行（before_start 校验通过） | ✅ |

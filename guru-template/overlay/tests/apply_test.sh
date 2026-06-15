@@ -30,11 +30,20 @@ EOF
 
 # ============ 场景 1：通用项目（无项目镜像脚本）============
 T1=$(mk_target generic yes)
+mkdir -p "$T1/.trellis/tasks/old-grill-marker"
+: > "$T1/.trellis/tasks/old-grill-marker/.grilled-prd"
 out=$(bash "$APPLY" "$T1" 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "场景1 apply 退出码 0" || { bad "场景1 退出码 (rc=$rc)"; echo "$out" | tail -10; }
 
 diff -r "$T1/.agents/skills/client-design-overview-writing" "$T1/.claude/skills/client-design-overview-writing" >/dev/null 2>&1 \
   && ok "场景1 skills 镜像到 .claude/skills 且字节一致" || bad "场景1 .claude/skills 镜像缺失或不一致"
+
+[ -d "$T1/.agents/skills/design-grill" ] && [ -d "$T1/.claude/skills/design-grill" ] \
+  && diff -r "$T1/.agents/skills/design-grill" "$T1/.claude/skills/design-grill" >/dev/null 2>&1 \
+  && ok "场景1 design-grill 两面存在且字节一致" || bad "场景1 design-grill 两面缺失或不一致"
+
+[ ! -e "$T1/.trellis/tasks/old-grill-marker/.grilled-prd" ] \
+  && ok "场景1 清理旧 .grilled-* 提示标记" || bad "场景1 旧 .grilled-* 标记未清理"
 
 grep -q "my-custom-guard.sh" "$T1/.claude/settings.json" && grep -q "block-unconfirmed-start.sh" "$T1/.claude/settings.json" \
   && ok "场景1 settings.json 合并（用户 hook 保留 + 阻断 hook 接线）" || bad "场景1 settings.json 合并不完整"
@@ -76,14 +85,27 @@ SNAP2=$(snapshot "$T1") || { bad "场景1 快照失败（二次）"; SNAP2="__fa
 T2=$(mk_target mirrored yes)
 mkdir -p "$T2/scripts"
 cat > "$T2/scripts/sync_platform_skills.py" <<'EOF'
+import os
+import shutil
 import sys
+root = sys.argv[sys.argv.index("--root") + 1] if "--root" in sys.argv else os.getcwd()
+src = os.path.join(root, ".agents", "skills", "design-grill")
+dst = os.path.join(root, ".claude", "skills", "design-grill")
 if "--sync" in sys.argv:
-    open("MIRROR_SENTINEL", "w").write("synced")
+    if os.path.isdir(src):
+        shutil.rmtree(dst, ignore_errors=True)
+        shutil.copytree(src, dst)
+    open(os.path.join(root, "MIRROR_SENTINEL"), "w").write("synced")
+if "--check" in sys.argv:
+    if not (os.path.isdir(src) and os.path.isdir(dst)):
+        sys.exit(1)
 sys.exit(0)
 EOF
 out=$(cd "$T2" && bash "$APPLY" "$T2" 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "场景2 apply 退出码 0" || { bad "场景2 退出码 (rc=$rc)"; echo "$out" | tail -5; }
 [ -f "$T2/MIRROR_SENTINEL" ] && ok "场景2 项目镜像脚本被调用" || bad "场景2 镜像脚本未被调用"
+[ -d "$T2/.agents/skills/design-grill" ] && [ -d "$T2/.claude/skills/design-grill" ] \
+  && ok "场景2 镜像模式 design-grill 两面存在" || bad "场景2 design-grill 未被镜像到两面"
 [ ! -d "$T2/.claude/skills/client-design-overview-writing" ] \
   && ok "场景2 apply 未直写 .claude/skills（交镜像脚本管）" || bad "场景2 不应直写 .claude/skills"
 rm -f "$T2/MIRROR_SENTINEL"
