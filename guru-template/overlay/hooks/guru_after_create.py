@@ -68,14 +68,21 @@ def append_unique(jsonl_path: str, entries: list) -> int:
                     existing.add(json.loads(line).get("file", ""))
                 except json.JSONDecodeError:
                     continue
-    added = 0
+    new_entries = [e for e in entries if e["file"] not in existing]
+    if not new_entries:
+        return 0
+    # 既有文件末行无换行时先补一个，避免首条新条目粘到用户最后一行末尾（产生 {..}{..} 非法 jsonl 行）
+    need_nl = False
+    if os.path.isfile(jsonl_path) and os.path.getsize(jsonl_path) > 0:
+        with open(jsonl_path, "rb") as r:
+            r.seek(-1, os.SEEK_END)
+            need_nl = r.read(1) != b"\n"
     with open(jsonl_path, "a", encoding="utf-8") as f:
-        for e in entries:
-            if e["file"] in existing:
-                continue
+        if need_nl:
+            f.write("\n")
+        for e in new_entries:
             f.write(json.dumps(e, ensure_ascii=False) + "\n")
-            added += 1
-    return added
+    return len(new_entries)
 
 
 def main() -> int:

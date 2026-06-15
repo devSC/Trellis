@@ -14,8 +14,12 @@
                                                   # 人工确认 Gate（gate 省略=批量确认全部待确认阶段，逐个 y/n）
                                                   # strict 模式（默认）：仅限用户本人在交互式终端运行，agent 代跑被拒
                                                   # soft 模式（config guru.gate_mode: soft）：用户对话确认后 agent 以 --via-agent 代跑（记录留痕标注）
+  python3 guru_gate.py grill-done <gate> [task_dir] [--via-agent] --user-quote "<用户确认原话>"
+                                                  # 记录 design-grill 已完成（写入 guru_gates[gate].grill，含 gate digest）
+  python3 guru_gate.py grill-skip <gate> [task_dir] [--via-agent] --user-quote "<跳过理由>"
+                                                  # 记录用户明确跳过 design-grill（留原因）
   python3 guru_gate.py status [task_dir]          # 查看三道人工 Gate 的确认状态与下一步
-  python3 guru_gate.py check [task_dir]           # before_start 钩子用：复跑结构 Gate + 三道人工确认 + 确认快照比对，任一不满足 exit 2
+  python3 guru_gate.py check [task_dir]           # before_start 钩子用：复跑结构 Gate + grill 前置 + 三道人工确认 + 确认快照比对，任一不满足 exit 2
   python3 guru_gate.py digest <gate> [task_dir]   # 输出该阶段产物的确认快照摘要（排查快照失配用）
 
 编号纪律:
@@ -48,11 +52,14 @@ BHV_REF = re.compile(r"(BHV-\d+)")
 UNIT_REF = re.compile(r"(UNIT-[a-z][a-z0-9-]*)")
 
 # 双轨制（完整五阶段链=目录级设计包；轻量链=单文件 design.md）
-# V1_L2 / NINE_TYPES 与 detail-structure-single-source.md §2 同步维护。
-V1_L2 = {"controller", "usecase", "repository-datasource"}
-NINE_TYPES = V1_L2 | {"page-entry", "service", "db-dao", "api-network",
-                      "config-l10n", "external-platform"}
-DOC_TYPE_REF = re.compile(r"(?:detail_)?doc_type\s*[=:：]\s*`?([a-z][a-z-]*)`?")
+# doc_type 分类【运行时】从已装的 detail-structure-single-source.md §2 表解析（见 _doc_type_taxonomy），
+# 使 gate 自适应平台（flutter/go/ios/h5 的 doc_type 类目各异）。下列 fallback 是 flutter 基线，仅在
+# SSOT 缺失/解析空时使用（向后兼容测试夹具与上游 CLI 装的项目）。
+_FALLBACK_V1 = {"controller", "usecase", "repository-datasource"}
+_FALLBACK_NINE = _FALLBACK_V1 | {"page-entry", "service", "db-dao", "api-network",
+                                 "config-l10n", "external-platform"}
+_TAXONOMY_CACHE = {}
+DOC_TYPE_REF = re.compile(r"(?:detail_)?doc_type\s*[=:：]\s*`?([a-z][a-z0-9-]*)`?")
 CHAPTER_FILE_REF = re.compile(r"chapters/([A-Za-z0-9_][A-Za-z0-9_.-]*\.md)")
 L2_EXEMPT_LINE = re.compile(r"L2豁免[^\n]*")
 
@@ -79,8 +86,13 @@ def read(path: str) -> str:
 
 
 def _design_sections(design: str):
-    """切出概要章与详细章正文（按 § 或章节标题启发式）。"""
-    m = re.search(r"(?:§\s*2|##\s*(?:§?\s*2|详细设计))", design)
+    """切出概要章与详细章正文（按行首 §2/详细设计标题锚定）。
+
+    分割点必须是行首标题（^#{1,6}）：§2 要求行首（不命中正文里的 `详见 §2` 行内交叉引用），
+    「详细设计」用负向前瞻排除「详细设计承接索引」子节标题——否则结构合规的 light design.md
+    会被误切（承接索引/三问理由漏进详细段），导致 overview/auto 假拦截。
+    """
+    m = re.search(r"(?m)^#{1,6}\s*(?:§\s*2(?![0-9])|详细设计(?!承接))", design)
     if m:
         return design[: m.start()], design[m.start():]
     return design, ""
@@ -269,7 +281,9 @@ def check_requirements(task_dir: str) -> int:
         problems.append("缺行为编号：行为须以 `### BHV-NNN <短名>` 标题定义（编号纪律）")
     if not (re.search(r"\bGiven\b", prd) and re.search(r"\bWhen\b", prd) and re.search(r"\bThen\b", prd)):
         problems.append("缺行为规格：未找到 Given/When/Then 三段式（至少一组）")
-    if not re.search(r"\bP0\b|\bP1\b", prd):
+    # 不用 \bP0\b：Python \b 把 CJK 当 word 字符，"优先级P0" 会失配（同文件头部反 \b 纪律）。
+    # 守卫用显式 ASCII-word 类（含数字/下划线）两侧对称：放过 CJK 紧贴，挡掉 step_P0/3P0/P0Beta 假阳性。
+    if not re.search(r"(?<![A-Za-z0-9_])P[01](?![A-Za-z0-9_])", prd):
         problems.append("缺核心能力清单：未找到 P0/P1 优先级标记")
     if not re.search(r"失败路径|失败场景|异常路径|failure", prd, re.I):
         problems.append("缺失败路径章节")
@@ -315,15 +329,49 @@ def _check_chapter_closure(task_dir: str) -> list:
     return problems
 
 
+def _doc_type_taxonomy():
+    """运行时从已装 SSOT 解析 doc_type 分类，返回 (all_types, v1_types)。
+
+    定位 .trellis/spec/harness/detail/detail-structure-single-source.md（相对 cwd=项目根，与
+    _package_dir 同约定）的 doc_type 表：表格行最后一列为 L2 状态（pending / 含 v1）时，取行内第一个
+    反引号 token 为 doc_type；含 v1 → 已建成 L2（不需豁免）。这样 go/ios/h5 的 domain/route/
+    coordinator… 也能被 pending-L2 Gate 正确拦截，而非只认 flutter 硬编码类目。SSOT 缺失/解析空 →
+    fallback flutter 基线。结果按 cwd 缓存（同一进程多次调用不重复解析）。
+    """
+    key = os.path.realpath(os.getcwd())
+    if key in _TAXONOMY_CACHE:
+        return _TAXONOMY_CACHE[key]
+    text = read(os.path.join(".trellis", "spec", "harness", "detail",
+                             "detail-structure-single-source.md"))
+    allt, v1 = set(), set()
+    for line in text.splitlines():
+        s = line.strip()
+        if not s.startswith("|"):
+            continue
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        if len(cells) < 2 or not re.search(r"pending|v1", cells[-1]):
+            continue
+        m = re.search(r"`([a-z][a-z0-9-]*)`", s)   # 行内第一个反引号 token = doc_type（兼容 doc_type 在第 1/2 列）
+        if not m:
+            continue
+        allt.add(m.group(1))
+        if "v1" in cells[-1]:
+            v1.add(m.group(1))
+    result = (allt, v1) if allt else (set(_FALLBACK_NINE), set(_FALLBACK_V1))
+    _TAXONOMY_CACHE[key] = result
+    return result
+
+
 def _index_doc_types(main: str) -> set:
     """提取承接索引引用的 doc_type：兼容 `doc_type=X` 行内形式与表格行形式
-    （表格行无 doc_type= 前缀，按九类 token 出现在索引上下文行识别）。"""
-    hits = {t for t in DOC_TYPE_REF.findall(main) if t in NINE_TYPES}
+    （表格行无 doc_type= 前缀，按当前平台 doc_type token 出现在索引上下文行识别）。"""
+    nine, _ = _doc_type_taxonomy()
+    hits = {t for t in DOC_TYPE_REF.findall(main) if t in nine}
     for line in main.splitlines():
         if "L2豁免" in line:
             continue
         if "chapters/" in line or "chapter_target" in line:
-            for t in NINE_TYPES:
+            for t in nine:
                 if re.search(rf"\b{re.escape(t)}\b", line):
                     hits.add(t)
     return hits
@@ -334,14 +382,15 @@ def _check_pending_l2(task_dir: str) -> list:
     pkg = _package_dir(task_dir)
     if not pkg:
         return []
+    nine, v1 = _doc_type_taxonomy()
     main = read(os.path.join(pkg, "design-main.md"))
-    hit = {t for t in _index_doc_types(main) if t not in V1_L2}
+    hit = {t for t in _index_doc_types(main) if t not in v1}
     exempted = set()
     for line in L2_EXEMPT_LINE.findall(main):
-        # 豁免对象只从「理由」之前的声明段取词（且限九类 token）——
+        # 豁免对象只从「理由」之前的声明段取词（且限当前平台 doc_type token）——
         # 理由文本里出现的类型词（如 "this service layer..."）不构成豁免
         head = line.split("理由", 1)[0]
-        exempted.update(t for t in re.findall(r"[a-z][a-z-]*", head) if t in NINE_TYPES)
+        exempted.update(t for t in re.findall(r"[a-z][a-z0-9-]*", head) if t in nine)
     not_exempted = sorted(t for t in hit if t not in exempted)
     if not_exempted:
         return [f"承接索引命中 pending L2 类型且无显式豁免：{', '.join(not_exempted)}"
@@ -448,15 +497,25 @@ def check_implement(task_dir: str) -> int:
 
 
 def resolve_task_dir(arg):
+    # before_start 注入 TASK_JSON_PATH（指向正要 start 的任务）：与显式 arg 不一致时警告，
+    # 避免 check 校验了 A（已确认）却给 B（正要 start、未确认）放行（F4 跨任务错配）。
+    tj = os.environ.get("TASK_JSON_PATH", "")
+    tj_dir = os.path.dirname(tj) if tj and os.path.isfile(tj) else None
     if arg:
         if os.path.isdir(arg):
-            return arg
-        named = os.path.join(".trellis", "tasks", arg)  # 裸任务名
-        return named if os.path.isdir(named) else None
+            resolved = arg
+        else:
+            named = os.path.join(".trellis", "tasks", arg)  # 裸任务名
+            resolved = named if os.path.isdir(named) else None
+        if resolved and tj_dir and os.path.realpath(resolved) != os.path.realpath(tj_dir):
+            sys.stderr.write(
+                f"[guru-gate] 警告：显式 task_dir（{resolved}）与 before_start 注入的 "
+                f"TASK_JSON_PATH（{tj_dir}）指向不同任务，按显式参数校验——若此调用是 "
+                f"task.py start 的前置闸门，请核实校验的是否为正在激活的任务。\n")
+        return resolved
     # before_start 钩子注入 TASK_JSON_PATH（最可靠：指向正要 start 的任务）
-    tj = os.environ.get("TASK_JSON_PATH", "")
-    if tj and os.path.isfile(tj):
-        return os.path.dirname(tj)
+    if tj_dir:
+        return tj_dir
     import subprocess
     try:
         out = subprocess.run(["python3", ".trellis/scripts/task.py", "current"],
@@ -495,6 +554,15 @@ def resolve_task_dir(arg):
 # 设计：阶段跃迁（需求→概要→详细→实现）必须由用户本人确认。confirm 强制 TTY +
 # 交互输入，agent 经工具管道运行必然无 TTY 而被拒；确认落盘 task.json 的
 # guru_gates 键；task.py start 经 before_start 钩子跑 check，缺确认即中止。
+#
+# 安全边界（诚实声明，勿误用）：本机制是「诚实性辅助（integrity aid）」，不是
+# 「安全边界（security boundary）」。它挡得住「无意/图省事跳过评审」（手滑），
+# 挡不住「蓄意绕过」的 agent——判定材料 task.json 与 agent 同处可写信任域，
+# artifact_digest 是无密钥哈希且 `digest` 子命令无门禁，故蓄意者可：(a) 自取
+# digest 伪造一份自洽的 guru_gates；(b) 分配 pty 使 isatty() 误判为人；(c) 自行
+# 把 gate_mode 降 soft 代跑。strict 模式只抬高绕过成本、提供流程纪律，不构成
+# 密码学保证。要升级成真正的安全边界，须把确认信任根移出 agent 可写域（独立
+# 进程/服务签发确认），属架构级改动，不在本脚本范围。
 
 HUMAN_GATES = ("requirements", "overview", "detail")
 GATE_LABEL = {"requirements": "需求", "overview": "概要设计", "detail": "详细设计"}
@@ -579,37 +647,25 @@ def _gate_mode() -> str:
     return "strict"
 
 
-def _record_confirm(task_dir: str, gate: str, via: str, user_quote=None) -> int:
-    """写入单个 Gate 的确认记录（严格 JSON 守卫 + 原子写）。via ∈ tty|agent。"""
-    from datetime import datetime
-    # confirm 是写路径：task.json 内容非法时拒绝写入（_task_json_of 的宽容 {} 会冲掉原有元数据）
+def _task_data_for_write(task_dir: str, channel: str):
+    """写路径严格读取 task.json：非法/非对象根拒绝，避免宽容读冲掉用户元数据。"""
     raw = read(os.path.join(task_dir, "task.json"))
     if raw.strip():
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as e:
-            sys.stderr.write(f"[guru-gate:confirm] task.json 格式非法，拒绝写入确认：{e}\n")
-            return BLOCK
+            sys.stderr.write(f"[guru-gate:{channel}] task.json 格式非法，拒绝写入：{e}\n")
+            return None
         if not isinstance(data, dict):
-            sys.stderr.write("[guru-gate:confirm] task.json 根节点必须是对象，拒绝写入确认\n")
-            return BLOCK
-    else:
-        data = {}
-    gates = data.setdefault(GATES_KEY, {})
-    record = {
-        "confirmed_by": _developer_name(),
-        "confirmed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        # 确认快照：check 时比对，产物在确认后被修改 → 要求重新确认
-        "artifact_digest": _gate_digest(task_dir, gate),
-    }
-    if via == "agent":
-        record["mode"] = "soft"
-        record["via"] = "agent"  # 留痕：对话确认、agent 代跑（非 TTY 人手证明）
-        if user_quote:
-            record["user_quote"] = user_quote[:500]  # 用户确认原话（审计：伪造须编造用户言论）
-    gates[gate] = record
+            sys.stderr.write(f"[guru-gate:{channel}] task.json 根节点必须是对象，拒绝写入\n")
+            return None
+        return data
+    return {}
+
+
+def _write_task_data_atomic(task_dir: str, data: dict) -> str:
+    """原子写 task.json：中断不留半截文件。返回写入路径。"""
     tj_path = os.path.join(task_dir, "task.json")
-    # 原子写：中断不留半截 task.json（与 guru_after_create 同一模式）
     tmp_path = f"{tj_path}.tmp.{os.getpid()}"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -619,9 +675,148 @@ def _record_confirm(task_dir: str, gate: str, via: str, user_quote=None) -> int:
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+    return tj_path
+
+
+def _record_confirm(task_dir: str, gate: str, via: str, user_quote=None) -> int:
+    """写入单个 Gate 的确认记录（严格 JSON 守卫 + 原子写）。via ∈ tty|agent。"""
+    from datetime import datetime
+    data = _task_data_for_write(task_dir, "confirm")
+    if data is None:
+        return BLOCK
+    gates = data.setdefault(GATES_KEY, {})
+    previous = gates.get(gate)
+    record = {
+        "confirmed_by": _developer_name(),
+        "confirmed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        # 确认快照：check 时比对，产物在确认后被修改 → 要求重新确认
+        "artifact_digest": _gate_digest(task_dir, gate),
+    }
+    if isinstance(previous, dict) and isinstance(previous.get("grill"), dict):
+        record["grill"] = previous["grill"]
+    if via == "agent":
+        record["mode"] = "soft"
+        record["via"] = "agent"  # 留痕：对话确认、agent 代跑（非 TTY 人手证明）
+        if user_quote:
+            record["user_quote"] = user_quote[:500]  # 用户确认原话（审计：伪造须编造用户言论）
+    gates[gate] = record
+    tj_path = _write_task_data_atomic(task_dir, data)
     suffix = "（soft：对话确认，agent 代跑）" if via == "agent" else ""
     print(f"[guru-gate:confirm] ✅ {GATE_LABEL[gate]} Gate 已由 {record['confirmed_by']} 确认{suffix}（已写入 {tj_path}）")
     return PASS
+
+
+def _record_grill(task_dir: str, gate: str, status: str, via: str, user_quote=None) -> int:
+    """写入 design-grill 完成/跳过记录（严格 JSON 守卫 + 原子写）。via ∈ tty|agent。"""
+    from datetime import datetime
+    data = _task_data_for_write(task_dir, f"grill-{status}")
+    if data is None:
+        return BLOCK
+    gates = data.setdefault(GATES_KEY, {})
+    entry = gates.setdefault(gate, {})
+    if not isinstance(entry, dict):
+        entry = {}
+        gates[gate] = entry
+    record = {
+        "status": status,
+        "by": _developer_name(),
+        "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    if status == "done":
+        record["digest"] = _gate_digest(task_dir, gate)
+    elif status == "skipped":
+        reason = (user_quote or "").strip()
+        record["reason"] = reason[:500]
+        record["digest"] = _gate_digest(task_dir, gate)
+    if via == "agent":
+        record["mode"] = "soft"
+        record["via"] = "agent"
+        if user_quote:
+            record["user_quote"] = user_quote[:500]
+    entry["grill"] = record
+    tj_path = _write_task_data_atomic(task_dir, data)
+    suffix = "（soft：对话确认，agent 代跑）" if via == "agent" else ""
+    if status == "done":
+        print(f"[guru-gate:grill-done] ✅ {GATE_LABEL[gate]} Gate design-grill 已完成{suffix}（已写入 {tj_path}）")
+    else:
+        print(f"[guru-gate:grill-skip] ✅ {GATE_LABEL[gate]} Gate design-grill 已按用户理由跳过{suffix}（已写入 {tj_path}）")
+    return PASS
+
+
+def _grill_ok(task_dir: str, gate: str) -> bool:
+    """design-grill 前置状态：done 且 digest 匹配，或 skipped 留痕。"""
+    state = _gate_states(task_dir).get(gate)
+    grill = state.get("grill") if isinstance(state, dict) else None
+    if not isinstance(grill, dict):
+        return False
+    if grill.get("status") == "skipped":
+        return bool((grill.get("reason") or "").strip()) and grill.get("digest") == _gate_digest(task_dir, gate)
+    if grill.get("status") == "done" and grill.get("digest") == _gate_digest(task_dir, gate):
+        return True
+    return False
+
+
+def _grill_problem(task_dir: str, gate: str) -> str:
+    state = _gate_states(task_dir).get(gate)
+    grill = state.get("grill") if isinstance(state, dict) else None
+    if not isinstance(grill, dict):
+        return "未记录 design-grill 完成凭据"
+    if grill.get("status") == "done":
+        if not grill.get("digest"):
+            return "design-grill 完成记录缺 digest"
+        if grill.get("digest") != _gate_digest(task_dir, gate):
+            return "design-grill digest 失配（产物在 grill 后被修改）"
+    if grill.get("status") == "skipped":
+        if not (grill.get("reason") or "").strip():
+            return "design-grill 跳过记录缺理由（reason）"
+        if grill.get("digest") != _gate_digest(task_dir, gate):
+            return "design-grill 跳过后产物被修改（digest 失配），需重新 grill-skip/grill-done"
+        return ""
+    return "design-grill 状态非法（必须是 done 或 skipped）"
+
+
+def _grill_status_mark(task_dir: str, gate: str) -> str:
+    """status 呈现用：design-grill 子状态（与 confirm 同口径，避免 status 漏报 grill 卡点）。"""
+    state = _gate_states(task_dir).get(gate)
+    grill = state.get("grill") if isinstance(state, dict) else None
+    if not isinstance(grill, dict):
+        return "grill ⬜ 待拷问"
+    if grill.get("status") == "skipped":
+        if not (grill.get("reason") or "").strip():
+            return "grill ⚠️ 跳过缺理由"
+        return "grill ⏭ 跳过" if grill.get("digest") == _gate_digest(task_dir, gate) else "grill ⚠️ 跳过后产物已改"
+    if grill.get("status") == "done":
+        return "grill ✅" if grill.get("digest") == _gate_digest(task_dir, gate) else "grill ⚠️ digest 失配"
+    return "grill ⚠️ 状态非法"
+
+
+def _block_grill(channel: str, task_dir: str, gate: str) -> int:
+    reason = _grill_problem(task_dir, gate)
+    sys.stderr.write(f"[guru-gate:{channel}] 拦截：{GATE_LABEL[gate]} Gate 未完成 design-grill 前置：{reason}\n")
+    sys.stderr.write("先跑：\n")
+    sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py grill-done {gate} {task_dir}\n")
+    sys.stderr.write("如用户明确选择跳过，请留理由：\n")
+    sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py grill-skip {gate} {task_dir} --user-quote \"<跳过理由>\"\n")
+    return BLOCK
+
+
+def _authorize_gate_write(channel: str, via_agent: bool, user_quote=None):
+    """复用人工 Gate 写入守卫：strict 只认 TTY；soft 需 --via-agent + --user-quote。"""
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    mode = _gate_mode()
+    if not interactive and not (mode == "soft" and via_agent):
+        sys.stderr.write(
+            f"[guru-gate:{channel}] 拒绝：strict 模式下人工 Gate 写入必须由用户本人在交互式终端执行（当前无 TTY）。\n"
+            f"agent 不得代跑。请提示用户在自己的终端运行对应 guru_gate.py 命令。\n"
+            f"（项目可在 .trellis/config.yaml 设 guru.gate_mode: soft 改为对话确认后 agent --via-agent 代跑）\n"
+        )
+        return False, interactive, mode
+    if not interactive and not (user_quote and user_quote.strip()):
+        sys.stderr.write(
+            f"[guru-gate:{channel}] soft 模式 agent 代跑必须带 --user-quote \"<用户确认原话/理由>\" 记录审计留痕\n"
+        )
+        return False, interactive, mode
+    return True, interactive, mode
 
 
 def _pending_gates(task_dir: str) -> list:
@@ -645,21 +840,8 @@ def cmd_confirm(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None
     if not task_dir:
         sys.stderr.write("[guru-gate:confirm] 无法定位任务目录，请显式传 task_dir\n")
         return BLOCK
-    interactive = sys.stdin.isatty() and sys.stdout.isatty()
-    mode = _gate_mode()
-    if not interactive and not (mode == "soft" and via_agent):
-        sys.stderr.write(
-            f"[guru-gate:confirm] 拒绝：strict 模式下人工 Gate 确认必须由用户本人在交互式终端执行（当前无 TTY）。\n"
-            f"agent 不得代为确认。请提示用户在自己的终端运行：\n"
-            f"  python3 .trellis/scripts/guru/guru_gate.py confirm\n"
-            f"（项目可在 .trellis/config.yaml 设 guru.gate_mode: soft 改为对话确认后 agent --via-agent 代跑）\n"
-        )
-        return BLOCK
-    if not interactive and not (user_quote and user_quote.strip()):
-        # soft 代跑的审计底线：必须留用户确认原话，否则留痕失去意义
-        sys.stderr.write(
-            "[guru-gate:confirm] soft 模式 agent 代跑必须带 --user-quote \"<用户确认原话>\" 记录审计留痕\n"
-        )
+    allowed, interactive, mode = _authorize_gate_write("confirm", via_agent, user_quote)
+    if not allowed:
         return BLOCK
     targets = [gate_arg] if gate_arg else _pending_gates(task_dir)
     if not targets:
@@ -672,6 +854,8 @@ def cmd_confirm(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None
         if checkers[g](task_dir) != PASS:
             sys.stderr.write(f"[guru-gate:confirm] {GATE_LABEL[g]}结构 Gate 未过，先修复缺口再确认；本次到此为止。\n")
             return BLOCK
+        if not _grill_ok(task_dir, g):
+            return _block_grill("confirm", task_dir, g)
         if interactive:
             print(f"即将确认【{GATE_LABEL[g]} Gate】通过，允许进入下一阶段。")
             try:
@@ -685,6 +869,37 @@ def cmd_confirm(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None
         if rc != PASS:
             return rc
     return PASS
+
+
+def cmd_grill_done(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None) -> int:
+    if gate_arg not in HUMAN_GATES:
+        sys.stderr.write(f"[guru-gate:grill-done] 需要 gate 参数（{', '.join(HUMAN_GATES)}）\n")
+        return BLOCK
+    task_dir = resolve_task_dir(task_dir_arg)
+    if not task_dir:
+        sys.stderr.write("[guru-gate:grill-done] 无法定位任务目录，请显式传 task_dir\n")
+        return BLOCK
+    allowed, interactive, _mode = _authorize_gate_write("grill-done", via_agent, user_quote)
+    if not allowed:
+        return BLOCK
+    return _record_grill(task_dir, gate_arg, "done", "tty" if interactive else "agent", user_quote=user_quote)
+
+
+def cmd_grill_skip(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None) -> int:
+    if gate_arg not in HUMAN_GATES:
+        sys.stderr.write(f"[guru-gate:grill-skip] 需要 gate 参数（{', '.join(HUMAN_GATES)}）\n")
+        return BLOCK
+    task_dir = resolve_task_dir(task_dir_arg)
+    if not task_dir:
+        sys.stderr.write("[guru-gate:grill-skip] 无法定位任务目录，请显式传 task_dir\n")
+        return BLOCK
+    if not (user_quote and user_quote.strip()):
+        sys.stderr.write("[guru-gate:grill-skip] 必须带 --user-quote \"<跳过理由>\" 记录用户选择跳过的原因\n")
+        return BLOCK
+    allowed, interactive, _mode = _authorize_gate_write("grill-skip", via_agent, user_quote)
+    if not allowed:
+        return BLOCK
+    return _record_grill(task_dir, gate_arg, "skipped", "tty" if interactive else "agent", user_quote=user_quote)
 
 
 def _gate_states(task_dir: str) -> dict:
@@ -701,27 +916,37 @@ def cmd_status(task_dir_arg) -> int:
     print(f"任务：{task_dir}")
     pending = []
     for g in HUMAN_GATES:
+        gm = _grill_status_mark(task_dir, g)
         s = states.get(g)
         if isinstance(s, dict) and s.get("confirmed_by"):
             # 与 check 同口径呈现快照状态——避免 status 报绿而 check 拦截的不一致
             recorded = s.get("artifact_digest")
             if not recorded:
                 pending.append(g)
-                print(f"  ⚠️ {GATE_LABEL[g]} Gate — 缺确认快照，请重新确认")
+                print(f"  ⚠️ {GATE_LABEL[g]} Gate — 缺确认快照，请重新确认 ｜ {gm}")
             elif recorded != _gate_digest(task_dir, g):
                 pending.append(g)
-                print(f"  ⚠️ {GATE_LABEL[g]} Gate — 确认快照失配（产物已改动），请重新确认")
+                print(f"  ⚠️ {GATE_LABEL[g]} Gate — 确认快照失配（产物已改动），请重新确认 ｜ {gm}")
             else:
                 soft_mark = "（soft：对话确认，agent 代跑）" if s.get("via") == "agent" else ""
-                print(f"  ✅ {GATE_LABEL[g]} Gate — {s['confirmed_by']} @ {s.get('confirmed_at', '?')}{soft_mark}")
+                print(f"  ✅ {GATE_LABEL[g]} Gate — {s['confirmed_by']} @ {s.get('confirmed_at', '?')}{soft_mark} ｜ {gm}")
+                # confirm 有效但 grill 未过（缺/失配/跳过缺理由）也属未完成，与 check/auto 真实拦截口径一致
+                if not _grill_ok(task_dir, g):
+                    pending.append(g)
         else:
             pending.append(g)
-            print(f"  ⬜ {GATE_LABEL[g]} Gate — 未确认")
+            print(f"  ⬜ {GATE_LABEL[g]} Gate — 未确认 ｜ {gm}")
     if pending:
-        print(f"下一步：完成 {GATE_LABEL[pending[0]]} 阶段 review 后，由用户本人在终端运行：")
-        print(f"  python3 .trellis/scripts/guru/guru_gate.py confirm {pending[0]} {task_dir}")
+        g0 = pending[0]
+        if not _grill_ok(task_dir, g0):
+            print(f"下一步：{GATE_LABEL[g0]} 阶段需先完成 design-grill（{_grill_problem(task_dir, g0)}）：")
+            print(f"  python3 .trellis/scripts/guru/guru_gate.py grill-done {g0} {task_dir}")
+            print(f"  （用户明确跳过则：grill-skip {g0} {task_dir} --user-quote \"<理由>\"）")
+        else:
+            print(f"下一步：完成 {GATE_LABEL[g0]} 阶段 review 后，由用户本人在终端运行：")
+            print(f"  python3 .trellis/scripts/guru/guru_gate.py confirm {g0} {task_dir}")
     else:
-        print("三道人工 Gate 已全部确认，可 task.py start 进入实现。")
+        print("三道人工 Gate 已全部确认且 design-grill 完成，可 task.py start 进入实现。")
     return PASS
 
 
@@ -740,6 +965,8 @@ def cmd_check(task_dir_arg) -> int:
             sys.stderr.write(f"[guru-gate:check] 拦截：{GATE_LABEL[gate]}结构 Gate 当前未通过"
                              f"（产物在确认后被修改？）。修复后请用户重新人工确认该阶段。\n")
             return BLOCK
+        if not _grill_ok(task_dir, gate):
+            return _block_grill("check", task_dir, gate)
     states = _gate_states(task_dir)
     missing = [g for g in HUMAN_GATES
                if not (isinstance(states.get(g), dict) and states[g].get("confirmed_by"))]
@@ -789,6 +1016,8 @@ def auto(task_dir_arg) -> int:
         rc = check_requirements(task_dir)
         if rc != PASS:
             return rc
+        if not _grill_ok(task_dir, "requirements"):
+            return _block_grill("auto", task_dir, "requirements")
         src = _artifact_sources(task_dir)
         full = task_chain(task_dir) == "full"
         # full 链：design_package 已声明即校验骨架（声明但损坏不得静默跳过）；
@@ -797,8 +1026,15 @@ def auto(task_dir_arg) -> int:
             rc = check_overview(task_dir)
             if rc != PASS:
                 return rc
+            if not _grill_ok(task_dir, "overview"):
+                return _block_grill("auto", task_dir, "overview")
             if src["detail"] or src["imp"]:
-                return check_detail(task_dir)
+                rc = check_detail(task_dir)
+                if rc != PASS:
+                    return rc
+                if not _grill_ok(task_dir, "detail"):
+                    return _block_grill("auto", task_dir, "detail")
+                return PASS
         note = "；full 链尚未声明 design_package（概要阶段 0 待办）" if full and not _package_dir(task_dir) else ""
         return ok("auto", f"planning 渐进校验到当前 artifact（{task_dir}，{task_chain(task_dir)} 链{note}）")
     for fn in (check_requirements, check_overview, check_detail, check_implement):
@@ -841,6 +1077,12 @@ def main() -> int:
         else:
             gate_arg, dir_arg = None, (rest[0] if rest else None)
         return cmd_confirm(gate_arg, dir_arg, via_agent="--via-agent" in flags, user_quote=user_quote)
+    if cmd == "grill-done":
+        gate_arg, dir_arg = (rest[0] if rest else None), (rest[1] if len(rest) > 1 else None)
+        return cmd_grill_done(gate_arg, dir_arg, via_agent="--via-agent" in flags, user_quote=user_quote)
+    if cmd == "grill-skip":
+        gate_arg, dir_arg = (rest[0] if rest else None), (rest[1] if len(rest) > 1 else None)
+        return cmd_grill_skip(gate_arg, dir_arg, via_agent="--via-agent" in flags, user_quote=user_quote)
     if cmd == "digest":
         if not rest or rest[0] not in HUMAN_GATES:
             sys.stderr.write(f"[guru-gate:digest] 需要 gate 参数（{', '.join(HUMAN_GATES)}）\n")
