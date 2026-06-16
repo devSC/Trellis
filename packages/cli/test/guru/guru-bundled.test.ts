@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -27,6 +28,35 @@ import {
   listBundledSpecTemplateIds,
 } from "../../src/templates/guru/index.js";
 import { mergeJsonDefaults } from "../../src/configurators/shared.js";
+
+const GURU_OVERLAY_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../src/templates/guru/overlay",
+);
+
+function overlayPath(...segments: string[]): string {
+  return path.join(GURU_OVERLAY_ROOT, ...segments);
+}
+
+function readOverlayFile(...segments: string[]): string {
+  return fs.readFileSync(overlayPath(...segments), "utf8");
+}
+
+function listFilesRecursive(root: string): string[] {
+  if (!fs.existsSync(root)) return [];
+
+  const files: string[] = [];
+  for (const entry of fs.readdirSync(root)) {
+    const fullPath = path.join(root, entry);
+    if (fs.statSync(fullPath).isDirectory()) {
+      files.push(...listFilesRecursive(fullPath));
+    } else {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
 
 describe("bundled guru-client workflow", () => {
   it("resolves offline without network access", async () => {
@@ -147,6 +177,39 @@ describe("bundled multi-platform guru spec packages", () => {
         expect(keys).toContain(`${layer}/index.md`);
       }
     }
+  });
+});
+
+describe("bundled guru overlay", () => {
+  it("ships the overlay skill and gate files needed by Guru installs", () => {
+    const designGrill = readOverlayFile(
+      "agents-skills",
+      "design-grill",
+      "SKILL.md",
+    );
+    expect(designGrill).toContain("Design Grill Packet");
+    expect(designGrill).toContain("grill-done");
+    expect(designGrill).toContain("grill-skip");
+    expect(fs.existsSync(overlayPath("apply.sh"))).toBe(true);
+    expect(fs.existsSync(overlayPath("verify", "guru_gate.py"))).toBe(true);
+    expect(
+      fs.existsSync(overlayPath("hooks", "platform", "grill-nudge.sh")),
+    ).toBe(true);
+  });
+
+  it("does not bundle transient cache artifacts from the overlay source", () => {
+    const relativeFiles = listFilesRecursive(GURU_OVERLAY_ROOT).map((file) =>
+      path.relative(GURU_OVERLAY_ROOT, file),
+    );
+    expect(relativeFiles.length).toBeGreaterThan(0);
+    expect(
+      relativeFiles.filter(
+        (file) =>
+          file.includes("__pycache__") ||
+          file.endsWith(".pyc") ||
+          file.endsWith(".pyo"),
+      ),
+    ).toEqual([]);
   });
 });
 

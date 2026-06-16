@@ -1,0 +1,10 @@
+# 合并进目标项目 .trellis/config.yaml 的 hooks 节
+# 另：人工 Gate 通道可在 config.yaml 顶层（marker 块外）配置：
+#   guru:
+#     gate_mode: soft   # strict（默认）=用户终端 TTY；soft=对话确认后 agent --via-agent 代跑
+hooks:
+  after_create:
+    - "python3 .trellis/scripts/guru/guru_after_create.py"
+  # 阻断式：三道人工 Gate（requirements/overview/detail）确认缺一，task.py start 直接失败
+  before_start:
+    - "python3 .trellis/scripts/guru/guru_gate.py check"
