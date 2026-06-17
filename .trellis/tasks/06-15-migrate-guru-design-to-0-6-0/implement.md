@@ -102,10 +102,11 @@
 
 ### 4. Root Script Repair
 
-- [ ] Replace stale root filters targeting `@mindfoldhq/...`.
-- [ ] Prefer fork package names or path selectors that cannot silently no-op.
-- [ ] Add or update checks so "No projects matched the filters" is a failure.
-- [ ] Validate root `build`, `test`, `lint`, and package-scoped commands run the
+- [x] Replace stale root filters targeting `@mindfoldhq/...`, including
+  `.lintstagedrc`.
+- [x] Prefer fork package names or path selectors that cannot silently no-op.
+- [x] Add or update checks so "No projects matched the filters" is a failure.
+- [x] Validate root `build`, `test`, `lint`, and package-scoped commands run the
   intended packages.
 
 ### 5. Release And Preflight Repair

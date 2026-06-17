@@ -68,6 +68,41 @@ afterEach(() => {
   clearManifestCache();
 });
 
+describe("regression: Guru fork package filters", () => {
+  const regressionTestDir = path.dirname(fileURLToPath(import.meta.url));
+  const repoRoot = path.resolve(regressionTestDir, "../../..");
+
+  it("[0.6.0-guru.1] root scripts and lint-staged filters target fork packages and fail on misses", () => {
+    const rootPackage = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "package.json"), "utf-8"),
+    ) as { scripts: Record<string, string> };
+    const lintStaged = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, ".lintstagedrc"), "utf-8"),
+    ) as Record<string, string[]>;
+
+    for (const [name, script] of Object.entries(rootPackage.scripts)) {
+      if (!script.includes("pnpm --filter")) {
+        continue;
+      }
+      expect(
+        script,
+        `${name} should not use upstream package filters`,
+      ).not.toContain("@mindfoldhq/");
+      expect(script, `${name} should fail when filters miss`).toContain(
+        "--fail-if-no-match",
+      );
+    }
+
+    const lintCommands = Object.values(lintStaged).flat();
+    expect(lintCommands.length).toBeGreaterThan(0);
+    for (const command of lintCommands) {
+      expect(command).not.toContain("@mindfoldhq/");
+      expect(command).toContain("@devsc/trellis");
+      expect(command).toContain("--fail-if-no-match");
+    }
+  });
+});
+
 // =============================================================================
 // 1. Windows / Encoding Regressions
 // =============================================================================
