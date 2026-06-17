@@ -15,6 +15,11 @@
   - `.agents/skills/gitnexus/`
 - Official npm/tag state must be rechecked before final release validation
   because release state can drift.
+- 2026-06-17 recheck: local tag `v0.6.0` is present, but public npm
+  `@mindfoldhq/trellis` and `@mindfoldhq/trellis-core` now report
+  `latest: 0.6.1`. This task remains scoped to the user-approved
+  `0.6.0-guru.1` target; evaluate official `0.6.1` as a follow-up migration
+  instead of silently changing this GA target.
 - GitNexus impact analysis is required before editing any function, class, or
   method if GitNexus tools become available; if the index is stale, run the
   prescribed refresh before relying on it.
@@ -50,54 +55,54 @@
 
 ### 0. Branch And Baseline
 
-- [ ] Create or switch to a dedicated branch, for example
+- [x] Create or switch to a dedicated branch, for example
   `codex/migrate-guru-to-0.6.0-ga`.
-- [ ] Record `git status --short` before edits.
-- [ ] Recheck:
+- [x] Record `git status --short` before edits.
+- [x] Recheck:
   - `git show --no-patch v0.6.0`
   - `npm view @mindfoldhq/trellis version dist-tags --json`
   - `npm view @mindfoldhq/trellis-core version dist-tags --json`
-- [ ] Confirm target remains `0.6.0-guru.1`.
+- [x] Confirm target remains `0.6.0-guru.1`.
 
 ### 1. Import Official GA Assets
 
-- [ ] Add `packages/cli/src/migrations/manifests/0.6.0.json`.
-- [ ] Add
+- [x] Add `packages/cli/src/migrations/manifests/0.6.0.json`.
+- [x] Add
   `packages/cli/src/templates/common/bundled-skills/trellis-channel/**`.
-- [ ] Refresh
+- [x] Refresh
   `packages/cli/src/templates/common/bundled-skills/trellis-meta/**`.
-- [ ] Adopt applicable official configurator test deltas.
-- [ ] Do not import upstream release-task artifacts.
+- [x] Adopt applicable official configurator test deltas.
+- [x] Do not import upstream release-task artifacts.
 
 ### 2. Preserve Guru Overlay And Update `design-grill`
 
-- [ ] Preserve `guru-template/**` as the Guru source of truth.
-- [ ] Verify `sync-guru-template.js` bundles the full
+- [x] Preserve `guru-template/**` as the Guru source of truth.
+- [x] Verify `sync-guru-template.js` bundles the full
   `guru-template/overlay/` tree into `packages/cli/src/templates/guru/overlay/`.
-- [ ] Verify bundled overlay contains `design-grill`, `apply.sh`,
+- [x] Verify bundled overlay contains `design-grill`, `apply.sh`,
   `guru_gate.py`, and `grill-nudge.sh`.
-- [ ] Verify bundled overlay excludes `__pycache__`, `.pyc`, and `.pyo`.
-- [ ] Update `guru-template/overlay/agents-skills/design-grill/SKILL.md` to
+- [x] Verify bundled overlay excludes `__pycache__`, `.pyc`, and `.pyo`.
+- [x] Update `guru-template/overlay/agents-skills/design-grill/SKILL.md` to
   define the accepted packet-first `Design Grill Packet` contract.
-- [ ] Preserve evidence-first lookup, redline fail behavior, sequential handling
+- [x] Preserve evidence-first lookup, redline fail behavior, sequential handling
   for blockers/dependencies, and Chinese-first artifact output.
-- [ ] Preserve `guru_gate.py grill-done/skip` as the only durable completion or
+- [x] Preserve `guru_gate.py grill-done/skip` as the only durable completion or
   skip record.
-- [ ] Ensure workflow text still orders `design-grill` before confirm and before
+- [x] Ensure workflow text still orders `design-grill` before confirm and before
   `task.py start`.
-- [ ] Run `pnpm -C packages/cli sync:guru`.
-- [ ] Verify packaged Guru templates reflect source template changes.
+- [x] Run `pnpm -C packages/cli sync:guru`.
+- [x] Verify packaged Guru templates reflect source template changes.
 - [x] Verify packaged `dist/templates/guru/overlay/apply.sh` can install into a
   fresh simulated project and copy `guru-client.md` into `.trellis/workflow.md`.
 
 ### 3. Version And Package Identity
 
-- [ ] Update CLI/core versions to `0.6.0-guru.1`.
-- [ ] Keep package names `@devsc/trellis` and `@devsc/trellis-core`.
-- [ ] Preserve GitHub Packages publish config.
-- [ ] Update lockfile if package metadata requires it.
-- [ ] Verify packed CLI does not accidentally depend on official core.
-- [ ] Verify Guru overlay version ordering in `compareVersions`: `0.6.0-guru.1`
+- [x] Update CLI/core versions to `0.6.0-guru.1`.
+- [x] Keep package names `@devsc/trellis` and `@devsc/trellis-core`.
+- [x] Preserve GitHub Packages publish config.
+- [x] Update lockfile if package metadata requires it.
+- [x] Verify packed CLI does not accidentally depend on official core.
+- [x] Verify Guru overlay version ordering in `compareVersions`: `0.6.0-guru.1`
   must sort after upstream `0.6.0` and `0.6.0-rc.0`.
 
 ### 4. Root Script Repair
@@ -111,20 +116,20 @@
 
 ### 5. Release And Preflight Repair
 
-- [ ] Make release scripts fork-aware.
-- [ ] Make release preflight registry-aware using `publishConfig.registry`.
-- [ ] Split official public continuity checks from Guru private package checks.
-- [ ] Make packed CLI verification alias-aware.
+- [x] Make release scripts fork-aware.
+- [x] Make release preflight registry-aware using `publishConfig.registry`.
+- [x] Split official public continuity checks from Guru private package checks.
+- [x] Make packed CLI verification alias-aware.
 - [x] Repair or block `release.js` so Guru `patch`, `minor`, `major`, and
   `promote` releases cannot push `origin main --tags`.
-- [ ] Update release docs for the Guru private release path.
+- [x] Update release docs for the Guru private release path.
 
 ### 6. Dogfood Update
 
-- [ ] Update `.trellis/.version` to the Guru GA version.
-- [ ] Refresh installed bundled skills across local skill surfaces.
-- [ ] Ensure `trellis-channel` is installed where bundled skills are supported.
-- [ ] Refresh template hashes.
+- [x] Update `.trellis/.version` to the Guru GA version.
+- [x] Refresh installed bundled skills across local skill surfaces.
+- [x] Ensure `trellis-channel` is installed where bundled skills are supported.
+- [x] Refresh template hashes.
 - [x] Do not silently overwrite existing `.trellis/config.yaml`
   `codex.dispatch_mode`, but make fresh Guru projects default to
   `codex.dispatch_mode: channel` through the supervision config patch.
@@ -133,10 +138,13 @@
   whose step-detail platform blocks do not yet include a `codex-channel`
   variant. Fresh Guru projects default to channel through the overlay smoke
   path instead.
-- [ ] Confirm Guru overlay maintenance does not remove official bundled skills.
-- [ ] Audit the large `trellis-meta` refresh/deletion set and confirm removed
+- [x] Confirm Guru overlay maintenance does not remove official bundled skills.
+- [x] Audit the large `trellis-meta` refresh/deletion set and confirm removed
   old reference files are replaced by the intended `local-architecture`
-  structure rather than user-owned content loss.
+  structure rather than user-owned content loss. Evidence: `.agents`,
+  `.claude`, `.cursor`, `.opencode`, `.pi`, and packaged common bundled
+  surfaces now expose `customize-local/`, `local-architecture/`, and
+  `platform-files/` references consistently.
 
 ### 7. Official Supervision Default
 
@@ -180,20 +188,21 @@
     Guru skill files and `implement.jsonl` / `check.jsonl`;
   - `node packages/cli/bin/trellis.js update --dry-run` reported
     project/CLI version `0.6.0-guru.1` and made no changes.
-- [ ] Decide the separate dogfood path for this TypeScript Trellis repo: either
-  add a Trellis/TypeScript Guru platform mapping plus Guru workflow, or keep
-  this repo on the native workflow and treat the simulated Guru project smoke as
-  the supported-platform proof.
+- [x] Decide the separate dogfood path for this TypeScript Trellis repo: keep
+  this repo on the native workflow for `0.6.0-guru.1`; do not add a
+  Trellis/TypeScript Guru platform mapping in this migration. Treat the
+  simulated Guru project smoke as the supported-platform proof, and evaluate a
+  Trellis/TypeScript Guru platform separately if it becomes a product need.
 
 ### 8. Documentation
 
-- [ ] Update fork-facing release/migration docs.
-- [ ] Document official features now supported:
+- [x] Update fork-facing release/migration docs.
+- [x] Document official features now supported:
   - migration manifest continuity
   - `trellis-channel`
   - refreshed `trellis-meta`
   - `trellis mem` compatibility assumptions from official `0.6.0`
-- [ ] Document Guru intentional differences:
+- [x] Document Guru intentional differences:
   - private package identity and registry
   - official channel supervision default
   - legacy Codex sub-agent rollback mode
@@ -252,12 +261,12 @@ python3 .trellis/scripts/guru/guru_supervise.py check .trellis/tasks/<task> --dr
 
 ## Review Gates For Continued Implementation / Check Work
 
-- [ ] PRD has no open product/scope blocker.
-- [ ] `design.md` and `implement.md` are present and consistent with
+- [x] PRD has no open product/scope blocker.
+- [x] `design.md` and `implement.md` are present and consistent with
   `migration-plan.md` and `official-supervision-default-plan.md`.
-- [ ] `implement.jsonl` and `check.jsonl` include the PRD, plan, `design-grill`,
+- [x] `implement.jsonl` and `check.jsonl` include the PRD, plan, `design-grill`,
   workflow, gate, and test context.
-- [ ] Current `in_progress` implementation state is acknowledged before
+- [x] Current `in_progress` implementation state is acknowledged before
   dispatching further implement/check work.
 - [x] Release-readiness review treats `release.js` push targeting as fixed for
   Guru releases, with regression coverage in `test/scripts/release.test.ts`.
