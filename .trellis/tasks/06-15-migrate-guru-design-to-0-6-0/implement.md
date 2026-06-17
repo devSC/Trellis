@@ -166,9 +166,20 @@
   `kill` requires exact `--channel` + `--worker` values.
 - [x] Cover `inline`, legacy `sub-agent`, and default `channel` routing in
   focused tests.
-- [ ] Run dogfood self-proof in this worktree plus a simulated Guru project
-  smoke that proves Gate, `task.py start`, channel dry-run, and
-  `trellis update --dry-run` all trigger correctly.
+- [x] Run simulated Guru project smoke that proves Gate, `task.py start`,
+  channel dry-run, and `trellis update --dry-run` all trigger correctly.
+  Evidence from `/tmp/trellis-guru-smoke.q09dI9`:
+  - first `task.py start` blocked in `before_start` on missing design-grill
+    record;
+  - after soft-mode smoke gate records, `guru_gate.py check` and second
+    `task.py start` passed;
+  - `guru_supervise.py implement/check --dry-run` emitted official
+    `trellis channel create/spawn/send/wait/messages` commands with Flutter
+    Guru skill files and `implement.jsonl` / `check.jsonl`;
+  - `node packages/cli/bin/trellis.js update --dry-run` reported
+    project/CLI version `0.6.0-guru.1` and made no changes.
+- [ ] Run dogfood self-proof in this worktree after restoring a valid Trellis
+  developer identity/current-task pointer for `.trellis/scripts/get_context.py`.
 
 ### 8. Documentation
 
