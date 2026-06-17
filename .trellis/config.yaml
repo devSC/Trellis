@@ -62,13 +62,13 @@ max_journal_lines: 2000
 #-------------------------------------------------------------------------------
 # Codex (dispatch behavior)
 #-------------------------------------------------------------------------------
-# Codex-only knob; other platforms ignore it. Guru dogfood uses the official
-# `trellis channel` supervised worker runtime by default. Use "sub-agent" only
-# as an explicit legacy rollback mode, or "inline" to let the main agent edit
-# code directly.
+# Codex-only knob; other platforms ignore it. This repository uses the native
+# Trellis workflow, which still routes Codex through the legacy sub-agent block.
+# Fresh Guru projects are switched to official `trellis channel` supervision by
+# the Guru overlay config patch instead.
 #
 codex:
-  dispatch_mode: channel  # values: "inline", "sub-agent", "channel"
+  dispatch_mode: sub-agent  # values: "inline", "sub-agent", "channel"
 
 #-------------------------------------------------------------------------------
 # Session Auto-Commit

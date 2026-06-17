@@ -125,12 +125,14 @@
 - [ ] Refresh installed bundled skills across local skill surfaces.
 - [ ] Ensure `trellis-channel` is installed where bundled skills are supported.
 - [ ] Refresh template hashes.
-- [ ] Do not silently overwrite existing `.trellis/config.yaml`
+- [x] Do not silently overwrite existing `.trellis/config.yaml`
   `codex.dispatch_mode`, but make fresh Guru projects default to
   `codex.dispatch_mode: channel` through the supervision config patch.
-- [ ] After channel routing and installed hooks are updated, explicitly switch
-  this migration worktree `.trellis/config.yaml` to
-  `codex.dispatch_mode: channel` and record the rollback point.
+- [x] Keep this migration worktree `.trellis/config.yaml` on
+  `codex.dispatch_mode: sub-agent`: this repo uses the native Trellis workflow,
+  whose step-detail platform blocks do not yet include a `codex-channel`
+  variant. Fresh Guru projects default to channel through the overlay smoke
+  path instead.
 - [ ] Confirm Guru overlay maintenance does not remove official bundled skills.
 - [ ] Audit the large `trellis-meta` refresh/deletion set and confirm removed
   old reference files are replaced by the intended `local-architecture`
@@ -140,7 +142,7 @@
 
 - [x] Implement `channel` mode in workflow-state injection and phase-detail
   routing.
-- [ ] Update Guru workflow blocks so ordinary `planning` / `in_progress` are
+- [x] Update Guru workflow blocks so ordinary `planning` / `in_progress` are
   channel defaults, while legacy wording lives in `planning-sub-agent` /
   `in_progress-sub-agent`.
 - [x] Add `guru_supervise.py` or equivalent P0 helper that wraps official
@@ -157,7 +159,7 @@
   `check.jsonl` exists.
 - [x] Add helper dry-run tests covering provider, run id naming, conditional
   jsonl injection, and Guru skill `--file` injection.
-- [ ] Ensure workflow snippets and provider smoke are copy-paste safe: each
+- [x] Ensure workflow snippets and provider smoke are copy-paste safe: each
   declares `TASK` and uses run-id channel / worker names.
 - [x] Repair packaged and installed `trellis-channel` skill references so they
   do not contain executable `trellis channel ... --tag` examples; keep only
@@ -178,8 +180,10 @@
     Guru skill files and `implement.jsonl` / `check.jsonl`;
   - `node packages/cli/bin/trellis.js update --dry-run` reported
     project/CLI version `0.6.0-guru.1` and made no changes.
-- [ ] Run dogfood self-proof in this worktree after restoring a valid Trellis
-  developer identity/current-task pointer for `.trellis/scripts/get_context.py`.
+- [ ] Decide the separate dogfood path for this TypeScript Trellis repo: either
+  add a Trellis/TypeScript Guru platform mapping plus Guru workflow, or keep
+  this repo on the native workflow and treat the simulated Guru project smoke as
+  the supported-platform proof.
 
 ### 8. Documentation
 
