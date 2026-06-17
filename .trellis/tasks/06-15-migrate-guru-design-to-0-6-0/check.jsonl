@@ -1,0 +1,16 @@
+{"file": ".trellis/tasks/06-15-migrate-guru-design-to-0-6-0/prd.md", "reason": "Acceptance criteria and planning constraints that the checker must preserve."}
+{"file": ".trellis/tasks/06-15-migrate-guru-design-to-0-6-0/migration-plan.md", "reason": "Full risk matrix, validation commands, blocker/should-fix closure record, and accepted MVP boundaries."}
+{"file": ".trellis/tasks/06-15-migrate-guru-design-to-0-6-0/design.md", "reason": "Verify standard design artifact matches the reviewed migration strategy and accepted design-grill packet contract."}
+{"file": ".trellis/tasks/06-15-migrate-guru-design-to-0-6-0/implement.md", "reason": "Verify execution checklist, continued implementation gates, validation commands, and release-readiness blockers."}
+{"file": "guru-template/overlay/agents-skills/design-grill/SKILL.md", "reason": "Verify the accepted packet-first contract is present without losing redline fail, evidence-first lookup, or sequential blocker handling."}
+{"file": "guru-template/workflows/guru-client-workflow.md", "reason": "Verify workflow still requires design-grill before confirm and does not treat packets or nudge markers as completion."}
+{"file": "guru-template/overlay/verify/guru_gate.py", "reason": "Verify hard gate semantics still require grill-done/skip digest records for confirm/check/auto."}
+{"file": "guru-template/overlay/verify/tests/run_tests.sh", "reason": "Verify existing grill hard-precondition tests still cover confirm/check/auto missing/done/skip/mismatch states."}
+{"file": "packages/cli/scripts/release.js", "reason": "Check release push-target guard: Guru non-prerelease releases target a guru/* branch or fail before git push."}
+{"file": "packages/cli/scripts/release-preflight.js", "reason": "Check registry-aware Guru publish plan, guru dist-tag, and packed alias verification."}
+{"file": "packages/cli/scripts/check-manifest-continuity.js", "reason": "Check default fork continuity mode and --official upstream mode remain distinct."}
+{"file": "packages/cli/src/utils/compare-versions.ts", "reason": "Check Guru overlay ordering remains an intentional update-contract rule."}
+{"file": "packages/cli/test/utils/compare-versions.test.ts", "reason": "Run or inspect focused Guru overlay ordering coverage."}
+{"file": "packages/cli/scripts/sync-guru-template.js", "reason": "Check full Guru overlay sync and transient artifact exclusions."}
+{"file": "packages/cli/test/guru/guru-bundled.test.ts", "reason": "Run or inspect focused packaged-overlay coverage."}
+{"file": "packages/cli/test/scripts/release.test.ts", "reason": "Run focused regression tests for official, beta/rc, and Guru release push-target behavior."}

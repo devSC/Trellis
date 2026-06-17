@@ -64,6 +64,7 @@ from typing import Optional
 CODEX_NO_TASK_BOOTSTRAP_NOTICE = """<trellis-bootstrap>
 If you have not already loaded Trellis context this session, read the `trellis-start` skill once.
 </trellis-bootstrap>"""
+CODEX_DISPATCH_MODES = {"inline", "sub-agent", "channel"}
 
 
 # ---------------------------------------------------------------------------
@@ -227,17 +228,16 @@ def _codex_mode_banner(config: dict) -> str:
     Mode tells AI which dispatch protocol to follow; workflow-state tells
     AI what step it's at.
     """
-    mode = "inline"
-    if isinstance(config, dict):
-        codex_cfg = config.get("codex")
-        if isinstance(codex_cfg, dict):
-            cfg_mode = codex_cfg.get("dispatch_mode")
-            if cfg_mode in ("inline", "sub-agent"):
-                mode = cfg_mode
+    mode = _codex_dispatch_mode(config)
     if mode == "sub-agent":
         meaning = (
             "sub-agent: implement/check work defaults to Trellis sub-agents; "
             "the main session still coordinates, clarifies, updates specs, commits, and finishes."
+        )
+    elif mode == "channel":
+        meaning = (
+            "channel: implement/check work defaults to official trellis channel supervised workers; "
+            "the main session creates channels, waits on done/error/killed, and owns commit/finish."
         )
     else:
         meaning = (
@@ -247,6 +247,17 @@ def _codex_mode_banner(config: dict) -> str:
     return f"<codex-mode>{meaning}</codex-mode>"
 
 
+def _codex_dispatch_mode(config: dict) -> str:
+    """Return the configured Codex dispatch mode, defaulting invalid values to inline."""
+    if isinstance(config, dict):
+        codex_cfg = config.get("codex")
+        if isinstance(codex_cfg, dict):
+            cfg_mode = codex_cfg.get("dispatch_mode")
+            if isinstance(cfg_mode, str) and cfg_mode in CODEX_DISPATCH_MODES:
+                return cfg_mode
+    return "inline"
+
+
 def resolve_breadcrumb_key(
     status: str, platform: str | None, config: dict
 ) -> str:
@@ -254,21 +265,15 @@ def resolve_breadcrumb_key(
 
     Codex defaults to ``inline`` because sub-agents run with ``fork_turns="none"``
     isolation and can't inherit the parent session's task context. Users can
-    opt into ``codex.dispatch_mode: sub-agent`` in ``.trellis/config.yaml``
-    to use the parallel ``<status>-inline`` tag → ``<status>`` flip. Invalid
-    or missing values fall back to inline.
+    opt into ``codex.dispatch_mode: sub-agent`` for legacy platform sub-agents
+    or ``codex.dispatch_mode: channel`` for official ``trellis channel``
+    supervised workers. Invalid or missing values fall back to inline.
 
     Non-codex platforms return the plain status unchanged.
     """
     if platform == "codex":
-        mode = "inline"
-        if isinstance(config, dict):
-            codex_cfg = config.get("codex")
-            if isinstance(codex_cfg, dict):
-                cfg_mode = codex_cfg.get("dispatch_mode")
-                if cfg_mode in ("inline", "sub-agent"):
-                    mode = cfg_mode
-        return f"{status}-inline" if mode == "inline" else status
+        mode = _codex_dispatch_mode(config)
+        return f"{status}-{mode}"
     return status
 
 

@@ -8,11 +8,17 @@
  *   -> version check -> version commit -> tag -> push
  */
 import { execSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI_DIR = path.resolve(__dirname, "..");
+const REPO_ROOT = path.resolve(__dirname, "../../..");
+const CORE_PKG = path.join(REPO_ROOT, "packages/core/package.json");
+const CLI_PKG = path.join(REPO_ROOT, "packages/cli/package.json");
+const GURU_CLI_PACKAGE = "@devsc/trellis";
+const SAFE_GURU_BRANCH_RE = /^guru\/[A-Za-z0-9._/-]+$/;
 
 const RELEASE_TYPES = new Set([
   "patch",
@@ -26,6 +32,21 @@ const RELEASE_TYPES = new Set([
 function fail(message) {
   console.error(`x ${message}`);
   process.exit(1);
+}
+
+function readJSON(p) {
+  return JSON.parse(fs.readFileSync(p, "utf-8"));
+}
+
+function packageNames() {
+  return {
+    core: readJSON(CORE_PKG).name,
+    cli: readJSON(CLI_PKG).name,
+  };
+}
+
+function pnpmFilter(packageName, script) {
+  return `pnpm --filter ${packageName} --fail-if-no-match ${script}`;
 }
 
 function run(command, options = {}) {
@@ -64,8 +85,28 @@ function docsGuard(type) {
   }
 }
 
-function pushTarget(type) {
-  return type === "beta" || type === "rc" ? "HEAD" : "main";
+export function pushTarget(type, options = {}) {
+  if (type === "beta" || type === "rc") return "HEAD";
+
+  const { cliPackageName, currentBranch } = options;
+  if (cliPackageName !== GURU_CLI_PACKAGE) return "main";
+
+  if (!currentBranch) {
+    throw new Error(
+      "Cannot determine the current branch for a Guru release; refusing to push tags.",
+    );
+  }
+  if (!currentBranch.startsWith("guru/")) {
+    throw new Error(
+      `Guru releases must run from a guru/* branch, got "${currentBranch}"; refusing to push tags.`,
+    );
+  }
+  if (!SAFE_GURU_BRANCH_RE.test(currentBranch)) {
+    throw new Error(
+      `Guru release branch "${currentBranch}" contains unsupported characters; refusing to push tags.`,
+    );
+  }
+  return currentBranch;
 }
 
 function main() {
@@ -74,9 +115,21 @@ function main() {
     fail(`usage: release.js <patch|minor|major|beta|rc|promote>`);
   }
 
+  run("node scripts/check-manifest-continuity.js --official");
   run("node scripts/check-manifest-continuity.js");
   docsGuard(type);
-  run("pnpm --filter @mindfoldhq/trellis-core test");
+  const packages = packageNames();
+  const currentBranch = output("git branch --show-current", { cwd: REPO_ROOT });
+  let target;
+  try {
+    target = pushTarget(type, {
+      cliPackageName: packages.cli,
+      currentBranch,
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+  run(pnpmFilter(packages.core, "test"));
   run("pnpm test");
 
   run("git add -A -- ':!docs-site' ':!marketplace'");
@@ -89,7 +142,12 @@ function main() {
   run("git add package.json ../core/package.json");
   run(`git commit -m "${version}"`);
   run(`git tag "v${version}"`);
-  run(`git push origin ${pushTarget(type)} --tags`);
+  run(`git push origin ${target} --tags`);
 }
 
-main();
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+) {
+  main();
+}

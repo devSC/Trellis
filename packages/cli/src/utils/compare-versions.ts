@@ -7,6 +7,7 @@
  * - 0.3.0-alpha < 0.3.0-beta (alphabetically)
  * - 0.3.0-beta.1 < 0.3.0-beta.2 (numerically)
  * - 0.3.0-beta.16 < 0.3.0-rc.0 (alphabetically: "beta" < "rc")
+ * - 0.6.0 < 0.6.0-guru.1 (Guru overlay builds are downstream patches)
  */
 export function compareVersions(a: string, b: string): number {
   // Split into base version and prerelease parts on the FIRST hyphen.
@@ -38,6 +39,18 @@ export function compareVersions(a: string, b: string): number {
     if (aVal < bVal) return -1;
     if (aVal > bVal) return 1;
   }
+
+  const isGuruOverlay = (prerelease: string | undefined): boolean =>
+    prerelease === "guru" || prerelease?.startsWith("guru.") === true;
+
+  const aIsGuruOverlay = isGuruOverlay(aPrerelease);
+  const bIsGuruOverlay = isGuruOverlay(bPrerelease);
+
+  // Guru overlay versions are a downstream distribution line built from the
+  // same base release. Treat them as patches after the matching upstream GA so
+  // update/migration gates can move from upstream RC/GA into the Guru package.
+  if (aIsGuruOverlay && !bIsGuruOverlay) return 1;
+  if (!aIsGuruOverlay && bIsGuruOverlay) return -1;
 
   // Base versions are equal, compare prerelease
   // No prerelease > prerelease (1.0.0 > 1.0.0-beta)

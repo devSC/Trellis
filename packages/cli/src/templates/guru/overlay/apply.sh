@@ -125,11 +125,16 @@ for gs in $GURU_SKILLS; do
 done
 echo "  skills ×${agent_skill_n} → .agents/skills/（${PLATFORM} 平台 + shared 需求三件套）"
 
-# 2) gate + after_create → .trellis/scripts/guru/
+# 2) gate + after_create + config patcher → .trellis/scripts/guru/
 mkdir -p "$TARGET/.trellis/scripts/guru"
-cp "$HERE/verify/guru_gate.py" "$HERE/hooks/guru_after_create.py" "$TARGET/.trellis/scripts/guru/"
+cp \
+  "$HERE/verify/guru_gate.py" \
+  "$HERE/hooks/guru_after_create.py" \
+  "$HERE/verify/guru_config_patch.py" \
+  "$HERE/verify/guru_supervise.py" \
+  "$TARGET/.trellis/scripts/guru/"
 chmod +x "$TARGET/.trellis/scripts/guru/"*.py
-echo "  scripts: guru_gate.py, guru_after_create.py → .trellis/scripts/guru/"
+echo "  scripts: guru_gate.py, guru_after_create.py, guru_config_patch.py, guru_supervise.py → .trellis/scripts/guru/"
 
 # 3) 平台 hooks（Claude）+ trellis-local：只装共享 + 本平台专属 + 平台化 grill-nudge
 mkdir -p "$TARGET/.claude/hooks" "$TARGET/.claude/skills/trellis-local"
@@ -364,8 +369,16 @@ print(f"  settings.json: hooks 接线完成（新增 {added} 条、清理悬空 
 PYEOF
 
 # 6) workflow + SSOT 同步（升级通道：CLI update 不跟踪非 native workflow，spec/ 又是其保护路径）
-cp "$ROOT/workflows/${WF_NAME}-workflow.md" "$TARGET/.trellis/workflow.md"
-echo "  workflow: ${WF_NAME}-workflow.md → .trellis/workflow.md"
+# Source guru-template keeps <id>-workflow.md, while the packaged CLI bundle
+# normalizes workflow files to <id>.md. Keep this resolver compatible with both
+# layouts so the shipped overlay can install from dist/templates/guru/.
+WORKFLOW_SRC="$ROOT/workflows/${WF_NAME}.md"
+if [ ! -f "$WORKFLOW_SRC" ]; then
+  WORKFLOW_SRC="$ROOT/workflows/${WF_NAME}-workflow.md"
+fi
+[ -f "$WORKFLOW_SRC" ] || { echo "ERROR: workflow 模板不存在: workflows/${WF_NAME}.md 或 workflows/${WF_NAME}-workflow.md"; exit 1; }
+cp "$WORKFLOW_SRC" "$TARGET/.trellis/workflow.md"
+echo "  workflow: $(basename "$WORKFLOW_SRC") → .trellis/workflow.md"
 SPEC_SRC="$ROOT/specs/${SPEC_NAME}"
 mkdir -p "$TARGET/.trellis/spec/guides" "$TARGET/.trellis/spec/conventions"
 rm -rf "$TARGET/.trellis/spec/harness"
@@ -397,7 +410,12 @@ else
   echo "  spec: harness/guides/README 已刷新；⚠ conventions/project-conventions.md 缺失（按模板填写，见收尾）"
 fi
 
-# 7) config 合并（幂等：marker 检测）
+# 7) Guru official supervision defaults (child-key merge, no user-value overwrite)
+python3 "$TARGET/.trellis/scripts/guru/guru_config_patch.py" ensure-supervision-defaults \
+  --root "$TARGET" \
+  --platform "$PLATFORM"
+
+# 7.1) config 合并（幂等：marker 检测）
 python3 - "$TARGET" "$ANALYZE_CMD" <<'PYEOF'
 import os, sys
 t = sys.argv[1]
@@ -546,7 +564,10 @@ FAIL=0
 
 # 用 ast.parse 做语法检查：py_compile 会写 __pycache__ 副产物，破坏装配幂等性
 if python3 -c "import ast,sys; [ast.parse(open(f,encoding='utf-8').read()) for f in sys.argv[1:]]" \
-    "$TARGET/.trellis/scripts/guru/guru_gate.py" "$TARGET/.trellis/scripts/guru/guru_after_create.py" 2>/dev/null; then
+    "$TARGET/.trellis/scripts/guru/guru_gate.py" \
+    "$TARGET/.trellis/scripts/guru/guru_after_create.py" \
+    "$TARGET/.trellis/scripts/guru/guru_config_patch.py" \
+    "$TARGET/.trellis/scripts/guru/guru_supervise.py" 2>/dev/null; then
   echo "  ✓ guru 脚本语法"
 else
   echo "  ✗ guru 脚本语法检查失败"; FAIL=1

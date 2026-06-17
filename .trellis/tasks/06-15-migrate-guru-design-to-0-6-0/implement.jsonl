@@ -1,0 +1,15 @@
+{"file": ".trellis/tasks/06-15-migrate-guru-design-to-0-6-0/prd.md", "reason": "Task requirements, current implementation-in-progress boundary, confirmed official baseline, accepted target version, and release-readiness acceptance criteria."}
+{"file": ".trellis/tasks/06-15-migrate-guru-design-to-0-6-0/migration-plan.md", "reason": "Reviewed migration strategy, implementation phases, ownership boundaries, rollback plan, and implementation blockers."}
+{"file": ".trellis/tasks/06-15-migrate-guru-design-to-0-6-0/design.md", "reason": "Standard Trellis technical design artifact derived from the migration plan."}
+{"file": ".trellis/tasks/06-15-migrate-guru-design-to-0-6-0/implement.md", "reason": "Standard Trellis execution checklist, validation plan, review gates, and rollback points."}
+{"file": "guru-template/overlay/agents-skills/design-grill/SKILL.md", "reason": "Source skill contract to rework from unconditional one-question mode to accepted packet-first batch discovery."}
+{"file": "guru-template/workflows/guru-client-workflow.md", "reason": "Representative Guru workflow that defines design-grill ordering before confirm and task start."}
+{"file": "guru-template/overlay/verify/guru_gate.py", "reason": "Hard gate implementation whose grill-done/skip digest semantics must remain the durable completion record."}
+{"file": "packages/cli/scripts/release.js", "reason": "Release push-target guard: Guru non-prerelease releases must target a guru/* branch or fail before git push."}
+{"file": "packages/cli/scripts/release-preflight.js", "reason": "Fork-aware registry, npm tag, and packed-alias preflight behavior that release orchestration must preserve."}
+{"file": "packages/cli/scripts/check-manifest-continuity.js", "reason": "Official-vs-Guru manifest continuity mode split and Guru version-to-base-manifest mapping."}
+{"file": "packages/cli/src/utils/compare-versions.ts", "reason": "Guru overlay version ordering contract that treats 0.6.0-guru.1 as newer than upstream 0.6.0."}
+{"file": "packages/cli/test/utils/compare-versions.test.ts", "reason": "Focused tests for Guru overlay ordering against upstream GA and RC versions."}
+{"file": "packages/cli/scripts/sync-guru-template.js", "reason": "Full Guru overlay bundling and transient artifact exclusion behavior."}
+{"file": "packages/cli/test/guru/guru-bundled.test.ts", "reason": "Focused tests that packaged Guru overlay ships design-grill, gate files, hooks, and excludes transient artifacts."}
+{"file": "packages/cli/test/scripts/release.test.ts", "reason": "Regression tests for official, beta/rc, and Guru release push-target behavior."}

@@ -8,7 +8,7 @@
 | 分支 | 用途 | 规则 |
 |------|------|------|
 | `main` / `feat/*` | 上游纯镜像 | **永不直接提交**，只从 upstream 同步 |
-| `guru/main` | 团队主分支（基于 feat/v0.6.0-rc @ c463533c） | 团队全部改动在此；改动尽量集中于**新增文件**（guru-template/、GURU_FORK.md 等），最小化与上游的冲突面 |
+| `guru/main` | 团队主分支（当前基于官方 `v0.6.0` GA） | 团队全部改动在此；改动尽量集中于**新增文件**（guru-template/、GURU_FORK.md 等），最小化与上游的冲突面 |
 
 ## 上游同步 SOP
 
@@ -31,6 +31,7 @@ git checkout guru/main && git merge upstream/main                               
 |------|------|-----------|
 | 2026-06-12 | 建立 guru/main 基线 + 本说明文件 | client_agent#2 |
 | 2026-06-14 | 多平台扩展：go/ios/h5 三平台 spec+workflow+skills（references/grill 全套）；CLI 数据驱动 wiring + OCR 加固；bump `guru.2` | client_agent#1 |
+| 2026-06-16 | 迁移到官方 `v0.6.0` GA 基线：采用 `0.6.0.json` manifest、`trellis-channel`、刷新 `trellis-meta`，保留 Guru overlay/Gate/offline 工作流；`design-grill` 改为 bounded packet-first 合同；目标版本 `0.6.0-guru.1` | 本仓库 Trellis task `06-15-migrate-guru-design-to-0-6-0` |
 
 ## 包发布（GitHub Packages）
 
@@ -39,9 +40,14 @@ git checkout guru/main && git merge upstream/main                               
 | `@devsc/trellis` | CLI（bin: `trellis`/`tl`），内置 4 平台 workflow（guru-client/go/ios/h5）与 spec（guru-flutter-client/go-backend/ios-native/h5-web），离线可用 |
 | `@devsc/trellis-core` | CLI 的运行时依赖（经 npm alias `@mindfoldhq/trellis-core` 引用，源码 import 零改动） |
 
-版本策略：跟随上游 + guru 后缀（如 `0.6.0-rc.0-guru.1`）。当前 **`0.6.0-rc.0-guru.2`**（新增 go/ios/h5 三平台 bundled spec+workflow+skills）。
+版本策略：跟随上游 + guru 后缀（如 `0.6.0-guru.1`）。当前 **`0.6.0-guru.1`**，基于官方 `v0.6.0` GA。官方 common 层保留 `trellis channel`、`trellis mem`、`@mindfoldhq/trellis-core` SDK、`0.6.0.json` manifest 与刷新后的 bundled skills；Guru 差异保留在 `guru-template/**`、`packages/cli/src/templates/guru/**`、overlay/Gate 机制、GitHub Packages 私有发布路径与本仓库 dogfood `codex.dispatch_mode: sub-agent`。
 
 ```bash
+# 发布前检查（需 PAT 含 read:packages；发布需 write:packages）
+node packages/cli/scripts/release-preflight.js check-versions
+node packages/cli/scripts/release-preflight.js publish-plan --json
+node packages/cli/scripts/release-preflight.js verify-packed-cli
+
 # 发布（需 PAT 含 write:packages；用 --ignore-scripts 跳过会跑测试的 prepublishOnly）
 npm login --registry=https://npm.pkg.github.com   # 或 ~/.npmrc 配 //npm.pkg.github.com/:_authToken=<PAT>
 # prerelease 版本必须带 --tag（实测：缺省报 "must specify a tag"）
@@ -55,12 +61,13 @@ npm login --registry=https://npm.pkg.github.com   # 或 ~/.npmrc 配 //npm.pkg.g
 pnpm -C packages/cli build && cp README.md LICENSE packages/cli/
 ( cd packages/cli && pnpm publish --tag guru --ignore-scripts --no-git-checks )
 # 注意：需 PAT(classic) 含 write:packages —— gh CLI 的 OAuth token 无此 scope（实测 403）；
-# 凭证落 ~/.npmrc：//npm.pkg.github.com/:_authToken=<PAT>。已发布 guru.2（core+cli）于 2026-06-14。
+# 凭证落 ~/.npmrc：//npm.pkg.github.com/:_authToken=<PAT>。2026-06-14 曾发布 0.6.0-rc.0-guru.2（core+cli）；
+# 当前 GA 迁移目标为 0.6.0-guru.1，发布前以 package.json + release-preflight 为准。
 
 # 团队安装（一次性 ~/.npmrc）：
 #   @devsc:registry=https://npm.pkg.github.com
 #   //npm.pkg.github.com/:_authToken=<read:packages PAT>
 npm i -g @devsc/trellis
 
-# 内容更新流：改 guru-template/ → pnpm -C packages/cli sync:guru → bump guru.N → publish
+# 内容更新流：改 guru-template/ → pnpm -C packages/cli sync:guru → release-preflight → bump guru.N → publish
 ```

@@ -99,8 +99,16 @@ Phase 3: Finish  → 验证（swift build/test）→ 萃取回写 spec → commi
 - 1.7 完成判定
 
 [workflow-state:planning]
-无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review skill→guru_gate.py confirm 人工收口（通道按 gate_mode）；三确认齐才 task.py start。doc_type 限七类，归属违分层依赖律=fail。
+无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review skill→design-grill→guru_gate.py confirm 人工收口；三确认齐且 implement.jsonl/check.jsonl 策展完成才 task.py start。默认 Phase2 使用官方 trellis channel；doc_type 限七类，归属违分层依赖律=fail。
 [/workflow-state:planning]
+
+[workflow-state:planning-channel]
+无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→design-grill→guru_gate.py confirm 收口；三确认齐且 implement.jsonl/check.jsonl 策展完成才 task.py start。channel：Phase2 由主会话运行 guru_supervise.py / trellis channel。
+[/workflow-state:planning-channel]
+
+[workflow-state:planning-sub-agent]
+无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→design-grill→guru_gate.py confirm 收口；三确认齐才 task.py start。legacy sub-agent：Phase2 dispatch trellis-implement/check，prompt 以 Active task: <path> 开头。
+[/workflow-state:planning-sub-agent]
 
 [workflow-state:planning-inline]
 无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→guru_gate.py confirm 收口（通道按 gate_mode）；三确认齐才 task.py start。inline：Phase2 先 trellis-before-dev 读 iOS spec。
@@ -113,8 +121,16 @@ Phase 3: Finish  → 验证（swift build/test）→ 萃取回写 spec → commi
 - 2.3 回退 `[on demand]`
 
 [workflow-state:in_progress]
-实现→质检→spec回写→commit→finish。dispatch trellis-implement/check，prompt 以 Active task: <path> 开头；trace 记执行/swift build+test 证据/偏差；质检按 guru iOS 口径（分层律+DI+doc_type）；无 build/test 证据不 commit；设计缺陷回 Phase1。
+实现→质检→spec回写→commit→finish。默认用官方 trellis channel：主会话运行 guru_supervise.py implement/check（或等价 create/spawn/send/wait/messages），等待 done/error/killed，失败先读 messages --raw；worker 不 commit/push/merge。无 swift build/test 证据不 commit；设计缺陷回 Phase1。
 [/workflow-state:in_progress]
+
+[workflow-state:in_progress-channel]
+实现→质检→spec回写→commit→finish。channel：主会话运行 guru_supervise.py implement/check（官方 trellis channel），注入存在的 jsonl/任务产物/Guru skill，等待 done/error/killed，失败先读 messages --raw 和 log；worker 不 commit/push/merge。
+[/workflow-state:in_progress-channel]
+
+[workflow-state:in_progress-sub-agent]
+实现→质检→spec回写→commit→finish。legacy sub-agent：dispatch trellis-implement/check，prompt 以 Active task: <path> 开头；trace 记执行/swift build+test 证据/偏差；质检按 guru iOS 口径（分层律+DI+doc_type）；无 build/test 证据不 commit；设计缺陷回 Phase1。
+[/workflow-state:in_progress-sub-agent]
 
 [workflow-state:in_progress-inline]
 实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 iOS spec，编辑后 trellis-check（guru iOS 口径）；swift build/test 证据记 implement.md，无证据不 commit；设计缺陷回 Phase1。
@@ -142,15 +158,24 @@ Phase 3: Finish  → 验证（swift build/test）→ 萃取回写 spec → commi
 
 ### Active Task Routing
 
-[Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
+[Claude Code, Cursor, OpenCode, codex-channel, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
 
 - 需求不清 → `trellis-brainstorm`（前置探索）；full 链正式需求 → `requirement-writing` / `requirement-review`（guru-ai-guides）。
 - 概要/详细撰写 → `ios-design-overview-writing` / `ios-design-detail-writing`；Gate 判定 → 对应 `ios-design-overview-review` / `ios-design-detail-review`。
 - Gate 前拷问/术语磨尖（归属表逐行、分层律核对）→ `design-grill`。
-- `in_progress` 实现/质检 → dispatch `trellis-implement` / `trellis-check`（口径 = `ios-implementation-guru-writing` / `ios-implementation-guru-review`）。
+- `in_progress` 实现/质检 → 默认运行 `python3 .trellis/scripts/guru/guru_supervise.py implement/check <task>`（官方 `trellis channel`，注入 iOS implementation/review skill）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`（萃取九段）。
 
-[/Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
+[/Claude Code, Cursor, OpenCode, codex-channel, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
+
+[codex-sub-agent]
+
+- 需求不清 → `trellis-brainstorm`；full 链正式需求 → `requirement-writing/review`；概要/详细 → `ios-design-*-writing/review`。
+- Gate 前拷问 → `design-grill`。
+- `in_progress` 实现/质检 → legacy dispatch `trellis-implement` / `trellis-check`（口径 = `ios-implementation-guru-writing` / `ios-implementation-guru-review`），prompt 以 `Active task: <path>` 开头。
+- 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`。
+
+[/codex-sub-agent]
 
 [codex-inline, Kilo, Antigravity, Windsurf]
 
@@ -251,12 +276,12 @@ prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path / 项目约
 
 #### 2.1 实现 `[required · repeatable]`
 
-sub-agent 平台 dispatch `trellis-implement`，inline 平台先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT（含命中的 `detail-type-*.md`）。编码按 `ios-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，**按自底向上顺序**（`domain-model` → `repository` → `usecase` → `viewmodel` → `view`，`coordinator`/`external` 横切）逐片实现并持续更新 `implement.md` 的执行/证据/阻塞偏差。
+channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.py implement <task-dir>`（或等价官方 `trellis channel create/spawn/send/wait/messages`），helper 只注入存在的 `implement.jsonl`、任务产物和 `ios-implementation-guru-writing` skill，等待 `done/error/killed`。legacy sub-agent 平台 dispatch `trellis-implement`；inline 平台先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT（含命中的 `detail-type-*.md`）。编码按 `ios-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，**按自底向上顺序**（`domain-model` → `repository` → `usecase` → `viewmodel` → `view`，`coordinator`/`external` 横切）逐片实现并持续更新 `implement.md` 的执行/证据/阻塞偏差。
 golden-path 硬约束逐片落实：FactoryKit `@Injected` 注入（禁手动 init 依赖）、Repository 接口在 Domain 实现在 Infrastructure、`enum Error` 分层、ViewModel `ObservableObject`+`@Published`、private 方法置于 `private extension`、持久化只走 WCDBSwift。发现设计缺口停下回 Phase 1 修订，不在代码里绕过设计语义。
 
 #### 2.2 质检 `[required · repeatable]`
 
-加载 `trellis-check`，按 `ios-implementation-guru-review` 口径审核（实现 trace 四节对齐）：需求/设计/实现合同一致性、**分层依赖律**（import 方向、Domain 零依赖、View 不直连持久化/网络、View 间不直接导航）、**DI canonical**（`@Injected` + `Container+*` 工厂，无手动初始化）、doc_type 归属与七类台账一致、项目约定槽位取值、`enum Error` 分层、合规红线（隐私清单/ATT/内购）与验证证据。无 `swift build` / `swift test`（或 `xcodebuild test`）/ lints 证据不得进入 commit。
+channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.py check <task-dir>`，helper 只注入存在的 `check.jsonl`、任务产物和 `ios-implementation-guru-review` skill，等待 `done/error/killed`；失败先读 `trellis channel messages --raw`。legacy sub-agent/inline 模式加载 `trellis-check`，按 `ios-implementation-guru-review` 口径审核（实现 trace 四节对齐）：需求/设计/实现合同一致性、**分层依赖律**（import 方向、Domain 零依赖、View 不直连持久化/网络、View 间不直接导航）、**DI canonical**（`@Injected` + `Container+*` 工厂，无手动初始化）、doc_type 归属与七类台账一致、项目约定槽位取值、`enum Error` 分层、合规红线（隐私清单/ATT/内购）与验证证据。无 `swift build` / `swift test`（或 `xcodebuild test`）/ lints 证据不得进入 commit。
 
 #### 2.3 回退 `[on demand]`
 

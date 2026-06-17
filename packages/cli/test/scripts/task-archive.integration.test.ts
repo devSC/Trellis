@@ -52,6 +52,9 @@ function setupRepo(tmp: string): void {
   // Local commit identity so commit() works in CI without global config.
   git(tmp, "config", "user.email", "test@example.com");
   git(tmp, "config", "user.name", "Test");
+  // Ignore any developer-global hooksPath so .git/hooks/pre-commit in this
+  // temp repo deterministically exercises commit failure behavior.
+  git(tmp, "config", "core.hooksPath", ".git/hooks");
 
   // Stamp the real templates into the test repo.
   const scriptsDest = path.join(tmp, ".trellis", "scripts");

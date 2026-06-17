@@ -9,13 +9,19 @@
  * bucket of migrations.
  *
  * This guard runs before `pnpm version` bumps on every release track:
- *   1. Query npm for all published versions of @mindfoldhq/trellis
+ *   1. Query the selected registry for all published CLI package versions
  *   2. Diff against local `src/migrations/manifests/*.json`
  *   3. Fail non-zero if any npm version lacks a local manifest
  *
  * Historical gaps (existed before this check was introduced) are listed in
  * KNOWN_GAPS below so the gate can block *new* drift without being stuck
  * on accumulated debt. Do NOT add to KNOWN_GAPS — fix the root cause instead.
+ *
+ * Modes:
+ *   default      Check the current package from packages/cli/package.json.
+ *                Fork package versions such as 0.6.0-guru.1 map back to the
+ *                official base manifest, e.g. 0.6.0.json.
+ *   --official  Check upstream @mindfoldhq/trellis on public npm.
  *
  * Override: `SKIP_MANIFEST_CONTINUITY=1` to bypass (for emergency re-rolls
  * that knowingly accept the tradeoff). Prints a loud banner when bypassed.
@@ -30,8 +36,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, "../../..");
 const MANIFESTS_DIR = path.join(__dirname, "../src/migrations/manifests");
-const PACKAGE_NAME = "@mindfoldhq/trellis";
+const CLI_PKG = path.join(REPO_ROOT, "packages/cli/package.json");
+const OFFICIAL_PACKAGE_NAME = "@mindfoldhq/trellis";
+const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org/";
 
 /**
  * Historical npm versions whose manifests are permanently missing from the
@@ -65,14 +74,49 @@ function readLocalManifestVersions() {
   );
 }
 
-function fetchNpmVersions() {
+function readJSON(p) {
+  return JSON.parse(fs.readFileSync(p, "utf-8"));
+}
+
+function currentPackageTarget() {
+  const pkg = readJSON(CLI_PKG);
+  return {
+    packageName: pkg.name,
+    registry: pkg.publishConfig?.registry ?? DEFAULT_NPM_REGISTRY,
+    mode: pkg.name === OFFICIAL_PACKAGE_NAME ? "official" : "fork",
+  };
+}
+
+function officialPackageTarget() {
+  return {
+    packageName: OFFICIAL_PACKAGE_NAME,
+    registry: DEFAULT_NPM_REGISTRY,
+    mode: "official",
+  };
+}
+
+function manifestVersionForPackageVersion(version, mode) {
+  if (mode === "fork") {
+    return version.replace(/-guru\.\d+$/, "");
+  }
+  return version;
+}
+
+function fetchNpmVersions(packageName, registry) {
   try {
-    const output = execSync(`npm view ${PACKAGE_NAME} versions --json`, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 15_000,
-    });
-    const parsed = JSON.parse(output);
+    const output = execSync(
+      `npm view ${packageName} versions --json --registry=${registry}`,
+      {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 15_000,
+      },
+    );
+    const trimmed = output.trim();
+    if (!trimmed) {
+      return [];
+    }
+    const parsed = JSON.parse(trimmed);
     // `npm view` returns a string for single version and array otherwise.
     return Array.isArray(parsed) ? parsed : [parsed];
   } catch (err) {
@@ -86,6 +130,10 @@ function fetchNpmVersions() {
 }
 
 function main() {
+  const target = process.argv.includes("--official")
+    ? officialPackageTarget()
+    : currentPackageTarget();
+
   if (process.env.SKIP_MANIFEST_CONTINUITY === "1") {
     console.error(
       `${YELLOW}⚠  SKIP_MANIFEST_CONTINUITY=1 set — bypassing manifest/npm continuity check.${RESET}\n` +
@@ -95,10 +143,15 @@ function main() {
   }
 
   const localVersions = readLocalManifestVersions();
-  const npmVersions = fetchNpmVersions();
+  const npmVersions = fetchNpmVersions(target.packageName, target.registry);
+  const manifestVersions = npmVersions.map((version) =>
+    manifestVersionForPackageVersion(version, target.mode),
+  );
 
-  const newGaps = npmVersions.filter(
-    (v) => !localVersions.has(v) && !KNOWN_GAPS.has(v),
+  const newGaps = [...new Set(manifestVersions)].filter(
+    (v) =>
+      !localVersions.has(v) &&
+      !(target.mode === "official" && KNOWN_GAPS.has(v)),
   );
 
   if (newGaps.length > 0) {
@@ -109,8 +162,11 @@ function main() {
     newGaps.forEach((v) => console.error(`  - ${v}.json`));
     console.error(
       `\n` +
-      `A version on npm without its local manifest breaks \`trellis update\`\n` +
-      `for users on adjacent versions. See .trellis/spec/cli/backend/migrations.md.\n` +
+      `A version on the selected registry without its local manifest breaks\n` +
+      `\`trellis update\` for users on adjacent versions. See\n` +
+      `.trellis/spec/cli/backend/migrations.md.\n` +
+      `\n` +
+      `Checked: ${target.packageName} via ${target.registry} (${target.mode} mode).\n` +
       `\n` +
       `Fix options:\n` +
       `  1. Restore the manifest from git history\n` +
@@ -128,8 +184,12 @@ function main() {
   }
 
   console.log(
-    `${GREEN}✓${RESET} Manifest continuity OK — ${localVersions.size} local, ` +
-    `${npmVersions.length} published (${KNOWN_GAPS.size} historical gaps whitelisted).`,
+    `${GREEN}✓${RESET} Manifest continuity OK (${target.mode}) — ` +
+      `${target.packageName} via ${target.registry}; ${localVersions.size} local, ` +
+      `${npmVersions.length} published` +
+      (target.mode === "official"
+        ? ` (${KNOWN_GAPS.size} historical gaps whitelisted).`
+        : "."),
   );
 }
 

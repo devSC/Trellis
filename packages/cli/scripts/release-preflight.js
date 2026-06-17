@@ -3,9 +3,8 @@
  * Shared release / publish preflight.
  *
  * One source of truth for:
- *   1. Version match between `@mindfoldhq/trellis` and
- *      `@mindfoldhq/trellis-core` (and the current git tag when checked from
- *      a tag context).
+ *   1. Version match between the CLI package and core package (and the
+ *      current git tag when checked from a tag context).
  *   2. The npm dist-tag derived from the shared version (`beta`, `rc`,
  *      `alpha`, or `latest`).
  *   3. An idempotent publish plan that checks npm for each package + version
@@ -20,20 +19,23 @@
  *   npm-tag                          Print the computed npm dist-tag.
  *   publish-plan [--json|--github]   Decide which packages still need a
  *                                    publish. Idempotent: if a package
- *                                    version already exists on npm it is
- *                                    skipped (but version mismatches still
- *                                    fail loudly).
+ *                                    version already exists on its publish
+ *                                    registry it is skipped (but version
+ *                                    mismatches still fail loudly).
  *   verify-packed-cli                Pack the CLI and assert its dependency
- *                                    on @mindfoldhq/trellis-core resolves
- *                                    to the exact shared version (not
- *                                    "workspace:*" or a loose range).
+ *                                    on the core package resolves to the
+ *                                    exact shared version (not "workspace:*"
+ *                                    or a loose range). Fork aliases such as
+ *                                    @mindfoldhq/trellis-core ->
+ *                                    npm:@devsc/trellis-core@<version> are
+ *                                    accepted.
  *   verify-npm [--package all|core|cli]
  *                                    Verify the published package version and
- *                                    dist-tag are visible on the public npm
- *                                    registry. Used after CI publish so a
- *                                    registry visibility problem fails the
- *                                    release pipeline instead of being fixed
- *                                    by a local publish.
+ *                                    dist-tag are visible on the configured
+ *                                    publish registry. Used after CI publish
+ *                                    so a registry visibility problem fails
+ *                                    the release pipeline instead of being
+ *                                    fixed by a local publish.
  *
  * Idempotency rule: a CI rerun on the same tag must not republish an
  * already-published version, but must also never silently paper over a
@@ -49,6 +51,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 const CORE_PKG = path.join(REPO_ROOT, "packages/core/package.json");
 const CLI_PKG = path.join(REPO_ROOT, "packages/cli/package.json");
+const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org/";
 
 const RED = "\x1b[31m";
 const YELLOW = "\x1b[33m";
@@ -60,14 +63,39 @@ function readJSON(p) {
   return JSON.parse(fs.readFileSync(p, "utf-8"));
 }
 
+function publishRegistry(pkg) {
+  return pkg.publishConfig?.registry ?? DEFAULT_NPM_REGISTRY;
+}
+
+function findCoreDependency(cliPkg, coreName) {
+  const dependencies = cliPkg.dependencies ?? {};
+  if (dependencies[coreName]) {
+    return { name: coreName, spec: dependencies[coreName] };
+  }
+  for (const [name, spec] of Object.entries(dependencies)) {
+    if (
+      typeof spec === "string" &&
+      (spec === `workspace:${coreName}` ||
+        spec.startsWith(`workspace:${coreName}@`) ||
+        spec.startsWith(`npm:${coreName}@`))
+    ) {
+      return { name, spec };
+    }
+  }
+  return null;
+}
+
 function readVersions() {
   const core = readJSON(CORE_PKG);
   const cli = readJSON(CLI_PKG);
   return {
     coreName: core.name,
     coreVersion: core.version,
+    coreRegistry: publishRegistry(core),
     cliName: cli.name,
     cliVersion: cli.version,
+    cliRegistry: publishRegistry(cli),
+    coreDependency: findCoreDependency(cli, core.name),
   };
 }
 
@@ -83,13 +111,18 @@ export function computeNpmTag(version) {
   if (/-beta\./.test(version)) return "beta";
   if (/-rc\./.test(version)) return "rc";
   if (/-alpha\./.test(version)) return "alpha";
+  if (/-guru\./.test(version)) return "guru";
   return "latest";
 }
 
-export function npmVersionExists(pkgName, version) {
+export function npmVersionExists(
+  pkgName,
+  version,
+  registry = DEFAULT_NPM_REGISTRY,
+) {
   try {
     const out = execSync(
-      `npm view ${pkgName}@${version} version --json --registry=https://registry.npmjs.org/`,
+      `npm view ${pkgName}@${version} version --json --registry=${registry}`,
       { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 15_000 },
     ).trim();
     if (!out) return false;
@@ -105,12 +138,31 @@ export function npmVersionExists(pkgName, version) {
   }
 }
 
-function npmViewJSON(args) {
+function npmViewJSON(args, registry = DEFAULT_NPM_REGISTRY) {
   const out = execSync(
-    `npm view ${args} --json --registry=https://registry.npmjs.org/`,
+    `npm view ${args} --json --registry=${registry}`,
     { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"], timeout: 15_000 },
   ).trim();
   return out ? JSON.parse(out) : null;
+}
+
+function npmErrorSummary(err) {
+  const stdout = err?.stdout?.toString() ?? "";
+  try {
+    const parsed = JSON.parse(stdout);
+    if (parsed?.error?.summary) {
+      return parsed.error.summary;
+    }
+  } catch {
+    // Fall through to stderr/message extraction.
+  }
+
+  const stderr = err?.stderr?.toString() ?? "";
+  const line = stderr
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .find((s) => s.length > 0);
+  return line ? line.replace(/^npm error\s+/, "") : (err?.message ?? String(err));
 }
 
 async function sleep(ms) {
@@ -171,6 +223,11 @@ function checkVersions({ requireTag, quiet = false }) {
       `Git tag version (${tagVersion}) does not match package version (${v.cliVersion}).`,
     );
   }
+  if (!v.coreDependency) {
+    fail(
+      `${v.cliName} package.json does not declare a dependency that resolves to ${v.coreName}.`,
+    );
+  }
   if (!quiet) {
     console.log(
       `${GREEN}ok${RESET} versions match: ${v.coreName}@${v.coreVersion} = ${v.cliName}@${v.cliVersion}` +
@@ -183,13 +240,25 @@ function checkVersions({ requireTag, quiet = false }) {
 function publishPlan({ output }) {
   const v = checkVersions({ requireTag: false, quiet: output === "json" });
   const tag = computeNpmTag(v.cliVersion);
-  const coreExists = npmVersionExists(v.coreName, v.coreVersion);
-  const cliExists = npmVersionExists(v.cliName, v.cliVersion);
+  const coreExists = npmVersionExists(v.coreName, v.coreVersion, v.coreRegistry);
+  const cliExists = npmVersionExists(v.cliName, v.cliVersion, v.cliRegistry);
   const plan = {
     version: v.cliVersion,
     tag,
-    core: { name: v.coreName, publish: !coreExists, alreadyOnNpm: coreExists },
-    cli: { name: v.cliName, publish: !cliExists, alreadyOnNpm: cliExists },
+    core: {
+      name: v.coreName,
+      registry: v.coreRegistry,
+      publish: !coreExists,
+      alreadyOnRegistry: coreExists,
+      alreadyOnNpm: coreExists,
+    },
+    cli: {
+      name: v.cliName,
+      registry: v.cliRegistry,
+      publish: !cliExists,
+      alreadyOnRegistry: cliExists,
+      alreadyOnNpm: cliExists,
+    },
   };
   if (output === "json") {
     process.stdout.write(JSON.stringify(plan, null, 2) + "\n");
@@ -207,17 +276,19 @@ function publishPlan({ output }) {
         `cli_publish=${plan.cli.publish}`,
         `core_already_on_npm=${plan.core.alreadyOnNpm}`,
         `cli_already_on_npm=${plan.cli.alreadyOnNpm}`,
+        `core_registry=${plan.core.registry}`,
+        `cli_registry=${plan.cli.registry}`,
       ].join("\n") + "\n",
     );
   }
   const status = (pkg) =>
     pkg.publish
       ? `${GREEN}publish${RESET}`
-      : `${YELLOW}skip (already on npm)${RESET}`;
+      : `${YELLOW}skip (already on registry)${RESET}`;
   console.log(
     `${DIM}plan for v${plan.version} -> npm tag "${plan.tag}":${RESET}\n` +
-      `  ${plan.core.name}@${plan.version}: ${status(plan.core)}\n` +
-      `  ${plan.cli.name}@${plan.version}:  ${status(plan.cli)}`,
+      `  ${plan.core.name}@${plan.version}: ${status(plan.core)} ${DIM}${plan.core.registry}${RESET}\n` +
+      `  ${plan.cli.name}@${plan.version}:  ${status(plan.cli)} ${DIM}${plan.cli.registry}${RESET}`,
   );
   return plan;
 }
@@ -247,18 +318,23 @@ function verifyPackedCli() {
       stdio: ["pipe", "pipe", "pipe"],
     });
     const packedPkg = readJSON(path.join(extractDir, "package/package.json"));
-    const dep = packedPkg.dependencies?.["@mindfoldhq/trellis-core"];
+    const depName = v.coreDependency.name;
+    const dep = packedPkg.dependencies?.[depName];
     if (!dep) {
-      fail(`packed CLI is missing dependency on @mindfoldhq/trellis-core.`);
+      fail(`packed CLI is missing dependency "${depName}" for ${v.coreName}.`);
     }
-    if (dep !== v.cliVersion) {
+    const expected =
+      depName === v.coreName
+        ? v.coreVersion
+        : `npm:${v.coreName}@${v.coreVersion}`;
+    if (dep !== expected) {
       fail(
-        `packed CLI depends on @mindfoldhq/trellis-core@"${dep}" but expected exact "${v.cliVersion}".\n` +
-          `pnpm should rewrite workspace:* to the exact published version; got "${dep}" instead.`,
+        `packed CLI dependency "${depName}" resolves to "${dep}" but expected "${expected}".\n` +
+          `pnpm should rewrite the workspace dependency to the exact published fork package; got "${dep}" instead.`,
       );
     }
     console.log(
-      `${GREEN}ok${RESET} packed CLI pins @mindfoldhq/trellis-core to exact ${v.cliVersion}.`,
+      `${GREEN}ok${RESET} packed CLI dependency "${depName}" resolves to ${expected}.`,
     );
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -269,28 +345,39 @@ async function verifyNpm({ packageFilter }) {
   const v = checkVersions({ requireTag: false });
   const tag = computeNpmTag(v.cliVersion);
   const packages = [
-    { key: "core", name: v.coreName },
-    { key: "cli", name: v.cliName },
+    { key: "core", name: v.coreName, registry: v.coreRegistry },
+    { key: "cli", name: v.cliName, registry: v.cliRegistry },
   ].filter((pkg) => packageFilter === "all" || pkg.key === packageFilter);
 
   for (const pkg of packages) {
-    await retry(`${pkg.name}@${v.cliVersion}`, () => {
-      const version = npmViewJSON(`${pkg.name}@${v.cliVersion} version`);
-      if (version !== v.cliVersion) {
-        fail(
-          `${pkg.name}@${v.cliVersion} is not visible on the public npm registry.`,
+    try {
+      await retry(`${pkg.name}@${v.cliVersion}`, () => {
+        const version = npmViewJSON(
+          `${pkg.name}@${v.cliVersion} version`,
+          pkg.registry,
         );
-      }
-      const taggedVersion = npmViewJSON(`${pkg.name}@${tag} version`);
-      if (taggedVersion !== v.cliVersion) {
-        fail(
-          `${pkg.name}@${tag} resolves to ${taggedVersion ?? "nothing"}, expected ${v.cliVersion}.`,
+        if (version !== v.cliVersion) {
+          fail(`${pkg.name}@${v.cliVersion} is not visible on ${pkg.registry}.`);
+        }
+        const taggedVersion = npmViewJSON(
+          `${pkg.name}@${tag} version`,
+          pkg.registry,
         );
-      }
-      console.log(
-        `${GREEN}ok${RESET} ${pkg.name}@${v.cliVersion} visible on npm tag "${tag}".`,
+        if (taggedVersion !== v.cliVersion) {
+          fail(
+            `${pkg.name}@${tag} resolves to ${taggedVersion ?? "nothing"}, expected ${v.cliVersion}.`,
+          );
+        }
+        console.log(
+          `${GREEN}ok${RESET} ${pkg.name}@${v.cliVersion} visible on ${pkg.registry} tag "${tag}".`,
+        );
+      });
+    } catch (err) {
+      fail(
+        `${pkg.name}@${v.cliVersion} is not visible on ${pkg.registry} after retrying.\n` +
+          `Last npm response: ${npmErrorSummary(err)}`,
       );
-    });
+    }
   }
 }
 
@@ -342,4 +429,6 @@ async function main() {
   fail(`unknown command: ${cmd}`);
 }
 
-main();
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}

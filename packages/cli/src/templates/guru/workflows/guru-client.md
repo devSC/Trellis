@@ -79,8 +79,16 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 - 1.7 完成判定
 
 [workflow-state:planning]
-无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md，详见步骤细则）。每步=writing→review skill→guru_gate.py confirm 人工收口（通道按 gate_mode）；三确认齐才 task.py start。
+无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md，详见步骤细则）。每步=writing→review skill→design-grill→guru_gate.py confirm 人工收口；三确认齐且 implement.jsonl/check.jsonl 策展完成才 task.py start。默认 Phase2 使用官方 trellis channel。
 [/workflow-state:planning]
+
+[workflow-state:planning-channel]
+无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→design-grill→guru_gate.py confirm 收口；三确认齐且 implement.jsonl/check.jsonl 策展完成才 task.py start。channel：Phase2 由主会话运行 guru_supervise.py / trellis channel。
+[/workflow-state:planning-channel]
+
+[workflow-state:planning-sub-agent]
+无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→design-grill→guru_gate.py confirm 收口；三确认齐才 task.py start。legacy sub-agent：Phase2 dispatch trellis-implement/check，prompt 以 Active task: <path> 开头。
+[/workflow-state:planning-sub-agent]
 
 [workflow-state:planning-inline]
 无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→guru_gate.py confirm 收口（通道按 gate_mode）；三确认齐才 task.py start。inline：Phase2 先 trellis-before-dev。
@@ -93,8 +101,16 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 - 2.3 回退 `[on demand]`
 
 [workflow-state:in_progress]
-实现→质检→spec回写→commit→finish。dispatch trellis-implement/check，prompt 以 Active task: <path> 开头；trace 记执行/证据/偏差；质检按 guru 口径，无 analyze/test 证据不 commit；设计缺陷回 Phase1。
+实现→质检→spec回写→commit→finish。默认用官方 trellis channel：主会话运行 guru_supervise.py implement/check（或等价 create/spawn/send/wait/messages），等待 done/error/killed，失败先读 messages --raw；worker 不 commit/push/merge。无 analyze/test 证据不 commit；设计缺陷回 Phase1。
 [/workflow-state:in_progress]
+
+[workflow-state:in_progress-channel]
+实现→质检→spec回写→commit→finish。channel：主会话运行 guru_supervise.py implement/check（官方 trellis channel），注入存在的 jsonl/任务产物/Guru skill，等待 done/error/killed，失败先读 messages --raw 和 log；worker 不 commit/push/merge。
+[/workflow-state:in_progress-channel]
+
+[workflow-state:in_progress-sub-agent]
+实现→质检→spec回写→commit→finish。legacy sub-agent：dispatch trellis-implement/check，prompt 以 Active task: <path> 开头；trace 记执行/证据/偏差；质检按 guru 口径，无 analyze/test 证据不 commit；设计缺陷回 Phase1。
+[/workflow-state:in_progress-sub-agent]
 
 [workflow-state:in_progress-inline]
 实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 spec，编辑后 trellis-check（guru 口径）；验证证据记 implement.md，无证据不 commit；设计缺陷回 Phase1。
@@ -121,15 +137,24 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 
 ### Active Task Routing
 
-[Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
+[Claude Code, Cursor, OpenCode, codex-channel, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
 
 - 需求不清 → `trellis-brainstorm`（前置探索）；full 链正式需求 → `requirement-writing` / `requirement-review`（guru-ai-guides）。
 - 概要/详细撰写 → `client-design-overview-writing` / `client-design-detail-writing`；Gate 判定 → 对应 `*-review`。
 - Gate 前拷问/术语磨尖 → `design-grill`。
-- `in_progress` 实现/质检 → dispatch `trellis-implement` / `trellis-check`（guru 口径）。
+- `in_progress` 实现/质检 → 默认运行 `python3 .trellis/scripts/guru/guru_supervise.py implement/check <task>`（官方 `trellis channel`，注入 flutter implementation/review skill）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`（萃取九段）。
 
-[/Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
+[/Claude Code, Cursor, OpenCode, codex-channel, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
+
+[codex-sub-agent]
+
+- 需求不清 → `trellis-brainstorm`；full 链正式需求 → `requirement-writing/review`；概要/详细 → `client-design-*-writing/review`。
+- Gate 前拷问 → `design-grill`。
+- `in_progress` 实现/质检 → legacy dispatch `trellis-implement` / `trellis-check`（guru 口径），prompt 以 `Active task: <path>` 开头。
+- 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`。
+
+[/codex-sub-agent]
 
 [codex-inline, Kilo, Antigravity, Windsurf]
 
@@ -217,11 +242,11 @@ prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path/项目约�
 
 #### 2.1 实现 `[required · repeatable]`
 
-sub-agent 平台 dispatch `trellis-implement`，inline 平台先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT。编码按 `flutter-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，逐片实现并持续更新 `implement.md` 的执行/证据/阻塞偏差。禁止执行 l10n 同步脚本；发现设计缺口停下回 Phase 1 修订。
+channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.py implement <task-dir>`（或等价官方 `trellis channel create/spawn/send/wait/messages`），helper 只注入存在的 `implement.jsonl`、任务产物和 `flutter-implementation-guru-writing` skill，等待 `done/error/killed`。legacy sub-agent 平台 dispatch `trellis-implement`；inline 平台先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT。编码按 `flutter-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，逐片实现并持续更新 `implement.md` 的执行/证据/阻塞偏差。禁止执行 l10n 同步脚本；发现设计缺口停下回 Phase 1 修订。
 
 #### 2.2 质检 `[required · repeatable]`
 
-加载 `trellis-check`，按 `flutter-implementation-guru-review` 口径审核：需求/设计/实现合同一致性、分层依赖律、DI canonical、项目槽位取值、SLOT-15 存量豁免、合规红线与验证证据。无 analyze/test/lints/compliance 证据不得进入 commit。
+channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.py check <task-dir>`，helper 只注入存在的 `check.jsonl`、任务产物和 `flutter-implementation-guru-review` skill，等待 `done/error/killed`；失败先读 `trellis channel messages --raw`。legacy sub-agent/inline 模式加载 `trellis-check`，按 `flutter-implementation-guru-review` 口径审核：需求/设计/实现合同一致性、分层依赖律、DI canonical、项目槽位取值、SLOT-15 存量豁免、合规红线与验证证据。无 analyze/test/lints/compliance 证据不得进入 commit。
 
 #### 2.3 回退 `[on demand]`
 

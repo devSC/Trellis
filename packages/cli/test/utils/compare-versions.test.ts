@@ -139,6 +139,27 @@ describe("compareVersions: hyphens inside a prerelease identifier", () => {
 });
 
 // =============================================================================
+// Downstream distribution overlays
+// =============================================================================
+
+describe("compareVersions: Guru overlay versions", () => {
+  it("orders Guru overlay builds after the matching upstream GA", () => {
+    expect(compareVersions("0.6.0-guru.1", "0.6.0")).toBe(1);
+    expect(compareVersions("0.6.0", "0.6.0-guru.1")).toBe(-1);
+  });
+
+  it("allows Guru overlay builds to upgrade upstream prereleases", () => {
+    expect(compareVersions("0.6.0-guru.1", "0.6.0-rc.0")).toBe(1);
+    expect(compareVersions("0.6.0-rc.0", "0.6.0-guru.1")).toBe(-1);
+  });
+
+  it("orders Guru overlay patch numbers numerically", () => {
+    expect(compareVersions("0.6.0-guru.2", "0.6.0-guru.1")).toBe(1);
+    expect(compareVersions("0.6.0-guru.1", "0.6.0-guru.10")).toBe(-1);
+  });
+});
+
+// =============================================================================
 // Sort behaviour — the contract that getMigrationsForVersion depends on
 // =============================================================================
 
@@ -150,6 +171,7 @@ describe("compareVersions: as Array.prototype.sort comparator", () => {
       "0.5.0-rc.10",
       "0.3.0",
       "0.5.0-rc.2",
+      "0.5.0-guru.1",
       "0.3.0-rc.0",
       "0.5.0-beta.19",
     ];
@@ -162,6 +184,7 @@ describe("compareVersions: as Array.prototype.sort comparator", () => {
       "0.5.0-rc.2",
       "0.5.0-rc.10",
       "0.5.0",
+      "0.5.0-guru.1",
     ]);
   });
 });

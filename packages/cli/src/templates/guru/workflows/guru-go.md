@@ -80,8 +80,16 @@ Phase 3: Finish  → 验证（go build/vet/test + golangci-lint）→ 萃取回�
 - 1.7 完成判定
 
 [workflow-state:planning]
-无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md，详见步骤细则）。每步=writing→review skill→guru_gate.py confirm 人工收口（通道按 gate_mode）；三确认齐才 task.py start。归属违反分层依赖律=直接 fail。
+无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md，详见步骤细则）。每步=writing→review skill→design-grill→guru_gate.py confirm 人工收口；三确认齐且 implement.jsonl/check.jsonl 策展完成才 task.py start。默认 Phase2 使用官方 trellis channel；归属违反分层依赖律=直接 fail。
 [/workflow-state:planning]
+
+[workflow-state:planning-channel]
+无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→design-grill→guru_gate.py confirm 收口；三确认齐且 implement.jsonl/check.jsonl 策展完成才 task.py start。channel：Phase2 由主会话运行 guru_supervise.py / trellis channel。
+[/workflow-state:planning-channel]
+
+[workflow-state:planning-sub-agent]
+无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→design-grill→guru_gate.py confirm 收口；三确认齐才 task.py start。legacy sub-agent：Phase2 dispatch trellis-implement/check，prompt 以 Active task: <path> 开头。
+[/workflow-state:planning-sub-agent]
 
 [workflow-state:planning-inline]
 无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→guru_gate.py confirm 收口（通道按 gate_mode）；三确认齐才 task.py start。inline：Phase2 编辑前先 trellis-before-dev 读 golden-path+约定。
@@ -94,8 +102,16 @@ Phase 3: Finish  → 验证（go build/vet/test + golangci-lint）→ 萃取回�
 - 2.3 回退 `[on demand]`
 
 [workflow-state:in_progress]
-实现→质检→spec回写→commit→finish。dispatch trellis-implement/check，prompt 以 Active task: <path> 开头；trace 记执行/证据/偏差；质检按 guru 口径，无 go build/vet/test 证据不 commit；设计缺陷回 Phase1。
+实现→质检→spec回写→commit→finish。默认用官方 trellis channel：主会话运行 guru_supervise.py implement/check（或等价 create/spawn/send/wait/messages），等待 done/error/killed，失败先读 messages --raw；worker 不 commit/push/merge。无 go build/vet/test 证据不 commit；设计缺陷回 Phase1。
 [/workflow-state:in_progress]
+
+[workflow-state:in_progress-channel]
+实现→质检→spec回写→commit→finish。channel：主会话运行 guru_supervise.py implement/check（官方 trellis channel），注入存在的 jsonl/任务产物/Guru skill，等待 done/error/killed，失败先读 messages --raw 和 log；worker 不 commit/push/merge。
+[/workflow-state:in_progress-channel]
+
+[workflow-state:in_progress-sub-agent]
+实现→质检→spec回写→commit→finish。legacy sub-agent：dispatch trellis-implement/check，prompt 以 Active task: <path> 开头；trace 记执行/证据/偏差；质检按 guru 口径，无 go build/vet/test 证据不 commit；设计缺陷回 Phase1。
+[/workflow-state:in_progress-sub-agent]
 
 [workflow-state:in_progress-inline]
 实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 golden-path/约定/harness，编辑后 trellis-check（guru 口径）；go build/vet/test 证据记 implement.md，无证据不 commit；设计缺陷回 Phase1。
@@ -123,15 +139,24 @@ Phase 3: Finish  → 验证（go build/vet/test + golangci-lint）→ 萃取回�
 
 ### Active Task Routing
 
-[Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
+[Claude Code, Cursor, OpenCode, codex-channel, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
 
 - 需求不清 → `trellis-brainstorm`（前置探索）；full 链正式需求 → `requirement-writing` / `requirement-review`（guru-ai-guides）。
 - 概要/详细撰写 → `go-design-overview-writing` / `go-design-detail-writing`（Go 平台专属设计 skill，按 Go doc_type 七分类展开）；Gate 判定 → 对应 `*-review`。
 - Gate 前拷问/术语磨尖/归属逐行核对 → `design-grill`。
-- `in_progress` 实现/质检 → dispatch `trellis-implement`（按 `go-implementation-guru-writing` 口径）/ `trellis-check`（按 `go-implementation-guru-review` 口径）。
+- `in_progress` 实现/质检 → 默认运行 `python3 .trellis/scripts/guru/guru_supervise.py implement/check <task>`（官方 `trellis channel`，注入 Go implementation/review skill）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`（萃取九段）。
 
-[/Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
+[/Claude Code, Cursor, OpenCode, codex-channel, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
+
+[codex-sub-agent]
+
+- 需求不清 → `trellis-brainstorm`；full 链正式需求 → `requirement-writing/review`；概要/详细 → `go-design-*-writing/review`。
+- Gate 前拷问 → `design-grill`。
+- `in_progress` 实现/质检 → legacy dispatch `trellis-implement`（按 `go-implementation-guru-writing` 口径）/ `trellis-check`（按 `go-implementation-guru-review` 口径），prompt 以 `Active task: <path>` 开头。
+- 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`。
+
+[/codex-sub-agent]
 
 [codex-inline, Kilo, Antigravity, Windsurf]
 
@@ -221,11 +246,11 @@ prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path/项目约�
 
 #### 2.1 实现 `[required · repeatable]`
 
-sub-agent 平台 dispatch `trellis-implement`，inline 平台先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT。编码按 `go-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，按执行顺序自下而上（`domain → repository → service → transport → app/config/main`）逐切片实现，每片挂 `UNIT-<slug>` 编号 + 所属 `services/<svc>/internal/<layer>` + 完成信号 + 验证方式（一片不跨两个 internal 层），并持续更新 `implement.md` 的执行/证据/阻塞偏差。守住硬规则：`net/http ServeMux`（禁 gin/echo）、分层单向无环、sentinel + `%w` + `errors.Is`、`app.New/Run/Shutdown` 生命周期、`config.Load()` 集中配置、secret 只引用 env 名。发现设计缺口停下回 Phase 1 修订（不在代码里补造 owner/合同）。
+channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.py implement <task-dir>`（或等价官方 `trellis channel create/spawn/send/wait/messages`），helper 只注入存在的 `implement.jsonl`、任务产物和 `go-implementation-guru-writing` skill，等待 `done/error/killed`。legacy sub-agent 平台 dispatch `trellis-implement`；inline 平台先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT。编码按 `go-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，按执行顺序自下而上（`domain → repository → service → transport → app/config/main`）逐切片实现，每片挂 `UNIT-<slug>` 编号 + 所属 `services/<svc>/internal/<layer>` + 完成信号 + 验证方式（一片不跨两个 internal 层），并持续更新 `implement.md` 的执行/证据/阻塞偏差。守住硬规则：`net/http ServeMux`（禁 gin/echo）、分层单向无环、sentinel + `%w` + `errors.Is`、`app.New/Run/Shutdown` 生命周期、`config.Load()` 集中配置、secret 只引用 env 名。发现设计缺口停下回 Phase 1 修订（不在代码里补造 owner/合同）。
 
 #### 2.2 质检 `[required · repeatable]`
 
-加载 `trellis-check`，按 `go-implementation-guru-review` 口径审核：需求/设计/实现合同一致性、分层依赖律（无反向/横向 `internal` 包导入）、框架锁定（无 gin/echo 新增依赖）、错误三件套（sentinel + `%w` + `errors.Is`，无字符串比对错误）、启动序列与 `context` 超时传递、项目槽位取值（SLOT-01~SLOT-13）、`SLOT-15` 存量豁免判定、合规红线（无 secret 字面量）与验证证据。无 `go build`/`go vet`/`go test`/`golangci-lint`/合规证据不得进入 commit。
+channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.py check <task-dir>`，helper 只注入存在的 `check.jsonl`、任务产物和 `go-implementation-guru-review` skill，等待 `done/error/killed`；失败先读 `trellis channel messages --raw`。legacy sub-agent/inline 模式加载 `trellis-check`，按 `go-implementation-guru-review` 口径审核：需求/设计/实现合同一致性、分层依赖律（无反向/横向 `internal` 包导入）、框架锁定（无 gin/echo 新增依赖）、错误三件套（sentinel + `%w` + `errors.Is`，无字符串比对错误）、启动序列与 `context` 超时传递、项目槽位取值（SLOT-01~SLOT-13）、`SLOT-15` 存量豁免判定、合规红线（无 secret 字面量）与验证证据。无 `go build`/`go vet`/`go test`/`golangci-lint`/合规证据不得进入 commit。
 
 #### 2.3 回退 `[on demand]`
 

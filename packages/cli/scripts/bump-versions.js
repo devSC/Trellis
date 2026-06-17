@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Bump @mindfoldhq/trellis and @mindfoldhq/trellis-core to the same next
- * version. Replaces the per-package `pnpm version --no-git-tag-version`
+ * Bump the CLI and core packages to the same next version. Replaces the
+ * per-package `pnpm version --no-git-tag-version`
  * calls in the release scripts so the two packages can never drift.
  *
  * Usage:
@@ -11,6 +11,10 @@
  *   patch | minor | major
  *   beta | rc                  -- prerelease bump using the given preid
  *   promote                    -- strip prerelease suffix (X.Y.Z-rc.N -> X.Y.Z)
+ *
+ * Fork note: patch bumps preserve a trailing Guru suffix, so
+ * `0.6.0-guru.1` moves to `0.6.0-guru.2` instead of stripping to the
+ * official `0.6.0` line.
  *
  * Reads current version from packages/cli/package.json; refuses to run if
  * core and cli already disagree (call `release-preflight check-versions`
@@ -76,10 +80,21 @@ function bumpPrerelease(current, preid) {
   return `${parsed.major}.${parsed.minor}.${parsed.patch + 1}-${preid}.0`;
 }
 
+function bumpGuruPatch(parsed) {
+  const guru = parsed.prerelease?.match(/^(.*?)(?:-)?guru\.(\d+)$/);
+  if (!guru) return null;
+  const prefix = guru[1] ? `${guru[1]}-` : "";
+  return `${parsed.major}.${parsed.minor}.${parsed.patch}-${prefix}guru.${Number(guru[2]) + 1}`;
+}
+
 export function computeNext(current, type) {
   const v = parseVersion(current);
   switch (type) {
     case "patch":
+      {
+        const guruNext = bumpGuruPatch(v);
+        if (guruNext) return guruNext;
+      }
       if (v.prerelease) return `${v.major}.${v.minor}.${v.patch}`;
       return `${v.major}.${v.minor}.${v.patch + 1}`;
     case "minor":
@@ -122,7 +137,7 @@ function main() {
   writeJSON(CLI_PKG, cli);
   // Human message to stderr so stdout stays a clean machine-readable value.
   process.stderr.write(
-    `${GREEN}ok${RESET} bumped @mindfoldhq/trellis and @mindfoldhq/trellis-core (${type}) -> ${next}\n`,
+    `${GREEN}ok${RESET} bumped ${cli.name} and ${core.name} (${type}) -> ${next}\n`,
   );
   process.stdout.write(next + "\n");
 }

@@ -36,6 +36,7 @@ _STEP_HEADING_RE = re.compile(r"^####\s+(\d+\.\d+)\b.*$")
 
 # Phase Index starts here; Phase 1/2/3 step bodies follow; ends at Breadcrumbs.
 _PHASE_INDEX_HEADING = "## Phase Index"
+_CODEX_DISPATCH_MODES = {"inline", "sub-agent", "channel"}
 
 
 def _read_workflow() -> str:
@@ -141,14 +142,25 @@ def _platform_matches(platform: str, block_names: list[str]) -> bool:
     return False
 
 
+def _codex_dispatch_mode(config: dict) -> str:
+    """Return the configured Codex dispatch mode, defaulting invalid values to inline."""
+    codex_cfg = config.get("codex") if isinstance(config, dict) else None
+    if isinstance(codex_cfg, dict):
+        cfg_mode = codex_cfg.get("dispatch_mode")
+        if isinstance(cfg_mode, str) and cfg_mode in _CODEX_DISPATCH_MODES:
+            return cfg_mode
+    return "inline"
+
+
 def resolve_effective_platform(platform: str, config: dict) -> str:
     """Map ``codex`` to a dispatch-mode-namespaced virtual platform name.
 
     When ``--platform codex`` is passed, return ``"codex-inline"`` (default)
-    or ``"codex-sub-agent"`` based on ``.trellis/config.yaml`` ``codex.dispatch_mode``.
+    ``"codex-sub-agent"``, or ``"codex-channel"`` based on ``.trellis/config.yaml``
+    ``codex.dispatch_mode``.
     ``filter_platform`` then surfaces blocks whose marker lists include the
-    namespaced name (e.g. ``[codex-sub-agent, ...]`` or ``[codex-inline, Kilo,
-    Antigravity, Windsurf]``).
+    namespaced name (e.g. ``[codex-channel, ...]``, ``[codex-sub-agent, ...]``,
+    or ``[codex-inline, Kilo, Antigravity, Windsurf]``).
 
     Default is ``inline`` because Codex sub-agents run with ``fork_turns="none"``
     isolation and can't inherit the parent session's task context — inline
@@ -158,13 +170,7 @@ def resolve_effective_platform(platform: str, config: dict) -> str:
     Other platforms are returned unchanged.
     """
     if platform == "codex":
-        mode = "inline"
-        codex_cfg = config.get("codex") if isinstance(config, dict) else None
-        if isinstance(codex_cfg, dict):
-            cfg_mode = codex_cfg.get("dispatch_mode")
-            if cfg_mode in ("inline", "sub-agent"):
-                mode = cfg_mode
-        return f"codex-{mode}"
+        return f"codex-{_codex_dispatch_mode(config)}"
     return platform
 
 

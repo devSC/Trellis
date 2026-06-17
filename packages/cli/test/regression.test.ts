@@ -3741,15 +3741,18 @@ print(len(entries))
     expect(ctx).not.toContain("DISPATCH the trellis-implement");
   });
 
-  it("[issue-codex-dispatch-mode] codex breadcrumb routes to plain status when codex.dispatch_mode=sub-agent", () => {
+  it("[issue-codex-dispatch-mode] codex breadcrumb routes to sub-agent tag when codex.dispatch_mode=sub-agent", () => {
     setupTaskRepo();
     writeSessionContext("session_workflow-a", ".trellis/tasks/issue-106");
     const codexHookPath = writeCodexInjectHook();
     writeProjectFile(
       path.join(".trellis", "workflow.md"),
       "[workflow-state:in_progress]\n" +
-        "DISPATCH the trellis-implement / trellis-check sub-agents.\n" +
+        "DEFAULT CHANNEL via trellis channel.\n" +
         "[/workflow-state:in_progress]\n" +
+        "[workflow-state:in_progress-sub-agent]\n" +
+        "DISPATCH the trellis-implement / trellis-check sub-agents.\n" +
+        "[/workflow-state:in_progress-sub-agent]\n" +
         "[workflow-state:in_progress-inline]\n" +
         "MAIN SESSION edits code via trellis-before-dev directly.\n" +
         "[/workflow-state:in_progress-inline]\n",
@@ -3761,7 +3764,58 @@ print(len(entries))
     ) as { hookSpecificOutput: { additionalContext: string } };
     const ctx = parsed.hookSpecificOutput.additionalContext;
     expect(ctx).toContain("DISPATCH the trellis-implement");
+    expect(ctx).not.toContain("DEFAULT CHANNEL");
     expect(ctx).not.toContain("MAIN SESSION edits code");
+  });
+
+  it("[issue-codex-dispatch-mode] codex breadcrumb routes to channel tag when codex.dispatch_mode=channel", () => {
+    setupTaskRepo();
+    writeSessionContext("session_workflow-a", ".trellis/tasks/issue-106");
+    const codexHookPath = writeCodexInjectHook();
+    writeProjectFile(
+      path.join(".trellis", "workflow.md"),
+      "[workflow-state:in_progress]\n" +
+        "DEFAULT workflow fallback.\n" +
+        "[/workflow-state:in_progress]\n" +
+        "[workflow-state:in_progress-channel]\n" +
+        "MAIN SESSION uses trellis channel supervised workers.\n" +
+        "[/workflow-state:in_progress-channel]\n" +
+        "[workflow-state:in_progress-sub-agent]\n" +
+        "DISPATCH the trellis-implement / trellis-check sub-agents.\n" +
+        "[/workflow-state:in_progress-sub-agent]\n" +
+        "[workflow-state:in_progress-inline]\n" +
+        "MAIN SESSION edits code via trellis-before-dev directly.\n" +
+        "[/workflow-state:in_progress-inline]\n",
+    );
+    writeConfigYaml("codex:\n  dispatch_mode: channel\n");
+
+    const parsed = JSON.parse(
+      runPython(codexHookPath, JSON.stringify({ cwd: tmpDir, session_id: "workflow-a" })),
+    ) as { hookSpecificOutput: { additionalContext: string } };
+    const ctx = parsed.hookSpecificOutput.additionalContext;
+    expect(ctx).toContain("trellis channel supervised workers");
+    expect(ctx).not.toContain("DISPATCH the trellis-implement");
+    expect(ctx).not.toContain("MAIN SESSION edits code");
+  });
+
+  it("[issue-codex-dispatch-mode] codex channel breadcrumb falls back to plain status when channel tag is absent", () => {
+    setupTaskRepo();
+    writeSessionContext("session_workflow-a", ".trellis/tasks/issue-106");
+    const codexHookPath = writeCodexInjectHook();
+    writeProjectFile(
+      path.join(".trellis", "workflow.md"),
+      "[workflow-state:in_progress]\n" +
+        "PLAIN STATUS fallback.\n" +
+        "[/workflow-state:in_progress]\n",
+    );
+    writeConfigYaml("codex:\n  dispatch_mode: channel\n");
+
+    const parsed = JSON.parse(
+      runPython(codexHookPath, JSON.stringify({ cwd: tmpDir, session_id: "workflow-a" })),
+    ) as { hookSpecificOutput: { additionalContext: string } };
+    expect(parsed.hookSpecificOutput.additionalContext).toContain(
+      "PLAIN STATUS fallback",
+    );
   });
 
   it("[issue-codex-dispatch-mode] codex breadcrumb routes to inline tag when codex.dispatch_mode=inline", () => {
@@ -3848,7 +3902,48 @@ print(len(entries))
     expect(output).not.toMatch(/Active task: <task path>/);
   });
 
-  it("[issue-codex-dispatch-mode] resolve_breadcrumb_key picks status-inline only for codex+inline", () => {
+  it("[issue-codex-dispatch-mode] get_context.py --platform codex swaps to channel block content", () => {
+    writeTrellisScripts();
+    writeProjectFile(path.join(".trellis", ".developer"), "name=test\n");
+    writeProjectFile(
+      path.join(".trellis", "workflow.md"),
+      "# Workflow\n" +
+        "## Phase Index\n" +
+        "Phase summary\n" +
+        "## Phase 1: Plan\n" +
+        "#### 2.1 Implement\n" +
+        "Shared step intro.\n" +
+        "[codex-channel]\n" +
+        "CHANNEL ROUTE uses trellis channel supervised workers.\n" +
+        "[/codex-channel]\n" +
+        "[codex-sub-agent]\n" +
+        "SUBAGENT ROUTE dispatches trellis-implement.\n" +
+        "[/codex-sub-agent]\n" +
+        "[codex-inline]\n" +
+        "INLINE ROUTE loads trellis-before-dev.\n" +
+        "[/codex-inline]\n" +
+        "## Phase 3: Finish\n",
+    );
+    writeConfigYaml("codex:\n  dispatch_mode: channel\n");
+
+    const contextScript = path.join(
+      tmpDir,
+      ".trellis",
+      "scripts",
+      "get_context.py",
+    );
+    const output = execSync(
+      `${pythonCmd} ${JSON.stringify(contextScript)} --mode phase --step 2.1 --platform codex`,
+      { cwd: tmpDir, encoding: "utf-8" },
+    );
+
+    expect(output).toContain("Shared step intro.");
+    expect(output).toContain("CHANNEL ROUTE uses trellis channel");
+    expect(output).not.toContain("SUBAGENT ROUTE");
+    expect(output).not.toContain("INLINE ROUTE");
+  });
+
+  it("[issue-codex-dispatch-mode] resolve_breadcrumb_key maps codex.dispatch_mode values to namespaced status keys", () => {
     // Cover all four cases via the actual hook helper (imported from the
     // installed shared-hooks template). This locks the helper's contract
     // rather than retesting an inline copy.
@@ -3872,7 +3967,9 @@ print(len(entries))
         "result = {",
         "  'codex_inline': mod.resolve_breadcrumb_key('in_progress', 'codex', {'codex': {'dispatch_mode': 'inline'}}),",
         "  'codex_subagent': mod.resolve_breadcrumb_key('in_progress', 'codex', {'codex': {'dispatch_mode': 'sub-agent'}}),",
+        "  'codex_channel': mod.resolve_breadcrumb_key('in_progress', 'codex', {'codex': {'dispatch_mode': 'channel'}}),",
         "  'codex_missing': mod.resolve_breadcrumb_key('in_progress', 'codex', {}),",
+        "  'codex_invalid': mod.resolve_breadcrumb_key('in_progress', 'codex', {'codex': {'dispatch_mode': 'invalid'}}),",
         "  'claude_inline': mod.resolve_breadcrumb_key('in_progress', 'claude', {'codex': {'dispatch_mode': 'inline'}}),",
         "}",
         "print(json.dumps(result))",
@@ -3886,9 +3983,11 @@ print(len(entries))
       output.split("\n").filter((l) => l.startsWith("{")).pop() ?? "{}",
     ) as Record<string, string>;
     expect(result.codex_inline).toBe("in_progress-inline");
-    expect(result.codex_subagent).toBe("in_progress");
+    expect(result.codex_subagent).toBe("in_progress-sub-agent");
+    expect(result.codex_channel).toBe("in_progress-channel");
     // Default for codex (missing config) is inline since 0.5.9.
     expect(result.codex_missing).toBe("in_progress-inline");
+    expect(result.codex_invalid).toBe("in_progress-inline");
     expect(result.claude_inline).toBe("in_progress");
   });
 
@@ -3938,7 +4037,7 @@ print(len(entries))
     expect(parsed.codex?.dispatch_mode).toBe("inline");
   });
 
-  it("[issue-codex-dispatch-mode] resolve_effective_platform namespaces codex into codex-sub-agent / codex-inline", () => {
+  it("[issue-codex-dispatch-mode] resolve_effective_platform namespaces codex by codex.dispatch_mode", () => {
     setupTaskRepo();
     writeTrellisScripts();
     const probePath = path.join(tmpDir, "probe_effective_platform.py");
@@ -3952,6 +4051,7 @@ print(len(entries))
         "  'codex_default': resolve_effective_platform('codex', {}),",
         "  'codex_explicit_subagent': resolve_effective_platform('codex', {'codex': {'dispatch_mode': 'sub-agent'}}),",
         "  'codex_inline': resolve_effective_platform('codex', {'codex': {'dispatch_mode': 'inline'}}),",
+        "  'codex_channel': resolve_effective_platform('codex', {'codex': {'dispatch_mode': 'channel'}}),",
         "  'codex_invalid_mode': resolve_effective_platform('codex', {'codex': {'dispatch_mode': 'invalid'}}),",
         "  'claude_passthrough': resolve_effective_platform('claude', {'codex': {'dispatch_mode': 'inline'}}),",
         "}",
@@ -3968,6 +4068,7 @@ print(len(entries))
     expect(result.codex_default).toBe("codex-inline");
     expect(result.codex_explicit_subagent).toBe("codex-sub-agent");
     expect(result.codex_inline).toBe("codex-inline");
+    expect(result.codex_channel).toBe("codex-channel");
     // Invalid mode falls back to default inline rather than passing through.
     expect(result.codex_invalid_mode).toBe("codex-inline");
     // Non-codex platforms ignore the codex.dispatch_mode setting.
@@ -4006,6 +4107,24 @@ print(len(entries))
     ) as { hookSpecificOutput: { additionalContext: string } };
     expect(subAgentRun.hookSpecificOutput.additionalContext).toContain(
       "<codex-mode>sub-agent: implement/check work defaults to Trellis sub-agents; the main session still coordinates, clarifies, updates specs, commits, and finishes.</codex-mode>",
+    );
+
+    // Explicit channel → official supervised channel worker banner.
+    writeConfigYaml("codex:\n  dispatch_mode: channel\n");
+    const channelRun = JSON.parse(
+      runPython(codexHookPath, JSON.stringify({ cwd: tmpDir, session_id: "workflow-a" })),
+    ) as { hookSpecificOutput: { additionalContext: string } };
+    expect(channelRun.hookSpecificOutput.additionalContext).toContain(
+      "<codex-mode>channel: implement/check work defaults to official trellis channel supervised workers; the main session creates channels, waits on done/error/killed, and owns commit/finish.</codex-mode>",
+    );
+
+    // Invalid value keeps the documented inline fallback.
+    writeConfigYaml("codex:\n  dispatch_mode: nope\n");
+    const invalidRun = JSON.parse(
+      runPython(codexHookPath, JSON.stringify({ cwd: tmpDir, session_id: "workflow-a" })),
+    ) as { hookSpecificOutput: { additionalContext: string } };
+    expect(invalidRun.hookSpecificOutput.additionalContext).toContain(
+      "<codex-mode>inline: the main session implements/checks directly; do not dispatch implement/check sub-agents.</codex-mode>",
     );
   });
 
@@ -5927,6 +6046,8 @@ describe("regression: configSectionsAdded (issue-codex-dispatch-mode)", () => {
     const tmpl = fs.readFileSync(tmplPath, "utf-8");
     expect(tmpl).toContain("# Codex (dispatch behavior)");
     expect(tmpl).toContain("dispatch_mode");
+    expect(tmpl).toContain('values: "inline", "sub-agent", "channel"');
+    expect(tmpl).toContain("official `trellis channel` supervised worker runtime");
   });
 });
 
