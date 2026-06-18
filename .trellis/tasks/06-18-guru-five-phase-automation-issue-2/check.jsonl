@@ -1,0 +1,30 @@
+{"file": ".trellis/tasks/06-18-guru-five-phase-automation-issue-2/prd.md", "reason": "Acceptance criteria for final verification"}
+{"file": ".trellis/tasks/06-18-guru-five-phase-automation-issue-2/design.md", "reason": "Expected Guru gate semantics for verification"}
+{"file": ".trellis/tasks/06-18-guru-five-phase-automation-issue-2/implement.md", "reason": "Validation command matrix and implementation phases"}
+{"file": "guru-template/workflows/", "type": "directory", "reason": "Source Guru workflow docs to inspect for stale gate language"}
+{"file": "guru-template/specs/guru-flutter-client/harness/gate/gate-confirmation-model.md", "reason": "Flutter Gate SSOT must match new model"}
+{"file": "guru-template/specs/guru-go-backend/harness/gate/gate-confirmation-model.md", "reason": "Go Gate SSOT must match new model"}
+{"file": "guru-template/specs/guru-ios-native/harness/gate/gate-confirmation-model.md", "reason": "iOS Gate SSOT must match new model"}
+{"file": "guru-template/specs/guru-h5-web/harness/gate/gate-confirmation-model.md", "reason": "H5 Gate SSOT must match new model"}
+{"file": "guru-template/overlay/verify/guru_gate.py", "reason": "Verify check/status/auto and record-review behavior match the new model"}
+{"file": "guru-template/overlay/verify/tests/run_tests.sh", "reason": "Guru gate fixture suite to extend and run, including auto under the new review-evidence model"}
+{"file": "packages/cli/test/guru/guru-bundled.test.ts", "reason": "Packaged template assertions after sync, including overview/detail guru_supervise.py dry-run contracts"}
+{"file": "packages/cli/test/configurators/shared.test.ts", "reason": "Verify shared brainstorm template contracts render across neutral skill output"}
+{"file": "packages/cli/test/templates/codex.test.ts", "reason": "Verify Codex brainstorm skill includes Domain Grill and evidence-first contracts"}
+{"file": "packages/cli/test/templates/copilot.test.ts", "reason": "Verify Copilot brainstorm prompt includes Domain Grill and evidence-first contracts"}
+{"file": ".agents/skills/trellis-brainstorm/SKILL.md", "reason": "Verify local dogfood brainstorm skill is not stale"}
+{"file": "guru-template/overlay/verify/guru_supervise.py", "reason": "Verify mandatory planning automation driver contract"}
+{"file": "guru-template/overlay/hooks/platform/block-unconfirmed-start.sh", "reason": "Verify before-start hook guidance matches new Gate model"}
+{"file": "guru-template/overlay/apply.sh", "reason": "Verify overlay install text no longer describes three human Gates"}
+{"file": "guru-template/overlay/config-snippets/config.hooks.yaml", "reason": "Verify generated hook config comments match the new Gate model"}
+{"file": "guru-template/overlay/config-snippets/worktree.verify.yaml", "reason": "Verify guru_gate.py auto wording means progressive current-artifact verification"}
+{"file": "packages/cli/src/templates/guru/overlay/config-snippets/worktree.verify.yaml", "reason": "Verify packaged worktree verify snippet matches source after sync"}
+{"file": "guru-template/specs/", "type": "directory", "reason": "Verify gate and detail SSOT docs no longer require overview user confirmation"}
+{"file": "guru-template/overlay/agents-skills/", "type": "directory", "reason": "Verify overview/detail writing, review, and review-output references match record-review and double-clean semantics"}
+{"file": "packages/cli/src/templates/common/skills/brainstorm.md", "reason": "Verify packaged common brainstorm template includes Domain Grill"}
+{"file": "packages/cli/src/templates/codex/skills/brainstorm/SKILL.md", "reason": "Verify packaged Codex brainstorm skill includes Domain Grill"}
+{"file": "packages/cli/src/templates/copilot/prompts/brainstorm.prompt.md", "reason": "Verify packaged Copilot brainstorm prompt includes Domain Grill"}
+{"file": ".claude/skills/trellis-brainstorm/SKILL.md", "reason": "Verify Claude brainstorm skill includes Domain Grill"}
+{"file": ".cursor/skills/trellis-brainstorm/SKILL.md", "reason": "Verify Cursor brainstorm skill includes Domain Grill"}
+{"file": ".opencode/skills/trellis-brainstorm/SKILL.md", "reason": "Verify OpenCode brainstorm skill includes Domain Grill"}
+{"file": ".pi/skills/trellis-brainstorm/SKILL.md", "reason": "Verify Pi brainstorm skill includes Domain Grill"}

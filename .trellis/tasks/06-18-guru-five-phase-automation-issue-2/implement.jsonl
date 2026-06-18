@@ -1,0 +1,32 @@
+{"file": ".trellis/tasks/06-18-guru-five-phase-automation-issue-2/prd.md", "reason": "Task PRD derived from devSC/Trellis#2 requirements"}
+{"file": ".trellis/tasks/06-18-guru-five-phase-automation-issue-2/design.md", "reason": "Technical design for Guru gate model and review evidence"}
+{"file": ".trellis/tasks/06-18-guru-five-phase-automation-issue-2/implement.md", "reason": "Phase-by-phase implementation and validation plan"}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "CLI Python script conventions for guru_gate.py changes"}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "CLI backend quality requirements"}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Focused unit-test conventions for CLI/template changes"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse guidance before adding abstractions"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer impact checklist for Guru workflow/template changes"}
+{"file": ".agents/skills/trellis-brainstorm/SKILL.md", "reason": "Current worktree brainstorm skill must receive Domain Grill updates"}
+{"file": ".claude/skills/trellis-brainstorm/SKILL.md", "reason": "Claude dogfood brainstorm skill must receive Domain Grill updates"}
+{"file": ".cursor/skills/trellis-brainstorm/SKILL.md", "reason": "Cursor dogfood brainstorm skill must receive Domain Grill updates"}
+{"file": ".opencode/skills/trellis-brainstorm/SKILL.md", "reason": "OpenCode dogfood brainstorm skill must receive Domain Grill updates"}
+{"file": ".pi/skills/trellis-brainstorm/SKILL.md", "reason": "Pi dogfood brainstorm skill must receive Domain Grill updates"}
+{"file": "guru-template/overlay/agents-skills/design-grill/SKILL.md", "reason": "Source behavior to fold into brainstorm Domain Grill subroutine"}
+{"file": "guru-template/overlay/verify/guru_gate.py", "reason": "Implementation target for review evidence, check/status/auto behavior, and legacy grill compatibility"}
+{"file": "guru-template/overlay/verify/guru_supervise.py", "reason": "Implementation target for overview/detail planning actions and implement-check loop"}
+{"file": "guru-template/overlay/verify/tests/run_tests.sh", "reason": "Shell fixture suite for guru_gate.py new model and auto behavior"}
+{"file": "guru-template/workflows/", "type": "directory", "reason": "Source Guru workflow docs to remove old overview confirm and document automation loops"}
+{"file": "guru-template/specs/", "type": "directory", "reason": "Source Guru gate/detail SSOT docs for all supported platforms"}
+{"file": "guru-template/overlay/agents-skills/", "type": "directory", "reason": "Source Guru writing/review skills for planning loops, implementation DoD, and review routing"}
+{"file": "guru-template/overlay/hooks/platform/block-unconfirmed-start.sh", "reason": "Before-start hook messaging must delegate to new guru_gate.py status semantics"}
+{"file": "guru-template/overlay/apply.sh", "reason": "Overlay install text must not describe old three-human-Gate model"}
+{"file": "guru-template/overlay/config-snippets/config.hooks.yaml", "reason": "Generated hook config comments must match new Gate model"}
+{"file": "guru-template/overlay/config-snippets/worktree.verify.yaml", "reason": "Worktree verify snippet must describe guru_gate.py auto as progressive current-artifact verification"}
+{"file": "packages/cli/src/templates/guru/overlay/config-snippets/worktree.verify.yaml", "reason": "Packaged verify snippet must stay synced after guru-template changes"}
+{"file": "packages/cli/test/guru/guru-bundled.test.ts", "reason": "Packaging tests for synced Guru overlay, guru_supervise.py dry-runs, and auto help text"}
+{"file": "packages/cli/src/templates/common/skills/brainstorm.md", "reason": "Packaged common brainstorm template must include Domain Grill contract"}
+{"file": "packages/cli/src/templates/codex/skills/brainstorm/SKILL.md", "reason": "Packaged Codex brainstorm skill must include Domain Grill contract"}
+{"file": "packages/cli/src/templates/copilot/prompts/brainstorm.prompt.md", "reason": "Packaged Copilot brainstorm prompt must include Domain Grill contract"}
+{"file": "packages/cli/test/configurators/shared.test.ts", "reason": "Template tests for shared brainstorm contract rendering"}
+{"file": "packages/cli/test/templates/codex.test.ts", "reason": "Template tests for Codex brainstorm and implementation/check agent contracts"}
+{"file": "packages/cli/test/templates/copilot.test.ts", "reason": "Template tests for Copilot brainstorm prompt contract"}

@@ -1,0 +1,32 @@
+{
+  "id": "guru-five-phase-automation-issue-2",
+  "name": "guru-five-phase-automation-issue-2",
+  "title": "Implement devSC/Trellis#2 Guru automated five-phase workflow",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-06-18",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/guru-0.6.0-ga-worktree",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/tasks/06-18-guru-five-phase-automation-issue-2/prd.md",
+    ".trellis/tasks/06-18-guru-five-phase-automation-issue-2/design.md",
+    ".trellis/tasks/06-18-guru-five-phase-automation-issue-2/implement.md",
+    ".trellis/tasks/06-18-guru-five-phase-automation-issue-2/implement.jsonl",
+    ".trellis/tasks/06-18-guru-five-phase-automation-issue-2/check.jsonl"
+  ],
+  "notes": "",
+  "meta": {}
+}
