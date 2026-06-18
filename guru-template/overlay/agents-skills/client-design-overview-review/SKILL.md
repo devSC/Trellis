@@ -1,6 +1,6 @@
 ---
 name: client-design-overview-review
-description: 用于审核 Flutter 客户端概要设计文档，判定能否进入详细设计。先做 EX 前置判定（判轨/包骨架/需求准入/项目约定），再按取证矩阵逐章审核：行为覆盖与粒度、owner 归属与分层依赖律、架构总览人审视图六件套、时序图策略闭合、技术决策合规依据、承接索引完整性；先证据后结论，输出分级 findings 与互斥三选一结论，并以用户终端 confirm 作为 Gate 收口。规则唯一来源是 `.trellis/spec/harness/overview/` 的 L1 SSOT。
+description: 用于审核 Flutter 客户端概要设计文档，判定能否进入详细设计。先做 EX 前置判定（判轨/包骨架/需求准入/项目约定），再按取证矩阵逐章审核：行为覆盖与粒度、owner 归属与分层依赖律、架构总览人审视图六件套、时序图策略闭合、技术决策合规依据、承接索引完整性；先证据后结论，输出分级 findings 与互斥三选一结论，并输出 record-review 证据作为 Gate 收口。规则唯一来源是 `.trellis/spec/harness/overview/` 的 L1 SSOT。
 ---
 
 # 客户端概要设计审核
@@ -75,14 +75,22 @@ description: 用于审核 Flutter 客户端概要设计文档，判定能否进�
 
 本 skill 是 Phase 1 内的概要 Gate 判定（人工触发），区别于 Phase 2/3 的 `trellis-check`（代码质检）。审核对象是概要主定义（full=design-main.md；light=design.md §1），不审代码。
 
-## Gate 收口（人工确认）
+## Review Evidence 收口
 
-结论为"可进入详细设计"（或带明确假设可进入且假设已记录）时，按 config `guru.gate_mode` 完成人工收口（通道主定义见 workflow Trellis System 节）：
+结论为「可进入详细设计」或「带明确假设可进入」时，不请求用户确认 overview。必须输出可执行的 review evidence 记录命令：
 
-- **strict（默认）**：提请**用户本人**在终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm`；agent 不得代跑（无 TTY 会被拒）。
-- **soft**：用户在对话中明确确认后，agent 运行 `python3 .trellis/scripts/guru/guru_gate.py confirm overview <task_dir> --via-agent --user-quote "<用户确认原话>"` 代跑（记录留痕标注 soft/agent）；未获用户本轮明确确认不得执行。
+```bash
+python3 .trellis/scripts/guru/guru_gate.py record-review overview <task_dir> \
+  --result clean \
+  --max-severity low \
+  --reviewer clean-context \
+  --run-id <fresh-run-id> \
+  --evidence "<本次 overview review 证据摘要>"
+```
 
-确认未落盘前不得进入详细设计。
+若存在 medium+ finding，必须输出 `--result findings --max-severity medium|high|critical --finding-class REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT`，并停止进入下一阶段。
+
+当前 digest 下两个不同 `run_id` 的 clean review 记录后，overview 自动通过；`confirm overview` 禁止。
 
 ## 参考资料
 

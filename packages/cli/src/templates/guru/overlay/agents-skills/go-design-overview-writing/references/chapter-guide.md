@@ -302,7 +302,7 @@ sequenceDiagram
 
 - 默认连续推进（一次性交付模式）；只有高风险未决项才暂停提问（一次 1~4 个；存在单一明显 P0 缺口时通常 1 个问题即可）。
 - 每阶段切换前轻量自检：本阶段产物是否满足对应 L1 合同；明显缺口当场补，不带病推进。
-- 全稿完成 → 回填全部时序图占位 → G1~G9 自检 → 提示送审：加载 `go-design-overview-review` 过概要 Gate；该 Gate 是人工判「能否进详细」，区别于 `trellis-check` 代码质检。
+- 全稿完成 → 回填全部时序图占位 → G1~G9 自检 → 提示送审：加载 `go-design-overview-review` 过概要 Gate；由 review worker 用 `record-review overview` 记录当前 digest 的 clean/findings 证据，区别于 `trellis-check` 代码质检。
 
 ## 12. 禁止事项（写作期红线速查）
 

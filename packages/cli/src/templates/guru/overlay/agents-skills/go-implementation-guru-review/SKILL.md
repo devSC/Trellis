@@ -85,10 +85,13 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
    - **可进入 PR**：D1~D7 全过；trace 四节齐全、`go build`/`go vet`/`golangci-lint`/`go test` 有命令级证据且全绿、承接 UNIT 的成功 + 全部失败路径有测试、注释/日志/文档路径追溯可审计、无 P1、无清单外新增违例、无未闭合偏差。
    - **修复 P2 后可进入**：无 P1，但存在 P2（证据不完整、偏差未全闭合、非高风险漏测、绕行未挂编号等）；列出 P2 修复项。
    - **不可进入 PR**：存在任一 P1（合同未实现 / 八问断链 / 分层反向 / 轻框架破坏 / 丢 `%w` / 生命周期破坏 / 硬编码 secret / 清单外新增违例 / 高风险漏测 / 编译未收口 / 证据造假 / 就地改设计）；逐条列阻塞 P1。验证因环境/凭据/DB/网络阻塞无法完成时，结论为 blocked，记录命令、错误摘要、缺失依赖与恢复条件，不得降级为 pass。
+   - 机器可读收口字段必须同步输出：clean 且可进入 PR 时写 `review_result=clean/final-verification-ready`、`route_class=none`、`validation_summary=<命令与证据摘要>`；有 finding 或阻塞时写 `review_result=findings|blocked` 与最高优先级 `route_class`。
+   - route class 只能取：`IMPLEMENT_DEFECT`（代码/测试/验证/注释/日志/脱敏缺陷）、`PROCESS_DEFECT`（trace/证据/流程执行缺陷）、`DETAIL_DEFECT`（详细设计合同错误或缺失）、`OVERVIEW_DEFECT`（概要归属/承接错误）、`REQ_BLOCKER`（需求行为/验收/边界缺陷）、`none`。
 
 2. **逐条 Findings**（按 `P1 → P2 → P3` 排序；无则写 `none`），每条字段：
    ```md
    ### P<1|2|3> <标题>
+   - route_class：`IMPLEMENT_DEFECT|PROCESS_DEFECT|DETAIL_DEFECT|OVERVIEW_DEFECT|REQ_BLOCKER`
    - 设计证据：`<UNIT-<slug>#八问几 / BHV-NNN / 详细设计文件:章节>`
    - 代码证据：`<services/<svc>/internal/<layer>/<file>:行 / 类型 / 方法 / app 装配 / config / 验证位置>`
    - 存量证据：`<命中的 [SLOT-NN] 条目 / 清单外；不适用写 N/A>`
@@ -96,6 +99,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
    - 影响：`<为何导致合同不闭合 / 验证不可信 / 红线破坏 / 无法判断>`
    - 建议（最小修订）：`<修代码 | 补/复跑验证 | 移除越界测试 | 回退详细阶段修订 | 挂 SLOT-17 记债 | 恢复验证环境>`
    ```
+   同一轮多类缺陷按 `REQ_BLOCKER > OVERVIEW_DEFECT > DETAIL_DEFECT > PROCESS_DEFECT > IMPLEMENT_DEFECT` 给最高优先级路由，供 implement-check 自动回退。
    先证据后结论，严重度排序：
    - **P1**：合同未实现 / 执行流程步骤缺失·改序·下沉·上移无设计依据 / 八问断链（幽灵 BHV·UNIT）/ 实现阶段猜测发明未定义合同 / 分层反向·越层 / 轻框架破坏 / 错误链丢 `%w`·吞错·panic 控制流 / 生命周期·context·优雅关闭破坏 / 配置不集中 / internal 越界 / 契约不走 `packages/contracts/` / 高风险核心 owner 完全无文档追溯 / 高风险路径不可观测 / 日志泄露 secret 或 PII / 硬编码 secret 或 config 存 secret value / 清单外新增违例（含扩大违例面）/ 高风险链路漏测 / 编译未收口 / 证据与复跑不符 / 就地改设计而非回退。
    - **P2**：编译/静态/测试证据不完整（无命令·无退出态·无测试名）/ 非高风险失败路径漏测 / 新增核心定义缺 Go doc 或设计锚点 / 非显然分支缺"为什么"注释 / 关键流程日志缺入口或失败上下文 / 偏差未全闭合靠 reviewer 发现 / 触碰存量绕行未挂编号 / 计划与验证命令轻微不一致但未绕过实现 / 因环境阻塞验证未完成。

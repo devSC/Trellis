@@ -1,6 +1,6 @@
 ---
 name: ios-design-detail-review
-description: 用于审核 Guru iOS 原生平台（SwiftUI 主 + RxSwift 遗留、DDD 四层 Domain→App→Infrastructure→UI、FactoryKit @Injected DI、Repository 模式、WCDBSwift 持久化、AppCoordinator 导航）详细设计文档，判定能否进入实现编码。先做 EX 前置检查（判轨 / 项目约定 C1~C5 / 承接索引 / 概要确认 / 承接源 / 机器 Gate），再按 review_scope 三模式执行：current_chapter 单章逐行为诊断、layer_checkpoint 跨章协同诊断、directory_final 目录级三段式终审（逐文档 D1~D9 诊断 → 跨层调用链 → 概要承接索引与时序覆盖率）。核查合同八问、概要 owner 追溯、Domain→App→Infrastructure→UI 单向依赖律、per-domain enum Error 收口、@Published 三态收口、WCDBSwift 事务边界、测试映射、合规红线与可编码粒度；编号断链拦截（单元引用幽灵 BHV / 行为无单元承接 / 切片引用幽灵 UNIT）；先证据后结论，输出分级 findings 与互斥三选一结论，以用户终端 confirm 作为 Gate 收口。doc_type 一律以 IOS_BRIEF 钉死七类（viewmodel / usecase / repository / domain-model / view / coordinator / external）为权威，禁照抄 flutter（controller/page-entry/db-dao/api-network）或 Go（transport/service）类型名。规则唯一来源是 `.trellis/spec/harness/detail/` 的 L1/L2 SSOT 与 `.trellis/spec/harness/index.md`，本文件只组织取证、Finding 与输出。
+description: 用于审核 Guru iOS 原生平台（SwiftUI 主 + RxSwift 遗留、DDD 四层 Domain→App→Infrastructure→UI、FactoryKit @Injected DI、Repository 模式、WCDBSwift 持久化、AppCoordinator 导航）详细设计文档，判定能否进入实现编码。先做 EX 前置检查（判轨 / 项目约定 C1~C5 / 承接索引 / 概要 review evidence / 承接源 / 机器 Gate），再按 review_scope 三模式执行：current_chapter 单章逐行为诊断、layer_checkpoint 跨章协同诊断、directory_final 目录级三段式终审（逐文档 D1~D9 诊断 → 跨层调用链 → 概要承接索引与时序覆盖率）。核查合同八问、概要 owner 追溯、Domain→App→Infrastructure→UI 单向依赖律、per-domain enum Error 收口、@Published 三态收口、WCDBSwift 事务边界、测试映射、合规红线与可编码粒度；编号断链拦截（单元引用幽灵 BHV / 行为无单元承接 / 切片引用幽灵 UNIT）；先证据后结论，输出分级 findings 与互斥三选一结论，输出 record-review 证据，并在双 clean 后等待 detail confirm。doc_type 一律以 IOS_BRIEF 钉死七类（viewmodel / usecase / repository / domain-model / view / coordinator / external）为权威，禁照抄 flutter（controller/page-entry/db-dao/api-network）或 Go（transport/service）类型名。规则唯一来源是 `.trellis/spec/harness/detail/` 的 L1/L2 SSOT 与 `.trellis/spec/harness/index.md`，本文件只组织取证、Finding 与输出。
 ---
 
 # iOS 原生平台详细设计审核
@@ -53,7 +53,7 @@ description: 用于审核 Guru iOS 原生平台（SwiftUI 主 + RxSwift 遗留�
 3. **EX-1 输入键**：task.json `guru_chain`（full 链含 `design_package` 字段，相对 repo root）可判定；判轨结果决定 full（目录级设计包）/ light（任务内单文件 `design.md`）口径。
 4. **EX-2 路径与骨架**：full 链 `design_package/chapters/` 目录存在且路径边界合法；light 链 `design.md` §详细节存在。
 5. **EX-3 承接索引**：concept `design-main.md` 第 7 节详细设计承接索引（light 链 `design.md` 索引节）存在、非空，可建立 `chapter_target → ios doc_type → 目标文件` 完整映射，且 doc_type 取值落在 IOS_BRIEF 七类全集内（出现异平台/自创类型名 → 归属红线，回退概要重判）；归属表全部 owner 被索引覆盖（双向闭合）。
-6. **EX-4 概要确认**：`python3 .trellis/scripts/guru/guru_gate.py status` 显示 overview 已人工确认；未确认 → 回退概要 Gate 收口。
+6. **EX-4 概要 review evidence**：`python3 .trellis/scripts/guru/guru_gate.py status` 显示 overview 当前 digest 已有两个不同 run-id 的 clean review；缺 evidence → 回退概要 review/fix loop。
 7. **EX-5 承接源 + 项目约定**：被审章节引用的技术决策（UI 框架取向、网络层、日志、测试框架、mock 生成、主题、持久化等映射到 project-conventions 槽位）均已「选定」（待定槽位写明决策人/期限）；命中 pending L2 的 doc_type（`domain-model`/`view`/`coordinator`/`external`）均有 `L2豁免：<doc_type> 理由：…` 声明（full 链；缺即 P1）；项目约定 C1~C5 全部通过。
 8. **EX-6 机器 Gate**：`python3 .trellis/scripts/guru/guru_gate.py detail <task_dir>` 与 `guru_gate.py trace-matrix <task_dir> --strict` 的结构结论可获取（机检失败项——合同八问四标记缺失[承接行为/失败收口/测试映射/不得补造]、`implement.md` trace §1 缺失、章节闭合失败、编号断链 `unit_ghost_bhv`/`bhv_no_unit`/`slice_ghost_unit`、pending L2 拦截 `_check_pending_l2`——直接并入 findings，人工聚焦语义判定，不重复机检）。
 9. 按被审文档命中的 doc_type 读对应 L2；只装载命中类型（`viewmodel`/`usecase`/`repository`），不全量装；pending doc_type 不装 L2（不存在），按 L1 八问取证 + 豁免核查。
@@ -132,14 +132,28 @@ description: 用于审核 Guru iOS 原生平台（SwiftUI 主 + RxSwift 遗留�
 - **区别于官方 `trellis-brainstorm`**：brainstorm 在更早阶段做需求/方案发散，不产出受 index/L1/L2 约束的 design 章，也不做 Gate 判定。
 - **区别于官方 `trellis-check`**：`trellis-check` 是实现后的代码质检（对照已落地 Swift 代码查质量/回归）；本 skill 是实现前的设计文档 Gate（对照 index/L1/L2 查设计合同是否可编码），二者阶段、对象、判定口径均不同，不互相替代。
 
-## Gate 收口（人工确认）
+## Review Evidence 与 detail 确认
 
-结论为「可进入实现编码」（或带明确假设可进入且假设已记录）时，按 config `guru.gate_mode` 完成人工收口（通道主定义见 workflow Trellis System 节）：
+结论为「可进入编码」或「带明确假设可进入」时，先写入 review evidence，不直接开始实现：
 
-- **strict（默认）**：提请**用户本人**在终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm detail <task_dir>`；agent 不得代跑（无 TTY 会被拒）。
-- **soft**：用户在对话中明确确认后，agent 运行 `python3 .trellis/scripts/guru/guru_gate.py confirm detail <task_dir> --via-agent --user-quote "<用户确认原话>"` 代跑（记录留痕标注 soft/agent）；未获用户本轮明确确认不得执行。
+```bash
+python3 .trellis/scripts/guru/guru_gate.py record-review detail <task_dir> \
+  --result clean \
+  --max-severity low \
+  --reviewer clean-context \
+  --run-id <fresh-run-id> \
+  --evidence "<本次 detail review 证据摘要>"
+```
 
-确认未落盘前不得 `task.py start`（before_start 钩子也会强制拦截）。
+若存在 medium+ finding，必须输出 `--result findings --max-severity medium|high|critical --finding-class REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT`，并停止进入编码。
+
+当前 digest 下两个不同 `run_id` 的 clean review 记录后，提示用户运行：
+
+```bash
+python3 .trellis/scripts/guru/guru_gate.py confirm detail <task_dir>
+```
+
+confirm detail 的 strict/soft 通道以 workflow Trellis System 节为准；未确认前不得 `task.py start`。
 
 ## 参考资料
 

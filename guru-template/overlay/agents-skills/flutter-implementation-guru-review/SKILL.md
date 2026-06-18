@@ -34,7 +34,12 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
 **前置失败时**：仅输出前置缺口与修复动作。
 
 **前置通过时**：
+0. **机器可读收口字段（必须置顶）**：
+   - clean 且可进入 PR 时输出：`review_result=clean/final-verification-ready`、`route_class=none`、`validation_summary=<命令与证据摘要>`。
+   - 有 finding 或阻塞时输出：`review_result=findings` 或 `review_result=blocked`，并给出最高优先级 `route_class`。
+   - route class 只能取：`IMPLEMENT_DEFECT`（代码/测试/验证/注释/日志/脱敏缺陷）、`PROCESS_DEFECT`（trace/证据/流程执行缺陷）、`DETAIL_DEFECT`（详细设计合同错误或缺失）、`OVERVIEW_DEFECT`（概要归属/承接错误）、`REQ_BLOCKER`（需求行为/验收/边界缺陷）、`none`。
 1. 逐条 findings：`severity(P1/P2/P3) / location(文件:行) / problem / suggestion(最小修订)`，先证据后结论。
+   - 每条 finding 必须附 `route_class`；同一轮多类缺陷按 `REQ_BLOCKER > OVERVIEW_DEFECT > DETAIL_DEFECT > PROCESS_DEFECT > IMPLEMENT_DEFECT` 给最高优先级路由。
 2. 存量豁免清单：本次触碰的 SLOT-15 条目 + 分类结果 + 可移除项。
 3. 注释/日志/文档追溯摘要：覆盖的新增核心定义、日志点、设计文档路径引用，以及缺口。
 4. **结论（三选一）**：可进入 PR / 修复 P2 后可进入 / 不可进入（列阻塞 P1）。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guru 五阶段 Gate 校验 + 追溯矩阵（结构底线检查；语义判定由 review skill 人工 Gate 负责）。
+"""Guru 五阶段 Gate 校验 + 追溯矩阵（结构底线检查；语义判定由 review loop 负责）。
 
 Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
 
@@ -12,16 +12,18 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
   python3 guru_gate.py trace-matrix <task_dir> [--write] [--strict]
                                                   # 追溯矩阵：BHV × owner × UNIT × 测试 × 切片 + 孤儿清单
                                                   # --write 写入 <task_dir>/trace-matrix.md；--strict 有断链时 exit 2
-  python3 guru_gate.py confirm [gate] [task_dir] [--via-agent]
-                                                  # 人工确认 Gate（gate 省略=批量确认全部待确认阶段，逐个 y/n）
+  python3 guru_gate.py confirm [requirements|detail] [task_dir] [--via-agent]
+                                                  # 人工确认 Gate（需求确认 + 详细设计 review 双 clean 后确认）
                                                   # strict 模式（默认）：仅限用户本人在交互式终端运行，agent 代跑被拒
                                                   # soft 模式（config guru.gate_mode: soft）：用户对话确认后 agent 以 --via-agent 代跑（记录留痕标注）
+  python3 guru_gate.py record-review <overview|detail> <task_dir> --result clean|findings --max-severity none|low|medium|high|critical --reviewer clean-context --run-id <id> --evidence <text> [--finding-class <class>]
+                                                  # 记录概要/详细设计 review 证据；当前产物 digest 下需两个不同 run-id 的 clean 记录
   python3 guru_gate.py grill-done <gate> [task_dir] [--via-agent] --user-quote "<用户确认原话>"
-                                                  # 记录 design-grill 已完成（写入 guru_gates[gate].grill，含 gate digest）
+                                                  # 兼容旧流程：记录 design-grill 已完成（不再作为新 gate 放行条件）
   python3 guru_gate.py grill-skip <gate> [task_dir] [--via-agent] --user-quote "<跳过理由>"
-                                                  # 仅 low-risk 非 full 的 overview/detail 可跳过（留原因）
-  python3 guru_gate.py status [task_dir]          # 查看三道人工 Gate 的确认状态与下一步
-  python3 guru_gate.py check [task_dir]           # before_start 钩子用：复跑结构 Gate + grill 前置 + 三道人工确认 + 确认快照比对，任一不满足 exit 2
+                                                  # 兼容旧流程：仅 low-risk 非 full 的 overview/detail 可跳过（留原因）
+  python3 guru_gate.py status [task_dir]          # 查看需求确认、概要/详细 review 证据、详细确认状态与下一步
+  python3 guru_gate.py check [task_dir]           # before_start 钩子用：结构 Gate + review_runs 证据 + 人工确认快照，任一不满足 exit 2
   python3 guru_gate.py digest <gate> [task_dir]   # 输出该阶段产物的确认快照摘要（排查快照失配用）
 
 编号纪律:
@@ -70,7 +72,7 @@ def fail(gate: str, problems: list) -> int:
     sys.stderr.write(f"[guru-gate:{gate}] 未通过，缺口：\n")
     for p in problems:
         sys.stderr.write(f"  - {p}\n")
-    sys.stderr.write("修复后重试；语义级判定请走对应 review skill 的人工 Gate。\n")
+    sys.stderr.write("修复后重试；语义级判定请走对应 review loop 并用 record-review 留痕。\n")
     return BLOCK
 
 
@@ -551,11 +553,12 @@ def resolve_task_dir(arg):
 
 
 # =========================================================================
-# 人工 Gate（confirm / status / check）
+# Guru Gate（confirm / record-review / status / check）
 # =========================================================================
-# 设计：阶段跃迁（需求→概要→详细→实现）必须由用户本人确认。confirm 强制 TTY +
-# 交互输入，agent 经工具管道运行必然无 TTY 而被拒；确认落盘 task.json 的
-# guru_gates 键；task.py start 经 before_start 钩子跑 check，缺确认即中止。
+# 设计：新流程只保留两个人工确认点：requirements 与 detail。overview/detail
+# 的设计评审由 review worker 写入 task.json.guru_gates.review_runs；同一产物
+# digest 下两个不同 run-id 的 clean 记录才允许自动通过。旧 design-grill 记录
+# 继续可读写，但只作为兼容审计信息，不再作为 gate 放行条件。
 #
 # 安全边界（诚实声明，勿误用）：本机制是「诚实性辅助（integrity aid）」，不是
 # 「安全边界（security boundary）」。它挡得住「无意/图省事跳过评审」（手滑），
@@ -566,9 +569,21 @@ def resolve_task_dir(arg):
 # 密码学保证。要升级成真正的安全边界，须把确认信任根移出 agent 可写域（独立
 # 进程/服务签发确认），属架构级改动，不在本脚本范围。
 
-HUMAN_GATES = ("requirements", "overview", "detail")
+ALL_GATES = ("requirements", "overview", "detail")
+HUMAN_GATES = ("requirements", "detail")
+REVIEW_GATES = ("overview", "detail")
 GATE_LABEL = {"requirements": "需求", "overview": "概要设计", "detail": "详细设计"}
 GATES_KEY = "guru_gates"
+REVIEW_RUNS_KEY = "review_runs"
+REQUIRED_CLEAN_REVIEWS = 2
+SEVERITY_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+FINDING_CLASSES = {
+    "REQ_BLOCKER",
+    "OVERVIEW_DEFECT",
+    "DETAIL_DEFECT",
+    "IMPLEMENT_DEFECT",
+    "PROCESS_DEFECT",
+}
 HIGH_RISK_LEVELS = {"high", "critical", "p0"}
 LOW_RISK_LEVELS = {"low", "minor", "trivial"}
 
@@ -648,7 +663,7 @@ def _risk_level(task_dir: str) -> str:
 
 
 def _grill_policy(task_dir: str, gate: str) -> dict:
-    """返回当前 gate 的 design-grill 策略：requirements 必跑；overview/detail 仅 low-risk 非 full 可 skip。"""
+    """Return legacy design-grill audit policy for compatibility commands only."""
     chain = task_chain(task_dir)
     risk = _risk_level(task_dir)
     if gate == "requirements":
@@ -656,34 +671,34 @@ def _grill_policy(task_dir: str, gate: str) -> dict:
             "policy": "required",
             "guru_chain": chain,
             "risk_level": risk,
-            "reason": "requirements 阶段必须运行 design-grill",
+            "reason": "legacy compatibility：requirements 的旧 design-grill 记录不允许 skip",
         }
     if chain == "full":
         return {
             "policy": "required",
             "guru_chain": chain,
             "risk_level": risk,
-            "reason": "guru_chain=full，概要/详细 design-grill 必跑",
+            "reason": "legacy compatibility：guru_chain=full 的旧概要/详细 grill-skip 审计记录不适用",
         }
     if risk == "high":
         return {
             "policy": "required",
             "guru_chain": chain,
             "risk_level": risk,
-            "reason": "risk_level=high，概要/详细 design-grill 必跑",
+            "reason": "legacy compatibility：risk_level=high 的旧概要/详细 grill-skip 审计记录不适用",
         }
     if chain == "light" and risk == "low":
         return {
             "policy": "skippable",
             "guru_chain": chain,
             "risk_level": risk,
-            "reason": "guru_chain=light 且 risk_level=low，可用 guru_gate.py grill-skip 留痕",
+            "reason": "legacy compatibility：guru_chain=light 且 risk_level=low，可写入旧 grill-skip 审计记录",
         }
     return {
         "policy": "required",
         "guru_chain": chain,
         "risk_level": risk,
-        "reason": "risk_level 未显式标为 low，按保守策略要求运行 design-grill",
+        "reason": "legacy compatibility：risk_level 未显式标为 low，拒绝旧 grill-skip 审计记录",
     }
 
 
@@ -750,9 +765,246 @@ def _write_task_data_atomic(task_dir: str, data: dict) -> str:
     return tj_path
 
 
+def _now_iso() -> str:
+    from datetime import datetime
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _review_runs(task_dir: str, gate: str) -> list:
+    gates = _gate_states(task_dir)
+    by_gate = gates.get(REVIEW_RUNS_KEY)
+    if not isinstance(by_gate, dict):
+        return []
+    runs = by_gate.get(gate)
+    return runs if isinstance(runs, list) else []
+
+
+def _severity_rank(value) -> int:
+    if not isinstance(value, str):
+        return -1
+    return SEVERITY_ORDER.get(value.strip().lower(), -1)
+
+
+def _review_run_validation_error(run: dict) -> str:
+    result = str(run.get("result", "")).strip().lower()
+    severity = str(run.get("max_severity", "")).strip().lower()
+    rank = _severity_rank(severity)
+    if result not in {"clean", "findings"}:
+        return "result 必须是 clean 或 findings"
+    if rank < 0:
+        return "max_severity 必须是 none|low|medium|high|critical"
+    if not str(run.get("run_id", "")).strip():
+        return "缺 run_id"
+    reviewer = str(run.get("reviewer", "")).strip()
+    if not reviewer:
+        return "缺 reviewer"
+    if "clean-context" not in reviewer.lower():
+        return "reviewer 必须包含 clean-context 标记"
+    if not str(run.get("evidence", "")).strip():
+        return "缺 evidence"
+    if result == "clean":
+        if rank > SEVERITY_ORDER["low"]:
+            return "clean 记录的 max_severity 只能是 none 或 low"
+        if str(run.get("finding_class", "")).strip():
+            return "clean 记录不得写 finding_class"
+    if result == "findings":
+        if rank < SEVERITY_ORDER["medium"]:
+            return "findings 记录的 max_severity 必须是 medium+"
+        finding_class = str(run.get("finding_class", "")).strip().upper().replace("-", "_")
+        if finding_class not in FINDING_CLASSES:
+            return f"findings 记录必须带 finding_class（可选: {', '.join(sorted(FINDING_CLASSES))}）"
+    return ""
+
+
+def _review_run_is_clean(run: dict) -> bool:
+    return (
+        _review_run_validation_error(run) == ""
+        and str(run.get("result", "")).strip().lower() == "clean"
+        and _severity_rank(run.get("max_severity")) <= SEVERITY_ORDER["low"]
+        and not str(run.get("finding_class", "")).strip()
+    )
+
+
+def _review_state(task_dir: str, gate: str) -> dict:
+    """返回当前 digest 下的 review clean streak 状态。findings/非法记录会打断 streak。"""
+    digest = _gate_digest(task_dir, gate)
+    all_runs = [run for run in _review_runs(task_dir, gate) if isinstance(run, dict)]
+    current_runs = [
+        run for run in all_runs
+        if run.get("artifact_digest") == digest
+    ]
+    stale_runs = [
+        run for run in all_runs
+        if run.get("artifact_digest") != digest
+    ]
+    clean_run_ids = []
+    duplicate_clean_run_ids = []
+    latest_blocker = None
+    for run in current_runs:
+        error = _review_run_validation_error(run)
+        if error:
+            latest_blocker = {"run_id": run.get("run_id", "?"), "reason": error}
+            clean_run_ids = []
+            continue
+        if _review_run_is_clean(run):
+            run_id = str(run.get("run_id", "")).strip()
+            if run_id not in clean_run_ids:
+                clean_run_ids.append(run_id)
+            else:
+                duplicate_clean_run_ids.append(run_id)
+            continue
+        latest_blocker = run
+        clean_run_ids = []
+    ready = len(clean_run_ids) >= REQUIRED_CLEAN_REVIEWS
+    return {
+        "digest": digest,
+        "runs": current_runs,
+        "stale_run_count": len(stale_runs),
+        "latest_stale_digest": stale_runs[-1].get("artifact_digest") if stale_runs else "",
+        "clean_run_ids": clean_run_ids,
+        "duplicate_clean_run_ids": duplicate_clean_run_ids,
+        "clean_count": len(clean_run_ids),
+        "ready": ready,
+        "latest_blocker": latest_blocker,
+    }
+
+
+def _review_problem(task_dir: str, gate: str) -> str:
+    state = _review_state(task_dir, gate)
+    if state["ready"]:
+        return ""
+    if not state["runs"]:
+        if state.get("stale_run_count"):
+            return (
+                f"review digest 失配：已有 {state['stale_run_count']} 条旧 digest 记录，"
+                f"但当前产物 digest 尚无 {GATE_LABEL[gate]} review 记录"
+            )
+        return f"当前产物 digest 尚无 {GATE_LABEL[gate]} review 记录"
+    blocker = state["latest_blocker"]
+    if isinstance(blocker, dict):
+        reason = blocker.get("reason")
+        if reason:
+            return f"最近 review 记录非法（run_id={blocker.get('run_id', '?')}）：{reason}"
+        return (
+            f"最近 review 仍有 medium+ findings"
+            f"（run_id={blocker.get('run_id', '?')}，max_severity={blocker.get('max_severity', '?')}，"
+            f"finding_class={blocker.get('finding_class', '?')}）"
+        )
+    duplicates = state.get("duplicate_clean_run_ids") or []
+    if duplicates:
+        dup_text = ", ".join(sorted(set(str(item) for item in duplicates)))
+        return (
+            f"重复 clean review run_id 不计入双 clean：{dup_text}；"
+            f"当前 digest 只有 {state['clean_count']}/{REQUIRED_CLEAN_REVIEWS} 个不同 run-id 的 clean review"
+        )
+    return (
+        f"当前 digest 只有 {state['clean_count']}/{REQUIRED_CLEAN_REVIEWS} 个不同 run-id 的 clean review"
+    )
+
+
+def _review_route_guidance(task_dir: str, gate: str) -> str:
+    blocker = _review_state(task_dir, gate).get("latest_blocker")
+    if not isinstance(blocker, dict):
+        return ""
+    finding_class = str(blocker.get("finding_class", "")).strip().upper()
+    if finding_class == "REQ_BLOCKER":
+        return (
+            "回到需求澄清，更新 prd.md 后重新确认 requirements；"
+            "下游 review evidence 会因 digest 变化失效。"
+        )
+    if gate == "detail" and finding_class == "OVERVIEW_DEFECT":
+        return "回到概要设计修复承接/归属问题，再重新执行 detail review。"
+    return ""
+
+
+def _review_status_mark(task_dir: str, gate: str) -> str:
+    state = _review_state(task_dir, gate)
+    if state["ready"]:
+        ids = ", ".join(state["clean_run_ids"][-REQUIRED_CLEAN_REVIEWS:])
+        return f"review ✅ clean x{state['clean_count']} ({ids})"
+    problem = _review_problem(task_dir, gate)
+    return f"review ⬜ {state['clean_count']}/{REQUIRED_CLEAN_REVIEWS} clean — {problem}"
+
+
+def _block_review(channel: str, task_dir: str, gate: str) -> int:
+    route_guidance = _review_route_guidance(task_dir, gate)
+    if route_guidance:
+        sys.stderr.write(
+            f"[guru-gate:{channel}] 拦截：{GATE_LABEL[gate]} review 路由上游："
+            f"{_review_problem(task_dir, gate)}\n"
+        )
+        sys.stderr.write(f"下一步：{route_guidance}\n")
+        return BLOCK
+    sys.stderr.write(
+        f"[guru-gate:{channel}] 拦截：{GATE_LABEL[gate]} Gate 缺少当前产物的双 clean review 证据："
+        f"{_review_problem(task_dir, gate)}\n"
+    )
+    sys.stderr.write(
+        "由 review worker 记录两次不同 run-id 的 clean 证据：\n"
+        f"  python3 .trellis/scripts/guru/guru_gate.py record-review {gate} {task_dir} "
+        "--result clean --max-severity low --reviewer clean-context --run-id <id> --evidence \"<review证据>\"\n"
+    )
+    return BLOCK
+
+
+def _record_review(task_dir: str, gate: str, options: dict) -> int:
+    if gate not in REVIEW_GATES:
+        sys.stderr.write(
+            f"[guru-gate:record-review] 只支持 {', '.join(REVIEW_GATES)}；requirements 只走人工确认，不记录 clean streak\n"
+        )
+        return BLOCK
+    data = _task_data_for_write(task_dir, "record-review")
+    if data is None:
+        return BLOCK
+    result = str(options.get("result") or "").strip().lower()
+    max_severity = str(options.get("max_severity") or "").strip().lower()
+    finding_class = str(options.get("finding_class") or "").strip().upper().replace("-", "_")
+    run_id = str(options.get("run_id") or "").strip()
+    reviewer = str(options.get("reviewer") or "").strip()
+    evidence = str(options.get("evidence") or "").strip()
+    record = {
+        "run_id": run_id,
+        "reviewer": reviewer,
+        "recorded_at": _now_iso(),
+        "artifact_digest": _gate_digest(task_dir, gate),
+        "result": result,
+        "max_severity": max_severity,
+        "evidence": evidence[:1000],
+    }
+    if finding_class:
+        record["finding_class"] = finding_class
+    error = _review_run_validation_error(record)
+    if error:
+        sys.stderr.write(f"[guru-gate:record-review] 拒绝写入：{error}\n")
+        return BLOCK
+    gates = data.setdefault(GATES_KEY, {})
+    if not isinstance(gates, dict):
+        sys.stderr.write("[guru-gate:record-review] task.json guru_gates 必须是对象，拒绝写入\n")
+        return BLOCK
+    by_gate = gates.setdefault(REVIEW_RUNS_KEY, {})
+    if not isinstance(by_gate, dict):
+        sys.stderr.write("[guru-gate:record-review] guru_gates.review_runs 必须是对象，拒绝写入\n")
+        return BLOCK
+    runs = by_gate.setdefault(gate, [])
+    if not isinstance(runs, list):
+        sys.stderr.write(f"[guru-gate:record-review] guru_gates.review_runs.{gate} 必须是数组，拒绝写入\n")
+        return BLOCK
+    if any(isinstance(run, dict) and run.get("artifact_digest") == record["artifact_digest"] and run.get("run_id") == run_id for run in runs):
+        sys.stderr.write(f"[guru-gate:record-review] 当前 digest 已存在 run_id={run_id} 的 {gate} review 记录\n")
+        return BLOCK
+    runs.append(record)
+    tj_path = _write_task_data_atomic(task_dir, data)
+    state = _review_state(task_dir, gate)
+    print(
+        f"[guru-gate:record-review] ✅ 已记录 {GATE_LABEL[gate]} review "
+        f"result={result} max_severity={max_severity} run_id={run_id} "
+        f"clean={state['clean_count']}/{REQUIRED_CLEAN_REVIEWS}（{tj_path}）"
+    )
+    return PASS
+
+
 def _record_confirm(task_dir: str, gate: str, via: str, user_quote=None) -> int:
     """写入单个 Gate 的确认记录（严格 JSON 守卫 + 原子写）。via ∈ tty|agent。"""
-    from datetime import datetime
     data = _task_data_for_write(task_dir, "confirm")
     if data is None:
         return BLOCK
@@ -760,7 +1012,7 @@ def _record_confirm(task_dir: str, gate: str, via: str, user_quote=None) -> int:
     previous = gates.get(gate)
     record = {
         "confirmed_by": _developer_name(),
-        "confirmed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "confirmed_at": _now_iso(),
         # 确认快照：check 时比对，产物在确认后被修改 → 要求重新确认
         "artifact_digest": _gate_digest(task_dir, gate),
     }
@@ -780,7 +1032,6 @@ def _record_confirm(task_dir: str, gate: str, via: str, user_quote=None) -> int:
 
 def _record_grill(task_dir: str, gate: str, status: str, via: str, user_quote=None) -> int:
     """写入 design-grill 完成/跳过记录（严格 JSON 守卫 + 原子写）。via ∈ tty|agent。"""
-    from datetime import datetime
     policy = _grill_policy(task_dir, gate)
     data = _task_data_for_write(task_dir, f"grill-{status}")
     if data is None:
@@ -793,7 +1044,7 @@ def _record_grill(task_dir: str, gate: str, status: str, via: str, user_quote=No
     record = {
         "status": status,
         "by": _developer_name(),
-        "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "at": _now_iso(),
         "policy": policy["policy"],
         "policy_reason": policy["reason"],
         "guru_chain": policy["guru_chain"],
@@ -821,7 +1072,7 @@ def _record_grill(task_dir: str, gate: str, status: str, via: str, user_quote=No
 
 
 def _grill_ok(task_dir: str, gate: str) -> bool:
-    """design-grill 前置状态：done 且 digest 匹配，或当前 policy 允许的 skipped 留痕。"""
+    """Legacy design-grill audit state; ignored by the current Gate model."""
     state = _gate_states(task_dir).get(gate)
     grill = state.get("grill") if isinstance(state, dict) else None
     if not isinstance(grill, dict):
@@ -841,54 +1092,52 @@ def _grill_problem(task_dir: str, gate: str) -> str:
     policy = _grill_policy(task_dir, gate)
     if not isinstance(grill, dict):
         if policy["policy"] == "skippable":
-            return "未记录 design-grill 完成或低风险跳过凭据"
-        return f"未记录 design-grill 完成凭据（{policy['reason']}）"
+            return "未记录旧 design-grill 完成或低风险跳过审计记录"
+        return f"未记录旧 design-grill 完成审计记录（{policy['reason']}）"
     if grill.get("status") == "done":
         if not grill.get("digest"):
-            return "design-grill 完成记录缺 digest"
+            return "旧 design-grill 完成记录缺 digest"
         if grill.get("digest") != _gate_digest(task_dir, gate):
-            return "design-grill digest 失配（产物在 grill 后被修改）"
+            return "旧 design-grill digest 失配（产物在兼容记录后被修改）"
     if grill.get("status") == "skipped":
         if policy["policy"] != "skippable":
-            return f"design-grill 跳过记录不适用：当前策略为 required（{policy['reason']}）"
+            return f"旧 design-grill 跳过记录不适用：当前旧审计策略为 required（{policy['reason']}）"
         if not (grill.get("reason") or "").strip():
-            return "design-grill 跳过记录缺理由（reason）"
+            return "旧 design-grill 跳过记录缺理由（reason）"
         if grill.get("digest") != _gate_digest(task_dir, gate):
-            return "design-grill 跳过后产物被修改（digest 失配），需重新 grill-skip/grill-done"
+            return "旧 design-grill 跳过后产物被修改（digest 失配）；该兼容记录已过期"
         return ""
-    return "design-grill 状态非法（必须是 done 或 skipped）"
+    return "旧 design-grill 状态非法（必须是 done 或 skipped）"
 
 
 def _grill_status_mark(task_dir: str, gate: str) -> str:
-    """status 呈现用：design-grill 子状态（与 confirm 同口径，避免 status 漏报 grill 卡点）。"""
+    """status 呈现用：旧 design-grill 子状态，仅作兼容审计信息。"""
     state = _gate_states(task_dir).get(gate)
     grill = state.get("grill") if isinstance(state, dict) else None
-    policy = _grill_policy(task_dir, gate)
-    policy_mark = "必跑" if policy["policy"] == "required" else "可跳过需留痕"
     if not isinstance(grill, dict):
-        return f"grill ⬜ {policy_mark}"
-    if grill.get("status") == "skipped":
-        if policy["policy"] != "skippable":
-            return "grill ⚠️ 跳过不适用"
-        if not (grill.get("reason") or "").strip():
-            return "grill ⚠️ 跳过缺理由"
-        return "grill ⏭ 跳过" if grill.get("digest") == _gate_digest(task_dir, gate) else "grill ⚠️ 跳过后产物已改"
-    if grill.get("status") == "done":
-        return "grill ✅" if grill.get("digest") == _gate_digest(task_dir, gate) else "grill ⚠️ digest 失配"
-    return "grill ⚠️ 状态非法"
+        return "legacy grill missing (ignored by current Gate model)"
+    status = grill.get("status")
+    if status in ("done", "skipped"):
+        fresh = "current" if grill.get("digest") == _gate_digest(task_dir, gate) else "stale"
+        return f"legacy grill present:{status}/{fresh} (ignored by current Gate model)"
+    return "legacy grill invalid (ignored by current Gate model)"
 
 
 def _block_grill(channel: str, task_dir: str, gate: str) -> int:
     reason = _grill_problem(task_dir, gate)
     policy = _grill_policy(task_dir, gate)
-    sys.stderr.write(f"[guru-gate:{channel}] 拦截：{GATE_LABEL[gate]} Gate 未完成 design-grill 前置：{reason}\n")
-    sys.stderr.write("先跑 design-grill 后记录完成：\n")
+    sys.stderr.write(
+        f"[guru-gate:{channel}] 拦截：旧 design-grill 兼容审计记录不满足：{reason}\n"
+    )
+    sys.stderr.write(
+        "当前新模型不应依赖 design-grill；若你正在维护旧任务审计记录，可显式写入：\n"
+    )
     sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py grill-done {gate} {task_dir}\n")
     if policy["policy"] == "skippable":
         sys.stderr.write("若本阶段确认保持 low-risk，也可记录跳过（必须留理由）：\n")
         sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py grill-skip {gate} {task_dir} --user-quote \"<跳过理由>\"\n")
     else:
-        sys.stderr.write(f"当前策略不允许 grill-skip：{policy['reason']}\n")
+        sys.stderr.write(f"旧审计策略不允许 grill-skip：{policy['reason']}\n")
     return BLOCK
 
 
@@ -912,7 +1161,7 @@ def _authorize_gate_write(channel: str, via_agent: bool, user_quote=None):
 
 
 def _pending_gates(task_dir: str) -> list:
-    """按阶段顺序列出待确认 Gate（未确认 / 缺快照 / 快照失配）。"""
+    """按阶段顺序列出待人工确认 Gate（未确认 / 缺快照 / 快照失配）。"""
     states = _gate_states(task_dir)
     pending = []
     for g in HUMAN_GATES:
@@ -926,7 +1175,12 @@ def _pending_gates(task_dir: str) -> list:
 
 def cmd_confirm(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None) -> int:
     if gate_arg is not None and gate_arg not in HUMAN_GATES:
-        sys.stderr.write(f"[guru-gate:confirm] 未知 gate: {gate_arg}（可选: {', '.join(HUMAN_GATES)}；省略=批量确认全部待确认 Gate）\n")
+        if gate_arg in REVIEW_GATES:
+            sys.stderr.write(
+                f"[guru-gate:confirm] {gate_arg} 不再走人工确认；请通过 record-review 累积两个当前 digest 的 clean review\n"
+            )
+        else:
+            sys.stderr.write(f"[guru-gate:confirm] 未知 gate: {gate_arg}（可选: {', '.join(HUMAN_GATES)}；省略=批量确认全部待确认 Gate）\n")
         return BLOCK
     task_dir = resolve_task_dir(task_dir_arg)
     if not task_dir:
@@ -937,17 +1191,19 @@ def cmd_confirm(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None
         return BLOCK
     targets = [gate_arg] if gate_arg else _pending_gates(task_dir)
     if not targets:
-        print(f"[guru-gate:confirm] 三道人工 Gate 均已确认且快照一致（{task_dir}），无需操作")
+        print(f"[guru-gate:confirm] 需求/详细两个人工 Gate 均已确认且快照一致（{task_dir}），无需操作")
         return PASS
     print(f"任务：{task_dir}（gate_mode={mode}）")
-    checkers = {"requirements": check_requirements, "overview": check_overview, "detail": check_detail}
+    checkers = {"requirements": check_requirements, "detail": check_detail}
     for g in targets:
         # 结构 Gate 未过时确认无意义，先拦下（批量模式停在首个未过阶段）
         if checkers[g](task_dir) != PASS:
             sys.stderr.write(f"[guru-gate:confirm] {GATE_LABEL[g]}结构 Gate 未过，先修复缺口再确认；本次到此为止。\n")
             return BLOCK
-        if not _grill_ok(task_dir, g):
-            return _block_grill("confirm", task_dir, g)
+        if g == "detail":
+            for review_gate in REVIEW_GATES:
+                if not _review_state(task_dir, review_gate)["ready"]:
+                    return _block_review("confirm", task_dir, review_gate)
         if interactive:
             print(f"即将确认【{GATE_LABEL[g]} Gate】通过，允许进入下一阶段。")
             try:
@@ -964,8 +1220,8 @@ def cmd_confirm(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None
 
 
 def cmd_grill_done(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None) -> int:
-    if gate_arg not in HUMAN_GATES:
-        sys.stderr.write(f"[guru-gate:grill-done] 需要 gate 参数（{', '.join(HUMAN_GATES)}）\n")
+    if gate_arg not in ALL_GATES:
+        sys.stderr.write(f"[guru-gate:grill-done] 需要 gate 参数（{', '.join(ALL_GATES)}）\n")
         return BLOCK
     task_dir = resolve_task_dir(task_dir_arg)
     if not task_dir:
@@ -978,8 +1234,8 @@ def cmd_grill_done(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=N
 
 
 def cmd_grill_skip(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None) -> int:
-    if gate_arg not in HUMAN_GATES:
-        sys.stderr.write(f"[guru-gate:grill-skip] 需要 gate 参数（{', '.join(HUMAN_GATES)}）\n")
+    if gate_arg not in ALL_GATES:
+        sys.stderr.write(f"[guru-gate:grill-skip] 需要 gate 参数（{', '.join(ALL_GATES)}）\n")
         return BLOCK
     task_dir = resolve_task_dir(task_dir_arg)
     if not task_dir:
@@ -991,8 +1247,8 @@ def cmd_grill_skip(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=N
     policy = _grill_policy(task_dir, gate_arg)
     if policy["policy"] != "skippable":
         sys.stderr.write(
-            f"[guru-gate:grill-skip] 拒绝：{GATE_LABEL[gate_arg]} Gate 当前不允许跳过 design-grill。"
-            f"{policy['reason']}。请先运行 design-grill，再记录：\n"
+            f"[guru-gate:grill-skip] 拒绝：{GATE_LABEL[gate_arg]} Gate 当前不允许跳过旧 design-grill 审计记录。"
+            f"{policy['reason']}。如需维护旧记录，请显式记录兼容完成：\n"
             f"  python3 .trellis/scripts/guru/guru_gate.py grill-done {gate_arg} {task_dir}\n"
         )
         return BLOCK
@@ -1014,43 +1270,51 @@ def cmd_status(task_dir_arg) -> int:
         return BLOCK
     states = _gate_states(task_dir)
     print(f"任务：{task_dir}")
-    pending = []
+    confirm_pending = []
     for g in HUMAN_GATES:
-        gm = _grill_status_mark(task_dir, g)
         s = states.get(g)
         if isinstance(s, dict) and s.get("confirmed_by"):
             # 与 check 同口径呈现快照状态——避免 status 报绿而 check 拦截的不一致
             recorded = s.get("artifact_digest")
             if not recorded:
-                pending.append(g)
-                print(f"  ⚠️ {GATE_LABEL[g]} Gate — 缺确认快照，请重新确认 ｜ {gm}")
+                confirm_pending.append(g)
+                print(f"  ⚠️ {GATE_LABEL[g]} Gate — 缺确认快照，请重新确认")
             elif recorded != _gate_digest(task_dir, g):
-                pending.append(g)
-                print(f"  ⚠️ {GATE_LABEL[g]} Gate — 确认快照失配（产物已改动），请重新确认 ｜ {gm}")
+                confirm_pending.append(g)
+                print(f"  ⚠️ {GATE_LABEL[g]} Gate — 确认快照失配（产物已改动），请重新确认")
             else:
                 soft_mark = "（soft：对话确认，agent 代跑）" if s.get("via") == "agent" else ""
-                print(f"  ✅ {GATE_LABEL[g]} Gate — {s['confirmed_by']} @ {s.get('confirmed_at', '?')}{soft_mark} ｜ {gm}")
-                # confirm 有效但 grill 未过（缺/失配/跳过缺理由）也属未完成，与 check/auto 真实拦截口径一致
-                if not _grill_ok(task_dir, g):
-                    pending.append(g)
+                print(f"  ✅ {GATE_LABEL[g]} Gate — {s['confirmed_by']} @ {s.get('confirmed_at', '?')}{soft_mark}")
         else:
-            pending.append(g)
-            print(f"  ⬜ {GATE_LABEL[g]} Gate — 未确认 ｜ {gm}")
-    if pending:
-        g0 = pending[0]
-        if not _grill_ok(task_dir, g0):
-            policy = _grill_policy(task_dir, g0)
-            print(f"下一步：{GATE_LABEL[g0]} 阶段需先完成 design-grill（{_grill_problem(task_dir, g0)}）：")
-            print(f"  python3 .trellis/scripts/guru/guru_gate.py grill-done {g0} {task_dir}")
-            if policy["policy"] == "skippable":
-                print(f"  或低风险跳过留痕：python3 .trellis/scripts/guru/guru_gate.py grill-skip {g0} {task_dir} --user-quote \"<理由>\"")
-            else:
-                print(f"  当前不允许 skip：{policy['reason']}")
-        else:
-            print(f"下一步：完成 {GATE_LABEL[g0]} 阶段 review 后，由用户本人在终端运行：")
-            print(f"  python3 .trellis/scripts/guru/guru_gate.py confirm {g0} {task_dir}")
+            confirm_pending.append(g)
+            print(f"  ⬜ {GATE_LABEL[g]} Gate — 未确认")
+
+    review_pending = []
+    for g in REVIEW_GATES:
+        mark = _review_status_mark(task_dir, g)
+        print(f"  {GATE_LABEL[g]} Review — {mark} ｜ legacy {_grill_status_mark(task_dir, g)}")
+        if not _review_state(task_dir, g)["ready"]:
+            review_pending.append(g)
+
+    if "requirements" in confirm_pending:
+        print("下一步：完成需求 review 后，由用户本人在终端运行：")
+        print(f"  python3 .trellis/scripts/guru/guru_gate.py confirm requirements {task_dir}")
+    elif review_pending:
+        g0 = review_pending[0]
+        route_guidance = _review_route_guidance(task_dir, g0)
+        if route_guidance:
+            print(f"下一步：{route_guidance}")
+            return PASS
+        print(f"下一步：继续 {GATE_LABEL[g0]} review，当前 digest 需要两个不同 run-id 的 clean 记录：")
+        print(
+            f"  python3 .trellis/scripts/guru/guru_gate.py record-review {g0} {task_dir} "
+            "--result clean --max-severity low --reviewer clean-context --run-id <id> --evidence \"<review证据>\""
+        )
+    elif "detail" in confirm_pending:
+        print("下一步：详细设计已双 clean，由用户本人在终端运行：")
+        print(f"  python3 .trellis/scripts/guru/guru_gate.py confirm detail {task_dir}")
     else:
-        print("三道人工 Gate 已全部确认且 design-grill 完成，可 task.py start 进入实现。")
+        print("需求确认、概要/详细双 clean review、详细确认均已完成，可 task.py start 进入实现。")
     return PASS
 
 
@@ -1067,40 +1331,44 @@ def cmd_check(task_dir_arg) -> int:
                           ("detail", check_detail)):
         if checker(task_dir) != PASS:
             sys.stderr.write(f"[guru-gate:check] 拦截：{GATE_LABEL[gate]}结构 Gate 当前未通过"
-                             f"（产物在确认后被修改？）。修复后请用户重新人工确认该阶段。\n")
+                             f"（产物在 Gate 证据后被修改？）。\n")
+            if gate == "overview":
+                sys.stderr.write("修复概要后重新运行 overview review loop 并写入 record-review overview；overview 不走人工确认。\n")
+            elif gate == "requirements":
+                sys.stderr.write("修复需求后请用户重新人工确认 requirements。\n")
+            else:
+                sys.stderr.write("修复详细设计后重新完成 detail 双 clean review，再请用户人工确认 detail。\n")
             return BLOCK
-        if not _grill_ok(task_dir, gate):
-            return _block_grill("check", task_dir, gate)
     states = _gate_states(task_dir)
-    missing = [g for g in HUMAN_GATES
-               if not (isinstance(states.get(g), dict) and states[g].get("confirmed_by"))]
-    if missing:
-        sys.stderr.write(f"[guru-gate:check] 拦截：人工 Gate 未全部确认（任务 {task_dir}）：\n")
-        for g in missing:
-            sys.stderr.write(f"  ⬜ {GATE_LABEL[g]} Gate 未确认\n")
-        sys.stderr.write(
-            "阶段跃迁确认必须由用户本人在交互式终端执行（agent 代跑会因无 TTY 被拒）：\n"
-            f"  python3 .trellis/scripts/guru/guru_gate.py confirm {missing[0]} {task_dir}\n"
-        )
+    req = states.get("requirements")
+    if not (isinstance(req, dict) and req.get("confirmed_by")):
+        sys.stderr.write(f"[guru-gate:check] 拦截：需求 Gate 未确认（任务 {task_dir}）\n")
+        sys.stderr.write("由用户本人在交互式终端执行：\n")
+        sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py confirm requirements {task_dir}\n")
         return BLOCK
-    # 确认快照比对：缺快照（手写/旧版确认记录）或失配（确认后产物被修改）→ 要求重新人工确认
-    stale = []
-    for g in HUMAN_GATES:
-        recorded = states[g].get("artifact_digest")
-        if not recorded:
-            stale.append((g, "缺确认快照（确认必须经 guru_gate.py confirm 产生）"))
-        elif recorded != _gate_digest(task_dir, g):
-            stale.append((g, "确认快照失配（产物在确认后被修改）"))
-    if stale:
-        sys.stderr.write(f"[guru-gate:check] 拦截：确认快照校验未通过（任务 {task_dir}）：\n")
-        for g, reason in stale:
-            sys.stderr.write(f"  ⚠️ {GATE_LABEL[g]} Gate {reason}\n")
-        sys.stderr.write(
-            f"请复核改动并由用户本人重新人工确认：\n"
-            f"  python3 .trellis/scripts/guru/guru_gate.py confirm {stale[0][0]} {task_dir}\n"
-        )
+    req_digest = req.get("artifact_digest")
+    if not req_digest or req_digest != _gate_digest(task_dir, "requirements"):
+        reason = "缺确认快照" if not req_digest else "确认快照失配（产物在确认后被修改）"
+        sys.stderr.write(f"[guru-gate:check] 拦截：需求 Gate {reason}\n")
+        sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py confirm requirements {task_dir}\n")
         return BLOCK
-    print(f"[guru-gate:check] 三道人工 Gate 已全部确认且快照一致（{task_dir}），放行")
+
+    for gate in REVIEW_GATES:
+        if not _review_state(task_dir, gate)["ready"]:
+            return _block_review("check", task_dir, gate)
+
+    detail = states.get("detail")
+    if not (isinstance(detail, dict) and detail.get("confirmed_by")):
+        sys.stderr.write(f"[guru-gate:check] 拦截：详细设计 Gate 未确认（任务 {task_dir}）\n")
+        sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py confirm detail {task_dir}\n")
+        return BLOCK
+    detail_digest = detail.get("artifact_digest")
+    if not detail_digest or detail_digest != _gate_digest(task_dir, "detail"):
+        reason = "缺确认快照" if not detail_digest else "确认快照失配（产物在确认后被修改）"
+        sys.stderr.write(f"[guru-gate:check] 拦截：详细设计 Gate {reason}\n")
+        sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py confirm detail {task_dir}\n")
+        return BLOCK
+    print(f"[guru-gate:check] 需求确认 + 概要/详细双 clean review + 详细确认均有效（{task_dir}），放行")
     return PASS
 
 
@@ -1120,8 +1388,15 @@ def auto(task_dir_arg) -> int:
         rc = check_requirements(task_dir)
         if rc != PASS:
             return rc
-        if not _grill_ok(task_dir, "requirements"):
-            return _block_grill("auto", task_dir, "requirements")
+        req = _gate_states(task_dir).get("requirements")
+        if not (
+            isinstance(req, dict)
+            and req.get("confirmed_by")
+            and req.get("artifact_digest") == _gate_digest(task_dir, "requirements")
+        ):
+            sys.stderr.write("[guru-gate:auto] 拦截：需求 Gate 未确认或确认快照失配\n")
+            sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py confirm requirements {task_dir}\n")
+            return BLOCK
         src = _artifact_sources(task_dir)
         full = task_chain(task_dir) == "full"
         # full 链：design_package 已声明即校验骨架（声明但损坏不得静默跳过）；
@@ -1130,14 +1405,14 @@ def auto(task_dir_arg) -> int:
             rc = check_overview(task_dir)
             if rc != PASS:
                 return rc
-            if not _grill_ok(task_dir, "overview"):
-                return _block_grill("auto", task_dir, "overview")
+            if not _review_state(task_dir, "overview")["ready"]:
+                return _block_review("auto", task_dir, "overview")
             if src["detail"] or src["imp"]:
                 rc = check_detail(task_dir)
                 if rc != PASS:
                     return rc
-                if not _grill_ok(task_dir, "detail"):
-                    return _block_grill("auto", task_dir, "detail")
+                if not _review_state(task_dir, "detail")["ready"]:
+                    return _block_review("auto", task_dir, "detail")
                 return PASS
         note = "；full 链尚未声明 design_package（概要阶段 0 待办）" if full and not _package_dir(task_dir) else ""
         return ok("auto", f"planning 渐进校验到当前 artifact（{task_dir}，{task_chain(task_dir)} 链{note}）")
@@ -1145,7 +1420,30 @@ def auto(task_dir_arg) -> int:
         rc = fn(task_dir)
         if rc != PASS:
             return rc
+    req = _gate_states(task_dir).get("requirements")
+    if not (
+        isinstance(req, dict)
+        and req.get("confirmed_by")
+        and req.get("artifact_digest") == _gate_digest(task_dir, "requirements")
+    ):
+        sys.stderr.write("[guru-gate:auto] 拦截：需求 Gate 未确认或确认快照失配\n")
+        return BLOCK
+    for gate in REVIEW_GATES:
+        if not _review_state(task_dir, gate)["ready"]:
+            return _block_review("auto", task_dir, gate)
     return ok("auto", f"status={status} 全 Gate 通过")
+
+
+def _pop_value_option(argv: list, name: str):
+    if name not in argv:
+        return None
+    idx = argv.index(name)
+    if idx + 1 >= len(argv):
+        del argv[idx]
+        return ""
+    value = argv[idx + 1]
+    del argv[idx:idx + 2]
+    return value
 
 
 def main() -> int:
@@ -1155,14 +1453,15 @@ def main() -> int:
     cmd = sys.argv[1]
     argv = list(sys.argv[2:])
     # --user-quote 带值：先摘出值，避免污染位置参数
-    user_quote = None
-    if "--user-quote" in argv:
-        qi = argv.index("--user-quote")
-        if qi + 1 < len(argv):
-            user_quote = argv[qi + 1]
-            del argv[qi:qi + 2]
-        else:
-            del argv[qi]
+    user_quote = _pop_value_option(argv, "--user-quote")
+    review_options = {
+        "result": _pop_value_option(argv, "--result"),
+        "max_severity": _pop_value_option(argv, "--max-severity"),
+        "finding_class": _pop_value_option(argv, "--finding-class"),
+        "reviewer": _pop_value_option(argv, "--reviewer"),
+        "run_id": _pop_value_option(argv, "--run-id"),
+        "evidence": _pop_value_option(argv, "--evidence"),
+    }
     rest = [a for a in argv if not a.startswith("--")]
     flags = {a for a in argv if a.startswith("--")}
     arg = rest[0] if rest else None
@@ -1176,11 +1475,20 @@ def main() -> int:
         return auto(arg)
     if cmd == "confirm":
         # confirm [gate] [task_dir] [--via-agent]：gate 省略=批量确认全部待确认 Gate
-        if rest and rest[0] in HUMAN_GATES:
+        if rest and rest[0] in ALL_GATES:
             gate_arg, dir_arg = rest[0], (rest[1] if len(rest) > 1 else None)
         else:
             gate_arg, dir_arg = None, (rest[0] if rest else None)
         return cmd_confirm(gate_arg, dir_arg, via_agent="--via-agent" in flags, user_quote=user_quote)
+    if cmd == "record-review":
+        if not rest or rest[0] not in REVIEW_GATES:
+            sys.stderr.write(f"[guru-gate:record-review] 需要 gate 参数（{', '.join(REVIEW_GATES)}）\n")
+            return BLOCK
+        task_dir = resolve_task_dir(rest[1] if len(rest) > 1 else None)
+        if not task_dir:
+            sys.stderr.write("[guru-gate:record-review] 无法定位任务目录\n")
+            return BLOCK
+        return _record_review(task_dir, rest[0], review_options)
     if cmd == "grill-done":
         gate_arg, dir_arg = (rest[0] if rest else None), (rest[1] if len(rest) > 1 else None)
         return cmd_grill_done(gate_arg, dir_arg, via_agent="--via-agent" in flags, user_quote=user_quote)
@@ -1188,8 +1496,8 @@ def main() -> int:
         gate_arg, dir_arg = (rest[0] if rest else None), (rest[1] if len(rest) > 1 else None)
         return cmd_grill_skip(gate_arg, dir_arg, via_agent="--via-agent" in flags, user_quote=user_quote)
     if cmd == "digest":
-        if not rest or rest[0] not in HUMAN_GATES:
-            sys.stderr.write(f"[guru-gate:digest] 需要 gate 参数（{', '.join(HUMAN_GATES)}）\n")
+        if not rest or rest[0] not in ALL_GATES:
+            sys.stderr.write(f"[guru-gate:digest] 需要 gate 参数（{', '.join(ALL_GATES)}）\n")
             return BLOCK
         task_dir = resolve_task_dir(rest[1] if len(rest) > 1 else None)
         if not task_dir:

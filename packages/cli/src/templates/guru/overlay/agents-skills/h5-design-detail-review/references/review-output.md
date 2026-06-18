@@ -7,7 +7,7 @@
 
 ## 分支一：前置缺口输出（EX-1~EX-6 任一失败）
 
-仅输出 EX 缺口与最小修复动作，不进入逐文档诊断。EX-3/EX-4/EX-5/EX-6 类缺口（承接索引断链、概要未确认、承接源未选定、机器 Gate 断链）的修复动作必须写「回退概要 / 判轨 / 项目约定 / 需求」而非详细侧补造；非法 doc_type 名写「回退概要改名为权威七类之一」。
+仅输出 EX 缺口与最小修复动作，不进入逐文档诊断。EX-3/EX-4/EX-5/EX-6 类缺口（承接索引断链、概要 review evidence 未达标、承接源未选定、机器 Gate 断链）的修复动作必须写「回退概要 / 判轨 / 项目约定 / 需求」而非详细侧补造；非法 doc_type 名写「回退概要改名为权威七类之一」。
 
 ```markdown
 ## H5 详细审核：前置阻断
@@ -18,7 +18,7 @@
 - EX-1 输入键（guru_chain full/light 判轨，full 含 design_package）：`ok/failed`
 - EX-2 路径与骨架（full: design_package/chapters/ 存在；light: design.md §2 存在）：`ok/failed`
 - EX-3 承接索引（design-main 第 7 节 chapter_target → doc_type → 目标文件 完整映射，doc_type 落七类全集）：`ok/failed`
-- EX-4 概要确认（guru_gate.py status 显示 overview 已人工确认）：`ok/failed`
+- EX-4 概要 review evidence（guru_gate.py status 显示 overview 当前 digest 已有两个不同 run_id 的 clean review）：`ok/failed`
 - EX-5 承接源（内容源/状态管理/UI 库/样式/数据库/认证/部署/路由模式等选定；pending L2 命中有 L2豁免）：`ok/failed`
 - EX-6 机器 Gate（guru_gate.py detail <task_dir> 结构结论可获取）：`ok/failed`
 

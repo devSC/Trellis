@@ -14,7 +14,7 @@
 - EX-1 输入键（guru_chain full/light 判轨）：`ok/failed`
 - EX-2 路径与骨架（full: design_package/chapters/ 存在且边界合法；light: design.md §详细节存在）：`ok/failed`
 - EX-3 承接索引（chapter_target → detail_doc_type → 目标文件 完整映射，doc_type 落七类全集）：`ok/failed`
-- EX-4 概要确认（guru_gate.py status 显示 overview 已人工确认）：`ok/failed`
+- EX-4 概要 review evidence（guru_gate.py status 显示 overview 当前 digest 已有两个不同 run_id 的 clean review）：`ok/failed`
 - EX-5 承接源 + 项目约定（技术决策 SLOT-01~SLOT-17 已选定，待定槽位 ≤2 且写明决策人/期限；pending L2 命中类型有 L2豁免；C1~C5 通过）：`ok/failed`
 - EX-6 机器 Gate（guru_gate.py detail / trace-matrix --strict 结构结论可获取）：`ok/failed`
 

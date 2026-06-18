@@ -39,7 +39,7 @@ export const BUNDLED_GURU_WORKFLOWS: BundledWorkflowMeta[] = [
     id: GURU_CLIENT_WORKFLOW_ID,
     name: "Guru Flutter Client 5-Phase Workflow",
     description:
-      "Flutter 客户端 需求→概要→详细→实现→审核 五阶段（三道文档 Gate + verify 强制）",
+      "Flutter 客户端 需求→概要→详细→实现→审核 五阶段（requirements/detail 人工 Gate + overview/detail 双 clean review + verify 强制）",
   },
   {
     id: GURU_GO_WORKFLOW_ID,

@@ -13,7 +13,7 @@
       "id": "guru-client",
       "type": "workflow",
       "name": "Guru Client 5-Phase Workflow",
-      "description": "需求→概要→详细→实现→审核 五阶段（三道文档 Gate + verify 强制）",
+      "description": "需求→概要→详细→实现→审核 五阶段（requirements/detail 人工 Gate + overview/detail 双 clean review + verify 强制）",
       "path": "workflows/guru-client-workflow.md",
       "tags": ["flutter", "guru", "workflow"]
     }

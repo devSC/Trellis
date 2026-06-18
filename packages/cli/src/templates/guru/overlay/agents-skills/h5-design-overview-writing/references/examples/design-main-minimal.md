@@ -207,4 +207,4 @@ L2豁免：posts-route 理由：按八问展开段约定与错误边界；风险
 
 ---
 
-> 送审提示：加载 `h5-design-overview-review` 过概要 Gate（人工判「能否进详细」，区别于 `trellis-check` 代码质检）。本示例为缩减演示，正式成稿 BHV/UC/索引行数应更多。
+> 送审提示：加载 `h5-design-overview-review` 过概要 Gate，由 review worker 用 `record-review overview` 记录当前 digest 的 clean/findings 证据；本示例为缩减演示，正式成稿 BHV/UC/索引行数应更多。

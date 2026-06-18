@@ -131,13 +131,44 @@ try:
 except Exception:
     data = {}
 gates = data.setdefault("guru_gates", {})
-for g in ("requirements", "overview", "detail"):
+for g in ("requirements", "detail"):
     entry = gates.setdefault(g, {})
     entry["confirmed_by"] = "tester"
     entry["confirmed_at"] = "x"
     entry["artifact_digest"] = digest(g)
 open(p, "w", encoding="utf-8").write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 PY
+}
+
+write_req_confirm() { # write_req_confirm <task_dir>
+  python3 - "$GATE" "$1" <<'PY'
+import json, subprocess, sys
+gate, task_dir = sys.argv[1], sys.argv[2]
+dig = subprocess.run(["python3", gate, "digest", "requirements", task_dir], capture_output=True, text=True, check=True).stdout.strip()
+p = f"{task_dir}/task.json"
+try:
+    data = json.load(open(p, encoding="utf-8"))
+except Exception:
+    data = {}
+gates = data.setdefault("guru_gates", {})
+gates["requirements"] = {"confirmed_by": "tester", "confirmed_at": "x", "artifact_digest": dig}
+open(p, "w", encoding="utf-8").write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+PY
+}
+
+write_clean_reviews() { # write_clean_reviews <gate> <task_dir>
+  python3 "$GATE" record-review "$1" "$2" --result clean --max-severity none --reviewer clean-context --run-id "$1-clean-a" --evidence "$1 clean a" >/dev/null
+  python3 "$GATE" record-review "$1" "$2" --result clean --max-severity low --reviewer clean-context --run-id "$1-clean-b" --evidence "$1 clean b" >/dev/null
+}
+
+write_reviews_all() { # write_reviews_all <task_dir>
+  write_clean_reviews overview "$1"
+  write_clean_reviews detail "$1"
+}
+
+write_new_gate_ready() { # write_new_gate_ready <task_dir>
+  write_confirms_all "$1"
+  write_reviews_all "$1"
 }
 
 mutate_gate_artifact() { # mutate_gate_artifact <gate> <task_dir>
@@ -215,34 +246,36 @@ if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "risk_level=high"; then
   pass=$((pass+1)); echo "PASS  high-risk detail grill-skip 被拒"
 else failn=$((failn+1)); echo "FAIL  high-risk detail grill-skip 应被拒 (rc=$rc)"; echo "$out" | head -4; fi
 
-# status #1 回归保护：confirm 全绿但 grill 缺失时，footer 不得提示"可 task.py start"
+# status #1 回归保护：confirm 全绿但 review 缺失时，footer 不得提示"可 task.py start"
 SS=$(make_gate_case statusfooter)
 if python3 - "$SS" "$GATE" >/dev/null <<'PY'
 import sys, json, os, importlib.util
 ss, gp = sys.argv[1], sys.argv[2]
 spec = importlib.util.spec_from_file_location("gg", gp); gg = importlib.util.module_from_spec(spec); spec.loader.exec_module(gg)
 tj = os.path.join(ss, "task.json"); d = json.load(open(tj)); gates = d.setdefault("guru_gates", {})
-for g in ("requirements", "overview", "detail"):
+for g in ("requirements", "detail"):
     gates[g] = {"confirmed_by": "T", "confirmed_at": "2026", "artifact_digest": gg._gate_digest(ss, g)}
 json.dump(d, open(tj, "w"))
 PY
 then
   out=$(python3 "$GATE" status "$SS" 2>&1)
   if printf '%s' "$out" | grep -q "可 task.py start"; then
-    failn=$((failn+1)); echo "FAIL  status confirm全绿+grill缺失误报可start"; printf '%s\n' "$out" | tail -2
-  else pass=$((pass+1)); echo "PASS  status confirm全绿+grill缺失不误报可start"; fi
+    failn=$((failn+1)); echo "FAIL  status confirm全绿+review缺失误报可start"; printf '%s\n' "$out" | tail -2
+  else pass=$((pass+1)); echo "PASS  status confirm全绿+review缺失不误报可start"; fi
 else failn=$((failn+1)); echo "FAIL  status footer 测试 setup 失败（task.json 未就绪）"; fi
-# status grill 渲染：done → ✅
+# status legacy grill 渲染：仅兼容展示，不提示必跑/跳过策略
 SS2=$(make_gate_case statusrender); write_grills_all_done "$SS2"
 out=$(python3 "$GATE" status "$SS2" 2>&1)
-if printf '%s' "$out" | grep -q "grill ✅"; then pass=$((pass+1)); echo "PASS  status 渲染 grill ✅(done)"
-else failn=$((failn+1)); echo "FAIL  status 未渲染 grill ✅"; printf '%s\n' "$out" | tail -4; fi
-SS3=$(make_gate_case status-skippable); grill_done requirements "$SS3"; mark_low_risk "$SS3"
+if printf '%s' "$out" | grep -q "legacy grill present:done/current (ignored by current Gate model)" \
+  && ! printf '%s' "$out" | grep -q "grill ⬜ 必跑"; then
+  pass=$((pass+1)); echo "PASS  status legacy grill 仅作兼容展示"
+else failn=$((failn+1)); echo "FAIL  status legacy grill 展示误导"; printf '%s\n' "$out" | tail -4; fi
+SS3=$(make_gate_case status-next-review)
 env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$SS3" --via-agent --user-quote "确认需求" >/dev/null
 out=$(python3 "$GATE" status "$SS3" 2>&1)
-if printf '%s' "$out" | grep -q "可跳过需留痕" && printf '%s' "$out" | grep -q "grill-skip overview"; then
-  pass=$((pass+1)); echo "PASS  status 渲染 low-risk overview 可跳过提示"
-else failn=$((failn+1)); echo "FAIL  status 未渲染 low-risk skip 提示"; printf '%s\n' "$out" | tail -6; fi
+if printf '%s' "$out" | grep -q "record-review overview"; then
+  pass=$((pass+1)); echo "PASS  status 需求确认后提示 overview record-review"
+else failn=$((failn+1)); echo "FAIL  status 未提示 overview record-review"; printf '%s\n' "$out" | tail -6; fi
 
 expect "requirements 合格通过" 0 python3 "$GATE" requirements "$G"
 expect "overview 合格通过"     0 python3 "$GATE" overview "$G"
@@ -321,7 +354,8 @@ EOF
 PK=$(mk_pkg pkg-good)
 expect "full 概要：设计包合格通过" 0 python3 "$GATE" overview "$PK"
 expect "full 详细：章节闭合通过"   0 python3 "$GATE" detail "$PK"
-write_grills_all_done "$PK"
+write_req_confirm "$PK"
+write_reviews_all "$PK"
 expect "full auto 渐进通过"        0 python3 "$GATE" auto "$PK"
 out=$(env GURU_GATE_MODE=soft python3 "$GATE" grill-skip overview "$PK" --via-agent --user-quote "full 也跳过" 2>&1); rc=$?
 if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "guru_chain=full"; then
@@ -330,7 +364,7 @@ else failn=$((failn+1)); echo "FAIL  full 链 overview grill-skip 应被拒 (rc=
 
 PK2=$(mk_pkg pkg-nochain); printf '{"guru_chain": "full"}\n' > "$PK2/task.json"
 expect "full 链缺 design_package 被拦" 2 python3 "$GATE" overview "$PK2"
-grill_done requirements "$PK2"
+write_req_confirm "$PK2"
 expect "full 链缺包时 auto 渐进放行" 0 python3 "$GATE" auto "$PK2"
 expect_grep "auto 显式提示包未声明" "尚未声明 design_package" python3 "$GATE" auto "$PK2"
 
@@ -353,7 +387,7 @@ else failn=$((failn+1)); echo "FAIL  符号链接逃逸应被拒 (got=$rc)"; ech
 
 PK2B=$(mk_pkg pkg-brokenpkg); python3 -c "
 import json; p='$PK2B/task.json'; d=json.load(open(p)); d['design_package']='$PK2B-nonexistent'; json.dump(d,open(p,'w'))"
-grill_done requirements "$PK2B"
+write_req_confirm "$PK2B"
 expect "full 链包声明但目录不存在 auto 拦截" 2 python3 "$GATE" auto "$PK2B"
 
 PK3=$(mk_pkg pkg-noready); sed -i '' '/架构就绪自检/d' "$PK3-docs/design-main.md" 2>/dev/null || sed -i '/架构就绪自检/d' "$PK3-docs/design-main.md"
@@ -383,35 +417,52 @@ expect_grep "pending 报错指名 page-entry" "page-entry" python3 "$GATE" detai
 printf "L2豁免：page-entry 理由：首发版页面结构简单，按 L1 八问展开\n" >> "$PK6-docs/design-main.md"
 expect "full 详细 pending L2 显式豁免放行" 0 python3 "$GATE" detail "$PK6"
 
-# ============ design-grill 硬前置：confirm/check/auto 三路 × 三 gate × 缺/done/skip/失配 ============
-for gate in requirements overview detail; do
-  for state in missing done skip mismatch; do
-    case "$state" in
-      missing|mismatch) want=2 ;;
-      done) want=0 ;;
-      skip) [ "$gate" = "requirements" ] && want=2 || want=0 ;;
-    esac
+# ============ review_runs 新 Gate：overview/detail 双 clean + detail confirm ============
+RV=$(make_gate_case review-model)
+write_req_confirm "$RV"
+expect "confirm overview 被拒（新模型不支持）" 2 env GURU_GATE_MODE=soft python3 "$GATE" confirm overview "$RV" --via-agent --user-quote "确认概要"
+expect "auto 缺 overview review 被拦" 2 python3 "$GATE" auto "$RV"
+expect_grep "auto 缺 overview review 提示 record-review" "record-review overview" python3 "$GATE" auto "$RV"
+write_clean_reviews overview "$RV"
+expect "auto 缺 detail review 被拦" 2 python3 "$GATE" auto "$RV"
+write_clean_reviews detail "$RV"
+expect "auto 双 clean 后渐进放行（不要求 detail confirm）" 0 python3 "$GATE" auto "$RV"
+expect "check 双 clean 但缺 detail confirm 被拦" 2 python3 "$GATE" check "$RV"
+env GURU_GATE_MODE=soft python3 "$GATE" confirm detail "$RV" --via-agent --user-quote "确认详细" >/dev/null
+expect "check 双 clean + detail confirm 放行" 0 python3 "$GATE" check "$RV"
 
-    DC=$(make_gate_case "grill-confirm-$gate-$state")
-    [ "$state" = "skip" ] && mark_low_risk "$DC"
-    setup_grills_for_gate_state "$gate" "$state" "$DC"
-    out=$(env GURU_GATE_MODE=soft python3 "$GATE" confirm "$gate" "$DC" --via-agent --user-quote "确认 $gate gate" 2>&1); rc=$?
-    judge_grill_case "grill confirm $gate/$state" "$gate" "$state" "$want" "$rc"
-
-    DK=$(make_gate_case "grill-check-$gate-$state")
-    [ "$state" = "skip" ] && mark_low_risk "$DK"
-    setup_grills_for_gate_state "$gate" "$state" "$DK"
-    write_confirms_all "$DK"
-    out=$(python3 "$GATE" check "$DK" 2>&1); rc=$?
-    judge_grill_case "grill check $gate/$state" "$gate" "$state" "$want" "$rc"
-
-    DA=$(make_gate_case "grill-auto-$gate-$state")
-    [ "$state" = "skip" ] && mark_low_risk "$DA"
-    setup_grills_for_gate_state "$gate" "$state" "$DA"
-    out=$(python3 "$GATE" auto "$DA" 2>&1); rc=$?
-    judge_grill_case "grill auto $gate/$state" "$gate" "$state" "$want" "$rc"
-  done
-done
+RV2=$(make_gate_case review-record)
+out=$(python3 "$GATE" record-review overview "$RV2" --result clean --max-severity low --reviewer clean-context --run-id same --evidence "clean" 2>&1); rc=$?
+if [ "$rc" = 0 ] && grep -q '"review_runs"' "$RV2/task.json"; then pass=$((pass+1)); echo "PASS  record-review clean 写入 review_runs"
+else failn=$((failn+1)); echo "FAIL  record-review clean 写入 (rc=$rc)"; echo "$out" | head -4; fi
+expect "record-review 重复 run-id 被拒" 2 python3 "$GATE" record-review overview "$RV2" --result clean --max-severity low --reviewer clean-context --run-id same --evidence "dup"
+expect "record-review reviewer 非 clean-context 被拒" 2 python3 "$GATE" record-review overview "$RV2" --result clean --max-severity low --reviewer casual-reviewer --run-id casual-review --evidence "bad"
+expect "record-review clean 带 finding_class 被拒" 2 python3 "$GATE" record-review overview "$RV2" --result clean --max-severity low --finding-class OVERVIEW_DEFECT --reviewer clean-context --run-id clean-class --evidence "bad"
+expect "record-review findings 缺 finding_class 被拒" 2 python3 "$GATE" record-review overview "$RV2" --result findings --max-severity medium --reviewer clean-context --run-id finding-no-class --evidence "bad"
+expect "record-review findings 带路由码可写入" 0 python3 "$GATE" record-review overview "$RV2" --result findings --max-severity medium --finding-class OVERVIEW_DEFECT --reviewer clean-context --run-id finding-a --evidence "overview defect"
+RV_DUP=$(make_gate_case review-duplicate-status)
+python3 - "$GATE" "$RV_DUP" <<'PY'
+import json, subprocess, sys
+gate, task_dir = sys.argv[1], sys.argv[2]
+digest = subprocess.run(["python3", gate, "digest", "overview", task_dir], capture_output=True, text=True, check=True).stdout.strip()
+data = {
+    "guru_gates": {
+        "review_runs": {
+            "overview": [
+                {"run_id": "dup-run", "reviewer": "clean-context", "recorded_at": "x", "artifact_digest": digest, "result": "clean", "max_severity": "none", "evidence": "first clean"},
+                {"run_id": "dup-run", "reviewer": "clean-context", "recorded_at": "x", "artifact_digest": digest, "result": "clean", "max_severity": "low", "evidence": "duplicate clean"},
+            ]
+        }
+    }
+}
+open(f"{task_dir}/task.json", "w", encoding="utf-8").write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+PY
+expect_grep "status 明示重复 clean run-id 不计入双 clean" "重复 clean review run_id" python3 "$GATE" status "$RV_DUP"
+RV_REQ=$(make_gate_case review-req-blocker)
+write_req_confirm "$RV_REQ"
+python3 "$GATE" record-review overview "$RV_REQ" --result findings --max-severity high --finding-class REQ_BLOCKER --reviewer clean-context --run-id req-blocker-a --evidence "requirements boundary missing" >/dev/null
+expect_grep "status 中 REQ_BLOCKER 回到需求" "需求澄清" python3 "$GATE" status "$RV_REQ"
+expect_grep "check 中 REQ_BLOCKER 回到需求" "需求澄清" python3 "$GATE" check "$RV_REQ"
 
 # 豁免理由里的普通英文词不得豁免其他类型（service 在理由中出现 ≠ 豁免 service）
 PK6B=$(mk_pkg pkg-exempt-word)
@@ -438,36 +489,33 @@ expect "confirm 无 TTY 被拒" 2 python3 "$GATE" confirm requirements "$G"
 expect_grep "confirm 拒绝信息指向用户终端" "交互式终端" python3 "$GATE" confirm requirements "$G"
 expect "confirm 未知 gate 被拒" 2 python3 "$GATE" confirm nonsense "$G"
 
-# 人工 Gate：check 缺确认拦截 / 全确认放行
+# 人工 Gate：check 按需求确认 → overview review → detail review → detail confirm 拦截 / 全证据放行
 write_grills_all_done "$G"
 expect "check 零确认被拦" 2 python3 "$GATE" check "$G"
 expect_grep "check 报缺需求确认" "需求" python3 "$GATE" check "$G"
-cat > "$G/task.json" <<'EOF'
-{"guru_gates": {"requirements": {"confirmed_by": "tester", "confirmed_at": "2026-01-01T00:00:00+00:00"},
-                "overview": {"confirmed_by": "tester", "confirmed_at": "2026-01-01T00:00:00+00:00"}}}
-EOF
-write_grills_all_done "$G"
+write_req_confirm "$G"
+expect "check 缺 overview review 被拦" 2 python3 "$GATE" check "$G"
+write_clean_reviews overview "$G"
+expect "check 缺 detail review 被拦" 2 python3 "$GATE" check "$G"
+write_clean_reviews detail "$G"
 expect "check 缺 detail 确认被拦" 2 python3 "$GATE" check "$G"
 # 缺 artifact_digest 的确认记录（手写伪造/旧版）不放行
 cat > "$G/task.json" <<'EOF'
 {"guru_gates": {"requirements": {"confirmed_by": "tester", "confirmed_at": "2026-01-01T00:00:00+00:00"},
-                "overview": {"confirmed_by": "tester", "confirmed_at": "2026-01-01T00:00:00+00:00"},
                 "detail": {"confirmed_by": "tester", "confirmed_at": "2026-01-01T00:00:00+00:00"}}}
 EOF
-write_grills_all_done "$G"
+write_reviews_all "$G"
 expect "check 缺确认快照被拦" 2 python3 "$GATE" check "$G"
 expect_grep "缺快照报错指明 confirm 来源" "缺确认快照" python3 "$GATE" check "$G"
 
 DG_REQ=$(python3 "$GATE" digest requirements "$G")
-DG_OV=$(python3 "$GATE" digest overview "$G")
 DG_DT=$(python3 "$GATE" digest detail "$G")
 cat > "$G/task.json" <<EOF
 {"guru_gates": {"requirements": {"confirmed_by": "tester", "confirmed_at": "x", "artifact_digest": "$DG_REQ"},
-                "overview": {"confirmed_by": "tester", "confirmed_at": "x", "artifact_digest": "$DG_OV"},
                 "detail": {"confirmed_by": "tester", "confirmed_at": "x", "artifact_digest": "$DG_DT"}}}
 EOF
-write_grills_all_done "$G"
-expect "check 三确认放行" 0 python3 "$GATE" check "$G"
+write_reviews_all "$G"
+expect "check 新 Gate 证据齐全放行" 0 python3 "$GATE" check "$G"
 expect "status 可运行" 0 python3 "$GATE" status "$G"
 expect_grep "status 显示确认人" "tester" python3 "$GATE" status "$G"
 
@@ -482,23 +530,30 @@ grep -v "失败路径\|网络失败" "$G/prd.md" > "$GS/prd.md"
 expect "check 确认后产物破坏被拦" 2 python3 "$GATE" check "$GS"
 expect_grep "check 报结构 Gate 未通过" "结构 Gate" python3 "$GATE" check "$GS"
 
-# 确认快照：digest 一致放行；结构仍合格但内容被改 → 快照失配拦截
+GOV="$TMP/overview-structure"; mkdir -p "$GOV"; cp "$G"/*.md "$GOV/"; cp "$G/task.json" "$GOV/"
+grep -v "承接索引" "$G/design.md" > "$GOV/design.md"
+out=$(python3 "$GATE" check "$GOV" 2>&1); rc=$?
+if [ "$rc" = 2 ] \
+  && printf '%s' "$out" | grep -q "record-review overview" \
+  && ! printf '%s' "$out" | grep -Eq "重新人工确认|请用户.*人工确认"; then
+  pass=$((pass+1)); echo "PASS  check overview 结构失败不提示人工确认"
+else failn=$((failn+1)); echo "FAIL  check overview 结构失败提示错误"; printf '%s\n' "$out" | head -4; fi
+
+# 确认快照与 review digest：一致放行；结构仍合格但内容被改 → 当前 digest review evidence 失效
 GD="$TMP/digest"; mkdir -p "$GD"; cp "$G/prd.md" "$G/design.md" "$G/implement.md" "$GD/"
 D_REQ=$(python3 "$GATE" digest requirements "$GD")
-D_OV=$(python3 "$GATE" digest overview "$GD")
 D_DT=$(python3 "$GATE" digest detail "$GD")
 cat > "$GD/task.json" <<EOF
 {"guru_gates": {
   "requirements": {"confirmed_by": "t", "confirmed_at": "x", "artifact_digest": "$D_REQ"},
-  "overview":     {"confirmed_by": "t", "confirmed_at": "x", "artifact_digest": "$D_OV"},
   "detail":       {"confirmed_by": "t", "confirmed_at": "x", "artifact_digest": "$D_DT"}}}
 EOF
-write_grills_all_done "$GD"
+write_reviews_all "$GD"
 expect "check 快照一致放行" 0 python3 "$GATE" check "$GD"
 printf '\n语义改动：阈值从 8s 调成 30s\n' >> "$GD/design.md"
-write_grills_all_done "$GD"
-expect "check 快照失配被拦" 2 python3 "$GATE" check "$GD"
-expect_grep "快照失配指明重新确认" "重新人工确认" python3 "$GATE" check "$GD"
+expect "check 设计改动后 review evidence 失效被拦" 2 python3 "$GATE" check "$GD"
+expect_grep "review 失效指明 record-review" "record-review overview" python3 "$GATE" check "$GD"
+expect_grep "status 设计改动后明示 review digest 失配" "digest 失配" python3 "$GATE" status "$GD"
 
 # 写保护：经 grill-done 写路径触发，非法 JSON 必须被解析守卫拒绝且不重写
 GJ="$TMP/badjson"; mkdir -p "$GJ"; cp "$G/prd.md" "$GJ/"; printf '[broken' > "$GJ/task.json"
@@ -512,27 +567,24 @@ fi
 # full 链确认快照：README 属包骨架，改动同样触发失配
 GF=$(mk_pkg pkg-digest-full)
 F_REQ=$(python3 "$GATE" digest requirements "$GF")
-F_OV=$(python3 "$GATE" digest overview "$GF")
 F_DT=$(python3 "$GATE" digest detail "$GF")
-python3 - "$GF" "$F_REQ" "$F_OV" "$F_DT" <<'PY'
+python3 - "$GF" "$F_REQ" "$F_DT" <<'PY'
 import json, sys
-gf, req, ov, dt = sys.argv[1:5]
+gf, req, dt = sys.argv[1:4]
 p = f"{gf}/task.json"
 d = json.load(open(p))
 d["guru_gates"] = {
     "requirements": {"confirmed_by": "t", "confirmed_at": "x", "artifact_digest": req},
-    "overview": {"confirmed_by": "t", "confirmed_at": "x", "artifact_digest": ov},
     "detail": {"confirmed_by": "t", "confirmed_at": "x", "artifact_digest": dt},
 }
 json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
 PY
-write_grills_all_done "$GF"
+write_reviews_all "$GF"
 expect "full check 快照一致放行" 0 python3 "$GATE" check "$GF"
 printf '\n导航入口调整\n' >> "$GF-docs/README.md"
-write_grills_all_done "$GF"
-expect "full check README 快照失配被拦" 2 python3 "$GATE" check "$GF"
-expect_grep "README 快照失配指明重新确认" "重新人工确认" python3 "$GATE" check "$GF"
-expect_grep "status 与 check 同口径呈现失配" "快照失配" python3 "$GATE" status "$GF"
+expect "full check README 改动后 review evidence 失效被拦" 2 python3 "$GATE" check "$GF"
+expect_grep "README 改动后提示 review evidence" "record-review overview" python3 "$GATE" check "$GF"
+expect_grep "status 与 check 同口径呈现 review 缺口" "record-review overview" python3 "$GATE" status "$GF"
 
 # 累积快照：上游 prd 改动 + 只重确认 requirements → 下游 overview/detail 失配
 GF2=$(mk_pkg pkg-cumulative)
@@ -542,10 +594,10 @@ gf, gate = sys.argv[1], sys.argv[2]
 def dig(g): return subprocess.run(["python3", gate, "digest", g, gf], capture_output=True, text=True).stdout.strip()
 d = json.load(open(f"{gf}/task.json"))
 d["guru_gates"] = {g: {"confirmed_by": "t", "confirmed_at": "x", "artifact_digest": dig(g)}
-                   for g in ("requirements", "overview", "detail")}
+                   for g in ("requirements", "detail")}
 json.dump(d, open(f"{gf}/task.json", "w"), ensure_ascii=False, indent=2)
 PY
-write_grills_all_done "$GF2"
+write_reviews_all "$GF2"
 expect "累积快照：基线放行" 0 python3 "$GATE" check "$GF2"
 # 结构中性的上游改动（不新增 BHV，避免结构 Gate 先拦导致测不到快照路径）
 printf '\n需求补充说明：下单成功后展示订单编号。\n' >> "$GF2/prd.md"
@@ -557,9 +609,8 @@ d = json.load(open(f"{gf}/task.json"))
 d["guru_gates"]["requirements"]["artifact_digest"] = dig
 json.dump(d, open(f"{gf}/task.json", "w"), ensure_ascii=False, indent=2)
 PY
-write_grills_all_done "$GF2"
-expect "累积快照：上游改动后下游确认失配被拦" 2 python3 "$GATE" check "$GF2"
-expect_grep "累积快照：拦截原因是下游快照失配" "确认快照失配" python3 "$GATE" check "$GF2"
+expect "累积快照：上游改动后下游 review evidence 失效被拦" 2 python3 "$GATE" check "$GF2"
+expect_grep "累积快照：拦截原因是 overview review 缺口" "record-review overview" python3 "$GATE" check "$GF2"
 
 # PreToolUse hook：shlex token 识别（引号字面量不触发；真实 start 命令触发并拦截）
 HOOK="$HERE/../../hooks/platform/block-unconfirmed-start.sh"
@@ -570,8 +621,8 @@ else failn=$((failn+1)); echo "FAIL  hook 引号字面量误拦 (rc=$rc)"; fi
 HP="$TMP/hook-project"; mkdir -p "$HP/.trellis/scripts/guru"
 ln -sf "$GATE" "$HP/.trellis/scripts/guru/guru_gate.py"
 out=$(printf '{"tool_input":{"command":"python3 .trellis/scripts/task.py start %s"}}' "$GD" | CLAUDE_PROJECT_DIR="$HP" bash "$HOOK" 2>&1); rc=$?
-if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "确认快照失配"; then pass=$((pass+1)); echo "PASS  hook 真实 start 命令被拦（拦截原因=快照失配）"
-else failn=$((failn+1)); echo "FAIL  hook 应以快照失配拦截 (rc=$rc)"; echo "$out" | head -3; fi
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "record-review overview"; then pass=$((pass+1)); echo "PASS  hook 真实 start 命令被拦（拦截原因=review evidence 缺口）"
+else failn=$((failn+1)); echo "FAIL  hook 应以 review evidence 缺口拦截 (rc=$rc)"; echo "$out" | head -3; fi
 out=$(printf '{"tool_input":{"file_path":"a.md","content":"task.py start"}}' | bash "$HOOK" 2>&1); rc=$?
 if [ "$rc" = 0 ]; then pass=$((pass+1)); echo "PASS  hook 非命令字段不触发"
 else failn=$((failn+1)); echo "FAIL  hook 非命令字段误拦 (rc=$rc)"; fi
@@ -617,9 +668,8 @@ if [ "$rc" = 0 ] && grep -q '"via": "agent"' "$SM/task.json" && grep -q '确认�
   pass=$((pass+1)); echo "PASS  soft 单 gate 代跑成功且留痕（via/user_quote）"
 else failn=$((failn+1)); echo "FAIL  soft 代跑 (rc=$rc)"; echo "$out" | head -3; fi
 expect "soft 代跑缺 --user-quote 被拒" 2 env GURU_GATE_MODE=soft python3 "$GATE" confirm "$SM" --via-agent
-grill_done overview "$SM"
-grill_done detail "$SM"
-expect "soft 零参数批量代跑剩余 Gate" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm "$SM" --via-agent --user-quote "确认全部"
+write_reviews_all "$SM"
+expect "soft 零参数批量代跑剩余 detail Gate" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm "$SM" --via-agent --user-quote "确认全部"
 expect "soft 批量后 check 放行" 0 python3 "$GATE" check "$SM"
 expect_grep "status 显示 soft 留痕" "soft" python3 "$GATE" status "$SM"
 
@@ -647,7 +697,7 @@ else failn=$((failn+1)); echo "FAIL  gate_mode 作用域泄漏 (rc=$rc)"; fi
 
 # TTY 零参数批量确认（pty 逐个 y）
 PT="$TMP/ptybatch"; mkdir -p "$PT"; cp "$G/prd.md" "$G/design.md" "$G/implement.md" "$PT/"
-write_grills_all_done "$PT"
+write_reviews_all "$PT"
 out=$(python3 - "$GATE" "$PT" <<'PY'
 import os, pty, select, sys, time
 gate, td = sys.argv[1], sys.argv[2]
@@ -678,7 +728,7 @@ sys.exit(os.waitstatus_to_exitcode(st))
 PY
 ); rc=$?
 if [ "$rc" = 0 ] && python3 "$GATE" check "$PT" >/dev/null 2>&1; then
-  pass=$((pass+1)); echo "PASS  TTY 零参数批量确认（pty 三连 y）"
+  pass=$((pass+1)); echo "PASS  TTY 零参数批量确认（pty 双 y）"
 else failn=$((failn+1)); echo "FAIL  pty 批量 (rc=$rc)"; echo "$out" | tail -3; fi
 
 # ===== light 链 _design_sections 分割正则盲区：'## 详细设计承接索引' 标题 + 行内 §2 不误切（修 #7）=====

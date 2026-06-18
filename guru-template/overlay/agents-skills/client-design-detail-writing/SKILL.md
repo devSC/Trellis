@@ -35,7 +35,7 @@ description: 用于把 Flutter 客户端概要设计展开为可编码合同（�
 - **WX-1 输入键完整**：task.json 含 `guru_chain` 与（full 链）`design_package`；缺失 → 执行级错误，提示补判轨。
 - **WX-2 路径边界**：design_package 目录存在且 `chapters/` 存在；目标文件名均落在 chapters/ 内（词法检查，不自动创建缺失目录——缺目录属概要骨架缺口）。
 - **WX-3 承接索引**：design-main 第 7 节索引存在、非空、每条有 doc_type 与目标文件名；缺失/为空 → **硬阻断，回退概要**。
-- **WX-4 概要 Gate 已确认**：`guru_gate.py status` 显示 overview 已人工确认；未确认 → 停止，提示先完成概要 Gate 收口。
+- **WX-4 概要 review evidence 已达标**：`guru_gate.py status` 显示 overview 当前 digest 已有两个不同 `run_id` 的 clean review；未达标 → 停止，提示先运行概要 review 并用 `record-review overview` 留痕。
 - **WX-5 承接源状态**：本批引用的 `technology_decision_handoff[]` 条目均为"选定"（未选定 → 回退概要，禁止详细拍板）；本批命中 pending L2 的 doc_type 均有 `L2豁免：<doc_type> 理由：…` 声明（无豁免 → 停止，提示先补 L2 或写豁免）。
 
 light 链执行 WX-3/WX-4/WX-5 的等价检查（索引在 design.md §1；产物写 §2）。

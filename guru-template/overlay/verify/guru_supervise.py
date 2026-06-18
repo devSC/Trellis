@@ -2,8 +2,11 @@
 """Run Guru implement/check work through the official trellis channel runtime.
 
 Usage:
+    python3 guru_supervise.py overview <task-dir> [--dry-run]
+    python3 guru_supervise.py detail <task-dir> [--dry-run]
     python3 guru_supervise.py implement <task-dir> [--dry-run]
     python3 guru_supervise.py check <task-dir> [--dry-run]
+    python3 guru_supervise.py implement-check <task-dir> [--dry-run]
     python3 guru_supervise.py status <task-dir>
     python3 guru_supervise.py kill <task-dir> --channel <name> --worker <name>
 """
@@ -23,30 +26,90 @@ from pathlib import Path
 from typing import Sequence
 
 
-VALID_ACTIONS = {"implement", "check"}
+VALID_ACTIONS = {"overview", "detail", "implement", "check", "implement-check"}
 VALID_PLATFORMS = {"flutter", "go", "ios", "h5"}
 
 DEFAULT_PROVIDER = "codex"
 DEFAULT_IMPLEMENT_TIMEOUT = "45m"
 DEFAULT_CHECK_TIMEOUT = "30m"
 DEFAULT_WARN_BEFORE = "5m"
+DEFAULT_IMPLEMENT_CHECK_MAX_LOOPS = 3
 
-SKILL_BY_PLATFORM: dict[str, dict[str, str]] = {
+REPAIRABLE_IMPLEMENT_ROUTES = {"IMPLEMENT_DEFECT", "PROCESS_DEFECT"}
+UPSTREAM_ROUTE_TARGETS = {
+    "REQ_BLOCKER": "requirements",
+    "OVERVIEW_DEFECT": "overview",
+    "DETAIL_DEFECT": "detail",
+}
+ROUTE_RE = re.compile(
+    r"\broute_class\s*[:=：]\s*`?(REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|PROCESS_DEFECT|IMPLEMENT_DEFECT|none)`?",
+    re.IGNORECASE,
+)
+
+SKILL_BY_PLATFORM: dict[str, dict[str, list[str]]] = {
     "flutter": {
-        "implement": ".agents/skills/flutter-implementation-guru-writing/SKILL.md",
-        "check": ".agents/skills/flutter-implementation-guru-review/SKILL.md",
+        "overview": [
+            ".agents/skills/client-design-overview-writing/SKILL.md",
+            ".agents/skills/client-design-overview-review/SKILL.md",
+        ],
+        "detail": [
+            ".agents/skills/client-design-detail-writing/SKILL.md",
+            ".agents/skills/client-design-detail-review/SKILL.md",
+        ],
+        "implement": [".agents/skills/flutter-implementation-guru-writing/SKILL.md"],
+        "check": [".agents/skills/flutter-implementation-guru-review/SKILL.md"],
+        "implement-check": [
+            ".agents/skills/flutter-implementation-guru-writing/SKILL.md",
+            ".agents/skills/flutter-implementation-guru-review/SKILL.md",
+        ],
     },
     "go": {
-        "implement": ".agents/skills/go-implementation-guru-writing/SKILL.md",
-        "check": ".agents/skills/go-implementation-guru-review/SKILL.md",
+        "overview": [
+            ".agents/skills/go-design-overview-writing/SKILL.md",
+            ".agents/skills/go-design-overview-review/SKILL.md",
+        ],
+        "detail": [
+            ".agents/skills/go-design-detail-writing/SKILL.md",
+            ".agents/skills/go-design-detail-review/SKILL.md",
+        ],
+        "implement": [".agents/skills/go-implementation-guru-writing/SKILL.md"],
+        "check": [".agents/skills/go-implementation-guru-review/SKILL.md"],
+        "implement-check": [
+            ".agents/skills/go-implementation-guru-writing/SKILL.md",
+            ".agents/skills/go-implementation-guru-review/SKILL.md",
+        ],
     },
     "ios": {
-        "implement": ".agents/skills/ios-implementation-guru-writing/SKILL.md",
-        "check": ".agents/skills/ios-implementation-guru-review/SKILL.md",
+        "overview": [
+            ".agents/skills/ios-design-overview-writing/SKILL.md",
+            ".agents/skills/ios-design-overview-review/SKILL.md",
+        ],
+        "detail": [
+            ".agents/skills/ios-design-detail-writing/SKILL.md",
+            ".agents/skills/ios-design-detail-review/SKILL.md",
+        ],
+        "implement": [".agents/skills/ios-implementation-guru-writing/SKILL.md"],
+        "check": [".agents/skills/ios-implementation-guru-review/SKILL.md"],
+        "implement-check": [
+            ".agents/skills/ios-implementation-guru-writing/SKILL.md",
+            ".agents/skills/ios-implementation-guru-review/SKILL.md",
+        ],
     },
     "h5": {
-        "implement": ".agents/skills/h5-implementation-guru-writing/SKILL.md",
-        "check": ".agents/skills/h5-implementation-guru-review/SKILL.md",
+        "overview": [
+            ".agents/skills/h5-design-overview-writing/SKILL.md",
+            ".agents/skills/h5-design-overview-review/SKILL.md",
+        ],
+        "detail": [
+            ".agents/skills/h5-design-detail-writing/SKILL.md",
+            ".agents/skills/h5-design-detail-review/SKILL.md",
+        ],
+        "implement": [".agents/skills/h5-implementation-guru-writing/SKILL.md"],
+        "check": [".agents/skills/h5-implementation-guru-review/SKILL.md"],
+        "implement-check": [
+            ".agents/skills/h5-implementation-guru-writing/SKILL.md",
+            ".agents/skills/h5-implementation-guru-review/SKILL.md",
+        ],
     },
 }
 
@@ -171,6 +234,21 @@ def _trellis_cmd(config: SupervisionConfig, args: Sequence[str]) -> list[str]:
     return [config.trellis_bin, *args]
 
 
+def _clip_context(text: str, *, limit: int = 4000) -> str:
+    return text[-limit:] if len(text) > limit else text
+
+
+def _route_from_output(text: str) -> str | None:
+    match = ROUTE_RE.search(text)
+    if match:
+        route = match.group(1).upper()
+        if route != "NONE":
+            return route
+    if "review_result=clean/final-verification-ready" in text:
+        return "clean"
+    return None
+
+
 def _load_config(
     root: Path,
     *,
@@ -213,32 +291,34 @@ def build_run_plan(
     task_dir: Path,
     config: SupervisionConfig,
     run_id: str,
+    extra_brief: str = "",
 ) -> RunPlan:
     if action not in VALID_ACTIONS:
         raise GuruSupervisionError(f"unknown action {action!r}")
     if not task_dir.is_dir():
         raise GuruSupervisionError(f"task directory not found: {task_dir}")
 
-    action_timeout = (
-        config.implement_timeout if action == "implement" else config.check_timeout
-    )
+    action_timeout = config.check_timeout if action == "check" else config.implement_timeout
     run_slug = _sanitize(run_id, limit=40)
     provider_slug = _sanitize(config.provider, limit=24)
     task_slug = _sanitize(task_dir.name, limit=70)
     channel = f"guru-{task_slug}-{action}-{run_slug}"
     worker = f"{action}-{provider_slug}-{run_slug}"
 
-    skill_rel = SKILL_BY_PLATFORM[config.platform][action]
-    skill_path = config.root / skill_rel
+    skill_rels = SKILL_BY_PLATFORM[config.platform][action]
+    skill_paths = [config.root / rel for rel in skill_rels]
     artifact_files = _existing_paths(
         [
-            skill_path,
+            *skill_paths,
             task_dir / "prd.md",
             task_dir / "design.md",
             task_dir / "implement.md",
         ]
     )
-    jsonls = _existing_paths([task_dir / f"{action}.jsonl"])
+    jsonl_names = [f"{action}.jsonl"]
+    if action == "implement-check":
+        jsonl_names = ["implement.jsonl", "check.jsonl"]
+    jsonls = _existing_paths([task_dir / name for name in jsonl_names])
 
     create_cmd = _trellis_cmd(
         config,
@@ -329,15 +409,29 @@ def build_run_plan(
         ],
     )
 
-    skill_line = (
-        f"Load the injected Guru {config.platform} "
-        f"{'implementation' if action == 'implement' else 'review'} skill."
-    )
-    responsibility = (
-        "Implement according to the Guru workflow."
-        if action == "implement"
-        else "Review the current diff under Guru quality rules and self-fix only mechanical issues."
-    )
+    skill_names = ", ".join(Path(rel).parts[-2] for rel in skill_rels)
+    skill_line = f"Load the injected Guru {config.platform} skill(s): {skill_names}."
+    if action in {"overview", "detail"}:
+        responsibility = (
+            f"Write or repair the {action} design artifact, run two clean review passes for the current digest, "
+            f"and record each clean pass with `python3 .trellis/scripts/guru/guru_gate.py record-review {action} "
+            f"{task_dir} --result clean --max-severity low --reviewer clean-context --run-id {run_id}-rN "
+            "--evidence \"<review evidence>\"`. If medium+ findings remain, record findings with "
+            "--finding-class REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT and stop."
+        )
+    elif action == "implement":
+        responsibility = "Implement according to the Guru workflow and keep implement.md evidence current."
+    elif action == "implement-check":
+        responsibility = (
+            "Implement the planned slices, then review the current diff under Guru quality rules, self-fixing only "
+            "issues in scope. Route IMPLEMENT_DEFECT, DETAIL_DEFECT, OVERVIEW_DEFECT, REQ_BLOCKER, and "
+            "PROCESS_DEFECT explicitly. A single clean implementation check is MVP review evidence only when the "
+            "output includes review_result=clean/final-verification-ready, reviewed diff/artifact context, and "
+            "validation_summary. Do not create implementation guru_gates. Keep implement.md evidence current and "
+            "stop at final validation plus hard boundary."
+        )
+    else:
+        responsibility = "Review the current diff under Guru quality rules and self-fix only mechanical issues."
     brief = "\n".join(
         [
             f"Active task: {task_dir}",
@@ -346,6 +440,8 @@ def build_run_plan(
             "Do not commit, push, merge, archive, or run finish-work.",
         ]
     )
+    if extra_brief:
+        brief = f"{brief}\n{extra_brief}"
 
     return RunPlan(
         action=action,
@@ -401,6 +497,24 @@ def _run(cmd: Sequence[str], *, cwd: Path, stdin: str | None = None) -> subproce
     return result
 
 
+def _execute_plan(plan: RunPlan, config: SupervisionConfig) -> tuple[int, str | None, str]:
+    for command in (plan.create_cmd, plan.spawn_cmd):
+        result = _run(command, cwd=config.root)
+        if result.returncode != 0:
+            return result.returncode, None, ""
+
+    result = _run(plan.send_cmd, cwd=config.root, stdin=plan.brief)
+    if result.returncode != 0:
+        return result.returncode, None, ""
+
+    wait = _run(plan.wait_cmd, cwd=config.root)
+    terminal = _terminal_status(wait.stdout)
+    messages = _run(plan.messages_cmd, cwd=config.root)
+    if wait.returncode != 0:
+        return wait.returncode, terminal, messages.stdout
+    return (0 if terminal == "done" else 1), terminal, messages.stdout
+
+
 def _terminal_status(output: str) -> str | None:
     for line in output.splitlines():
         try:
@@ -429,21 +543,105 @@ def run_action(args: argparse.Namespace, action: str) -> int:
         _print_dry_run(plan)
         return 0
 
-    for command in (plan.create_cmd, plan.spawn_cmd):
-        result = _run(command, cwd=config.root)
-        if result.returncode != 0:
-            return result.returncode
+    rc, _terminal, _messages = _execute_plan(plan, config)
+    return rc
 
-    result = _run(plan.send_cmd, cwd=config.root, stdin=plan.brief)
-    if result.returncode != 0:
-        return result.returncode
 
-    wait = _run(plan.wait_cmd, cwd=config.root)
-    terminal = _terminal_status(wait.stdout)
-    _run(plan.messages_cmd, cwd=config.root)
-    if wait.returncode != 0:
-        return wait.returncode
-    return 0 if terminal == "done" else 1
+def run_implement_check(args: argparse.Namespace) -> int:
+    task_dir = Path(args.task_dir).expanduser().resolve()
+    root = _resolve_root(args.root, task_dir)
+    config = _load_config(
+        root,
+        platform=args.platform,
+        provider=args.provider,
+        trellis_bin=args.trellis_bin,
+    )
+    base_run_id = args.run_id or _default_run_id()
+
+    if args.dry_run:
+        implement_plan = build_run_plan(
+            "implement",
+            task_dir,
+            config,
+            f"{base_run_id}-implement-1",
+            "Implement-check loop step 1/2: apply implementation fixes from the previous check context when present.",
+        )
+        check_plan = build_run_plan(
+            "check",
+            task_dir,
+            config,
+            f"{base_run_id}-check-1",
+            "Implement-check loop step 2/2: emit review_result=clean/final-verification-ready with route_class=none, or route_class=<defect>.",
+        )
+        print("IMPLEMENT-CHECK LOOP")
+        print("repeat: implement -> check -> route")
+        print(
+            "routes: IMPLEMENT_DEFECT/PROCESS_DEFECT repeat implement; "
+            "DETAIL_DEFECT -> detail; OVERVIEW_DEFECT -> overview; REQ_BLOCKER -> requirements"
+        )
+        print(
+            "clean: review_result=clean/final-verification-ready route_class=none; "
+            "reviewed diff/artifact context; validation_summary; final validation plus hard boundary stop"
+        )
+        print("Do not create implementation guru_gates")
+        print("")
+        _print_dry_run(implement_plan)
+        print("")
+        _print_dry_run(check_plan)
+        return 0
+
+    review_context = ""
+    for iteration in range(1, DEFAULT_IMPLEMENT_CHECK_MAX_LOOPS + 1):
+        extra = (
+            "Previous implementation check finding context:\n"
+            + _clip_context(review_context)
+            if review_context
+            else ""
+        )
+        implement_plan = build_run_plan(
+            "implement",
+            task_dir,
+            config,
+            f"{base_run_id}-implement-{iteration}",
+            extra,
+        )
+        rc, _terminal, _messages = _execute_plan(implement_plan, config)
+        if rc != 0:
+            return rc
+
+        check_plan = build_run_plan(
+            "check",
+            task_dir,
+            config,
+            f"{base_run_id}-check-{iteration}",
+            "Emit exactly one route_class and review_result for implement-check routing.",
+        )
+        rc, _terminal, messages = _execute_plan(check_plan, config)
+        if rc != 0:
+            return rc
+
+        route = _route_from_output(messages)
+        if route == "clean":
+            print("[guru-supervise] implement-check clean; stop at hard-boundary confirmation.")
+            return 0
+        if route in REPAIRABLE_IMPLEMENT_ROUTES:
+            review_context = messages
+            continue
+        if route in UPSTREAM_ROUTE_TARGETS:
+            target = UPSTREAM_ROUTE_TARGETS[route]
+            print(f"[guru-supervise] implement-check routed upstream: {route} -> {target}")
+            return 2
+        sys.stderr.write(
+            "[guru-supervise] check output missing route_class or "
+            "review_result=clean/final-verification-ready; cannot route safely\n"
+        )
+        return 2
+
+    sys.stderr.write(
+        f"[guru-supervise] implement-check stopped after {DEFAULT_IMPLEMENT_CHECK_MAX_LOOPS} "
+        "repair loops; continue manually with the latest check findings\n"
+    )
+    return 1
 
 
 def _load_channel_events(config: SupervisionConfig, channel: str) -> list[dict]:
@@ -596,12 +794,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trellis-bin", default=os.environ.get("TRELLIS_BIN"))
     sub = parser.add_subparsers(dest="command", required=True)
 
-    for action in ("implement", "check"):
+    for action in ("overview", "detail", "implement", "check"):
         p = sub.add_parser(action)
         p.add_argument("task_dir")
         p.add_argument("--run-id")
         p.add_argument("--dry-run", action="store_true")
         p.set_defaults(func=lambda args, action=action: run_action(args, action))
+
+    implement_check = sub.add_parser("implement-check")
+    implement_check.add_argument("task_dir")
+    implement_check.add_argument("--run-id")
+    implement_check.add_argument("--dry-run", action="store_true")
+    implement_check.set_defaults(func=run_implement_check)
 
     status = sub.add_parser("status")
     status.add_argument("task_dir")

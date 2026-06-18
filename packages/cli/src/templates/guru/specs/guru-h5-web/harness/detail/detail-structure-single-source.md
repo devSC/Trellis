@@ -248,7 +248,7 @@ export async function submitComment(formData: FormData): Promise<ActionResult>;
 - **P2** 通用 golden-path 可读（`.trellis/spec/guides/golden-path.md`）。
 - **P3** 目标仓库 `project-conventions.md` 可读且校验通过（§6 槽位 C1~C5）。
 - **P4** 概要主定义可定位（full 链=`design_package/design-main.md`；light 链=`design.md` §1），承接索引存在、可建立完整非空的 `chapter_target → detail_doc_type` 目标集合（七类之内）。**索引缺失/为空 → 回退概要阶段，禁止详细补造归属。**
-- **P5** 概要 Gate 已过且人工确认已落盘（`guru_gate.py status` 可查 overview 确认）；未确认不得开始详细写作。
+- **P5** 概要 Gate 已过且当前 digest 下已有两个不同 run-id 的 clean review evidence（`guru_gate.py status` 可查 overview review）；缺 evidence 不得开始详细写作。
 - **P6** pending L2 命中项均有 §2.5 `L2豁免` 声明；`technology_decision_handoff[]` 中被本批引用的条目状态为"选定"（未选定 → 回退概要，禁止详细拍板）。
 
 ### 5.2 推荐写作顺序（层级，与 §2.3 一致）

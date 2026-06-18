@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse(Bash)：拦截未过三道人工 Gate 的 task.py start（guru 五阶段硬约束的前置兜底；
+# PreToolUse(Bash)：拦截未过 Guru start Gate 的 task.py start（需求确认 + review evidence + detail 确认；
 # 最终防线在 task.py 的 before_start 阻断钩子，本 hook 仅提早给出可读提示）。
 INPUT=$(cat)
 # 只检查 Bash 工具的 command 字段，避免误伤"提及该命令文本"的无关调用（如编辑文档/echo）
@@ -64,7 +64,7 @@ cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 TDIR=""
 [ "$HIT" != "-" ] && TDIR="$HIT"
 if ! python3 .trellis/scripts/guru/guru_gate.py check ${TDIR:+"$TDIR"} >&2; then
-  echo "BLOCKED: 人工 Gate 校验未通过，禁止 task.py start。请提示用户本人在终端运行 guru_gate.py confirm <gate>。" >&2
+  echo "BLOCKED: Guru Gate 校验未通过，禁止 task.py start。请先运行 guru_gate.py status <task_dir> 查看下一步。" >&2
   exit 2
 fi
 exit 0

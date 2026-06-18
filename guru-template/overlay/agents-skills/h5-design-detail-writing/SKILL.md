@@ -48,7 +48,7 @@ description: 用于把 Guru H5/Next.js 概要设计展开为可编码合同（�
 - **WX-2 通用 golden-path 可读**：`.trellis/spec/guides/golden-path.md` 可读。
 - **WX-3 project-conventions 可读且校验通过**：§6 槽位 C1~C5（路由模式=App / 内容源 / 状态管理 / UI 库 / 样式方案）显式填写；缺一即前置失败。
 - **WX-4 承接索引存在且非空**：概要主定义可定位；第 7 节承接索引存在、每条有 `doc_type` 与目标文件名，可建立完整非空的 `chapter_target → detail_doc_type` 目标集合（七类之内）。**索引缺失/为空 → 硬阻断，回退概要，禁止详细补造归属。** full 链另查 `<design_package>/chapters/` 已存在（缺目录属概要骨架缺口，**不自动创建**）；目标文件名均落在 `chapters/` 内（词法检查）。
-- **WX-5 概要 Gate 已确认**：`guru_gate.py status` 显示 overview 已人工确认并落盘；未确认 → 停止，提示先完成概要 Gate 收口。
+- **WX-5 概要 review evidence 已达标**：`guru_gate.py status` 显示 overview 当前 digest 已有两个不同 `run_id` 的 clean review；未达标 → 停止，提示先运行概要 review 并用 `record-review overview` 留痕。
 - **WX-6 承接源状态**：本批引用的 `technology_decision_handoff[]` 条目均为"选定"（未选定 → 回退概要，**禁止详细拍板**）；本批命中 pending L2 的 doc_type（`route`/`ui-component`/`domain-type`/`server-action`）均有 L1 §2.5 的 `L2豁免：<doc_type> 理由：… 风险：… 补齐计划：…` 声明（无豁免 → 停止，提示先补 L2 或写豁免）。
 
 light 链执行 WX-3/WX-4/WX-5/WX-6 的等价检查（索引在 `design.md` §1；产物写 §2）。
@@ -102,7 +102,7 @@ light 链执行 WX-3/WX-4/WX-5/WX-6 的等价检查（索引在 `design.md` §1�
 15. 涉权限/数据采集/三方域名/PII/secret/session 的单元必须落合规与边界依据（L1 §2.2、§7 边界 trace）；不写制裁 TLD、私有 API key 明文、动态执行类设计。
 16. 辅助文本中文；代码语法元素英文。
 17. 中断升级仅限四种情形：**概要源缺失 / 业务语义必须人工确认 / 技术决策未选定 / 修复无法收敛**；其余情况自动闭环推进，不等用户人工 review。
-18. 写作结果不得输出审核矩阵或二元放行结论；全目录完成后提示送审：加载 `h5-design-detail-review`，Gate 结论"可进入编码"后按 gate_mode 完成 confirm 人工收口。
+18. 写作结果不得输出审核矩阵或二元放行结论；全目录完成后提示送审：加载 `h5-design-detail-review`，Gate 结论"可进入编码"后先用 `record-review detail` 留下当前 digest 的两次 clean review evidence，再按 gate_mode 完成 `confirm detail` 人工收口。
 
 ## App Router 生产基线（写作纪律）
 

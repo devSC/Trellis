@@ -1,6 +1,6 @@
 ---
 name: h5-design-overview-review
-description: 用于审核 H5（Next.js + React + TypeScript）概要设计文档，判定能否进入详细设计。先做 EX 前置判定（判轨/包骨架/需求准入/项目约定 C1~C5/机器 Gate），再按取证矩阵逐章审核：行为覆盖与粒度（BHV-NNN）、owner 归属与分层依赖律（route→server-component→data-access→domain-type 服务端链 / client-component→ui-component 交互链 / server-action→data-access）、架构总览人审视图六件套、Use Case 时序图策略闭合、技术决策承接（technology_decision_handoff）与凭证/合规策略、server-first 与 'use client' 最小化合规、私有数据获取边界、route 段约定与 metadata/SEO、样式隔离、错误边界、共享能力归属判定、七类 doc_type（server-component/client-component/data-access/route/ui-component/domain-type/server-action）承接索引完整性与 L2 豁免、跨章边连线一致性；先证据后结论，输出分级 findings（严重度/证据/最小修订）与互斥结论（前置失败 vs 通过），并以用户终端 confirm 作为 Gate 收口。规则唯一来源是 `.trellis/spec/harness/overview/` 的 L1 SSOT。
+description: 用于审核 H5（Next.js + React + TypeScript）概要设计文档，判定能否进入详细设计。先做 EX 前置判定（判轨/包骨架/需求准入/项目约定 C1~C5/机器 Gate），再按取证矩阵逐章审核：行为覆盖与粒度（BHV-NNN）、owner 归属与分层依赖律（route→server-component→data-access→domain-type 服务端链 / client-component→ui-component 交互链 / server-action→data-access）、架构总览人审视图六件套、Use Case 时序图策略闭合、技术决策承接（technology_decision_handoff）与凭证/合规策略、server-first 与 'use client' 最小化合规、私有数据获取边界、route 段约定与 metadata/SEO、样式隔离、错误边界、共享能力归属判定、七类 doc_type（server-component/client-component/data-access/route/ui-component/domain-type/server-action）承接索引完整性与 L2 豁免、跨章边连线一致性；先证据后结论，输出分级 findings（严重度/证据/最小修订）与互斥结论（前置失败 vs 通过），并输出 record-review 证据作为 Gate 收口。规则唯一来源是 `.trellis/spec/harness/overview/` 的 L1 SSOT。
 ---
 
 # H5 概要设计审核（Next.js）
@@ -125,18 +125,26 @@ description: 用于审核 H5（Next.js + React + TypeScript）概要设计文档
 ## 与官方 Trellis skill 及姊妹 skill 的边界
 
 - 与官方 `trellis-brainstorm`：那是需求 / 构想阶段产物；本 skill 不做需求方向评判，只审概要承接需求 P0/P1 的就绪度。需求缺陷一律回退需求阶段。
-- 与官方 `trellis-check`：`trellis-check` 是 Phase 2/3 的**代码质检**（实现是否符合规范）；本 skill 是 Phase 1 内的概要**人工 Gate 判定**（能否进入下一阶段），审核对象是设计文档而非代码，二者职责不重叠。
+- 与官方 `trellis-check`：`trellis-check` 是 Phase 2/3 的**代码质检**（实现是否符合规范）；本 skill 是 Phase 1 内的概要 **review evidence Gate**（用 `record-review overview` 记录能否进入下一阶段的 clean/findings 证据），审核对象是设计文档而非代码，二者职责不重叠。
 - 与 `h5-design-overview-writing`（设计写）：那一支**承接 prd 产出 design 章**（按行为枚举 → 归属 → 架构总览 → 技术决策 → 承接索引推进）；本 skill 是其下游门禁，**审而不写**——只给证据、影响与最小修订，不代写正文。
 - 与 `h5-design-detail-review`：本 skill 的「可进入详细设计」结论是详细阶段的入口前提；详细审核（render/interactive/data 三元组 L2 与四类 pending 八问）是另一支 skill 的职责。
 
-## Gate 收口（人工确认）
+## Review Evidence 收口
 
-结论为「可进入详细设计」（或带明确假设可进入且假设已记录）时，按 config `guru.gate_mode` 完成人工收口（通道主定义见 workflow Trellis System 节）：
+结论为「可进入详细设计」或「带明确假设可进入」时，不请求用户确认 overview。必须输出可执行的 review evidence 记录命令：
 
-- **strict（默认）**：提请**用户本人**在终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm`；agent 不得代跑（无 TTY 会被拒）。
-- **soft**：用户在对话中明确确认后，agent 运行 `python3 .trellis/scripts/guru/guru_gate.py confirm overview <task_dir> --via-agent --user-quote "<用户确认原话>"` 代跑（记录留痕标注 soft/agent）；未获用户本轮明确确认不得执行。
+```bash
+python3 .trellis/scripts/guru/guru_gate.py record-review overview <task_dir> \
+  --result clean \
+  --max-severity low \
+  --reviewer clean-context \
+  --run-id <fresh-run-id> \
+  --evidence "<本次 overview review 证据摘要>"
+```
 
-确认未落盘前不得进入详细设计。
+若存在 medium+ finding，必须输出 `--result findings --max-severity medium|high|critical --finding-class REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT`，并停止进入下一阶段。
+
+当前 digest 下两个不同 `run_id` 的 clean review 记录后，overview 自动通过；`confirm overview` 禁止。
 
 ## 参考资料
 

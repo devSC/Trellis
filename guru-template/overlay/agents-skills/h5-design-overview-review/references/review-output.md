@@ -126,18 +126,13 @@
 - `不可进入`：存在 ≥1 条 P0/P1，列阻塞 P1 清单 + 修订形态建议（局部修订 / 文档级重构，按 L1 §9）。
 - 发现上游需求缺陷（行为缺失/矛盾/范围漂移）→ 在结论中标注「回退需求阶段」，不在概要补造业务规则。
 
-### 8. Gate 收口指引（结论为「可进入 / 带假设可进入」时必须输出）
-
-按 config `guru.gate_mode` 输出对应通道（见 SKILL.md「Gate 收口」节）：
+### 8. Review Evidence 收口指引（结论为「可进入 / 带假设可进入」时必须输出）
 
 ```markdown
-**strict（默认）**：请用户本人在终端运行（agent 不得代跑，无 TTY 会被拒）：
-python3 .trellis/scripts/guru/guru_gate.py confirm
+记录本次 clean review（使用新的 run_id）：
+python3 .trellis/scripts/guru/guru_gate.py record-review overview <task_dir> --result clean --max-severity low --reviewer clean-context --run-id <fresh-run-id> --evidence "<本次概要审核证据摘要>"
 
-**soft**：用户在对话中明确确认后，agent 运行：
-python3 .trellis/scripts/guru/guru_gate.py confirm overview <task_dir> --via-agent --user-quote "<用户确认原话>"
-
-确认落盘前不得进入详细设计。
+当前 digest 下两个不同 run_id 的 clean review 后，overview 自动通过；不要运行 confirm overview。
 ```
 
 ## 复审闭环

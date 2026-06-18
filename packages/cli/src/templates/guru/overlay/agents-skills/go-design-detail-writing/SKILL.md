@@ -10,7 +10,7 @@ description: 用于把 Go monorepo 后端概要设计展开为可编码合同（
 > 职责边界（与官方 trellis 工具区分，避免越权）：
 > - 本 skill = **设计写**：承接 prd（`### BHV-NNN`）与概要承接索引产出 design 详细章正文（`chapters/<slug>.md` 或 light 链 `design.md §详细`），只做执行编排与正文落地。
 > - **`trellis-brainstorm`**（官方）：在写作之前做需求/方案发散与收敛，产出概要可承接的 owner、技术决策、scope；本 skill 不发散方案、不替它拍板归属。
-> - **设计审 = 人工 Gate**（`go-design-detail-review` + `guru_gate.py confirm`）：详细设计写完后由审核 skill 判定**能否进入编码下一阶段**（互斥三选一结论 + 终端 confirm 收口），是阶段间的人工放行闸门。本 skill 不出放行结论，写完即转送审。
+> - **设计审 = review evidence + detail 人工确认 Gate**（`go-design-detail-review` + `guru_gate.py record-review detail` + `guru_gate.py confirm detail`）：详细设计写完后由审核 skill 判定**能否进入编码下一阶段**（互斥三选一结论 + 两次 clean review evidence + 终端 confirm detail 收口），是阶段间的人工放行闸门。本 skill 不出放行结论，写完即转送审。
 > - **`trellis-check`**（官方）：是**实现后的代码质检**（编译/vet/lint/test/合规证据），口径是「已写的代码对不对」；本 skill 是「编码前的设计合同对不对」，二者阶段不同、对象不同，互不替代。
 
 ## 目标
@@ -62,7 +62,7 @@ description: 用于把 Go monorepo 后端概要设计展开为可编码合同（
 - **WX-1 输入键完整**：task.json 含 `guru_chain` 与（full 链）`design_package`；缺失 → 执行级错误，提示补判轨。
 - **WX-2 路径边界**：`design_package` 目录存在且 `chapters/` 已存在；目标文件名均落在 `chapters/` 内（词法检查，**不自动创建缺失目录**——缺 `chapters/` 属概要骨架缺口）。
 - **WX-3 承接索引**：design-main 第 6 章承接索引存在、非空，可建立完整非空的 `chapter_target → detail_doc_type` 映射（每条有 doc_type 与目标文件名）；缺失/为空 → **硬阻断，回退概要**。
-- **WX-4 概要 Gate 已确认**：`python3 .trellis/scripts/guru/guru_gate.py status` 显示 overview 已人工确认；未确认 → 停止，提示先完成概要 Gate 收口。
+- **WX-4 概要 review evidence 已达标**：`python3 .trellis/scripts/guru/guru_gate.py status` 显示 overview 当前 digest 已有两个不同 `run_id` 的 clean review；未达标 → 停止，提示先运行概要 review 并用 `record-review overview` 留痕。
 - **WX-5 项目约定就绪**：`project-conventions.md` 的 C1~C5 已通过且本批引用的 `SLOT-NN` 槽位均非「待定」（命中待定槽位会改变本批合同取值时 → 停止，先定槽位；不在详细阶段拍板未选定槽位如 ORM/鉴权/驱动）。
 - **WX-6 承接源状态**：本批引用的 `technology_decision_handoff[]` 条目均为「选定」（未选定 → 回退概要，禁止详细拍板）；命中 `external` 类型时，provider/external owner、SDK/client、调用模式、runtime profile、credential strategy、异步生命周期、成本/限流/SLA 驱动来源必须均来自概要已落盘的技术决策，缺一即回退概要、禁止本地补造；本批命中 pending L2 的 doc_type 均有 `L2豁免：<doc_type> 理由：…` 声明（无豁免 → 停止，提示先补 L2 或写豁免）。
 
@@ -112,7 +112,7 @@ light 链执行 WX-3/WX-4/WX-5/WX-6 的等价检查（索引在 `design.md §概
 9. 涉鉴权 / secret / 外部 provider / PII / 跨服务契约的单元必须落合规依据与边界：secret 只写 `api_key_env_name`/`credential_ref` 引用，正文/yaml/测试 fixture 均不得出现真实 key/AK/SK/token/私钥/`secret_value`（出现即 P1）；跨服务结构体只走 `packages/contracts/`，不在 `internal/` 私自定义；不写制裁地区域名、私有 API、动态执行类设计。
 10. 辅助文本中文优先；英文仅限代码标识符、命令、路径、协议字段、框架/库名（`net/http`、`lib/pq`）、缩写（HMAC-SHA256）与原文引用。
 11. 中断升级仅限四种情形：概要源缺失 / 业务语义必须人工确认 / 技术决策（含 `external` provider/SDK）未选定或槽位待定 / 修复无法收敛（同一 finding 修 2 轮仍不收敛）；其余情况自动闭环推进，不停下等用户人工 review。
-12. 全目录完成后提示送审：加载 `go-design-detail-review`（人工 Gate 判定能否进入编码，区别于 `trellis-check` 的实现后代码质检）；Gate 结论「可进入编码」后按 config `guru.gate_mode` 完成 confirm 人工收口——strict 由用户本人在终端跑 `guru_gate.py confirm`（agent 不得代跑），soft 在用户对话明确确认后按 `--via-agent --user-quote` 代跑。
+12. 全目录完成后提示送审：加载 `go-design-detail-review`（人工 Gate 判定能否进入编码，区别于 `trellis-check` 的实现后代码质检）；Gate 结论「可进入编码」后先用 `record-review detail` 留下当前 digest 的两次 clean review evidence，再按 config `guru.gate_mode` 完成 `confirm detail` 人工收口——strict 由用户本人在终端跑 `guru_gate.py confirm detail <task_dir>`（agent 不得代跑），soft 在用户对话明确确认后按 `--via-agent --user-quote` 代跑。
 
 ## 输出要求（writing 专属）
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# PostToolUse(Write|Edit|MultiEdit)：prd/归属表草稿"成形"后自动提示加载 design-grill 拷问。
-# 平台旧名 skill 仅保留为 design-grill wrapper。
+# PostToolUse(Write|Edit|MultiEdit)：prd/归属表草稿"成形"后提示 Domain Grill / review evidence 下一步。
+# 平台旧名 skill 仅保留为 legacy wrapper，不再作为新 Gate 前置。
 # 成形判定 = guru_gate 对应结构检查通过（半成品不打扰）；.grill-nudged-<artifact> 标记仅用于提示幂等
-#（只提示一次，删除标记可重新触发）。真正的 grill 完成状态只由 guru_gate.py grill-done/skip 写入 task.json。
+#（只提示一次，删除标记可重新触发）。真正 Gate 状态以 confirm 快照与 review_runs 为准。
 # exit 2 的 stderr 会反馈给 agent（PostToolUse 不阻塞已完成的写入）。
 INPUT=$(cat)
 FP=$(printf '%s' "$INPUT" | grep -oE '"file_path"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed 's/.*:[[:space:]]*"//; s/"$//')
@@ -22,7 +22,11 @@ GATE=".trellis/scripts/guru/guru_gate.py"
 [ -f "$GATE" ] || exit 0
 if python3 "$GATE" "$KIND" "$TASK_DIR" >/dev/null 2>&1; then
   touch "$MARK"
-  echo "📋 ${ART}.md 已通过结构检查（${KIND} Gate 口径）。按 workflow：送审前先加载 design-grill 拷问——对照 golden-path/项目约定/既有 BHV 磨术语、压测边界场景，决策当场固化进产物；拷问后再走对应 review 提交人工 Gate。（本提示仅一次；删除 $MARK 可重新触发）" >&2
+  if [ "$ART" = "prd" ]; then
+    echo "📋 prd.md 已通过结构检查。按 workflow：先在需求发现内完成 Domain Grill（术语、边界、当前代码事实 vs 用户意图），再由用户确认 requirements。（本提示仅一次；删除 $MARK 可重新触发）" >&2
+  else
+    echo "📋 design.md 已通过结构检查。按 workflow：运行 guru_supervise.py overview/detail 或对应 review skill 写入 record-review；overview 不走 confirm，detail 双 clean 后再等用户确认。（本提示仅一次；删除 $MARK 可重新触发）" >&2
+  fi
   exit 2
 fi
 exit 0

@@ -12,7 +12,7 @@
 - P2 通用 golden-path 可读。
 - P3 目标仓库 `project-conventions.md` 可读且校验通过（C1~C5）。
 - P4 概要主定义可定位（full 链=`design_package/design-main.md`；light 链=`design.md` §1），且承接索引存在、可建立完整非空的 `chapter_target → detail_doc_type` 目标集合。**索引缺失/为空 → 回退概要阶段，禁止在详细阶段补造归属。**
-- P5 概要 Gate 已过且人工确认已落盘（`guru_gate.py status` 可查 overview 确认）；未确认不得开始详细写作。
+- P5 概要 Gate 已过且当前 digest 下已有两个不同 run-id 的 clean review evidence（`guru_gate.py status` 可查 overview review）；缺 evidence 不得开始详细写作。
 
 ## 2. 九类 detail_doc_type
 

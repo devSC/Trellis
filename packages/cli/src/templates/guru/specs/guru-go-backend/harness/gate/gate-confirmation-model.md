@@ -1,102 +1,179 @@
 # Gate 确认模型 - SSOT
 
-> 本文件是 Guru planning 阶段人工 Gate 的确认模型单一来源。workflow 只保留流程摘要与命令入口；`guru_gate.py` 只实现本文定义的结构底线与留痕口径。
+> 本文件是 Guru planning 阶段 Gate 模型的单一来源。workflow 只保留流程摘要与命令入口；`guru_gate.py` 实现本文定义的结构底线、review 证据与人工确认快照。
 
 ## 1. 适用范围
 
-本文覆盖从 planning 进入 implementation 前的三道人工 Gate：
+本文覆盖从 planning 进入 implementation 前的 Guru Gate：
 
-- `requirements` - 需求 Gate。
-- `overview` - 概要设计 Gate。
-- `detail` - 详细设计 Gate。
+- `requirements` - 需求 Gate：结构检查 + 需求发现/Domain Grill + 用户确认。
+- `overview` - 概要设计 Gate：结构检查 + 当前 digest 下两次 clean review，自动通过，不需要用户确认。
+- `detail` - 详细设计 Gate：结构检查 + 当前 digest 下两次 clean review，随后用户确认。
 
-实现 Gate、代码质量检查、测试证据和 commit 前审核属于实现/审核阶段，由 implementation trace 合同、平台 golden-path、实现 review skill 与 `trellis-check` 承载。
+实现 Gate、代码质量检查、测试证据和 commit 前审核属于实现/审核阶段，由 implementation trace 合同、平台 golden-path、实现 review skill、`guru_supervise.py implement-check` 与 `trellis-check` 承载。
 
-## 2. 三类检查的边界
+## 2. 机制边界
 
 | 机制 | 作用 | 可否替代其他机制 |
 |------|------|------------------|
-| 结构 Gate | `guru_gate.py requirements/overview/detail` 复查产物结构、编号纪律、引用闭合与最低可机检条件。 | 不替代 review 或用户确认。 |
-| design-grill | Gate 前对抗式拷问，磨尖术语、owner、边界、失败路径和红线，确认后把决策回写产物。 | 不替代结构 Gate、review 或 confirm。 |
-| confirm | 用户确认当前阶段产物可以作为下一阶段输入，并写入 `task.json` 的 `guru_gates` 快照。 | 不替代结构 Gate 或 design-grill。 |
+| 结构 Gate | `guru_gate.py requirements/overview/detail` 复查产物结构、编号纪律、引用闭合与最低可机检条件。 | 不替代语义 review 或用户确认。 |
+| Domain Grill | 需求发现阶段的对抗式领域拷问，磨尖术语、边界、失败路径、状态/owner 和红线，并把已确认决策回写需求产物或长期知识。 | 不替代结构 Gate，不单独作为 post-draft Gate。 |
+| review evidence | overview/detail review worker 把当前 artifact digest 下的 clean/findings 结果写入 `task.json.guru_gates.review_runs`。 | 不替代 requirements/detail 的人工确认。 |
+| confirm | 用户确认 requirements 或 detail 当前产物可以作为后续输入，并写入确认快照。 | 不替代结构 Gate 或 review evidence。 |
 
-完整跃迁顺序固定为：
+完整 planning 跃迁顺序：
 
 ```text
-writing -> review -> grill policy -> guru_gate.py confirm
+requirements writing/review + Domain Grill -> guru_gate.py confirm requirements
+overview writing -> overview review/fix loop -> two clean current-digest reviews -> auto pass
+detail writing -> detail review/fix loop -> two clean current-digest reviews -> guru_gate.py confirm detail
 ```
 
-## 3. 为什么三道 Gate 独立
+`confirm overview` 不是正常路径，必须失败并提示改用 `record-review overview`。
 
-`requirements`、`overview`、`detail` 的决策对象不同，不能用一次确认覆盖全部阶段：
+## 3. 人工确认边界
 
-- 需求 Gate 确认用户可感知行为、失败路径和验收口径是否已定。
-- 概要 Gate 确认 owner 归属、架构边界、分层依赖和详细设计承接索引是否已定。
-- 详细 Gate 确认可编码合同、测试映射、不得补造清单和实现切片是否已定。
+Guru planning 只保留两个阶段性人工确认：
 
-因此三道 Gate 必须分别记录 grill 凭据与 `confirm`。`requirements` 必须是 `grill-done`；`overview` / `detail` 只有在 low-risk 非 full 策略下才允许 `grill-skip`。缺任一阶段有效凭据时，不得 `task.py start`。
+- `requirements`：确认用户可感知行为、失败路径、验收口径、术语和产品边界已定。
+- `detail`：在 overview/detail 都已有当前 digest 双 clean review 后，确认可编码合同、测试映射、不得补造清单和实现切片已定。
+
+硬边界确认另行存在：commit、archive、finish-work、publish、外部系统写入和其他不可逆操作仍必须等待用户明确确认。
 
 ## 4. Gate 覆盖范围
 
-| Gate | 完成命令 | 确认快照覆盖范围 | 决策含义 |
-|------|----------|------------------|----------|
-| `requirements` | `guru_gate.py grill-done requirements <task_dir>` + `guru_gate.py confirm requirements <task_dir>` | `prd.md` | 需求行为、失败路径、验收口径已定；不允许 skip。 |
-| `overview` | required 时 `grill-done overview`；skippable 时可 `grill-skip overview --user-quote "<理由>"`；随后 `confirm overview` | `prd.md` + `design_package/README.md` + `design_package/design-main.md`；light 链为 `prd.md` + `design.md` | owner、架构归属、技术决策承接和详细设计索引已定。 |
-| `detail` | required 时 `grill-done detail`；skippable 时可 `grill-skip detail --user-quote "<理由>"`；随后 `confirm detail` | overview 覆盖范围 + `design_package/chapters/*.md` + `implement.md`；light 链为 `prd.md` + `design.md` + `implement.md` | 可编码合同、测试映射、不得补造清单和实现切片已定。 |
+| Gate | 完成条件 | artifact digest 覆盖范围 | 决策含义 |
+|------|----------|--------------------------|----------|
+| `requirements` | `guru_gate.py requirements <task_dir>` 通过 + `guru_gate.py confirm requirements <task_dir>` | `prd.md` | 需求行为、失败路径、验收口径、术语边界已定。 |
+| `overview` | `guru_gate.py overview <task_dir>` 通过 + 两个不同 `run_id` 的当前 digest clean review | `prd.md` + `design_package/README.md` + `design_package/design-main.md`；light 链为 `prd.md` + `design.md` | owner、架构归属、技术决策承接和详细设计索引已定。 |
+| `detail` | `guru_gate.py detail <task_dir>` 通过 + 两个不同 `run_id` 的当前 digest clean review + `guru_gate.py confirm detail <task_dir>` | overview 覆盖范围 + `design_package/chapters/*.md` + `implement.md`；light 链为 `prd.md` + `design.md` + `implement.md` | 可编码合同、测试映射、不得补造清单和实现切片已定。 |
 
-## 5. 累积 digest 规则
+## 5. Digest 与失效规则
 
-确认快照按阶段累积：下游阶段包含上游产物。
+确认快照与 review 证据都绑定 artifact digest。
 
 规则：
 
 - `requirements` digest 只覆盖需求产物。
 - `overview` digest 覆盖需求产物和概要主定义。
 - `detail` digest 覆盖需求产物、概要主定义、详细设计和实现计划。
+- 当前产物 digest 改变后，旧 review 记录和确认快照只作为历史证据，不再放行当前 Gate。
+- clean streak 必须从当前 digest 的 review_runs 重放计算；不得信任手写的 `clean_streak`、`auto_passed` 或聊天结论。
 
-这样可以防止上游产物在下游确认后被改动而仍然进入实现。若 `prd.md` 在 overview/detail 确认后发生变更，overview/detail 的确认快照会失配；若 `design-main.md` 或 `design.md` 概要部分发生变更，detail 的确认快照会失配。
+失配时回到最早失配阶段。需求变更会使 overview/detail review 证据和 detail 确认失效；概要变更会使 detail review 证据和 detail 确认失效。
 
-失配时必须回到最早失配阶段，重新完成必要的 review、design-grill 和 confirm。
+## 6. Review Evidence 模型
 
-## 6. design-grill 策略
+overview/detail review evidence 存在 `task.json.guru_gates.review_runs`：
 
-`requirements` 阶段必须运行 `design-grill`，只能用 `guru_gate.py grill-done requirements <task_dir>` 记录完成；`grill-skip requirements` 必须被拒绝。
+```json
+{
+  "guru_gates": {
+    "requirements": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-06-18T00:00:00+08:00",
+      "artifact_digest": "<requirements digest>"
+    },
+    "detail": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-06-18T00:30:00+08:00",
+      "artifact_digest": "<detail digest>"
+    },
+    "review_runs": {
+      "overview": [
+        {
+          "run_id": "overview-20260618-a",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-06-18T00:10:00+08:00",
+          "artifact_digest": "<overview digest>",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "overview review found no medium+ issues"
+        }
+      ],
+      "detail": [
+        {
+          "run_id": "detail-20260618-a",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-06-18T00:20:00+08:00",
+          "artifact_digest": "<detail digest>",
+          "result": "findings",
+          "max_severity": "medium",
+          "finding_class": "DETAIL_DEFECT",
+          "evidence": "UNIT test mapping missing for BHV-002"
+        }
+      ]
+    }
+  }
+}
+```
 
-`overview` / `detail` 采用 full/high-risk 触发策略：
+命令：
 
-- `task.json guru_chain=full`：必须运行 `design-grill`，不允许 skip。
-- `risk_level=high` 或 `guru_risk.high_risk=true`：必须运行 `design-grill`，不允许 skip。
-- `risk_level` 缺失或无法判定：按保守策略视为 required，必须运行 `design-grill`。
-- 只有 `guru_chain=light` 且显式 `risk_level=low`（或 `guru_risk.low_risk=true`）时，`overview` / `detail` 才是 skippable。
+```bash
+python3 .trellis/scripts/guru/guru_gate.py record-review overview <task_dir> \
+  --result clean \
+  --max-severity low \
+  --reviewer clean-context \
+  --run-id overview-review-20260618-a \
+  --evidence "no medium+ overview findings"
+```
 
-low-risk skip 不是聊天口头豁免，必须由 `guru_gate.py grill-skip <overview|detail> <task_dir> --user-quote "<跳过理由>"` 写入 `task.json`，记录当时的 `policy`、`guru_chain`、`risk_level`、理由与 digest。若后续任务改为 full/high/unknown，既有 skip 凭据失效，必须重新 `grill-done` 或重新合法 skip。
+规则：
 
-## 7. grill-done、grill-skip 与 confirm
+- `record-review` 只支持 `overview` 和 `detail`；不得添加 requirements clean streak。
+- `clean` 只允许 `max_severity=none|low`，且不得写 `finding_class`。
+- `findings` 必须是 `max_severity=medium|high|critical`，且必须写 `finding_class`。
+- `finding_class` 只用于路由：`REQ_BLOCKER`、`OVERVIEW_DEFECT`、`DETAIL_DEFECT`、`IMPLEMENT_DEFECT`、`PROCESS_DEFECT`。
+- 两次 clean 必须来自当前 digest 下两个不同 `run_id`。
+- medium+ findings 会打断当前 clean streak；后续需要重新得到两个不同 run-id 的 clean。
 
-`design-grill` policy 是 confirm 的硬前置。结构 Gate 通过后、confirm 前必须满足下列条件之一：
+## 7. Automation Driver
 
-- `grill-done <gate>` - 当前 gate 已运行 design-grill，并写入当前阶段 digest。
-- `grill-skip overview|detail --user-quote "<跳过理由>"` - 仅 low-risk 非 full 策略下合法，写入理由与当前阶段 digest。
+planning 阶段使用 `guru_supervise.py` 的最小 channel 驱动，不引入新 task status、队列、数据库或调度器。
 
-无效凭据：
+```bash
+python3 .trellis/scripts/guru/guru_supervise.py overview <task_dir>
+python3 .trellis/scripts/guru/guru_supervise.py detail <task_dir>
+```
 
-- 聊天中说“已确认”。
-- Design Grill Packet 文本。
-- review skill 的“可进入下一阶段”结论。
-- 手写 `.grilled-*`、`.grill-nudged-*` 或直接编辑 marker。
+stop conditions：
 
-`confirm <gate>` 只在对应 gate 的 grill 凭据有效时才允许写入确认快照。grill digest、grill policy 或 confirm artifact digest 失配时，需要重新 `grill-done` / 合法 `grill-skip` 并重新 confirm。
+- `REQ_BLOCKER`：回到 requirements；下游证据不得视为当前。
+- `OVERVIEW_DEFECT`：修复 overview 产物并重新 review。
+- `DETAIL_DEFECT`：修复 detail 产物并重新 review。
+- `PROCESS_DEFECT`：修复受影响流程产物并重新 review。
+- 当前 digest 两个 clean review：overview 自动通过；detail 停下等待用户确认。
+- 工具失败、timeout、killed：向主会话暴露 blocker。
 
-## 8. strict 与 soft
+实现阶段使用：
 
-`guru.gate_mode` 控制人工 Gate 写入通道：
+```bash
+python3 .trellis/scripts/guru/guru_supervise.py implement-check <task_dir>
+```
 
-- `strict`：默认模式。用户本人在交互式终端运行 `guru_gate.py grill-done` / `grill-skip` / `confirm`；agent 不得代跑。
+它复用实现 writing skill 与实现 review skill，干净后停在最终验证和 hard-boundary confirmation，不写新的 implementation `guru_gates`。
+
+## 8. Legacy design-grill 兼容
+
+旧 `grill-done` / `grill-skip` 命令可以保留，用来读取或记录历史项目的兼容审计信息。但在新模型下：
+
+- overview/detail 的放行不得依赖旧 grill 记录。
+- 旧 grill 记录不得 unblock 或 block `guru_gate.py auto` / `guru_gate.py check`。
+- `status` 可以把旧 grill 状态显示为 legacy context，但下一步提示必须以 requirements confirm、review_runs、detail confirm 为准。
+
+Domain Grill 的长期位置是需求发现阶段，而不是 overview/detail 之后的额外 Gate。
+
+## 9. strict 与 soft
+
+`guru.gate_mode` 控制人工确认写入通道：
+
+- `strict`：默认模式。用户本人在交互式终端运行 `guru_gate.py confirm requirements|detail`；agent 不得代跑。
 - `soft`：用户在本轮对话中明确确认后，agent 可以用 `--via-agent --user-quote "<用户确认原话>"` 代跑，并在 `task.json` 留审计痕迹。
 
-无论 strict 还是 soft，结构 Gate 复跑、grill digest、confirm artifact digest、`task.py start` 前的 `guru_gate.py check` 都必须生效。
+无论 strict 还是 soft，结构 Gate 复跑、review digest、confirm artifact digest、`task.py start` 前的 `guru_gate.py check` 都必须生效。
 
-## 9. 失配恢复流程
+## 10. 失配恢复流程
 
 先查看状态：
 
@@ -107,10 +184,11 @@ python3 .trellis/scripts/guru/guru_gate.py status <task_dir>
 按最早缺口恢复：
 
 1. 缺结构产物或结构 Gate 不通过：回到对应 writing/review 阶段修产物。
-2. 缺 grill 凭据：requirements/full/high/unknown 运行 `grill-done <gate>`；仅 low-risk 非 full 的 overview/detail 可运行 `grill-skip <gate> --user-quote "<理由>"`。
-3. grill digest 或 policy 失配：说明产物或风险策略在 grill 后改过，重新 design-grill 或重新记录合法 skip。
-4. confirm 快照失配：说明产物在 confirm 后改过，重新 confirm；若改动影响语义，先重新 review 与 design-grill。
-5. 三道 Gate 均有效后，运行 `guru_gate.py check <task_dir>`，通过后才允许 `task.py start`。
+2. 需求未确认或需求确认快照失配：重新复核需求并运行 `confirm requirements`。
+3. overview 缺当前 digest 双 clean：运行 `guru_supervise.py overview <task_dir>` 或继续 overview review/fix loop。
+4. detail 缺当前 digest 双 clean：运行 `guru_supervise.py detail <task_dir>` 或继续 detail review/fix loop。
+5. detail 未确认或确认快照失配：双 clean 后重新运行 `confirm detail`。
+6. `guru_gate.py check <task_dir>` 通过后才允许 `task.py start`。
 
 最终检查：
 

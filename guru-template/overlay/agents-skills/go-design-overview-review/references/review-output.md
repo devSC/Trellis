@@ -148,18 +148,13 @@ light 链：系统边界图 / 时序图策略表无外部依赖/无异步时标 
 - `带明确假设可进入`：仅余已落盘的显式假设，无 P0/P1——逐条列假设、依据、影响范围、验证时点。
 - `不可进入`：存在 ≥1 条 P1——列阻塞 P1 清单 + 修订形态建议（局部修订 / 文档级重构，按 L1 §8）；需求层缺陷标注「回退需求阶段」。
 
-### 9. Gate 收口指引（结论为可进入 / 带假设可进入时必须输出）
-
-按 config `guru.gate_mode` 二选一（通道主定义见 workflow Trellis System 节）：
+### 9. Review Evidence 收口指引（结论为可进入 / 带假设可进入时必须输出）
 
 ```markdown
-strict（默认）：请用户本人在终端运行（agent 不得代跑，无 TTY 会被拒）：
-python3 .trellis/scripts/guru/guru_gate.py confirm
+记录本次 clean review（使用新的 run_id）：
+python3 .trellis/scripts/guru/guru_gate.py record-review overview <task_dir> --result clean --max-severity low --reviewer clean-context --run-id <fresh-run-id> --evidence "<本次概要审核证据摘要>"
 
-soft（用户本轮已明确确认时）：
-python3 .trellis/scripts/guru/guru_gate.py confirm overview <task_dir> --via-agent --user-quote "<用户确认原话>"
-
-确认落盘后方可进入详细设计；未获用户本轮明确确认不得执行 soft 代跑。
+当前 digest 下两个不同 run_id 的 clean review 后，overview 自动通过；不要运行 confirm overview。
 ```
 
 ## 复审闭环

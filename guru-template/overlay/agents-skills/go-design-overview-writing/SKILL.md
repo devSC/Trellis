@@ -24,9 +24,9 @@ description: 用于撰写 Go monorepo 后端（典型形态：net/http ServeMux 
 本 skill 是「设计**写**」——承接 `prd.md` 产出，生成概要 design 章（行为归属 + 架构总览 + 承接索引）。它与下列两个独立环节职责不重叠、不互相替代：
 
 - **vs `trellis-brainstorm`（需求/构思阶段）**：brainstorm 负责把模糊意图收敛成 `prd.md` 的 `BHV-NNN` 行为规格、P0/P1 核心能力、失败路径与验收场景。本 skill **消费** prd，不生成 prd，不补造业务规则——prd 缺失或核心能力不可定位时只能产草稿并记显式假设，不得凭空生成 P0/P1。
-- **vs 设计**审**（人工 Gate）**：写完后由配套的 `go-design-overview-review` skill 做**人工 Gate 判定**——「这份概要能否进入下一阶段（详细设计）」，判的是归属是否正确、是否违反分层依赖律、架构视图是否就绪、承接索引是否闭合。这是结构性/语义性判定。
+- **vs 设计**审**（review evidence Gate）**：写完后由配套的 `go-design-overview-review` skill 做 clean-context review，并用 `record-review overview` 写入当前 digest 的 clean/findings 证据；两个不同 `run_id` 的 clean review 后才可进入下一阶段（详细设计）。判的是归属是否正确、是否违反分层依赖律、架构视图是否就绪、承接索引是否闭合。
 - **vs `trellis-check`（代码质检）**：`trellis-check`（对应 `guru_gate.py` 实现/审核 Gate）查的是**代码层**质量——`go build` / `go vet` / `golangci-lint` / `go test` 证据、secret 合规、存量违例豁免。本 skill 不产代码、不跑质检，概要阶段不输出任何编译/测试证据。
-- 一句话定位：**brainstorm 定「做什么」→ 本 skill 概要定「分给谁、边界在哪、谁承接展开」→ review 人工判「能否进详细」→ 详细写「可编码合同」→ trellis-check 判「代码达标」**。本 skill 只占第二格，越界即停。
+- 一句话定位：**brainstorm 定「做什么」→ 本 skill 概要定「分给谁、边界在哪、谁承接展开」→ overview review evidence 判「能否进详细」→ 详细写「可编码合同」→ trellis-check 判「代码达标」**。本 skill 只占第二格，越界即停。
 
 ## 最小输入与自动补全
 
@@ -82,7 +82,7 @@ description: 用于撰写 Go monorepo 后端（典型形态：net/http ServeMux 
 14. UC 与行为双向回指：每条 `BHV-NNN` 回指 ≥1 个 UC；UC 承接表 `bhv_refs` 与行为集合双向核对，不留孤儿行为、不留空 UC。
 15. 阶段 9 自检按 L1 §6 G1~G8 逐项输出（满足/缺口 + 闭合计划），full 链写成 `design-main` 的「架构就绪自检」章节；存在未闭合 G 项不得送审，不得用概括性「基本满足」替代逐项证据。
 16. 产物语言：辅助性正文一律中文；英文仅限代码标识符、命令、路径、协议字段（如 `application_account_id`）、框架/库名（`net/http`、`lib/pq`）、缩写（HMAC-SHA256）与原文引用。
-17. 完稿后提示送审：加载 `go-design-overview-review` 过概要 Gate；Gate 结论「可进入」后按 gate_mode 完成人工收口（人工 Gate 判「能否进详细」，区别于 `trellis-check` 代码质检——见上「职责边界」节）。
+17. 完稿后提示送审：加载 `go-design-overview-review` 做 clean-context review；review worker 用 `guru_gate.py record-review overview <task_dir> ...` 记录证据。当前 digest 下两个不同 `run_id` 的 clean review 后 overview 自动通过并进入详细设计；不要运行 `confirm overview`，也不要做任何 overview 人工收口。
 
 ## Go 详细 doc_type 七分类（承接索引取值）
 
@@ -136,7 +136,7 @@ description: 用于撰写 Go monorepo 后端（典型形态：net/http ServeMux 
   - `承接索引状态`（owner + 横切覆盖率；full 链逐文件 `chapters/<slug>.md` 清单；doc_type 分布；pending L2 命中与 `L2豁免`/补 L2 计划）
   - `架构就绪结论`（仅阶段 9 或全稿完成时输出 G1~G8 逐项 满足/缺口；草稿阶段只说明不可送审原因）
   - `需用户确认项`（若有）
-- 完稿输出末尾给出送审与人工确认指引（规则 17）：加载 `go-design-overview-review` 过概要 Gate；提示该 Gate 是人工判「能否进详细」，区别于 `trellis-check` 代码质检。
+- 完稿输出末尾给出送审与 review evidence 指引（规则 17）：加载 `go-design-overview-review` 过概要 Gate；由 review worker 用 `record-review overview` 记录当前 digest 的 clean/findings 证据，区别于 `trellis-check` 代码质检。
 
 ## 参考资料
 

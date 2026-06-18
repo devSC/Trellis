@@ -34,7 +34,7 @@
 | 实现 | Swift 代码 + `implement.md`（trace 四节）/ 同 | `.trellis/spec/guides/golden-path.md` + `.trellis/spec/harness/implementation/implementation-trace-contract.md`（追踪合同：trace 四节）+ `.trellis/spec/harness/implementation/implementation-ios-standard.md`（L1 编码标准：golden-path 锁定项 LOCK-1~7 / doc_type 权威七类 / 可编码合同八问基线）。两文件职责分工：**trace-contract = 追踪合同**（钉 `implement.md` 四节骨架与切片挂 `UNIT` 编号）；**ios-standard = 编码标准与审核基线**（钉 LOCK 锁定项、合同八问、实现 Gate 与存量豁免口径），同源被代码编写与实现审核引用 |
 | 审核 / 复盘 | findings + spec 回写 / 同 | 各 SSOT 审核基线章节 + `.trellis/spec/harness/extraction-template.md` |
 
-人工 Gate、design-grill 凭据、confirm 快照、累积 digest 与失配恢复流程见 `.trellis/spec/harness/gate/gate-confirmation-model.md`。摘要：requirements 必跑 `design-grill`；overview/detail 在 full/high-risk/unknown 时必跑，只有 low-risk 非 full 可由 `guru_gate.py grill-skip` 留痕跳过。
+Guru Gate、review_runs 证据、confirm 快照、累积 digest 与失配恢复流程见 `.trellis/spec/harness/gate/gate-confirmation-model.md`。摘要：requirements 结构通过后由用户确认；overview/detail 由当前 digest 下两个不同 run-id 的 clean review 记录驱动；detail 双 clean 后再由用户确认。
 
 > 装载约定：所有阶段文件以 **安装后路径** `.trellis/spec/harness/*` 与 `.trellis/spec/guides/golden-path.md` 装载并写入 jsonl；不要引用模板仓库内的源路径。
 

@@ -62,7 +62,7 @@ UI 框架（SwiftUI 主 + RxSwift 遗留 → 纯 SwiftUI）、网络层（URLSes
 - **vs `trellis-check`（代码质检）**：`trellis-check`（对应实现/审核 Gate）查的是**代码层**质量——`xcodebuild` / SwiftLint / `xcodebuild test`（XCTest 或迁移后的 Quick/Nimble）证据、secret 合规、存量违例豁免。本 skill **不做代码质检**：不产 Swift 代码（只到方法签名 / `struct`/`enum`/`protocol` 声明级），不跑构建测试，详细阶段不输出任何编译/测试证据，只写「哪些测试验证它」的测试映射合同（八问之 7）。
 - **vs `ios-design-detail-review`（姊妹 skill，写侧 vs 审侧）**：本 skill 是**写侧**——生成 `chapters/<slug>.md` 合同正文并做批内自动审修闭环（自检不替代 Gate）。`ios-design-detail-review` 是**审侧**——做 Phase 1 详细 Gate 的人工判定「能否进入实现编码」，给分级 finding 与三选一结论，**审而不写**。两者共享同一组 SSOT（L1 `detail-structure-single-source.md` + v1 三类 L2 + golden-path + project-conventions），本 skill 只产正文与自检证据，最终放行结论由 review skill 出、由用户终端 confirm 收口。
 - **vs `ios-implementation-guru-writing`（下游实现写，不编码）**：那一支在 Phase 2 承接已通过详细 Gate 的合同，生成 Swift 实现代码 + trace 四节。本 skill **不编码**——产出的是「可编码合同」而非实现体；写实现代码/伪代码超过签名级（方法体、>15 行实现）即越界（见「强制约束 4」），实现由 `ios-implementation-guru-writing` 在详细 Gate 通过后承接。
-- 一句话定位：**brainstorm 定「做什么」→ 概要 writing 定「分给哪层、边界在哪、谁承接展开」→ 概要 review 人工判「能否进详细」→ 本 skill（详细 writing）写「可编码合同」→ ios-design-detail-review 人工判「能否进编码」→ ios-implementation-guru-writing 写 Swift 实现 → trellis-check 判「代码达标」**。本 skill 只占「详细 writing」一格，越界即停。
+- 一句话定位：**brainstorm 定「做什么」→ 概要 writing 定「分给哪层、边界在哪、谁承接展开」→ overview review evidence 判「能否进详细」→ 本 skill（详细 writing）写「可编码合同」→ ios-design-detail-review 人工判「能否进编码」→ ios-implementation-guru-writing 写 Swift 实现 → trellis-check 判「代码达标」**。本 skill 只占「详细 writing」一格，越界即停。
 
 ## 最小输入与自动补全
 
@@ -90,7 +90,7 @@ UI 框架（SwiftUI 主 + RxSwift 遗留 → 纯 SwiftUI）、网络层（URLSes
 - **WX-1 输入键完整**：`task.json` 含 `guru_chain` 与（full 链）`design_package`；缺失 → 执行级错误，提示补判轨。
 - **WX-2 路径边界**：`design_package` 目录存在且 `chapters/` 已存在；目标文件名均落在 `chapters/` 内（词法检查）。`chapters/` 缺失属概要骨架缺口，**不自动创建目录**。
 - **WX-3 承接索引**：design-main 第 7 节索引存在、非空，每条有 `doc_type`（IOS 七类之一）与目标文件名，且可建立完整非空的 `chapter_target → detail_doc_type` 映射；缺失/为空/出现非七类名 → **硬阻断，回退概要**。
-- **WX-4 概要 Gate 已确认**：`guru_gate.py status` 显示 overview 已人工确认；未确认 → 停止，提示先完成概要 Gate 收口。
+- **WX-4 概要 review evidence 已达标**：`guru_gate.py status` 显示 overview 当前 digest 已有两个不同 `run_id` 的 clean review；未达标 → 停止，提示先运行概要 review 并用 `record-review overview` 留痕。
 - **WX-5 概要归属与分层合法**：本批目标的 owner 必须与概要归属表一致，且符合「分层依赖律」（Domain 零依赖、方向单向、View 不直连导航/持久化、repository 接口/实现双 owner）；越界或 owner 与概要不符 → 回退概要修订，**不就地改**。
 - **WX-6 承接源状态 + L2豁免**：本批引用的 `technology_decision_handoff[]` 条目均为「选定」（含网络层 URLSession/Moya、TTS/STT/图像生成等外部 provider/SDK、WCDBSwift 持久化模型、`@Injected` 注册位等；未选定 → 回退概要，禁止详细拍板）；本批命中 pending L2 的 doc_type（`domain-model/view/coordinator/external`）均有 `L2豁免：<doc_type> 理由：…` 声明（无豁免 → 停止，提示先补 L2 或写豁免）。
 

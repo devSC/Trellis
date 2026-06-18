@@ -1,6 +1,6 @@
 ---
 name: h5-design-detail-review
-description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设计文档，判定能否进入编码。先做 EX 前置检查（判轨/索引/概要确认/承接源/机检），再按 review_scope 三模式执行：current_chapter 单章诊断、layer_checkpoint 跨章协同诊断（checkpoint_layer=server-chain|interactive-chain|mutation|route）、directory_final 目录级三段式终审（逐文档 D1~D8 诊断 → 跨链路链接 → 索引与 SEO/scenario 覆盖率）。核查章节骨架符合性、合同八问、概要 owner 追溯、分层依赖律、编号断链拦截、server/client 边界与 secret 红线、测试映射与粒度；先证据后结论，输出分级 findings 与互斥三选一结论，并以用户终端 confirm 作为 Gate 收口。doc_type 严格用 H5_BRIEF 钉死的七类。规则唯一来源是 `.trellis/spec/harness/detail/` 的 L1/L2 SSOT 与 `.trellis/spec/guides/golden-path.md`。
+description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设计文档，判定能否进入编码。先做 EX 前置检查（判轨/索引/概要 review evidence/承接源/机检），再按 review_scope 三模式执行：current_chapter 单章诊断、layer_checkpoint 跨章协同诊断（checkpoint_layer=server-chain|interactive-chain|mutation|route）、directory_final 目录级三段式终审（逐文档 D1~D8 诊断 → 跨链路链接 → 索引与 SEO/scenario 覆盖率）。核查章节骨架符合性、合同八问、概要 owner 追溯、分层依赖律、编号断链拦截、server/client 边界与 secret 红线、测试映射与粒度；先证据后结论，输出分级 findings 与互斥三选一结论，输出 record-review 证据，并在双 clean 后等待 detail confirm。doc_type 严格用 H5_BRIEF 钉死的七类。规则唯一来源是 `.trellis/spec/harness/detail/` 的 L1/L2 SSOT 与 `.trellis/spec/guides/golden-path.md`。
 ---
 
 # H5（Next.js）详细设计审核
@@ -75,7 +75,7 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 4. **EX-1 输入键**：task.json `guru_chain`（full 链含 `design_package`）可判定。
 5. **EX-2 路径与骨架**：design_package/chapters/ 存在（light 链 design.md §2 存在）。
 6. **EX-3 承接索引**：design-main 第 7 节（light 链 design.md §1 索引节）存在、非空、可建立 `chapter_target → doc_type → 目标文件` 完整映射；doc_type 取值必须落在权威七类内（出现 controller/usecase/Biz 等非法类型名 → EX-3 失败，回退概要改名）。
-7. **EX-4 概要确认**：`python3 .trellis/scripts/guru/guru_gate.py status` 显示 overview 已人工确认。
+7. **EX-4 概要 review evidence**：`python3 .trellis/scripts/guru/guru_gate.py status` 显示 overview 当前 digest 已有两个不同 run-id 的 clean review。
 8. **EX-5 承接源**：被审章节引用的技术决策（内容源 / 状态管理 / UI 库 / 样式方案 / 数据库 / 认证 / 部署 / 路由模式）均"选定"；pending L2 命中（route/ui-component/domain-type/server-action）均有 `L2豁免` 声明。
 9. **EX-6 机器 Gate**：`python3 .trellis/scripts/guru/guru_gate.py detail <task_dir>` 的结构结论可获取（机检失败项直接并入 findings，人工聚焦语义）。
 10. 按被审文档命中的 doc_type 读对应 L2（仅 server-component/client-component/data-access 三类有 v1 L2，只装载命中类型，不全量装）；pending 四类走 L1 八问 + 豁免核查。
@@ -253,14 +253,28 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 
 本 skill 是 Phase 1 的详细 Gate 判定：详细设计不达标不得 `task.py start`。区别于 `trellis-check`（实现后代码质检）。
 
-## Gate 收口（人工确认）
+## Review Evidence 与 detail 确认
 
-结论为"可进入编码"（或带明确假设可进入且假设已记录）时，按 config `guru.gate_mode` 完成人工收口（通道主定义见 workflow Trellis System 节）：
+结论为「可进入编码」或「带明确假设可进入」时，先写入 review evidence，不直接开始实现：
 
-- **strict（默认）**：提请**用户本人**在终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm detail <task_dir>`；agent 不得代跑（无 TTY 会被拒）。
-- **soft**：用户在对话中明确确认后，agent 运行 `python3 .trellis/scripts/guru/guru_gate.py confirm detail <task_dir> --via-agent --user-quote "<用户确认原话>"` 代跑（记录留痕标注 soft/agent）；未获用户本轮明确确认不得执行。
+```bash
+python3 .trellis/scripts/guru/guru_gate.py record-review detail <task_dir> \
+  --result clean \
+  --max-severity low \
+  --reviewer clean-context \
+  --run-id <fresh-run-id> \
+  --evidence "<本次 detail review 证据摘要>"
+```
 
-确认未落盘前不得 `task.py start`（before_start 钩子也会强制拦截）。
+若存在 medium+ finding，必须输出 `--result findings --max-severity medium|high|critical --finding-class REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT`，并停止进入编码。
+
+当前 digest 下两个不同 `run_id` 的 clean review 记录后，提示用户运行：
+
+```bash
+python3 .trellis/scripts/guru/guru_gate.py confirm detail <task_dir>
+```
+
+confirm detail 的 strict/soft 通道以 workflow Trellis System 节为准；未确认前不得 `task.py start`。
 
 ## 参考资料
 

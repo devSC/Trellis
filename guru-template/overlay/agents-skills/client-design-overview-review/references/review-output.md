@@ -68,12 +68,13 @@ light 链 G6~G8 标注 `N/A(light)` 并说明简化口径已满足（L1 §2b）�
 - `带明确假设可进入`：逐条列假设、依据、验证时点
 - `不可进入`：列阻塞 P1 清单 + 修订形态建议（局部修订 / 文档级重构，按 L1 §8）
 
-### 6. Gate 收口指引（结论为可进入/带假设可进入时必须输出）
+### 6. Review Evidence 收口指引（结论为可进入/带假设可进入时必须输出）
 
 ```markdown
-请用户本人在终端运行（agent 不得代跑）：
-python3 .trellis/scripts/guru/guru_gate.py confirm overview <task_dir>
-确认落盘后方可进入详细设计（1.4）。
+记录本次 clean review（使用新的 run_id）：
+python3 .trellis/scripts/guru/guru_gate.py record-review overview <task_dir> --result clean --max-severity low --reviewer clean-context --run-id <fresh-run-id> --evidence "<本次概要审核证据摘要>"
+
+当前 digest 下两个不同 run_id 的 clean review 后，overview 自动通过；不要运行 confirm overview。
 ```
 
 ## 复审闭环

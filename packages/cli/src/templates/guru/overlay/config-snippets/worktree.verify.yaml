@@ -1,5 +1,5 @@
 # 合并进目标项目 .trellis/worktree.yaml 的 verify 节
-# guru_gate.py auto 按 task status 渐进校验五阶段 Gate（ralph-loop 在 gate 不过时阻止 check agent 停止）
+# guru_gate.py auto 按 task status 渐进校验当前已出现 artifact；exit 0 不代表五阶段全部完成
 verify:
   - "python3 .trellis/scripts/guru/guru_gate.py auto"
   - "flutter analyze"
