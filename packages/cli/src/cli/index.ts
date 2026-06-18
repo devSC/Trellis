@@ -7,6 +7,7 @@ import { update } from "../commands/update.js";
 import { upgrade } from "../commands/upgrade.js";
 import { uninstall } from "../commands/uninstall.js";
 import { runMem } from "../commands/mem.js";
+import { applyGuruOverlay } from "../commands/guru.js";
 import {
   runWorkflowCommand,
   WorkflowCommandError,
@@ -269,6 +270,28 @@ program
         console.error(chalk.red("Error:"), error.message);
         process.exit(1);
       }
+      console.error(
+        chalk.red("Error:"),
+        error instanceof Error ? error.message : error,
+      );
+      if (process.env.DEBUG || process.env.TRELLIS_DEBUG) {
+        console.error(error instanceof Error ? error.stack : error);
+      }
+      process.exit(1);
+    }
+  });
+
+const guru = program.command("guru").description("Guru workflow helpers");
+
+guru
+  .command("apply")
+  .description("Install or refresh the Guru overlay in a Trellis project")
+  .argument("<platform>", "flutter, go, ios, or h5")
+  .argument("[target]", "Target project directory", process.cwd())
+  .action(async (platform: string, target: string) => {
+    try {
+      await applyGuruOverlay(platform, target);
+    } catch (error) {
       console.error(
         chalk.red("Error:"),
         error instanceof Error ? error.message : error,

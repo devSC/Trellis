@@ -39,6 +39,10 @@ const GURU_SOURCE_OVERLAY_ROOT = path.resolve(
   GURU_OVERLAY_ROOT,
   "../../../../../../guru-template/overlay",
 );
+const DIST_CLI = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../dist/cli/index.js",
+);
 
 function overlayPath(...segments: string[]): string {
   return path.join(GURU_OVERLAY_ROOT, ...segments);
@@ -76,7 +80,8 @@ describe("bundled guru-client workflow", () => {
       const resolved = await resolveWorkflowTemplate(GURU_CLIENT_WORKFLOW_ID);
       expect(resolved.source).toBe("bundled");
       expect(resolved.content).toContain("五阶段");
-      expect(resolved.content).toContain("design-grill");
+      expect(resolved.content).toContain("review_runs");
+      expect(resolved.content).toContain("record-review");
     } finally {
       vi.unstubAllGlobals();
     }
@@ -231,6 +236,122 @@ describe("bundled multi-platform guru spec packages", () => {
 });
 
 describe("bundled guru overlay", () => {
+  it("packs the Guru command and overlay files into the npm tarball", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "guru-pack-"));
+    try {
+      execFileSync("pnpm", ["pack", "--pack-destination", tmpDir, "--json"], {
+        cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+        encoding: "utf8",
+      });
+      const tarball = fs.readdirSync(tmpDir).find((file) => file.endsWith(".tgz"));
+      if (!tarball) {
+        throw new Error("pnpm pack did not produce a tarball");
+      }
+      const tarballPath = path.join(tmpDir, tarball);
+      const listing = execFileSync("tar", ["-tzf", tarballPath], {
+        encoding: "utf8",
+      }).split(/\r?\n/);
+
+      expect(listing).toContain("package/bin/trellis.js");
+      expect(listing).toContain("package/dist/commands/guru.js");
+      expect(listing).toContain("package/dist/cli/index.js");
+      expect(listing).toContain("package/dist/templates/guru/overlay/apply.sh");
+      expect(listing).toContain(
+        "package/dist/templates/guru/overlay/verify/guru_gate.py",
+      );
+      expect(listing).toContain(
+        "package/dist/templates/guru/overlay/verify/guru_supervise.py",
+      );
+      expect(listing).toContain(
+        "package/dist/templates/guru/overlay/agents-skills/h5-design-overview-review/SKILL.md",
+      );
+
+      const packedPackageJson = execFileSync(
+        "tar",
+        ["-xOf", tarballPath, "package/package.json"],
+        { encoding: "utf8" },
+      );
+      const packedManifest = JSON.parse(packedPackageJson) as {
+        dependencies?: Record<string, string>;
+      };
+      expect(packedManifest.dependencies?.["@mindfoldhq/trellis-core"]).toBe(
+        "npm:@devsc/trellis-core@0.6.0-guru.1",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("installs a complete Guru overlay through the dist CLI", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "guru-dist-e2e-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmpDir, "package.json"),
+        '{"scripts":{"test":"echo ok"}}\n',
+        "utf8",
+      );
+
+      execFileSync(
+        process.execPath,
+        [
+          DIST_CLI,
+          "init",
+          "--codex",
+          "--claude",
+          "--template",
+          "guru-h5-web",
+          "--workflow",
+          "guru-h5",
+          "--yes",
+          "--user",
+          "smoke",
+        ],
+        { cwd: tmpDir, encoding: "utf8" },
+      );
+      execFileSync(process.execPath, [DIST_CLI, "guru", "apply", "h5"], {
+        cwd: tmpDir,
+        encoding: "utf8",
+      });
+
+      expect(
+        fs.existsSync(
+          path.join(tmpDir, ".trellis/scripts/guru/guru_gate.py"),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(tmpDir, ".trellis/scripts/guru/guru_supervise.py"),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(
+            tmpDir,
+            ".agents/skills/h5-design-overview-review/SKILL.md",
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(tmpDir, ".agents/skills/design-grill/SKILL.md"),
+        ),
+      ).toBe(true);
+      expect(
+        fs.readFileSync(path.join(tmpDir, ".trellis/config.yaml"), "utf8"),
+      ).toContain("guru_gate.py check");
+      expect(
+        fs.readFileSync(path.join(tmpDir, ".trellis/worktree.yaml"), "utf8"),
+      ).toContain("guru_gate.py auto");
+      execFileSync(
+        "python3",
+        [path.join(tmpDir, ".trellis/scripts/guru/guru_supervise.py"), "--help"],
+        { cwd: tmpDir, encoding: "utf8" },
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("ships workflow names that packaged apply.sh can resolve", () => {
     const applyScript = readOverlayFile("apply.sh");
     expect(applyScript).toContain('"$ROOT/workflows/${WF_NAME}.md"');
@@ -254,8 +375,14 @@ describe("bundled guru overlay", () => {
       "SKILL.md",
     );
     expect(designGrill).toContain("Design Grill Packet");
+    expect(designGrill).toContain("compatibility-only");
+    expect(designGrill).toContain("新流程的 Domain Grill 归属于 `trellis-brainstorm`");
+    expect(designGrill).toContain("`guru_gate.py check` / `auto` 不依赖本 skill");
     expect(designGrill).toContain("grill-done");
     expect(designGrill).toContain("grill-skip");
+    expect(designGrill).not.toContain("overview` / `detail` 在 full 或 high-risk 时必跑");
+    expect(designGrill).not.toContain("Policy: required | skippable");
+    expect(designGrill).not.toContain("Next Command: python3 .trellis/scripts/guru/guru_gate.py grill-done");
     expect(fs.existsSync(overlayPath("apply.sh"))).toBe(true);
     expect(fs.existsSync(overlayPath("verify", "guru_gate.py"))).toBe(true);
     expect(fs.existsSync(overlayPath("verify", "guru_config_patch.py"))).toBe(
@@ -488,6 +615,72 @@ fi
     return fake;
   }
 
+  function writeLoopFakeTrellis(): { fake: string; log: string } {
+    const fake = path.join(tmpDir, "fake-loop-trellis.sh");
+    const log = path.join(tmpDir, "loop.log");
+    const count = path.join(tmpDir, "check-count.txt");
+    fs.writeFileSync(
+      fake,
+      `#!/usr/bin/env bash
+set -euo pipefail
+LOG="${log}"
+COUNT="${count}"
+if [ "$1" = "channel" ] && [ "$2" = "create" ]; then
+  exit 0
+elif [ "$1" = "channel" ] && [ "$2" = "spawn" ]; then
+  agent=""
+  worker=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --agent) agent="$2"; shift 2 ;;
+      --as) worker="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  printf '%s %s\\n' "$agent" "$worker" >> "$LOG"
+elif [ "$1" = "channel" ] && [ "$2" = "send" ]; then
+  cat >/dev/null
+elif [ "$1" = "channel" ] && [ "$2" = "wait" ]; then
+  worker="worker"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --from) worker="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  printf '{"kind":"done","by":"%s"}\\n' "$worker"
+elif [ "$1" = "channel" ] && [ "$2" = "messages" ]; then
+  worker=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --from) worker="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [[ "$worker" == check-* ]]; then
+    n=0
+    if [ -s "$COUNT" ]; then n="$(cat "$COUNT")"; fi
+    n=$((n + 1))
+    echo "$n" > "$COUNT"
+    if [ "$n" = "1" ]; then
+      echo '{"kind":"message","by":"check","text":"review_result=findings route_class=IMPLEMENT_DEFECT validation_summary=fix code"}'
+    else
+      echo '{"kind":"message","by":"check","text":"review_result=clean/final-verification-ready route_class=none validation_summary=ok"}'
+    fi
+  else
+    echo '{"kind":"message","by":"implement","text":"done"}'
+  fi
+else
+  echo "unexpected fake trellis args: $*" >&2
+  exit 2
+fi
+`,
+      "utf8",
+    );
+    fs.chmodSync(fake, 0o755);
+    return { fake, log };
+  }
+
   it("dry-runs implement with codex provider, run id names, jsonl, and Guru skill context", () => {
     writeConfig("flutter");
     const skill = writeSkill(
@@ -535,6 +728,140 @@ fi
     expect(output).toContain(`--file ${skill}`);
     expect(output).not.toContain("--jsonl");
     expect(output).toContain("--kind done,error,killed");
+  });
+
+  it("dry-runs overview with writing/review skills and review evidence routing", () => {
+    writeConfig("go");
+    const writingSkill = writeSkill(
+      ".agents/skills/go-design-overview-writing/SKILL.md",
+    );
+    const reviewSkill = writeSkill(
+      ".agents/skills/go-design-overview-review/SKILL.md",
+    );
+    const taskDir = writeTask("task-overview");
+
+    const output = runSupervisor([
+      "overview",
+      taskDir,
+      "--run-id",
+      "r5",
+      "--dry-run",
+    ]);
+
+    expect(output).toContain("CHANNEL=guru-task-overview-overview-r5");
+    expect(output).toContain("WORKER=overview-codex-r5");
+    expect(output).toContain(`--file ${writingSkill}`);
+    expect(output).toContain(`--file ${reviewSkill}`);
+    expect(output).toContain("record-review overview");
+    expect(output).toContain("two clean review passes");
+    expect(output).toContain(
+      "REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT",
+    );
+  });
+
+  it("dry-runs detail with writing/review skills and review evidence routing", () => {
+    writeConfig("ios");
+    const writingSkill = writeSkill(
+      ".agents/skills/ios-design-detail-writing/SKILL.md",
+    );
+    const reviewSkill = writeSkill(
+      ".agents/skills/ios-design-detail-review/SKILL.md",
+    );
+    const taskDir = writeTask("task-detail");
+
+    const output = runSupervisor([
+      "detail",
+      taskDir,
+      "--run-id",
+      "r6",
+      "--dry-run",
+    ]);
+
+    expect(output).toContain("CHANNEL=guru-task-detail-detail-r6");
+    expect(output).toContain("WORKER=detail-codex-r6");
+    expect(output).toContain(`--file ${writingSkill}`);
+    expect(output).toContain(`--file ${reviewSkill}`);
+    expect(output).toContain("record-review detail");
+    expect(output).toContain("two clean review passes");
+    expect(output).toContain(
+      "REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT",
+    );
+  });
+
+  it("dry-runs implement-check with paired skills, jsonl, route classes, and hard-boundary stop", () => {
+    writeConfig("h5");
+    const writingSkill = writeSkill(
+      ".agents/skills/h5-implementation-guru-writing/SKILL.md",
+    );
+    const reviewSkill = writeSkill(
+      ".agents/skills/h5-implementation-guru-review/SKILL.md",
+    );
+    const taskDir = writeTask("task-implement-check");
+    const implementManifest = path.join(taskDir, "implement.jsonl");
+    const checkManifest = path.join(taskDir, "check.jsonl");
+    fs.writeFileSync(implementManifest, "{}\n", "utf8");
+    fs.writeFileSync(checkManifest, "{}\n", "utf8");
+
+    const output = runSupervisor([
+      "implement-check",
+      taskDir,
+      "--run-id",
+      "r7",
+      "--dry-run",
+    ]);
+
+    expect(output).toContain("IMPLEMENT-CHECK LOOP");
+    expect(output).toContain(
+      "CHANNEL=guru-task-implement-check-implement-r7-implement-1",
+    );
+    expect(output).toContain(
+      "CHANNEL=guru-task-implement-check-check-r7-check-1",
+    );
+    expect(output).toContain("WORKER=implement-codex-r7-implement-1");
+    expect(output).toContain("WORKER=check-codex-r7-check-1");
+    expect(output).toContain(
+      "repeat: implement -> check -> route",
+    );
+    expect(output).toContain(`--file ${writingSkill}`);
+    expect(output).toContain(`--file ${reviewSkill}`);
+    expect(output).toContain(`--jsonl ${implementManifest}`);
+    expect(output).toContain(`--jsonl ${checkManifest}`);
+    expect(output).toContain("IMPLEMENT_DEFECT");
+    expect(output).toContain("DETAIL_DEFECT");
+    expect(output).toContain("OVERVIEW_DEFECT");
+    expect(output).toContain("REQ_BLOCKER");
+    expect(output).toContain("PROCESS_DEFECT");
+    expect(output).toContain("review_result=clean/final-verification-ready");
+    expect(output).toContain("reviewed diff/artifact context");
+    expect(output).toContain("validation_summary");
+    expect(output).toContain("Do not create implementation guru_gates");
+    expect(output).toContain("final validation plus hard boundary");
+  });
+
+  it("runs implement-check as implement/check loop and repeats repairable implementation findings", () => {
+    writeConfig("h5");
+    writeSkill(".agents/skills/h5-implementation-guru-writing/SKILL.md");
+    writeSkill(".agents/skills/h5-implementation-guru-review/SKILL.md");
+    const taskDir = writeTask("task-loop");
+    const { fake, log } = writeLoopFakeTrellis();
+
+    const output = runSupervisor([
+      "--trellis-bin",
+      fake,
+      "implement-check",
+      taskDir,
+      "--run-id",
+      "loop",
+    ]);
+
+    expect(output).toContain("route_class=IMPLEMENT_DEFECT");
+    expect(output).toContain("review_result=clean/final-verification-ready");
+    expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+      "implement implement-codex-loop-implement-1",
+      "check check-codex-loop-check-1",
+      "implement implement-codex-loop-implement-2",
+      "check check-codex-loop-check-2",
+    ]);
   });
 
   it("dry-runs kill with exact channel and worker handles", () => {

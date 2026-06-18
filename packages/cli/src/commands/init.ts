@@ -22,6 +22,7 @@ import { DIR_NAMES, FILE_NAMES, PATHS } from "../constants/paths.js";
 import { VERSION } from "../constants/version.js";
 import { agentsMdContent } from "../templates/markdown/index.js";
 import { buildAgentsMdTemplate } from "./update.js";
+import { inferGuruPlatform } from "./guru.js";
 import {
   setWriteMode,
   startRecordingWrites,
@@ -1040,6 +1041,20 @@ function writeMonorepoConfig(cwd: string, packages: DetectedPackage[]): void {
   );
 }
 
+function printGuruApplyHint(
+  selectedTemplate: string | null,
+  workflowId: string,
+): void {
+  const platform = inferGuruPlatform(selectedTemplate, workflowId);
+  if (!platform) return;
+
+  console.log(
+    chalk.yellow(
+      `\nInstall/refresh Guru overlay: trellis guru apply ${platform}\n`,
+    ),
+  );
+}
+
 interface InitAnswers {
   tools: string[];
   template?: string;
@@ -1977,6 +1992,8 @@ export async function init(options: InitOptions): Promise<void> {
       }
     }
   }
+
+  printGuruApplyHint(selectedTemplate, workflowId);
 }
 
 /**
@@ -2031,5 +2048,7 @@ async function createRootFiles(cwd: string): Promise<void> {
 
   fs.writeFileSync(agentsPath, merged);
   recordWrite(agentsPath);
-  console.log(chalk.blue("📝 Updated AGENTS.md (merged Trellis managed block)"));
+  console.log(
+    chalk.blue("📝 Updated AGENTS.md (merged Trellis managed block)"),
+  );
 }
