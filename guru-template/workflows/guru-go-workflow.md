@@ -27,12 +27,13 @@
 - `.trellis/spec/` 使用 guru-go-backend spec 库：`harness/`（五阶段 SSOT，入口 `harness/index.md`）、`guides/golden-path.md`（分层依赖律 + 各层迷你路径 + 禁止清单）、`conventions/project-conventions.md`（项目约定槽位 SLOT-01~SLOT-13）。阶段→SSOT 映射见 `.trellis/spec/harness/index.md`。
 - 任何阶段开始前必须通过 `.trellis/spec/conventions/project-conventions.md` 的校验清单 **C1~C6**（槽位缺失/未填、证据路径不存在、取值与硬规则冲突 = 硬前置失败，先补约定）。
 - 三条最高禁令（违反即任务失败，对齐 golden-path 锁定项，不可豁免）：① 禁止引入 gin/echo/fiber 等重型 Web 框架（HTTP 入口只用 `net/http ServeMux`）② 禁止违反分层依赖律的 import（`transport → service → repository → domain` 严格单向无环；除 `domain` 外不跨 `internal` 包导入；`service` 不得 import `transport`、`repository` 不得 import `service`）③ 禁止把真实密钥/口令写成字面量（secret 只写环境变量名引用，经 `config.Load()` 装载）。
-- **人工 Gate 机制**：阶段跃迁（需求→概要→详细→实现）必须人工确认落盘，通道按 config `guru.gate_mode`（**本节是通道唯一主定义**，其余处写"confirm 收口"均指此处）：
+- **人工 Gate 机制**：阶段跃迁（需求→概要→详细→实现）必须人工确认落盘；完整模型见 `.trellis/spec/harness/gate/gate-confirmation-model.md`。通道按 config `guru.gate_mode`（**本节是通道唯一主定义**，其余处写"confirm 收口"均指此处）：
+  - 每道 Gate 都是独立阶段凭据：`requirements` 必须 `grill-done + confirm`；`overview` / `detail` 在 full/high-risk/unknown 时必须 `grill-done + confirm`，只有 low-risk 非 full 可 `grill-skip + confirm`。
+  - `design-grill` policy 是 confirm 的硬前置；不得用聊天确认、review 结论或手写 marker 替代。
+  - 确认快照按阶段累积；上游产物修改或 risk policy 改变会导致下游确认失配，需从失配阶段重新 `grill-done` / 合法 `grill-skip` + `confirm`。
   - **strict（默认）**：用户本人在交互式终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm`（零参数=批量确认待确认 Gate，逐个 y/n）；agent 经工具运行因无 TTY 被拒，**不得代跑、不得以自写 review 记录替代**。
   - **soft**：用户在对话中明确确认后，agent 运行 `guru_gate.py confirm --via-agent --user-quote "<用户确认原话>"` 代跑（`--user-quote` 必填，留痕标注 soft/agent + 用户原话）；**未获用户本轮明确确认不得执行**。
-  - **design-grill 硬前置**：每道 Gate 结构通过后、confirm 前必须先记录 grill 凭据。strict：用户终端运行 `python3 .trellis/scripts/guru/guru_gate.py grill-done <gate> <task_dir>`；soft：用户本轮明确确认后 agent 可加 `--via-agent --user-quote "<用户确认原话>"` 代跑；用户明确跳过时运行 `python3 .trellis/scripts/guru/guru_gate.py grill-skip <gate> <task_dir> --user-quote "<跳过理由>"`。不得手写 `.grilled-*` / `.grill-nudged-*` 标记。
-  - BLOCK 提示样例：`[guru-gate:check] 拦截：需求 Gate 未完成 design-grill 前置` → 先跑 `python3 .trellis/scripts/guru/guru_gate.py grill-done requirements <task_dir>`（或 `grill-skip requirements <task_dir> --user-quote "<跳过理由>"`），再重跑 confirm/check。
-  - 两种模式下 grill digest、确认快照（累积 digest）、结构 Gate 复跑、`task.py start` 的 before_start 强制校验均生效；进度随时 `guru_gate.py status` 查。
+  - 进度用 `guru_gate.py status <task_dir>` 查；最终以 `guru_gate.py check <task_dir>` 作为 `task.py start` 前强制复查。
 
 ### Planning Artifacts（guru 五阶段语义，双轨制）
 
@@ -80,19 +81,19 @@ Phase 3: Finish  → 验证（go build/vet/test + golangci-lint）→ 萃取回�
 - 1.7 完成判定
 
 [workflow-state:planning]
-无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md，详见步骤细则）。每步=writing→review skill→design-grill→guru_gate.py confirm 人工收口；三确认齐且 implement.jsonl/check.jsonl 策展完成才 task.py start。默认 Phase2 使用官方 trellis channel；归属违反分层依赖律=直接 fail。
+无需求→1.1；无概要→1.3；无详细→1.4。Gate=writing→review→grill-policy→confirm；req必跑，ov/detail full/high/unknown必跑，low-risk非full可grill-skip。三Gate+jsonl齐才start；Phase2默认channel。
 [/workflow-state:planning]
 
 [workflow-state:planning-channel]
-无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→design-grill→guru_gate.py confirm 收口；三确认齐且 implement.jsonl/check.jsonl 策展完成才 task.py start。channel：Phase2 由主会话运行 guru_supervise.py / trellis channel。
+无需求→1.1；无概要→1.3；无详细→1.4。Gate=writing→review→grill-policy→confirm；req必跑，ov/detail full/high/unknown必跑，low-risk非full可grill-skip。三Gate+jsonl齐才start；主会话跑guru_supervise/channel。
 [/workflow-state:planning-channel]
 
 [workflow-state:planning-sub-agent]
-无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→design-grill→guru_gate.py confirm 收口；三确认齐才 task.py start。legacy sub-agent：Phase2 dispatch trellis-implement/check，prompt 以 Active task: <path> 开头。
+无需求→1.1；无概要→1.3；无详细→1.4。Gate=writing→review→grill-policy→confirm；req必跑，ov/detail full/high/unknown必跑，low-risk非full可grill-skip。三Gate齐才start；legacy sub-agent用Active task提示。
 [/workflow-state:planning-sub-agent]
 
 [workflow-state:planning-inline]
-无需求→1.1；无概要→1.3；无详细→1.4（full=设计包，light=design.md）。每步=writing→review→guru_gate.py confirm 收口（通道按 gate_mode）；三确认齐才 task.py start。inline：Phase2 编辑前先 trellis-before-dev 读 golden-path+约定。
+无需求→1.1；无概要→1.3；无详细→1.4。Gate=writing→review→grill-policy→confirm；req必跑，ov/detail full/high/unknown必跑，low-risk非full可grill-skip。三Gate齐才start；inline先trellis-before-dev。
 [/workflow-state:planning-inline]
 
 ### Phase 2: Execute（实现阶段）
@@ -195,8 +196,8 @@ python3 ./.trellis/scripts/get_context.py --mode phase --step <step>
 **full 链**：先加载 `requirement-writing`（guru-ai-guides，硬前置=其标准包 requirement-doc-standard 可读，缺即停）撰写/补齐**正式需求包**（项目 docs 需求目录），全稿后加载 `requirement-review` 做门禁审核；review 通过后把行为规格抽取为任务内 `prd.md`（BHV 编号承接需求包场景）。`trellis-brainstorm` 仅作前置探索，不替代正式需求链。
 **light 链**：加载 `trellis-brainstorm` 探索需求，直接产出 `prd.md`。
 两轨 `prd.md` 口径一致：必含行为规格（Given/When/Then）、核心能力清单（P0/P1）、失败路径、验收场景、显式未决问题（无未决也须显式声明「无未决」；一次问用户 1~4 个，不私自拍板）。Go 行为枚举到「协议端点 / 编排步骤 / 数据访问 / 失败收口」，例：`### BHV-012 创建代理用户` — Given 管理员会话有效 When `POST /api/users` 携带 `display_name`/`proxy_username` Then service 校验入参→repository 落库→触发 config 同步→返回 201；校验失败返回 400 携带 `ErrValidation`。反例 `### BHV-012 处理用户`（无前置/无协议/无失败路径）被需求 Gate 拒。
-prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path/项目约定/既有 BHV 磨术语、压测边界，决策当场固化进 prd），然后记录 `guru_gate.py grill-done requirements <task_dir>`（或用户明确跳过时 `grill-skip requirements <task_dir> --user-quote "<跳过理由>"`），再提交需求 Gate。
-**需求 Gate**：五要素（行为编号 `BHV-NNN`、Given/When/Then、P0/P1 清单、失败路径章节、验收场景章节、未决问题章节）缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），先确保 grill 凭据已记录，再完成 **confirm 人工收口**（通道按 gate_mode，见 Trellis System 节）；确认落盘后方可进 1.3。若 BLOCK 提示缺 grill，按提示先跑 `grill-done requirements` 或 `grill-skip requirements`。
+prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path/项目约定/既有 BHV 磨术语、压测边界，决策当场固化进 prd），然后记录 `guru_gate.py grill-done requirements <task_dir>`；requirements 不允许 `grill-skip`，再提交需求 Gate。
+**需求 Gate**：五要素（行为编号 `BHV-NNN`、Given/When/Then、P0/P1 清单、失败路径章节、验收场景章节、未决问题章节）缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），先确保 grill-done 凭据已记录，再完成 **confirm 人工收口**（通道按 gate_mode，见 Trellis System 节）；确认落盘后方可进 1.3。若 BLOCK 提示缺 grill，按提示先跑 `grill-done requirements`。
 
 #### 1.2 研究 `[optional · repeatable]`
 
@@ -209,7 +210,7 @@ prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path/项目约�
 按行为枚举 → 分层归属判定 → 承接索引展开：每条 `BHV-NNN` 给唯一 owner（doc_type 取七类之一：`entry-api`/`biz`/`repository-data`/`domain`/`config`/`external`/`runtime`）+ 三问理由（为什么属于它 / 为什么不属于别人 / 为什么需独立存在）。归属示例：路由注册/请求解析/JSON 编解码/状态码 → `entry-api`；业务编排/入参校验/sentinel error → `biz`；SQL/行映射/`ErrNotFound` 转换 → `repository-data`。把数据访问归给 handler 或让 repository 反向 import service 即违反单向依赖律，直接 fail。
 **full 链**：建立设计包骨架（`README.md` + `design-main.md` + `chapters/`），把包路径写入 task.json `design_package`，产出 `design-main.md` 概要主定义（含架构就绪自检 G1~G8、mermaid 架构图、时序图或时序图策略表、逐文件承接索引落到 `chapters/<file>.md`）；任务内 `design.md` 写指针+摘要。
 **light 链**：产出 `design.md` **§1 概要设计**。
-**概要 Gate**：加载 `go-design-overview-review` 审核，结论"可进入详细设计"后，先完成 `design-grill` 拷问并记录 `guru_gate.py grill-done overview <task_dir>`（或 `grill-skip overview <task_dir> --user-quote "<跳过理由>"`），再完成 **confirm 人工收口**（通道按 gate_mode）；确认落盘后方可进 1.4。`guru_gate.py overview <task_dir>` 复查归属表/三问/承接索引（full 链另查骨架+G1~G8+架构图+时序图）。
+**概要 Gate**：加载 `go-design-overview-review` 审核，结论"可进入详细设计"后，按 grill policy 收口：full/high-risk/unknown 必须完成 `design-grill` 并记录 `guru_gate.py grill-done overview <task_dir>`；只有 low-risk 非 full 可 `grill-skip overview <task_dir> --user-quote "<跳过理由>"` 留痕。随后完成 **confirm 人工收口**（通道按 gate_mode）；确认落盘后方可进 1.4。`guru_gate.py overview <task_dir>` 复查归属表/三问/承接索引（full 链另查骨架+G1~G8+架构图+时序图）。
 
 #### 1.4 详细设计 `[required · repeatable]`
 
@@ -217,7 +218,7 @@ prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path/项目约�
 合同八问（写作完成条件）：① 承接哪些 `BHV-NNN`；② 输入/输出/错误结果（Go 签名级：函数签名、`domain` 结构体、sentinel error 表）；③ 读写哪些状态（DB 行/会话态，写 owner 与概要一致）；④ 调用哪些依赖、不调用哪些（service 调 repository 不反向；handler 不直连 DB）；⑤ 失败如何收口（`fmt.Errorf("%w: ...")` 链式包装 + `errors.Is(err, ErrValidation/ErrNotFound)` 检查 + HTTP 状态码映射，逐条失败路径对应处置）；⑥ 产生哪些事件/后置（config 同步触发、审计、副作用）；⑦ 哪些测试验证它（映射到 `internal/<pkg>/*_test.go` 的 `testing`，逐行为给成功 + 全部失败路径测试点）；⑧ 哪些内容不得在此补造（handler 不决定 SQL、service 不决定路由）。
 **full 链**：directory_precheck（design-main 承接索引存在且非空，否则回退概要）→ chapter_loop **逐章/小批次**生成 `chapters/<slug>.md`（禁止一次性全量输出）；命中 pending L2 类型（`domain`/`config`/`external`/`runtime`）须显式 `L2豁免：<doc_type> 理由：…` 或先补 L2（gate 拦截）；v1 提供 L2 的类型为 `entry-api`/`biz`/`repository-data`。
 **light 链**：展开 `design.md` **§2 详细设计**（单文档多章节，命中 pending L2 类型按 L1 合同八问展开并标注 `l2_status: pending`）。
-**详细 Gate**：加载 `go-design-detail-review` 审核，结论"可进入编码"后，先完成 `design-grill` 拷问并记录 `guru_gate.py grill-done detail <task_dir>`（或 `grill-skip detail <task_dir> --user-quote "<跳过理由>"`），再完成 **confirm 人工收口**（通道按 gate_mode）；确认落盘后方可进 1.5/1.6。`guru_gate.py detail <task_dir>` 复查合同八问四机检标记（承接行为/失败收口/测试映射/不得补造声明）+ `implement.md` 存在 + 承接断链（幽灵 `BHV-NNN`、行为无单元承接）；full 链另查章节双向闭合与 pending L2 拦截。
+**详细 Gate**：加载 `go-design-detail-review` 审核，结论"可进入编码"后，按 grill policy 收口：full/high-risk/unknown 必须完成 `design-grill` 并记录 `guru_gate.py grill-done detail <task_dir>`；只有 low-risk 非 full 可 `grill-skip detail <task_dir> --user-quote "<跳过理由>"` 留痕。随后完成 **confirm 人工收口**（通道按 gate_mode）；确认落盘后方可进 1.5/1.6。`guru_gate.py detail <task_dir>` 复查合同八问四机检标记（承接行为/失败收口/测试映射/不得补造声明）+ `implement.md` 存在 + 承接断链（幽灵 `BHV-NNN`、行为无单元承接）；full 链另查章节双向闭合与 pending L2 拦截。
 
 #### 1.5 配置上下文 `[required · once]`
 
@@ -231,9 +232,9 @@ prd 草稿成形后加载 `design-grill` 拷问（对照 golden-path/项目约�
 
 | 条件 | 必须 |
 |------|:---:|
-| 需求产物过需求 Gate + grill-done/skip requirements + 用户 confirm requirements（full 链含正式需求包 review 通过） | ✅ |
-| 概要主定义过概要 Gate + grill-done/skip overview + 用户 confirm overview（full=design-main.md 含 G1~G8+架构图+时序图；light=design.md §1） | ✅ |
-| 详细设计过详细 Gate + grill-done/skip detail + 用户 confirm detail（full=chapters/ 双向闭合；light=design.md §2） | ✅ |
+| 需求产物过需求 Gate + grill-done requirements + 用户 confirm requirements（full 链含正式需求包 review 通过） | ✅ |
+| 概要主定义过概要 Gate + grill-done overview（或 low-risk 非 full 的 grill-skip overview）+ 用户 confirm overview（full=design-main.md 含 G1~G8+架构图+时序图；light=design.md §1） | ✅ |
+| 详细设计过详细 Gate + grill-done detail（或 low-risk 非 full 的 grill-skip detail）+ 用户 confirm detail（full=chapters/ 双向闭合；light=design.md §2） | ✅ |
 | `implement.md`（trace §1 计划，执行顺序自下而上）存在 | ✅ |
 | jsonl 含 harness SSOT + golden-path + 项目约定条目 | ✅（inline 平台除外） |
 | `task.py start` 已执行（before_start 校验通过） | ✅ |

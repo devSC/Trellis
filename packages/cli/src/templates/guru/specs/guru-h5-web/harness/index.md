@@ -49,6 +49,7 @@
 - [ ] 读 `.trellis/spec/guides/golden-path.md`（分层依赖律 + 上面 7 条硬规则的禁止清单）。
 - [ ] 确认目标产物的 **路由模式**：本平台 golden-path = `App`（若仓库历史为 Pages Router，在 project-conventions `路由模式` 槽位显式记录并标偏离理由）。
 - [ ] 按本任务所处阶段读对应 SSOT（下方「阶段 → SSOT 映射」），并把所读文件登记进任务的 `implement.jsonl` / `check.jsonl`（带 reason）。
+- [ ] 若本任务处于 planning Gate 或准备 `task.py start`，读 `.trellis/spec/harness/gate/gate-confirmation-model.md`。
 - [ ] 确认本任务命中的 doc_type 属于 **H5 权威七类**（见下表）；命中 `l2_status: pending` 的类型，full 链须显式 `L2豁免` 声明或先补 L2。
 - [ ] 产物语言：**中文优先**（英文仅限代码标识符、命令、路径、协议字段、框架名/外部专有名词、缩写、原文引用）。
 
@@ -83,6 +84,8 @@
 | 详细设计 | `design_package/chapters/*.md`（逐章）/ `design.md` §详细 | `.trellis/spec/harness/detail/detail-structure-single-source.md` + 涉及类型的 `.trellis/spec/harness/detail/detail-type-server-component.md` / `detail-type-client-component.md` / `detail-type-data-access.md`（其余四类 doc_type 为 pending：full 链须显式 `L2豁免` 或先补 L2，light 链按 L1 合同八问展开并标注 `l2_status: pending`） |
 | 实现 | 代码 + `implement.md`（trace） | `.trellis/spec/guides/golden-path.md` + `.trellis/spec/harness/implementation/implementation-trace-contract.md` |
 | 审核/复盘 | findings + spec 回写 | 各 SSOT 审核基线章节 + `.trellis/spec/harness/extraction-template.md` |
+
+人工 Gate、design-grill 凭据、confirm 快照、累积 digest 与失配恢复流程见 `.trellis/spec/harness/gate/gate-confirmation-model.md`。摘要：requirements 必跑 `design-grill`；overview/detail 在 full/high-risk/unknown 时必跑，只有 low-risk 非 full 可由 `guru_gate.py grill-skip` 留痕跳过。
 
 ---
 

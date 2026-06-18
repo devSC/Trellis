@@ -7,12 +7,13 @@ description: 通用 Guru Gate 前拷问会话。运行时读取当前项目 .tre
 
 ## 做什么
 
-对当前 task 产物发起送审前的对抗式拷问：需求 Gate 前拷问 `prd.md` 的行为集合；概要 Gate 前拷问 `design.md` 或 `design-main.md` 的归属表、三问理由与承接索引。沿设计树逐分支推进，决策间依赖逐个解开，每个归属判定都必须经得起"为什么属于它 / 为什么不属于别人 / 为什么需要或不需要独立存在"三问。
+对当前 task 产物发起送审前的对抗式拷问：需求 Gate 前拷问 `prd.md` 的行为集合；概要 Gate 前拷问 `design.md` 或 `design-main.md` 的归属表、三问理由与承接索引；详细 Gate 前拷问可编码合同、失败收口、测试映射和不得补造声明。沿设计树逐分支推进，决策间依赖逐个解开，每个归属判定都必须经得起"为什么属于它 / 为什么不属于别人 / 为什么需要或不需要独立存在"三问。
 
 - 默认先输出一个有界 **Design Grill Packet**，批量暴露多个问题/建议；每个 packet 默认不超过 8 个候选项。
 - 独立、低风险的 `NORMAL` 项允许用户批量批准；`BLOCKER`、红线、合规、会设定依赖顺序的决策仍必须逐项确认。
 - 能从代码或 spec 找到答案的问题不要问用户，先自己读取证据。
 - 本 skill 不从零生成需求或设计，不给正式 Gate 结论；它只在送审前磨稿、排雷、回写决策。
+- 是否必须运行本 skill 由 `.trellis/spec/harness/gate/gate-confirmation-model.md` 定义：`requirements` 必跑；`overview` / `detail` 在 full 或 high-risk 时必跑；只有 low-risk 非 full 可由 `guru_gate.py grill-skip` 留痕跳过。
 
 ## 拷问对照物
 
@@ -26,6 +27,7 @@ description: 通用 Guru Gate 前拷问会话。运行时读取当前项目 .tre
 
 - `.trellis/spec/guides/golden-path.md`：分层依赖律、硬红线、禁止清单。
 - `.trellis/spec/conventions/project-conventions.md`：当前项目取值、存量违例清单、校验清单结果。`project-conventions.template.md` 和样例文件只能作为修复提示，不能作为有效取值。
+- `.trellis/spec/harness/gate/gate-confirmation-model.md`：Gate 凭据模型、digest 覆盖范围与失配恢复流程。
 - 当前任务产物：`prd.md`、`design.md`、`task.json`，以及 full 链的 `design_package` / `design-main.md` / `chapters/`（存在时）。
 - 术语与决策上下文：仓库根 `CONTEXT.md` 或 `CONTEXT-MAP.md`、`docs/adr/`（存在时）。
 - 目标仓库真实代码：按 project-conventions 和当前设计表里的 owner / 路径线索使用 `rg` 定位；找到证据后再引用。
@@ -83,11 +85,35 @@ Packet 约束：
 
 Durable 状态约束：
 
+- Gate 凭据模型、digest 覆盖范围与失配恢复流程以 `.trellis/spec/harness/gate/gate-confirmation-model.md` 为准；本 skill 只定义拷问会话执行方式。
 - Packet 文本、聊天确认、手写 marker 都不是完成凭据。
 - 只有 `python3 .trellis/scripts/guru/guru_gate.py grill-done <gate> <task_dir>` 能记录完成。
-- 用户明确跳过时，只能用 `python3 .trellis/scripts/guru/guru_gate.py grill-skip <gate> <task_dir> --user-quote "<跳过理由>"` 记录跳过。
+- `requirements` 不允许跳过；`overview` / `detail` 只有在 `guru_chain=light` 且显式 `risk_level=low` 时，才能用 `python3 .trellis/scripts/guru/guru_gate.py grill-skip <gate> <task_dir> --user-quote "<跳过理由>"` 记录跳过。
 - strict 模式由用户本人在交互式终端运行；soft 模式必须有本轮明确确认并带 `--via-agent --user-quote "<用户确认原话>"`。
-- `grill-done` / `grill-skip` 写入的 digest 失配后，必须重新拷问或重新跳过；不得用 packet 复用旧凭据。
+- `grill-done` / `grill-skip` 写入的 digest 或 policy 失配后，必须重新拷问或重新合法跳过；不得用 packet 复用旧凭据。
+
+## 收口输出
+
+每次会话结束必须输出一个 **Design Grill Result**，方便用户判断下一步命令，但不得代替 `guru_gate.py` 留痕：
+
+```markdown
+## Design Grill Result
+
+- Gate: requirements | overview | detail
+- Policy: required | skippable
+- Risk Level: low | high | unknown
+- Risk Reasons: ...
+- Result: passed | blocked | needs-revision | not-required
+- Written Back: yes | no
+- Next Command: python3 .trellis/scripts/guru/guru_gate.py grill-done <gate> <task_dir>
+```
+
+规则：
+
+- `requirements` 的 `Policy` 必须是 `required`；若用户要求跳过，明确说明 `grill-skip requirements` 会被 `guru_gate.py` 拒绝。
+- `overview` / `detail` 若是 `guru_chain=full`、`risk_level=high` 或风险无法判定，`Policy` 必须是 `required`。
+- `overview` / `detail` 只有在 `guru_chain=light` 且显式 `risk_level=low` 时，`Policy` 才能是 `skippable`；此时 `Result` 可为 `not-required`，`Next Command` 应给出 `grill-skip <gate> ... --user-quote "<理由>"`。
+- 如果拷问中发现当前 low-risk 判断过低，必须把 `Risk Level` 建议改为 `high`，`Policy` 改为 `required`，并要求回写 task 风险原因后再走 `grill-done`。
 
 ## 会话六动作
 

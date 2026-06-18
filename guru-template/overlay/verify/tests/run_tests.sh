@@ -70,6 +70,34 @@ make_gate_case() { # make_gate_case <name>
   echo "$d"
 }
 
+mark_low_risk() { # mark_low_risk <task_dir>
+  python3 - "$1/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+try:
+    d = json.load(open(p, encoding="utf-8"))
+except Exception:
+    d = {}
+d["guru_chain"] = "light"
+d["risk_level"] = "low"
+json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+PY
+}
+
+mark_high_risk() { # mark_high_risk <task_dir>
+  python3 - "$1/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+try:
+    d = json.load(open(p, encoding="utf-8"))
+except Exception:
+    d = {}
+d["guru_chain"] = "light"
+d["risk_level"] = "high"
+json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+PY
+}
+
 grill_done() { # grill_done <gate> <task_dir>
   env GURU_GATE_MODE=soft python3 "$GATE" grill-done "$1" "$2" --via-agent --user-quote "已完成 $1 grill" >/dev/null
 }
@@ -84,8 +112,9 @@ write_grills_all_done() { # write_grills_all_done <task_dir>
   grill_done detail "$1"
 }
 
-write_grills_all_skip() { # write_grills_all_skip <task_dir>
-  grill_skip requirements "$1"
+write_grills_low_risk_skip() { # write_grills_low_risk_skip <task_dir>
+  mark_low_risk "$1"
+  grill_done requirements "$1"
   grill_skip overview "$1"
   grill_skip detail "$1"
 }
@@ -154,19 +183,37 @@ if [ "$rc" = 0 ] && python3 - "$GC/task.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 g = d["guru_gates"]["requirements"]["grill"]
-assert g["status"] == "done" and g["by"] and g["at"] and g["digest"]
+assert g["status"] == "done" and g["by"] and g["at"] and g["digest"] and g["policy"] == "required"
 PY
 then pass=$((pass+1)); echo "PASS  grill-done 命令写入 guru_gates[requirements].grill"
 else failn=$((failn+1)); echo "FAIL  grill-done 命令写入 (rc=$rc)"; echo "$out" | head -4; fi
+out=$(env GURU_GATE_MODE=soft python3 "$GATE" grill-skip requirements "$GC" --via-agent --user-quote "需求也跳过" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "不允许跳过"; then
+  pass=$((pass+1)); echo "PASS  requirements grill-skip 被拒"
+else failn=$((failn+1)); echo "FAIL  requirements grill-skip 应被拒 (rc=$rc)"; echo "$out" | head -4; fi
+mark_low_risk "$GC"
 out=$(env GURU_GATE_MODE=soft python3 "$GATE" grill-skip overview "$GC" --via-agent --user-quote "本轮无需拷问" 2>&1); rc=$?
 if [ "$rc" = 0 ] && python3 - "$GC/task.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 g = d["guru_gates"]["overview"]["grill"]
 assert g["status"] == "skipped" and g["reason"] == "本轮无需拷问" and g["by"] and g["at"]
+assert g["policy"] == "skippable" and g["guru_chain"] == "light" and g["risk_level"] == "low"
 PY
 then pass=$((pass+1)); echo "PASS  grill-skip 命令写入 guru_gates[overview].grill"
 else failn=$((failn+1)); echo "FAIL  grill-skip 命令写入 (rc=$rc)"; echo "$out" | head -4; fi
+
+UNK=$(make_gate_case grill-skip-unknown)
+out=$(env GURU_GATE_MODE=soft python3 "$GATE" grill-skip overview "$UNK" --via-agent --user-quote "未分级跳过" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "risk_level"; then
+  pass=$((pass+1)); echo "PASS  未显式 low-risk 的 overview grill-skip 被拒"
+else failn=$((failn+1)); echo "FAIL  未分级 overview grill-skip 应被拒 (rc=$rc)"; echo "$out" | head -4; fi
+
+HIGH=$(make_gate_case grill-skip-high); mark_high_risk "$HIGH"
+out=$(env GURU_GATE_MODE=soft python3 "$GATE" grill-skip detail "$HIGH" --via-agent --user-quote "高风险跳过" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "risk_level=high"; then
+  pass=$((pass+1)); echo "PASS  high-risk detail grill-skip 被拒"
+else failn=$((failn+1)); echo "FAIL  high-risk detail grill-skip 应被拒 (rc=$rc)"; echo "$out" | head -4; fi
 
 # status #1 回归保护：confirm 全绿但 grill 缺失时，footer 不得提示"可 task.py start"
 SS=$(make_gate_case statusfooter)
@@ -190,6 +237,12 @@ SS2=$(make_gate_case statusrender); write_grills_all_done "$SS2"
 out=$(python3 "$GATE" status "$SS2" 2>&1)
 if printf '%s' "$out" | grep -q "grill ✅"; then pass=$((pass+1)); echo "PASS  status 渲染 grill ✅(done)"
 else failn=$((failn+1)); echo "FAIL  status 未渲染 grill ✅"; printf '%s\n' "$out" | tail -4; fi
+SS3=$(make_gate_case status-skippable); grill_done requirements "$SS3"; mark_low_risk "$SS3"
+env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$SS3" --via-agent --user-quote "确认需求" >/dev/null
+out=$(python3 "$GATE" status "$SS3" 2>&1)
+if printf '%s' "$out" | grep -q "可跳过需留痕" && printf '%s' "$out" | grep -q "grill-skip overview"; then
+  pass=$((pass+1)); echo "PASS  status 渲染 low-risk overview 可跳过提示"
+else failn=$((failn+1)); echo "FAIL  status 未渲染 low-risk skip 提示"; printf '%s\n' "$out" | tail -6; fi
 
 expect "requirements 合格通过" 0 python3 "$GATE" requirements "$G"
 expect "overview 合格通过"     0 python3 "$GATE" overview "$G"
@@ -270,6 +323,10 @@ expect "full 概要：设计包合格通过" 0 python3 "$GATE" overview "$PK"
 expect "full 详细：章节闭合通过"   0 python3 "$GATE" detail "$PK"
 write_grills_all_done "$PK"
 expect "full auto 渐进通过"        0 python3 "$GATE" auto "$PK"
+out=$(env GURU_GATE_MODE=soft python3 "$GATE" grill-skip overview "$PK" --via-agent --user-quote "full 也跳过" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "guru_chain=full"; then
+  pass=$((pass+1)); echo "PASS  full 链 overview grill-skip 被拒"
+else failn=$((failn+1)); echo "FAIL  full 链 overview grill-skip 应被拒 (rc=$rc)"; echo "$out" | head -4; fi
 
 PK2=$(mk_pkg pkg-nochain); printf '{"guru_chain": "full"}\n' > "$PK2/task.json"
 expect "full 链缺 design_package 被拦" 2 python3 "$GATE" overview "$PK2"
@@ -331,21 +388,25 @@ for gate in requirements overview detail; do
   for state in missing done skip mismatch; do
     case "$state" in
       missing|mismatch) want=2 ;;
-      done|skip) want=0 ;;
+      done) want=0 ;;
+      skip) [ "$gate" = "requirements" ] && want=2 || want=0 ;;
     esac
 
     DC=$(make_gate_case "grill-confirm-$gate-$state")
+    [ "$state" = "skip" ] && mark_low_risk "$DC"
     setup_grills_for_gate_state "$gate" "$state" "$DC"
     out=$(env GURU_GATE_MODE=soft python3 "$GATE" confirm "$gate" "$DC" --via-agent --user-quote "确认 $gate gate" 2>&1); rc=$?
     judge_grill_case "grill confirm $gate/$state" "$gate" "$state" "$want" "$rc"
 
     DK=$(make_gate_case "grill-check-$gate-$state")
+    [ "$state" = "skip" ] && mark_low_risk "$DK"
     setup_grills_for_gate_state "$gate" "$state" "$DK"
     write_confirms_all "$DK"
     out=$(python3 "$GATE" check "$DK" 2>&1); rc=$?
     judge_grill_case "grill check $gate/$state" "$gate" "$state" "$want" "$rc"
 
     DA=$(make_gate_case "grill-auto-$gate-$state")
+    [ "$state" = "skip" ] && mark_low_risk "$DA"
     setup_grills_for_gate_state "$gate" "$state" "$DA"
     out=$(python3 "$GATE" auto "$DA" 2>&1); rc=$?
     judge_grill_case "grill auto $gate/$state" "$gate" "$state" "$want" "$rc"
@@ -435,7 +496,7 @@ EOF
 write_grills_all_done "$GD"
 expect "check 快照一致放行" 0 python3 "$GATE" check "$GD"
 printf '\n语义改动：阈值从 8s 调成 30s\n' >> "$GD/design.md"
-write_grills_all_skip "$GD"
+write_grills_all_done "$GD"
 expect "check 快照失配被拦" 2 python3 "$GATE" check "$GD"
 expect_grep "快照失配指明重新确认" "重新人工确认" python3 "$GATE" check "$GD"
 
@@ -468,7 +529,7 @@ PY
 write_grills_all_done "$GF"
 expect "full check 快照一致放行" 0 python3 "$GATE" check "$GF"
 printf '\n导航入口调整\n' >> "$GF-docs/README.md"
-write_grills_all_skip "$GF"
+write_grills_all_done "$GF"
 expect "full check README 快照失配被拦" 2 python3 "$GATE" check "$GF"
 expect_grep "README 快照失配指明重新确认" "重新人工确认" python3 "$GATE" check "$GF"
 expect_grep "status 与 check 同口径呈现失配" "快照失配" python3 "$GATE" status "$GF"
@@ -496,7 +557,7 @@ d = json.load(open(f"{gf}/task.json"))
 d["guru_gates"]["requirements"]["artifact_digest"] = dig
 json.dump(d, open(f"{gf}/task.json", "w"), ensure_ascii=False, indent=2)
 PY
-write_grills_all_skip "$GF2"
+write_grills_all_done "$GF2"
 expect "累积快照：上游改动后下游确认失配被拦" 2 python3 "$GATE" check "$GF2"
 expect_grep "累积快照：拦截原因是下游快照失配" "确认快照失配" python3 "$GATE" check "$GF2"
 

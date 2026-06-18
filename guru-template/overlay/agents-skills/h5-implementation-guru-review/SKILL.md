@@ -1,6 +1,6 @@
 ---
 name: h5-implementation-guru-review
-description: 按通用 golden-path 与实现 trace 合同审核 Guru H5（Next.js App Router + React + TypeScript strict）代码改动，判定能否进入 PR。核查与详细设计单元（UNIT-<slug>）合同八问的一致性、分层依赖律（route → server-component → data-access → domain-type；client-component → ui-component；server-action → data-access 单向无环）与 server-first / 'use client' 最小化 / server-client 边界 / metadata-SEO / 样式隔离 / 错误边界等 canonical、验证证据（tsc / eslint / build / test）完整性、Secret 与 server-client 边界合规红线，并执行存量豁免判定（SLOT-15 内记债不阻塞、清单外新增违例阻塞）。标准口径住 `.trellis/spec/harness/implementation/` 与 `.trellis/spec/guides/golden-path.md`，本 skill 只审核取证、不重定义规则。
+description: 按通用 golden-path 与实现 trace 合同审核 Guru H5（Next.js App Router + React + TypeScript strict）代码改动，判定能否进入 PR。核查与详细设计单元（UNIT-<slug>）合同八问的一致性、分层依赖律（route → server-component → data-access → domain-type；client-component → ui-component；server-action → data-access 单向无环）与 server-first / 'use client' 最小化 / server-client 边界 / metadata-SEO / 样式隔离 / 错误边界等 canonical、验证证据（tsc / eslint / build / test）完整性、注释/日志/文档路径追溯、Secret 与 server-client 边界合规红线，并执行存量豁免判定（SLOT-15 内记债不阻塞、清单外新增违例阻塞）。标准口径住 `.trellis/spec/harness/implementation/` 与 `.trellis/spec/guides/golden-path.md`，本 skill 只审核取证、不重定义规则。
 ---
 
 # H5 实现审核
@@ -13,7 +13,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Guru H5（Next.j
 
 1. 必须先读取通用方法 SSOT `.trellis/spec/guides/golden-path.md`（编码规则与判定基准唯一来源：分层依赖律、各层迷你路径、server-client 边界规则、错误边界范式、metadata/SEO 标准、样式隔离规则、禁止清单）。不可用 → 终止并提示先安装 guru H5 spec 模板。
 2. 读取同级标准包 `.trellis/spec/harness/implementation/implementation-trace-contract.md`（实现 trace 过程合同 + 实现 Gate G1~G6 口径）与 `.trellis/spec/harness/index.md`（编号纪律 BHV/UNIT、doc_type 七类、Gate 4 脚本判定项、统一红线）。
-3. 读取目标仓库 `.trellis/spec/conventions/project-conventions.md`，先跑校验清单 C1~C5；**重点装载 SLOT-15 存量违例清单**（存量豁免判定的唯一数据源）与本项目的 project-conventions 槽位取值：内容源（MDX/CMS）、状态管理（none/Zustand/Context）、UI 组件库（shadcn/MUI）、样式方案（Tailwind/CSS Modules）、测试（Vitest+RTL/Playwright）、lint（ESLint+Prettier）、数据库、认证（NextAuth）、图像优化（next/image）、部署（Vercel）、路由模式（App vs Pages）。槽位缺失或待定超限 → 前置失败。
+3. 读取目标仓库 `.trellis/spec/conventions/project-conventions.md`，先跑校验清单 C1~C5；**重点装载 SLOT-15 存量违例清单**（存量豁免判定的唯一数据源）与本项目的 project-conventions 槽位取值：内容源（MDX/CMS）、状态管理（none/Zustand/Context）、UI 组件库（shadcn/MUI）、样式方案（Tailwind/CSS Modules）、测试（Vitest+RTL/Playwright）、lint（ESLint+Prettier）、数据库、认证（NextAuth）、图像优化（next/image）、部署（Vercel）、路由模式（App vs Pages），并确认项目 logger / logging helper / observability 门面和 server/client 日志边界。槽位缺失或待定超限 → 前置失败。
 4. 定位审核对象：被审改动（diff/分支）、本任务承接的详细设计单元（full 链 `design_package/chapters/*.md` 的 `UNIT-<slug>`；light 链 `design.md` §详细）、`implement.md`（trace）。trace 缺失 → 前置失败（实现 Gate 的证据载体不存在，不进入符合性判断）。
 5. 命中需要项目级取值才能判定的项（如 lint 是否真按 `ESLint + Prettier` 跑、样式是否真按 Tailwind/CSS Modules 隔离、状态管理是否真用约定的 none/Zustand/Context、认证是否真走 NextAuth、路由模式是否真是 App Router），其取值只能来自 project-conventions 槽位与仓库真实代码，不得从详细设计正文推断；仓库内残留的 Pages Router/旧形态代码不能据此放行 App Router 项目合规。
 
@@ -87,7 +87,14 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
    - **依赖整洁**：`package.json`/lockfile 变更须记 diff；新增第三方库须落在 project-conventions 已批准槽位（状态/UI 库/认证等被锁选型不得擅自换）。
    - **未验证项**：无法本地验证的（真实 CMS/数据库联调、Vercel 部署后的边缘/Node runtime 行为、生产 `revalidate`/ISR 缓存实际失效、真实 SEO 抓取/OG 预览、跨设备/真机 H5 视口与首屏性能、NextAuth 真实回调）须显式列出并指明移交环节（CI / Preview 部署 / Manual QA / Lighthouse），不得隐瞒。
 
-5. **D5 合规红线 / Secret 与 server-client 边界合规**（对应 Gate 4 config/secret 合规 + 统一红线）：
+5. **D5 注释/日志/文档追溯核查**（维护性证据）：检查实现是否能让后续维护者从代码回到设计决策，并能在生产问题中定位 server/client 边界与关键链路。
+   - 新增导出组件、`server-component`、`client-component`、`data-access` 函数、`server-action`、route 段入口、domain-type/zod schema，必须有 TSDoc/JSDoc 或等价注释说明职责、承接的 `UNIT-<slug>` / `BHV-NNN`；必要时附设计文档相对路径（`docs/design/.../chapters/<slug>.md` 或任务内 `design.md` 锚点）。缺失通常为 P2；高风险链路或新增核心 owner 完全无追溯为 P1。
+   - 非显然 server/client 边界、缓存/`revalidate` 决策、鉴权、错误边界、hydration 规避、内容源兼容、SEO metadata 生成策略必须解释"为什么这样做"，不能只靠代码形状猜意图。缺失按 P2 处理。
+   - 关键流程日志应覆盖 server 入口、成功收口、失败/降级、重试/恢复、外部依赖边界、`server-action` 变更结果；必须复用 project-conventions 日志槽位或项目 logger / observability 门面。生产散落 `console.log`/`console.debug`、吞错无日志、server-action 失败无上下文日志按 P2 起步，高风险不可观测路径按 P1。
+   - 日志不得记录 secret、token、PII、完整请求体、cookie/session 或用户生成内容原文；client 侧不得输出服务端私密上下文。命中即 P1。
+   - trace §2/§3 应记录本次新增注释、日志、文档路径引用与无法覆盖的理由；缺记录为 P3，若导致审计不可复现为 P2。
+
+6. **D6 合规红线 / Secret 与 server-client 边界合规**（对应 Gate 4 config/secret 合规 + 统一红线）：
    - **密钥落地**：代码、配置、`.env.example`、fixtures、测试资产、trace 不得出现真实 API key、token、password、数据库连接串、签名密钥等 `secret_value`；只允许保存环境变量名引用、`credential_ref`。硬编码 secret = P1。
    - **server-client 秘密边界**（红线，不可豁免）：私密配置只走服务端 env（无 `NEXT_PUBLIC_` 前缀）且只在 server-component/data-access/server-action 读取；把私密 env、服务端 token、数据库句柄经 props 或 import 暴露到 `'use client'` 子树 = P1。仅前端可见值若误标私密、或私密值误加 `NEXT_PUBLIC_` 前缀外泄 = P1。
    - **认证合规**（认证槽位 NextAuth 启用时）：鉴权/会话校验须在服务端（middleware / server-component / server-action）完成，client 端只做 UI 态展示不做权限裁决；密钥来自 env，禁硬编码；回调/CSRF/session 策略与设计一致。
@@ -95,7 +102,7 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
    - **合规依据一致**：权限/数据采集（埋点、第三方 SDK、cookie/storage 使用）须与设计合规依据一致；新增采集而设计无依据 = P1。
    - 红线违例（server-client 边界破坏 / 私有数据获取下沉 client / 分层反向 / 硬编码 secret / 私密 env 外泄 / strict 倒退 / prettier·eslint 未过 / 未批准重型依赖替换被锁槽位）在对应判定直接 fail，不可豁免。
 
-6. **D6 偏差闭合**（对应 Gate 4 G6）：PR diff 与计划逐项可对；所有计划外改动均有原因记录；上游结构性缺陷（归属错、合同越界、单元跟随名词而非行为、doc_type 用错名）已回退拥有该决策的阶段修订而非就地补造。对不上靠 reviewer 自己发现 = P2 起步；就地改设计 = P1。
+7. **D7 偏差闭合**（对应 Gate 4 G6）：PR diff 与计划逐项可对；所有计划外改动均有原因记录；上游结构性缺陷（归属错、合同越界、单元跟随名词而非行为、doc_type 用错名）已回退拥有该决策的阶段修订而非就地补造。对不上靠 reviewer 自己发现 = P2 起步；就地改设计 = P1。
 
 ## 输出（互斥分支）
 
@@ -104,7 +111,7 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
 **前置通过时**，按以下顺序输出：
 
 1. **结论（三选一，置顶）**：
-   - **可进入 PR**：D1~D6 全过；trace 四节齐全、`tsc`/`eslint`/`prettier`/`next build`/测试有命令级证据且全绿、承接 UNIT 的成功 + 全部失败路径有测试、无 P1、无清单外新增违例、无未闭合偏差、server-client 边界与 secret 合规。
+   - **可进入 PR**：D1~D7 全过；trace 四节齐全、`tsc`/`eslint`/`prettier`/`next build`/测试有命令级证据且全绿、承接 UNIT 的成功 + 全部失败路径有测试、注释/日志/文档路径追溯可审计、无 P1、无清单外新增违例、无未闭合偏差、server-client 边界与 secret 合规。
    - **修复 P2 后可进入**：无 P1，但存在 P2（证据不完整、偏差未全闭合、非高风险漏测、`'use client'` 越界但有降级、metadata/SEO 字段缺失、绕行未挂编号等）；列出 P2 修复项。
    - **不可进入 PR**：存在任一 P1（合同未实现 / 八问断链 / 分层反向·越层 / server-client 边界破坏 / 私有数据获取下沉 client / 硬编码 secret 或私密 env 外泄 / strict 倒退 / 错误吞噬关键链路 / doc_type 用错名 / 清单外新增违例 / 高风险漏测 / 类型或构建未收口 / 证据造假 / 就地改设计）；逐条列阻塞 P1。验证因环境/凭据/CMS/网络阻塞无法完成时，结论为 blocked，记录命令、错误摘要、缺失依赖与恢复条件，不得降级为 pass。
 
@@ -119,15 +126,17 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
    - 建议（最小修订）：`<修代码 | 补/复跑验证 | 移除越界结构 | 回退详细阶段修订 | 挂 SLOT-15 记债 | 恢复验证环境>`
    ```
    先证据后结论，严重度排序：
-   - **P1**：合同未实现 / 执行流程步骤缺失·改序·下沉·上移无设计依据 / 八问断链（幽灵 BHV·UNIT）/ 实现阶段猜测发明未定义合同 / 分层反向·越层 / server-client 边界破坏（client 直取私有数据·secret 透传客户端·私服模块 client 端 import）/ 私密 env 外泄 / 硬编码 secret / TS strict 倒退 / 关键链路错误吞噬·缺错误边界 / doc_type 用错名（非七类）/ 清单外新增违例（含扩大违例面）/ 高风险链路漏测 / 类型或 `next build` 未收口 / 证据与复跑不符 / 就地改设计而非回退。
-   - **P2**：类型/静态/构建/测试证据不完整（无命令·无退出态·无测试名）/ 非高风险失败路径漏测 / `'use client'` 越界但有降级 / metadata·SEO 关键字段缺失 / 偏差未全闭合靠 reviewer 发现 / 触碰存量绕行未挂编号 / 计划与验证命令轻微不一致但未绕过实现 / 因环境阻塞验证未完成。
-   - **P3**：命名、目录/文件组织、注释、验证记录可读性问题，不影响合同闭合与红线。
+   - **P1**：合同未实现 / 执行流程步骤缺失·改序·下沉·上移无设计依据 / 八问断链（幽灵 BHV·UNIT）/ 实现阶段猜测发明未定义合同 / 分层反向·越层 / server-client 边界破坏（client 直取私有数据·secret 透传客户端·私服模块 client 端 import）/ 高风险核心 owner 完全无文档追溯 / 高风险路径不可观测 / 日志泄露 secret 或 PII / 私密 env 外泄 / 硬编码 secret / TS strict 倒退 / 关键链路错误吞噬·缺错误边界 / doc_type 用错名（非七类）/ 清单外新增违例（含扩大违例面）/ 高风险链路漏测 / 类型或 `next build` 未收口 / 证据与复跑不符 / 就地改设计而非回退。
+   - **P2**：类型/静态/构建/测试证据不完整（无命令·无退出态·无测试名）/ 非高风险失败路径漏测 / 新增导出组件或核心函数缺 TSDoc/JSDoc 设计锚点 / 非显然 server-client 边界或缓存策略缺"为什么"注释 / 关键流程日志缺入口或失败上下文 / `'use client'` 越界但有降级 / metadata·SEO 关键字段缺失 / 偏差未全闭合靠 reviewer 发现 / 触碰存量绕行未挂编号 / 计划与验证命令轻微不一致但未绕过实现 / 因环境阻塞验证未完成。
+   - **P3**：命名、目录/文件组织、注释措辞、验证记录可读性问题，不影响合同闭合与红线。
 
 3. **存量豁免清单**：本次触碰的 SLOT-15 条目 + 分类结果（记债不阻塞 / 新增阻塞 / 可移除）+ 对应 `[SLOT-NN]` 编号。
 
-4. **验证命令汇总**：每条 `command / status(passed|failed|not_run|blocked_by_environment) / evidence(输出摘要或日志) / blocker`。未执行或环境阻塞的验证、失败的必要命令均不得支撑「可进入 PR」。
+4. **注释/日志/文档追溯摘要**：覆盖的新增核心定义、日志点、设计文档路径引用，以及缺口和判级。
 
-5. **反哺建议（可选）**：本次暴露的新模式/新坑 → 建议更新 golden-path、harness 标准包或 project-conventions 槽位定义的具体条目（如新增 SLOT-15 记债项、补 golden-path 禁止清单条目、补某 pending doc_type 的 L2 详例）。
+5. **验证命令汇总**：每条 `command / status(passed|failed|not_run|blocked_by_environment) / evidence(输出摘要或日志) / blocker`。未执行或环境阻塞的验证、失败的必要命令均不得支撑「可进入 PR」。
+
+6. **反哺建议（可选）**：本次暴露的新模式/新坑 → 建议更新 golden-path、harness 标准包或 project-conventions 槽位定义的具体条目（如新增 SLOT-15 记债项、补 golden-path 禁止清单条目、补某 pending doc_type 的 L2 详例）。
 
 ## 好例 / 坏例（审核判读对照）
 

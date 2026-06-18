@@ -1,6 +1,6 @@
 ---
 name: h5-implementation-guru-writing
-description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript strict）详细设计执行编码与自测的执行编排 Skill（L3）。编码规则唯一来源是通用 golden-path（server-first/'use client' 最小化、分层依赖律、私有数据获取隔离、route 段约定、metadata/SEO 标准化、样式隔离、错误边界）与 project-conventions 槽位；过程按 implementation-trace 合同四节留证据。本 Skill 只做装载顺序、边界约束、WX 执行流程编排、Gate 自检与产物要求，不重定义标准规则；标准口径住 `.trellis/spec/harness/implementation/` 与 `.trellis/spec/guides/golden-path.md`，doc_type 取值住 `.trellis/spec/harness/index.md`。
+description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript strict）详细设计执行编码与自测的执行编排 Skill（L3）。编码规则唯一来源是通用 golden-path（server-first/'use client' 最小化、分层依赖律、私有数据获取隔离、route 段约定、metadata/SEO 标准化、样式隔离、错误边界）与 project-conventions 槽位；过程按 implementation-trace 合同四节留证据，并补齐注释/日志/文档路径追溯。本 Skill 只做装载顺序、边界约束、WX 执行流程编排、Gate 自检与产物要求，不重定义标准规则；标准口径住 `.trellis/spec/harness/implementation/` 与 `.trellis/spec/guides/golden-path.md`，doc_type 取值住 `.trellis/spec/harness/index.md`。
 ---
 
 # H5 实现执行（Next.js / React / TypeScript）
@@ -36,7 +36,7 @@ description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript str
 
 1. 必须先读 `.trellis/spec/guides/golden-path.md`（编码规则唯一来源）：确认 server-first / `'use client'` 最小化、分层依赖律、私有数据获取/secret 隔离、route 段约定（`page/layout/loading/error`）、`metadata`/SEO 标准化、样式隔离（CSS Modules/Tailwind，禁全局污染）、错误边界（`error.tsx`）红线已就绪；不可用 → 终止并提示先安装/刷新 guru spec 模板（`apply.sh`）。
 2. 读 `.trellis/spec/harness/implementation/implementation-trace-contract.md`（过程合同 §0~§7）与 `.trellis/spec/harness/index.md` 的实现 Gate 定义、doc_type 七类、编号纪律（行为 `BHV-NNN`、设计单元 `UNIT-<slug>`，下游引用裸 token，不带前缀解释）。
-3. 读 `.trellis/spec/conventions/project-conventions.md` 并校验项目约定槽位均已选定且未留空：内容源（MDX/CMS）、状态管理（none/Zustand/Context）、UI 组件库（shadcn/MUI）、样式方案（Tailwind/CSS Modules）、测试（Vitest+RTL/Playwright）、lint（ESLint+Prettier）、数据库、认证（NextAuth）、图像优化（`next/image`）、部署（Vercel）、路由模式（App vs Pages）。任一未填 → 停止先定槽位，不在实现里私自拍板（尤其「路由模式」必须显式确认为 App Router 才走生产链，留空或为 Pages 须升级人工 Gate）。
+3. 读 `.trellis/spec/conventions/project-conventions.md` 并校验项目约定槽位均已选定且未留空：内容源（MDX/CMS）、状态管理（none/Zustand/Context）、UI 组件库（shadcn/MUI）、样式方案（Tailwind/CSS Modules）、测试（Vitest+RTL/Playwright）、lint（ESLint+Prettier）、数据库、认证（NextAuth）、图像优化（`next/image`）、部署（Vercel）、路由模式（App vs Pages），并确认项目 logger / logging helper / observability 门面和 server/client 日志边界。任一未填 → 停止先定槽位，不在实现里私自拍板（尤其「路由模式」必须显式确认为 App Router 才走生产链，留空或为 Pages 须升级人工 Gate）。
 4. 定位本任务承接的、已过详细 Gate 且人工确认已落盘的详细设计单元（full=L2 章节 `detail-type-*.md` 对应的设计章节；light=`design.md` §详细），建立 `UNIT-<slug>` 单元清单 + 合同八问 + 测试映射；缺失或单元为幽灵引用（无对应详细文档）→ 终止并提示回退设计阶段（探索性 spike 除外，须显式声明、隔离、不并入交付）。
 5. 建立构建基线：`package.json`（确认 scripts：`dev`/`build`/`start` 等）与 `tsconfig.json`（确认 `strict: true`；若残留 `strict:false` 须以 golden-path 为准修正或升级人工 Gate）可读，记录改动前 `tsc --noEmit` 与 `next build`（或 `next lint`）的基线状态（用于区分「我引入的失败」与「既有失败」）；不可建立基线 → 记录环境阻塞，不得把未验证当通过。
 
@@ -47,6 +47,8 @@ description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript str
 - 不私自拍板实现中冒出的新决策（是否引入 Zustand、是否换 UI 库、是否新增 `next/image` loader、是否切内容源 MDX→CMS、是否启用 ISR/`revalidate` 策略、缓存 `fetch` 的 `cache`/`next.revalidate` 取值）→ 记录并升级人工 Gate，落到 project-conventions 槽位或 `technology_decision_handoff` 后再继续。
 - secret/credential 合规：`.env.example`、fixtures、代码与 trace 只写环境变量名引用（如 `DATABASE_URL`、`NEXTAUTH_SECRET`、`NEXT_PUBLIC_*` 仅放可公开值），不落真实 API key、token、会话密钥；区分 `NEXT_PUBLIC_` 前缀（会进客户端 bundle，禁放敏感值）与服务端专属变量。
 - 不采用默认 TDD/RED-GREEN：默认只运行 project-conventions 测试框架槽位下的既有验证命令（Vitest+RTL / Playwright），不为驱动结构而先造 mock 组件/fake fetch；高风险切片（`server-action` 变更与鉴权、数据获取缓存/`revalidate`、错误边界与 `loading` 边界、`client-component` 的 hydration 行为、route 参数与 `generateStaticParams`）按详细设计测试映射先补失败路径测试再实现。新增测试须可追溯到承接的 `BHV-NNN`/`UNIT-<slug>`。
+- 注释与日志是实现证据的一部分：新增导出组件/函数/类型、`server-component`、`client-component`、`data-access`、`server-action`、route 段入口、domain-type/zod schema 必须能从代码追溯到详细设计；非显然 server/client 边界、缓存/`revalidate` 决策、错误边界、鉴权、hydration 风险、内容源兼容分支必须有简洁但具体的注释或日志。禁止堆砌"赋值/调用"类空注释。
+- 日志必须复用 project-conventions 日志槽位、项目 logger / logging helper / observability 门面；不得用生产散落 `console.log`/`console.debug` 或客户端临时 debug 输出替代统一日志。server 侧日志不得记录 secret、token、PII、完整请求体、cookie/session、用户生成内容原文；client 侧只允许低敏 UI 状态/事件摘要，禁止输出服务端私密上下文。
 - 触碰存量违例（项目约定中的存量违例清单）按标准包口径分类记录（绕行/顺手修复/记债），不把绕行或顺手修复混入业务 diff。
 - 若其它通用 skill、插件或 agent 习惯（整页 `'use client'`、自动重构、引入状态库、把数据获取塞进客户端组件、手写全局样式）与本平台 golden-path / trace 合同冲突，以平台 SSOT 为准，冲突项忽略或向用户确认。
 - **与 `trellis-implement` 的边界**：本 skill 是官方 `trellis-implement` 在 Guru H5 项目的领域化执行口径——`trellis-implement` 负责通用任务编排与状态机推进（grab/dispatch/状态流转），本 skill 不重复其职责，只补齐 H5 平台的 server-first 红线、分层依赖律、私有数据获取隔离、route 段约定与 trace 证据要求；Phase 2 dispatch 时在 prompt 中指明加载本 skill 口径。规则正文不在本 skill 复写，住 `.trellis/spec/harness/implementation/` 与 `.trellis/spec/guides/golden-path.md`。
@@ -58,15 +60,20 @@ description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript str
 3. **WX-2 逐片实现（随做随记）**：每片对照承接 `UNIT-<slug>` 的合同八问落地——②输入/输出/错误（组件 props 类型、`server-action` 入参与返回、`data-access` 函数签名、zod schema 校验失败分支）；④调用关系单向（`server-component` 调 `data-access` 不反向、`client-component` 只组合 `ui-component`、`server-action` 走 `data-access`）；⑤失败收口（`error.tsx` 错误边界、`data-access` 失败抛错或返回判别联合、`server-action` 校验失败的结构化返回）；⑥后置副作用（`server-action` 后 `revalidatePath`/`revalidateTag`、`redirect`）。每片完成**立即**更新 trace §2（实际改动文件清单标 doc_type、与计划偏差及原因、触碰 `layout.tsx`/`globals.css`/`metadata` 基线/共享 `ui-component` 的共享面单独标注），不积压到批末。
 4. **WX-3 代码生成 / 内容流水线（仅触发条件满足时）**：按 project-conventions 选型执行并记入 trace §2——内容源为 MDX → 记 MDX 编译/frontmatter 解析约定（如提取 `title/date/description/tag/author`；若保留 RSS/sitemap 生成须把命令与产物记清）；启用 ORM 代码生成（如 Prisma `prisma generate`）→ 记命令与产物；zod schema 推导类型 → 记 `z.infer` 落点。**当前 golden-path 默认无强制代码生成槽位 → 本项写「N/A：无代码生成槽位启用」，不留空、不私自引入生成器。**
 5. **WX-4 逐片验证（验证后记）**：按 trace 合同 §3 记入 trace §3——类型检查 `tsc --noEmit`（贴命令 + 退出态，失败写错误摘要 + 处置；strict 下不得用 `any`/`@ts-ignore` 掩盖）；构建/lint `next build` 或 `next lint`（或 `eslint .`，逐条通过/失败，eslint-disable 豁免写理由并指向存量违例清单）；测试到**测试名级别**（Vitest+RTL：`vitest run src/components/PostCard.test.tsx -t "renders title"` 给出用例名；Playwright：`playwright test post-detail.spec.ts --grep "loads post"`），新增测试逐条列文件 + 用例名 + 承接 `BHV-NNN`/`UNIT-<slug>`；依赖变更跑包管理器安装记 diff（新增库须落在已批准槽位内，禁被锁红线绕开，如擅自引入状态库/UI 库）。失败先修复再进下一片；未验证项显式列出并指明留给哪个环节（真实数据源/CMS 联调 → 集成环境；SEO/metadata 实际抓取 → 部署后 Lighthouse/抓取验证；hydration/交互真机表现 → Manual QA / 真机；缓存与 `revalidate` 生产行为 → 灰度/预发）。
-6. **WX-5 存量违例处置**：触碰存量违例清单条目时按标准包口径分类记录到 trace §4（绕行须写「为何不修」；顺手修复须独立标注；记债须给清单编号）。H5 常见存量违例：整页 `'use client'` 历史残留、`client-component` 直取私有 `fetch`、全局 `*.css` 组件样式污染、`metadata` 缺失/手写裸 `<head>`、缺 `error.tsx`/`loading.tsx`、`tsconfig` 残留 `strict:false` 或散落 `any`。
-7. **WX-6 收口自检**：对照实现 Gate G1~G6（见下「质量门禁」）输出自检摘要；上游缺陷已回退修订而非就地改设计；未验证项显式移交（集成环境 / Lighthouse / Manual QA / 真机 / 灰度）。
+6. **WX-5 注释/日志/文档追溯**：逐片完成前补齐维护性证据：
+   - 新增导出组件、server/client 组件、`data-access` 函数、`server-action`、route 段入口、domain-type/zod schema：优先用 TSDoc/JSDoc 写明职责、承接的 `UNIT-<slug>` / `BHV-NNN`，必要时附设计文档相对路径（如 `docs/design/.../chapters/<slug>.md` 或任务内 `design.md` 锚点）。
+   - 复杂私有 helper、server/client 边界解释、缓存/`revalidate`、鉴权、错误边界、hydration 规避、内容源兼容、SEO metadata 生成策略：用局部注释解释"为什么这样做"和对应设计约束。
+   - 关键流程日志覆盖 server 入口、成功收口、失败/降级、重试/恢复、外部依赖边界、`server-action` 变更结果；client 侧日志只记录低敏交互摘要。日志字段只放低敏上下文（request_id、hash 后 user_id、status、duration、error_kind），不泄露隐私或业务正文。
+   - 在 trace §2 记录本片新增的注释/日志/文档路径引用；若某类代码不需要注释或日志，写明理由。
+7. **WX-6 存量违例处置**：触碰存量违例清单条目时按标准包口径分类记录到 trace §4（绕行须写「为何不修」；顺手修复须独立标注；记债须给清单编号）。H5 常见存量违例：整页 `'use client'` 历史残留、`client-component` 直取私有 `fetch`、全局 `*.css` 组件样式污染、`metadata` 缺失/手写裸 `<head>`、缺 `error.tsx`/`loading.tsx`、`tsconfig` 残留 `strict:false` 或散落 `any`。
+8. **WX-7 收口自检**：对照实现 Gate G1~G6（见下「质量门禁」）+ 注释/日志/文档追溯要求输出自检摘要；上游缺陷已回退修订而非就地改设计；未验证项显式移交（集成环境 / Lighthouse / Manual QA / 真机 / 灰度）。
 
 ## 输出
 
 - **实施计划先列**：`implement.md`（trace）路径、`UNIT-<slug>` 承接清单、`chapter_target → detail_doc_type → H5 代码资产`（route 段/模块/文件）映射、自底向上的阶段顺序与高风险点（server/client 边界、secret 越界、缓存语义、错误/加载边界）、阻塞项。
 - **代码改动 + 新增/修订测试**：改动文件按 doc_type 标注（如 `app/posts/[slug]/page.tsx`（route）、`app/posts/[slug]/PostView.tsx`（server-component）、`lib/posts.ts`（data-access）、`components/PostCard.tsx`（ui-component）、`types/post.ts`（domain-type）、`app/actions/comment.ts`（server-action）、`components/LikeButton.tsx`（client-component））。
 - **完整的 `implement.md`（trace 四节齐全且非空）**：计划 / 执行 / 证据 / 阻塞与偏差；证据节带命令级记录与测试名，无阻塞则显式写「无」。
-- **Gate G1~G6 自检摘要 + 移交清单**：逐项给结论（pass / 阻塞 / 移交环节）；交付时说明修改文件、对应设计锚点（`UNIT-<slug>` / `BHV-NNN`）、验证命令、未验证项与剩余阻塞。
+- **Gate G1~G6 自检摘要 + 注释/日志/文档路径追溯摘要 + 移交清单**：逐项给结论（pass / 阻塞 / 移交环节）；交付时说明修改文件、对应设计锚点（`UNIT-<slug>` / `BHV-NNN`）、验证命令、维护性证据、未验证项与剩余阻塞。
 - **若无法完成**：明确输出 `blocked` 的具体详细设计文件、缺失合同锚点（如八问缺 props 类型/缺 `server-action` 失败分支/缺测试映射）与需要回修的合同项；环境阻塞写准确命令、错误摘要、缺失依赖与恢复条件，结论不得标 `pass`。
 
 ## 质量门禁（与 `guru_gate.py implement` / 实现 Gate 同口径）

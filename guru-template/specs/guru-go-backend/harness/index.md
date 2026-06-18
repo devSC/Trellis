@@ -13,6 +13,7 @@
 - [ ] 读 `.trellis/spec/guides/golden-path.md`：确认本任务不触碰锁定红线（`net/http ServeMux` 唯一框架、分层单向依赖、sentinel + `%w` + `errors.Is`、`app.New/Run/Shutdown` 生命周期、`config.Load()` 集中配置、`internal/` 隐私约定、`packages/contracts/` 放跨服务契约）。
 - [ ] 确定服务边界：本任务落在哪个 `services/<svc>/`，复用还是新建 `internal/{app,config,transport,service,repository,domain,auth}` 包；跨服务数据结构是否需进 `packages/contracts/`。
 - [ ] 按本任务所处阶段读对应阶段 SSOT（下表「装载」列），并把所读文件登记进任务的 `implement.jsonl` / `check.jsonl`（带 reason，便于追溯读了哪条规则）。
+- [ ] 若本任务处于 planning Gate 或准备 `task.py start`，读 [gate/gate-confirmation-model.md](./gate/gate-confirmation-model.md)。
 - [ ] 判轨：读 task.json `guru_chain`（`guru_after_create` 创建默认 `full`）。full=完整五阶段链（新服务、新协议端点、鉴权/会话、迁移、跨服务契约变更等高风险需求），走目录级设计包；light=轻量链（同包内小迭代且获用户同意降级），产物为任务内单文件。
 - [ ] 产物语言：中文优先。正文一律中文，英文仅限代码标识符、命令、路径、协议字段（如 `application_account_id`）、框架/库名（`net/http`、`lib/pq`）、缩写（HMAC-SHA256）与原文引用。
 
@@ -27,6 +28,8 @@
 | 详细设计 | `design_package/chapters/*.md`（逐章）/ `design.md` §详细 | [detail/detail-structure-single-source.md](./detail/detail-structure-single-source.md) + 涉及类型的 [detail-type-entry-api](./detail/detail-type-entry-api.md) / [detail-type-biz](./detail/detail-type-biz.md) / [detail-type-repository-data](./detail/detail-type-repository-data.md)（其余类型 doc_type 为 pending：full 链须显式 `L2豁免` 或先补 L2，light 链按 L1 合同八问展开并标注 `l2_status: pending`） |
 | 实现 | 代码 + `implement.md`（trace） | golden-path + [implementation/implementation-trace-contract.md](./implementation/implementation-trace-contract.md) |
 | 审核/复盘 | findings + spec 回写 | 各阶段 SSOT 审核基线章节 + [extraction-template.md](./extraction-template.md) |
+
+人工 Gate、design-grill 凭据、confirm 快照、累积 digest 与失配恢复流程见 [gate/gate-confirmation-model.md](./gate/gate-confirmation-model.md)。摘要：requirements 必跑 `design-grill`；overview/detail 在 full/high-risk/unknown 时必跑，只有 low-risk 非 full 可由 `guru_gate.py grill-skip` 留痕跳过。
 
 ### Go 后端的 doc_type 七类（详细阶段承接索引取值）
 

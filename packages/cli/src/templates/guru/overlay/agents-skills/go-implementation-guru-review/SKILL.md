@@ -1,6 +1,6 @@
 ---
 name: go-implementation-guru-review
-description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后端代码改动，判定能否进入 PR。核查与详细设计单元（UNIT-<slug>）合同八问的一致性、分层依赖律（transport→service→repository→domain 单向无环）与轻框架/错误链/生命周期 canonical、验证证据（go build/vet/golangci-lint/test）完整性、Secret/Config 合规红线，并执行存量豁免判定（SLOT-17 内记债不阻塞、清单外新增违例阻塞）。标准口径住 `.trellis/spec/harness/implementation/` 与 `.trellis/spec/guides/golden-path.md`，本 skill 只审核取证、不重定义规则。
+description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后端代码改动，判定能否进入 PR。核查与详细设计单元（UNIT-<slug>）合同八问的一致性、分层依赖律（transport→service→repository→domain 单向无环）与轻框架/错误链/生命周期 canonical、验证证据（go build/vet/golangci-lint/test）完整性、注释/日志/文档路径追溯、Secret/Config 合规红线，并执行存量豁免判定（SLOT-17 内记债不阻塞、清单外新增违例阻塞）。标准口径住 `.trellis/spec/harness/implementation/` 与 `.trellis/spec/guides/golden-path.md`，本 skill 只审核取证、不重定义规则。
 ---
 
 # Go 实现审核
@@ -13,7 +13,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
 
 1. 必须先读取通用方法 SSOT `.trellis/spec/guides/golden-path.md`（编码规则与判定基准唯一来源：分层依赖律、各层迷你路径、错误处理范式、启动/关闭契约、禁止清单）。不可用 → 终止并提示先安装 guru go-backend spec 模板。
 2. 读取同级标准包 `.trellis/spec/harness/implementation/implementation-trace-contract.md`（实现 trace 过程合同 + 实现 Gate G1~G6 口径）与 `.trellis/spec/harness/index.md`（编号纪律 BHV/UNIT、Gate 4 脚本判定项、统一红线）。
-3. 读取目标仓库 `.trellis/spec/conventions/project-conventions.md`，先跑校验清单 C1~C5；**重点装载 SLOT-17 存量违例清单**（存量豁免判定的唯一数据源）与本服务的 SLOT-01~SLOT-16 取值（DI/ORM/日志/测试框架/API 风格/DB 驱动/lint/配置/文档生成/会话鉴权/分层目录/迁移/错误风格/生命周期/接口抽象/枚举表达）。槽位缺失或待定超限 → 前置失败。
+3. 读取目标仓库 `.trellis/spec/conventions/project-conventions.md`，先跑校验清单 C1~C5；**重点装载 SLOT-17 存量违例清单**（存量豁免判定的唯一数据源）与本服务的 SLOT-01~SLOT-16 取值（DI/ORM/日志/测试框架/API 风格/DB 驱动/lint/配置/文档生成/会话鉴权/分层目录/迁移/错误风格/生命周期/接口抽象/枚举表达），并确认项目 logger / logging helper / 日志门面和字段约定。槽位缺失或待定超限 → 前置失败。
 4. 定位审核对象：被审改动（diff/分支）、本任务承接的详细设计单元（full 链 `design_package/chapters/*.md` 的 `UNIT-<slug>`；light 链 `design.md` §详细）、`implement.md`（trace）。trace 缺失 → 前置失败（实现 Gate 的证据载体不存在，不进入符合性判断）。
 5. 命中需要项目级取值才能判定的项（如 lint 是否真按 `golangci-lint` 跑、DB 驱动是否落在 repository/app 层、会话鉴权是否 HMAC-SHA256 签名 cookie + bcrypt），其取值只能来自 project-conventions 槽位与仓库真实代码，不得从详细设计正文或参考工程习惯推断。
 
@@ -59,14 +59,21 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
    - **依赖整洁**：`go.mod`/`go.sum` 变更须 `go mod tidy` 并记 diff；新增第三方库须落在 project-conventions 已批准槽位（禁被锁框架）。
    - **未验证项**：无法本地验证的（真实 PostgreSQL 集成、生产负载下 `context` 超时与连接池、跨服务契约在另一服务的运行时兼容、信号驱动优雅关闭实测）须显式列出并指明移交环节（CI 集成 / 压测灰度 / Manual QA staging），不得隐瞒。
 
-5. **D5 合规红线 / Secret 合规**（对应 Gate 4 config/secret 合规 + 统一红线）：
+5. **D5 注释/日志/文档追溯核查**（维护性证据）：检查实现是否能让后续维护者从代码回到设计决策，并能在生产问题中定位关键路径。
+   - 新增核心类型、导出函数/方法、transport handler、service、repository、domain model、config/app 生命周期入口、`packages/contracts/` 契约结构，必须有 Go doc comment 或等价注释说明职责、承接的 `UNIT-<slug>` / `BHV-NNN`；必要时附设计文档相对路径（`docs/design/.../chapters/<slug>.md` 或任务内 `design.md` 锚点）。缺失通常为 P2；高风险链路或新增核心 owner 完全无追溯为 P1。
+   - 非显然业务分支、事务/迁移、错误转换与 sentinel 映射、降级/恢复、并发同步、`context` timeout/cancel、生命周期启动/关闭、外部依赖边界必须解释"为什么这样做"，不能只靠代码形状猜意图。缺失按 P2 处理。
+   - 关键流程日志应覆盖入口、成功收口、失败/降级、重试/恢复、外部依赖边界、生命周期启动/关闭；必须复用 project-conventions 日志槽位选型或项目日志门面。散落 `fmt.Println`、无上下文 `log.Printf`、吞错无日志、外部依赖失败无上下文日志按 P2 起步，高风险不可观测路径按 P1。
+   - 日志不得记录 secret、token、PII、完整请求体、密码明文或用户生成内容原文；命中即 P1。
+   - trace §2/§3 应记录本次新增注释、日志、文档路径引用与无法覆盖的理由；缺记录为 P3，若导致审计不可复现为 P2。
+
+6. **D6 合规红线 / Secret 合规**（对应 Gate 4 config/secret 合规 + 统一红线）：
    - **密钥落地**：代码、config 结构、yaml、fixtures、测试资产、trace 不得出现真实 API key、长期 AK/SK、token、password、盐等 `secret_value`；只允许保存环境变量名引用（如 `api_key_env_name`）、`credential_ref`、role/profile 引用等非敏感配置。硬编码 secret = P1。
    - **会话鉴权**（SLOT-10）：鉴权逻辑须收敛在 `internal/auth` 并经 `transport` middleware 注入，service/repository/domain 不感知 cookie/header；密钥来自 `config`，禁硬编码密钥/盐；HMAC-SHA256 签名 cookie + bcrypt 的签发/校验/过期是否与设计一致。
    - **`.env` 不作线上合同**：`.env` 仅本地开发引导，不得当生产配置合同。
    - **迁移合规**（SLOT-12）：迁移版本号单调递增、up/down 成对、不修改已应用的历史迁移；改 schema 一律追加新版本。
    - 红线违例（轻框架破坏 / 分层反向 / 丢 `%w` / 生命周期破坏 / 配置不集中 / internal 越界 / 契约不走 contracts / gofmt-goimports 未过 / 硬编码 secret）在对应判定直接 fail，不可豁免。
 
-6. **D6 偏差闭合**（对应 Gate 4 G6）：PR diff 与计划逐项可对；所有计划外改动均有原因记录；上游结构性缺陷（归属错、合同越界、单元跟随名词而非行为）已回退拥有该决策的阶段修订而非就地补造。对不上靠 reviewer 自己发现 = P2 起步；就地改设计 = P1。
+7. **D7 偏差闭合**（对应 Gate 4 G6）：PR diff 与计划逐项可对；所有计划外改动均有原因记录；上游结构性缺陷（归属错、合同越界、单元跟随名词而非行为）已回退拥有该决策的阶段修订而非就地补造。对不上靠 reviewer 自己发现 = P2 起步；就地改设计 = P1。
 
 ## 输出（互斥分支）
 
@@ -75,7 +82,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
 **前置通过时**，按以下顺序输出：
 
 1. **结论（三选一，置顶）**：
-   - **可进入 PR**：D1~D6 全过；trace 四节齐全、`go build`/`go vet`/`golangci-lint`/`go test` 有命令级证据且全绿、承接 UNIT 的成功 + 全部失败路径有测试、无 P1、无清单外新增违例、无未闭合偏差。
+   - **可进入 PR**：D1~D7 全过；trace 四节齐全、`go build`/`go vet`/`golangci-lint`/`go test` 有命令级证据且全绿、承接 UNIT 的成功 + 全部失败路径有测试、注释/日志/文档路径追溯可审计、无 P1、无清单外新增违例、无未闭合偏差。
    - **修复 P2 后可进入**：无 P1，但存在 P2（证据不完整、偏差未全闭合、非高风险漏测、绕行未挂编号等）；列出 P2 修复项。
    - **不可进入 PR**：存在任一 P1（合同未实现 / 八问断链 / 分层反向 / 轻框架破坏 / 丢 `%w` / 生命周期破坏 / 硬编码 secret / 清单外新增违例 / 高风险漏测 / 编译未收口 / 证据造假 / 就地改设计）；逐条列阻塞 P1。验证因环境/凭据/DB/网络阻塞无法完成时，结论为 blocked，记录命令、错误摘要、缺失依赖与恢复条件，不得降级为 pass。
 
@@ -90,15 +97,17 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
    - 建议（最小修订）：`<修代码 | 补/复跑验证 | 移除越界测试 | 回退详细阶段修订 | 挂 SLOT-17 记债 | 恢复验证环境>`
    ```
    先证据后结论，严重度排序：
-   - **P1**：合同未实现 / 执行流程步骤缺失·改序·下沉·上移无设计依据 / 八问断链（幽灵 BHV·UNIT）/ 实现阶段猜测发明未定义合同 / 分层反向·越层 / 轻框架破坏 / 错误链丢 `%w`·吞错·panic 控制流 / 生命周期·context·优雅关闭破坏 / 配置不集中 / internal 越界 / 契约不走 `packages/contracts/` / 硬编码 secret 或 config 存 secret value / 清单外新增违例（含扩大违例面）/ 高风险链路漏测 / 编译未收口 / 证据与复跑不符 / 就地改设计而非回退。
-   - **P2**：编译/静态/测试证据不完整（无命令·无退出态·无测试名）/ 非高风险失败路径漏测 / 偏差未全闭合靠 reviewer 发现 / 触碰存量绕行未挂编号 / 计划与验证命令轻微不一致但未绕过实现 / 因环境阻塞验证未完成。
-   - **P3**：命名、包/文件组织、验证记录可读性问题，不影响合同闭合与红线。
+   - **P1**：合同未实现 / 执行流程步骤缺失·改序·下沉·上移无设计依据 / 八问断链（幽灵 BHV·UNIT）/ 实现阶段猜测发明未定义合同 / 分层反向·越层 / 轻框架破坏 / 错误链丢 `%w`·吞错·panic 控制流 / 生命周期·context·优雅关闭破坏 / 配置不集中 / internal 越界 / 契约不走 `packages/contracts/` / 高风险核心 owner 完全无文档追溯 / 高风险路径不可观测 / 日志泄露 secret 或 PII / 硬编码 secret 或 config 存 secret value / 清单外新增违例（含扩大违例面）/ 高风险链路漏测 / 编译未收口 / 证据与复跑不符 / 就地改设计而非回退。
+   - **P2**：编译/静态/测试证据不完整（无命令·无退出态·无测试名）/ 非高风险失败路径漏测 / 新增核心定义缺 Go doc 或设计锚点 / 非显然分支缺"为什么"注释 / 关键流程日志缺入口或失败上下文 / 偏差未全闭合靠 reviewer 发现 / 触碰存量绕行未挂编号 / 计划与验证命令轻微不一致但未绕过实现 / 因环境阻塞验证未完成。
+   - **P3**：命名、包/文件组织、注释措辞、验证记录可读性问题，不影响合同闭合与红线。
 
 3. **存量豁免清单**：本次触碰的 SLOT-17 条目 + 分类结果（记债不阻塞 / 新增阻塞 / 可移除）+ 对应 `[SLOT-NN]` 编号。
 
-4. **验证命令汇总**：每条 `command / status(passed|failed|not_run|blocked_by_environment) / evidence(输出摘要或日志) / blocker`。未执行或环境阻塞的验证、失败的必要命令均不得支撑「可进入 PR」。
+4. **注释/日志/文档追溯摘要**：覆盖的新增核心定义、日志点、设计文档路径引用，以及缺口和判级。
 
-5. **反哺建议（可选）**：本次暴露的新模式/新坑 → 建议更新 golden-path、harness 标准包或 project-conventions 槽位定义的具体条目（如新增 SLOT-17 记债项、补 golden-path 禁止清单条目）。
+5. **验证命令汇总**：每条 `command / status(passed|failed|not_run|blocked_by_environment) / evidence(输出摘要或日志) / blocker`。未执行或环境阻塞的验证、失败的必要命令均不得支撑「可进入 PR」。
+
+6. **反哺建议（可选）**：本次暴露的新模式/新坑 → 建议更新 golden-path、harness 标准包或 project-conventions 槽位定义的具体条目（如新增 SLOT-17 记债项、补 golden-path 禁止清单条目）。
 
 ## 好例 / 坏例（审核判读对照）
 

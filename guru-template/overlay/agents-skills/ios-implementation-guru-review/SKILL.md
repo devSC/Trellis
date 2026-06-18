@@ -1,6 +1,6 @@
 ---
 name: ios-implementation-guru-review
-description: 按通用 golden-path 与实现 trace 合同审核 Guru iOS 原生平台（SwiftUI + DDD 四层）代码改动，判定能否进入 PR。核查与详细设计单元（UNIT-<slug>）合同八问的一致性、分层依赖律（Domain → App → Infrastructure → UI 单向，Domain 零依赖）与 FactoryKit DI / Repository 模式 / enum Error 分层 / WCDBSwift 持久化 / ObservableObject+@Published 等 golden-path canonical、验证证据（xcodebuild build/test、SwiftLint）完整性、本地化/隐私合规红线，并执行存量豁免判定（SLOT-16 内记债不阻塞、清单外新增违例阻塞）。标准口径住 `.trellis/spec/harness/implementation/` 与 `.trellis/spec/guides/golden-path.md`，本 skill 只审核取证、不重定义规则。doc_type 严格用 iOS 权威七类（viewmodel/usecase/repository/domain-model/view/coordinator/external），禁止照抄 flutter 的 controller/page-entry/db-dao 或 Go 的 transport-handler/service。
+description: 按通用 golden-path 与实现 trace 合同审核 Guru iOS 原生平台（SwiftUI + DDD 四层）代码改动，判定能否进入 PR。核查与详细设计单元（UNIT-<slug>）合同八问的一致性、分层依赖律（Domain → App → Infrastructure → UI 单向，Domain 零依赖）与 FactoryKit DI / Repository 模式 / enum Error 分层 / WCDBSwift 持久化 / ObservableObject+@Published 等 golden-path canonical、验证证据（xcodebuild build/test、SwiftLint）完整性、注释/日志/文档路径追溯、本地化/隐私合规红线，并执行存量豁免判定（SLOT-16 内记债不阻塞、清单外新增违例阻塞）。标准口径住 `.trellis/spec/harness/implementation/` 与 `.trellis/spec/guides/golden-path.md`，本 skill 只审核取证、不重定义规则。doc_type 严格用 iOS 权威七类（viewmodel/usecase/repository/domain-model/view/coordinator/external），禁止照抄 flutter 的 controller/page-entry/db-dao 或 Go 的 transport-handler/service。
 ---
 
 # iOS 实现审核
@@ -14,7 +14,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Guru iOS 原生�
 
 1. 必须先读取通用方法 SSOT `.trellis/spec/guides/golden-path.md`（编码规则与判定基准唯一来源：§2.1 分层依赖律、§3~§9 各 doc_type 迷你路径、§2.3 FactoryKit DI 策略、§2.5 enum Error 分层、§2.6 private extension 组织、§2.7 WCDBSwift 持久化、§11 禁止清单）。不可用 → 终止并提示先安装 guru iOS 原生 spec 模板。
 2. 读取同级标准包 `.trellis/spec/harness/implementation/implementation-trace-contract.md`（实现 trace 过程合同：必含四节口径 + 实现 Gate `GI-1~GI-7` + doc_type↔测试分层映射表 + 反模式）与 `.trellis/spec/harness/index.md`（§3 doc_type 权威七类表、§4.1 编号纪律 BHV/UNIT、§4.3 合同八问、§4.4 trace 四节、§6 五道 Gate 口径、统一红线）。
-3. 读取目标仓库 `.trellis/spec/conventions/project-conventions.md`，先跑 Pre-Dev 校验清单 C1~C6；**重点装载 SLOT-16 存量违例清单**（存量豁免判定的唯一数据源）与本仓库各槽位取值（UI 框架 SwiftUI 主+RxSwift 遗留→纯 SwiftUI / 网络层 URLSession·Moya / 日志 SwiftyBeaver→OSLog / JSON 修复策略 / 测试框架 XCTest→Quick·Nimble / i18n / 主题 ThemeManager / feature 模块结构 / mock 生成 手写→Mockolo / 构建自动化 Fastlane）。槽位缺失或 C1~C6 未过 → 前置失败。
+3. 读取目标仓库 `.trellis/spec/conventions/project-conventions.md`，先跑 Pre-Dev 校验清单 C1~C6；**重点装载 SLOT-16 存量违例清单**（存量豁免判定的唯一数据源）与本仓库各槽位取值（UI 框架 SwiftUI 主+RxSwift 遗留→纯 SwiftUI / 网络层 URLSession·Moya / 日志 SwiftyBeaver→OSLog / JSON 修复策略 / 测试框架 XCTest→Quick·Nimble / i18n / 主题 ThemeManager / feature 模块结构 / mock 生成 手写→Mockolo / 构建自动化 Fastlane），并确认项目 logger / logging helper / 日志门面和隐私字段约定。槽位缺失或 C1~C6 未过 → 前置失败。
 4. 定位审核对象：被审改动（diff/分支）、本任务承接的详细设计单元（full 链 `design_package/chapters/*.md` 的 `UNIT-<slug>`；light 链 `design.md` §详细）、`implement.md`（trace 四节）。trace 缺失 → 前置失败（实现 Gate 的证据载体不存在，不进入符合性判断）。
 5. 命中需要项目级取值才能判定的项（如 lint 是否真按 SwiftLint 规则集跑、网络栈是否落在 `[SLOT-network]`、新代码是否禁引入 RxSwift、mock 是否按 `[SLOT-mock]` 生成），其取值只能来自 project-conventions 槽位与仓库真实代码，**不得从详细设计正文或参考工程习惯推断**。
 
@@ -85,14 +85,24 @@ D1/D2 发现的每个违例对照 SLOT-16 清单——
 - **依赖整洁**：`Podfile`/`Podfile.lock`（CocoaPods）或 `Package.swift`/`Package.resolved`（SPM）变更须记 diff；新增第三方库须落在 project-conventions 已批准槽位（禁被锁框架，如纯 SwiftUI 仓库新增 RxSwift）。
 - **未验证项**：无法本地验证的（真机/设备能力/大模型推理/TTS 真实音频/GPU 图像生成/WhisperKit 设备端表现/真实 WCDBSwift 唯一约束/RxSwift 桥接内存与线程）须显式列出并指明移交环节（Manual QA / 真机池 / 性能基准跑 / CI），不得隐瞒。
 
-### D5 合规红线 / 隐私合规（对应 harness 统一红线 + 平台合规）
+### D5 注释/日志/文档追溯核查（维护性证据）
+
+检查实现是否能让后续维护者从代码回到设计决策，并能在真机/线上问题中定位关键路径。
+
+- **核心定义追溯**：新增核心类型、public/internal API、ViewModel、UseCase、Repository 接口与实现、domain-model、Coordinator、external adapter、跨层 DTO/状态定义，必须有 Swift DocC 风格 `///` 或等价注释说明职责、承接的 `UNIT-<slug>` / `BHV-NNN`；必要时附设计文档相对路径（`docs/design/.../chapters/<slug>.md` 或任务内 `design.md` 锚点）。缺失通常为 P2；高风险链路或新增核心 owner 完全无追溯为 P1。
+- **复杂逻辑解释**：非显然业务分支、错误映射、WCDB 迁移、SwiftUI↔RxSwift 桥接、`MainActor`/异步竞态、DI 装配、导航枚举、降级/恢复、生命周期处置必须解释"为什么这样做"，不能只靠代码形状猜意图。缺失按 P2 处理。
+- **日志覆盖**：关键流程日志应覆盖入口、成功收口、失败/降级、重试/恢复、外部依赖边界、DI/导航/持久化关键边界；必须复用 SLOT-09 选定的 `ILogger`/`Logger`/OSLog 或项目日志门面。散落 `print`/`debugPrint`/`NSLog`、吞错无日志、外部依赖失败无上下文日志按 P2 起步，高风险不可观测路径按 P1。
+- **日志安全**：日志不得记录 API key、token、PII、完整请求体、Keychain 值、用户生成内容原文或设备隐私原文；命中即 P1。
+- **trace 记录**：trace §2/§3 应记录本次新增注释、日志、文档路径引用与无法覆盖的理由；缺记录为 P3，若导致审计不可复现为 P2。
+
+### D6 合规红线 / 隐私合规（对应 harness 统一红线 + 平台合规）
 
 - **本地化合规**：`view` 用户可见文案不得硬编码字面量，须走 `[SLOT-i18n]`（`Localizable.strings`/`R.string.localizable`）；新增硬编码文案 = 违例（hooks 拦），新增即阻塞按 D3。
 - **密钥/凭据落地**：代码、`Info.plist`、config、fixtures、测试资产、trace 不得出现真实 API key、token、password、盐、长期凭据；只允许保存环境变量名引用/`credential_ref`/Keychain 读取。硬编码 secret = P1。
 - **隐私与权限**：新增的权限申请（`Info.plist` 的 `NSXxxUsageDescription`）、数据采集、第三方 SDK 上报须与设计合规依据一致；私有 API、动态执行、未声明的数据采集 = P1。
 - **禁用栈红线**：用 CoreData/SwiftData 替代 WCDBSwift、自创第八类 doc_type（`service`/`transport-handler`/`db-dao` 等当 token）、违反 `[SLOT-ui-framework]`（纯 SwiftUI 仓库新增 RxSwift）= 在对应判定直接 fail，不可豁免。
 
-### D6 偏差闭合（对应 trace §4 + Gate `GI-6`）
+### D7 偏差闭合（对应 trace §4 + Gate `GI-6`）
 
 PR diff 与计划逐项可对；所有计划外改动均有原因记录（如「`Container+UseCases.swift` 计划外修改：新 UseCase 需注册 `Factory`，属 DI 装配必经」）；上游结构性缺陷（归属错、合同越界、单元跟随名词而非行为）已**回退拥有该决策的阶段修订**而非就地补造。对不上靠 reviewer 自己发现 = P2 起步；就地改设计 = P1。
 
@@ -103,7 +113,7 @@ PR diff 与计划逐项可对；所有计划外改动均有原因记录（如「
 **前置通过时**，按以下顺序输出：
 
 1. **结论（三选一，置顶）**：
-   - **可进入 PR**：D1~D6 全过；trace 四节齐全（`GI-1`）、`xcodebuild build`/`xcodebuild test`（或 `swift build`/`swift test`）/SwiftLint 有命令级证据且全绿（`GI-3`）、承接 UNIT 的成功 + 全部失败路径有测试、golden-path 锁定项逐项落地（`GI-4`：FactoryKit `@Injected` 无手动初始化 / Repository 模式 / `enum Error` 分层 / WCDBSwift 无 CoreData·SwiftData / ViewModel=`ObservableObject`+`@Published` / `private` 在 `private extension`）、分层依赖律零违反（`GI-5`）、DI 装配闭合（`GI-7`：新增单元在 `Container+*.swift` 有 `Factory` 注册且 `@Injected` 可解析）、无 P1、无清单外新增违例、无未闭合偏差。
+   - **可进入 PR**：D1~D7 全过；trace 四节齐全（`GI-1`）、`xcodebuild build`/`xcodebuild test`（或 `swift build`/`swift test`）/SwiftLint 有命令级证据且全绿（`GI-3`）、承接 UNIT 的成功 + 全部失败路径有测试、注释/日志/文档路径追溯可审计、golden-path 锁定项逐项落地（`GI-4`：FactoryKit `@Injected` 无手动初始化 / Repository 模式 / `enum Error` 分层 / WCDBSwift 无 CoreData·SwiftData / ViewModel=`ObservableObject`+`@Published` / `private` 在 `private extension`）、分层依赖律零违反（`GI-5`）、DI 装配闭合（`GI-7`：新增单元在 `Container+*.swift` 有 `Factory` 注册且 `@Injected` 可解析）、无 P1、无清单外新增违例、无未闭合偏差。
    - **修复 P2 后可进入**：无 P1，但存在 P2（证据不完整、偏差未全闭合、非高风险漏测、绕行未挂编号、`private extension` 组织小瑕等）；列出 P2 修复项。
    - **不可进入 PR**：存在任一 P1（合同未实现 / 八问断链 / 分层反向·越层 / Domain 零依赖破坏 / `view` 直连持久化或互相导航 / 手动 `new` 替代 `@Injected` / `usecase` 触碰 UI 或环形依赖 / `WCDBSwift` 原始错误裸抛 UI / CoreData·SwiftData 替代 WCDBSwift / 自创 doc_type / 硬编码 secret / 清单外新增违例 / 高风险漏测 / 编译未收口 / 证据造假 / 就地改设计）；逐条列阻塞 P1。验证因环境/设备/真机/网络阻塞无法完成时，结论为 **blocked**，记录命令、错误摘要、缺失依赖与恢复条件，不得降级为 pass。
 
@@ -118,15 +128,17 @@ PR diff 与计划逐项可对；所有计划外改动均有原因记录（如「
    - 建议（最小修订）：`<改代码 | 补/复跑验证 | 移除越界测试 | 回退详细阶段修订 | 挂 SLOT-16 记债 | 补 Container Factory 注册 | 恢复验证环境>`
    ```
    先证据后结论，严重度排序：
-   - **P1**：合同未实现 / 执行流程步骤缺失·改序·下沉·上移无设计依据 / 八问断链（幽灵 BHV·UNIT）/ 实现期猜测发明未定义合同 / 分层反向·越层（Domain 非 `Foundation` import、`view` 直连持久化、`view` 间硬导航、`viewmodel`/`usecase` 触碰实现或 `WCDBSwift`、`usecase` 环形依赖）/ 手动 `new` 替代 FactoryKit `@Injected` / `WCDBSwift` 原始错误裸抛 UI 或缺 `enum XxxError` / CoreData·SwiftData 替代 WCDBSwift / 自创第八类 doc_type / 硬编码 secret / 私有 API·动态执行 / 清单外新增违例（含扩大违例面）/ 高风险链路漏测 / 编译未收口 / 证据与复跑不符 / 就地改设计而非回退。
-   - **P2**：编译/静态/测试证据不完整（无命令·无退出态·无测试名·无 violations 计数）/ 非高风险失败路径漏测 / 偏差未全闭合靠 reviewer 发现 / 触碰存量绕行未挂编号 / DI 装配登记缺位（Factory 已注册但 trace 未记）/ `private` 方法未进 `private extension` / 计划与验证命令轻微不一致但未绕过实现 / 因环境阻塞验证未完成。
-   - **P3**：命名后缀（`I` 前缀/`View`/`ViewModel` 后缀）、目录/文件组织、`MARK` 分组、验证记录可读性问题，不影响合同闭合与红线。
+   - **P1**：合同未实现 / 执行流程步骤缺失·改序·下沉·上移无设计依据 / 八问断链（幽灵 BHV·UNIT）/ 实现期猜测发明未定义合同 / 分层反向·越层（Domain 非 `Foundation` import、`view` 直连持久化、`view` 间硬导航、`viewmodel`/`usecase` 触碰实现或 `WCDBSwift`、`usecase` 环形依赖）/ 手动 `new` 替代 FactoryKit `@Injected` / `WCDBSwift` 原始错误裸抛 UI 或缺 `enum XxxError` / 高风险核心 owner 完全无文档追溯 / 高风险路径不可观测 / 日志泄露 secret 或 PII / CoreData·SwiftData 替代 WCDBSwift / 自创第八类 doc_type / 硬编码 secret / 私有 API·动态执行 / 清单外新增违例（含扩大违例面）/ 高风险链路漏测 / 编译未收口 / 证据与复跑不符 / 就地改设计而非回退。
+   - **P2**：编译/静态/测试证据不完整（无命令·无退出态·无测试名·无 violations 计数）/ 非高风险失败路径漏测 / 新增核心类型或 public/internal API 缺 DocC 设计锚点 / 非显然分支缺"为什么"注释 / 关键流程日志缺入口或失败上下文 / 偏差未全闭合靠 reviewer 发现 / 触碰存量绕行未挂编号 / DI 装配登记缺位（Factory 已注册但 trace 未记）/ `private` 方法未进 `private extension` / 计划与验证命令轻微不一致但未绕过实现 / 因环境阻塞验证未完成。
+   - **P3**：命名后缀（`I` 前缀/`View`/`ViewModel` 后缀）、目录/文件组织、`MARK` 分组、注释措辞、验证记录可读性问题，不影响合同闭合与红线。
 
 3. **存量豁免清单**：本次触碰的 SLOT-16 条目 + 分类结果（记债不阻塞 / 新增阻塞 / 可移除）+ 对应 `[SLOT-NN]` 编号。
 
-4. **验证命令汇总**：每条 `command / status(passed|failed|not_run|blocked_by_environment) / evidence(输出摘要或测试名) / blocker`。未执行或环境阻塞的验证、失败的必要命令均不得支撑「可进入 PR」。
+4. **注释/日志/文档追溯摘要**：覆盖的新增核心定义、日志点、设计文档路径引用，以及缺口和判级。
 
-5. **反哺建议（可选）**：本次暴露的新模式/新坑 → 建议更新 `.trellis/spec/guides/golden-path.md`、`.trellis/spec/harness/*` 标准包或 project-conventions 槽位定义的具体条目（如新增 SLOT-16 记债项、补 golden-path §11 禁止清单条目、给 pending 四类补 L2）。
+5. **验证命令汇总**：每条 `command / status(passed|failed|not_run|blocked_by_environment) / evidence(输出摘要或测试名) / blocker`。未执行或环境阻塞的验证、失败的必要命令均不得支撑「可进入 PR」。
+
+6. **反哺建议（可选）**：本次暴露的新模式/新坑 → 建议更新 `.trellis/spec/guides/golden-path.md`、`.trellis/spec/harness/*` 标准包或 project-conventions 槽位定义的具体条目（如新增 SLOT-16 记债项、补 golden-path §11 禁止清单条目、给 pending 四类补 L2）。
 
 ## 好例 / 坏例（审核判读对照）
 

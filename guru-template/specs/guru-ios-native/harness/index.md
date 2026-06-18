@@ -15,6 +15,7 @@
 - [ ] 读 `.trellis/spec/conventions/project-conventions.md` 并通过其校验清单 C1~C6（缺失/未填 → 停止，先完成项目约定，见 §5 槽位清单）。
 - [ ] 读 `.trellis/spec/guides/golden-path.md`（iOS 分层依赖律 Domain→App→Infrastructure→UI 单向、FactoryKit DI 强制、Repository 模式强制、WCDBSwift 持久化、禁止清单）。
 - [ ] 按本任务所处阶段读对应 SSOT（§2 映射表），并把所读文件登记进任务的 `implement.jsonl` / `check.jsonl`（带 reason）。
+- [ ] 若本任务处于 planning Gate 或准备 `task.py start`，读 `.trellis/spec/harness/gate/gate-confirmation-model.md`。
 - [ ] 确认 task.json `guru_chain`（full / light）；full 链另须确认 `design_package` 路径已声明或将在概要阶段 0 声明。
 - [ ] 产物语言：中文优先——英文仅限 Swift 标识符（类名/方法名/属性名/enum case）、命令、路径、协议字段、框架名（SwiftUI/RxSwift/FactoryKit/WCDBSwift）、缩写、原文引用。
 - [ ] iOS golden-path 五条硬规则在场可执行：FactoryKit `@Injected` DI（禁手动 `init` 装配）/ Repository 模式强制 / `enum Error` 分层定义 / WCDBSwift 持久化（禁 CoreData/SwiftData）/ ViewModel = `ObservableObject + @Published`（私有方法落 `private extension`）。
@@ -32,6 +33,8 @@
 | 详细设计 | `design_package/chapters/*.md`（逐章）/ `design.md` §详细 | `.trellis/spec/harness/detail/detail-structure-single-source.md` + 涉及类型的 §3 七类 L2（v1 提供 `detail-type-viewmodel.md` / `detail-type-usecase.md` / `detail-type-repository.md`；其余四类 `domain-model / view / coordinator / external` 为 pending） |
 | 实现 | Swift 代码 + `implement.md`（trace 四节）/ 同 | `.trellis/spec/guides/golden-path.md` + `.trellis/spec/harness/implementation/implementation-trace-contract.md`（追踪合同：trace 四节）+ `.trellis/spec/harness/implementation/implementation-ios-standard.md`（L1 编码标准：golden-path 锁定项 LOCK-1~7 / doc_type 权威七类 / 可编码合同八问基线）。两文件职责分工：**trace-contract = 追踪合同**（钉 `implement.md` 四节骨架与切片挂 `UNIT` 编号）；**ios-standard = 编码标准与审核基线**（钉 LOCK 锁定项、合同八问、实现 Gate 与存量豁免口径），同源被代码编写与实现审核引用 |
 | 审核 / 复盘 | findings + spec 回写 / 同 | 各 SSOT 审核基线章节 + `.trellis/spec/harness/extraction-template.md` |
+
+人工 Gate、design-grill 凭据、confirm 快照、累积 digest 与失配恢复流程见 `.trellis/spec/harness/gate/gate-confirmation-model.md`。摘要：requirements 必跑 `design-grill`；overview/detail 在 full/high-risk/unknown 时必跑，只有 low-risk 非 full 可由 `guru_gate.py grill-skip` 留痕跳过。
 
 > 装载约定：所有阶段文件以 **安装后路径** `.trellis/spec/harness/*` 与 `.trellis/spec/guides/golden-path.md` 装载并写入 jsonl；不要引用模板仓库内的源路径。
 

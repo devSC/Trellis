@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Guru 五阶段 Gate 校验 + 追溯矩阵（结构底线检查；语义判定由 review skill 人工 Gate 负责）。
 
+Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
+
 用法:
   python3 guru_gate.py auto [task_dir]            # 按 task.json status + artifact 渐进校验（worktree.yaml verify 用这个）
   python3 guru_gate.py requirements <task_dir>    # 需求 Gate：prd.md（含 BHV 编号纪律）
@@ -17,7 +19,7 @@
   python3 guru_gate.py grill-done <gate> [task_dir] [--via-agent] --user-quote "<用户确认原话>"
                                                   # 记录 design-grill 已完成（写入 guru_gates[gate].grill，含 gate digest）
   python3 guru_gate.py grill-skip <gate> [task_dir] [--via-agent] --user-quote "<跳过理由>"
-                                                  # 记录用户明确跳过 design-grill（留原因）
+                                                  # 仅 low-risk 非 full 的 overview/detail 可跳过（留原因）
   python3 guru_gate.py status [task_dir]          # 查看三道人工 Gate 的确认状态与下一步
   python3 guru_gate.py check [task_dir]           # before_start 钩子用：复跑结构 Gate + grill 前置 + 三道人工确认 + 确认快照比对，任一不满足 exit 2
   python3 guru_gate.py digest <gate> [task_dir]   # 输出该阶段产物的确认快照摘要（排查快照失配用）
@@ -567,6 +569,8 @@ def resolve_task_dir(arg):
 HUMAN_GATES = ("requirements", "overview", "detail")
 GATE_LABEL = {"requirements": "需求", "overview": "概要设计", "detail": "详细设计"}
 GATES_KEY = "guru_gates"
+HIGH_RISK_LEVELS = {"high", "critical", "p0"}
+LOW_RISK_LEVELS = {"low", "minor", "trivial"}
 
 
 def _gate_artifacts(task_dir: str, gate: str) -> list:
@@ -613,6 +617,74 @@ def _gate_digest(task_dir: str, gate: str) -> str:
         h.update(read(p).encode("utf-8"))
         h.update(b"\0")
     return h.hexdigest()
+
+
+def _risk_level(task_dir: str) -> str:
+    """读取任务风险等级。缺失/不可判定按 unknown 处理，避免 light 链自动获得 skip 权限。"""
+    data = _task_json_of(task_dir)
+    candidates = [
+        data.get("risk_level"),
+        data.get("guru_risk_level"),
+    ]
+    for key in ("guru_risk", "risk"):
+        risk_obj = data.get(key)
+        if isinstance(risk_obj, dict):
+            if risk_obj.get("high_risk") is True:
+                return "high"
+            if risk_obj.get("low_risk") is True:
+                return "low"
+            candidates.extend([risk_obj.get("risk_level"), risk_obj.get("level")])
+        elif isinstance(risk_obj, str):
+            candidates.append(risk_obj)
+    for value in candidates:
+        if not isinstance(value, str):
+            continue
+        level = value.strip().lower().replace("_", "-")
+        if level in HIGH_RISK_LEVELS:
+            return "high"
+        if level in LOW_RISK_LEVELS:
+            return "low"
+    return "unknown"
+
+
+def _grill_policy(task_dir: str, gate: str) -> dict:
+    """返回当前 gate 的 design-grill 策略：requirements 必跑；overview/detail 仅 low-risk 非 full 可 skip。"""
+    chain = task_chain(task_dir)
+    risk = _risk_level(task_dir)
+    if gate == "requirements":
+        return {
+            "policy": "required",
+            "guru_chain": chain,
+            "risk_level": risk,
+            "reason": "requirements 阶段必须运行 design-grill",
+        }
+    if chain == "full":
+        return {
+            "policy": "required",
+            "guru_chain": chain,
+            "risk_level": risk,
+            "reason": "guru_chain=full，概要/详细 design-grill 必跑",
+        }
+    if risk == "high":
+        return {
+            "policy": "required",
+            "guru_chain": chain,
+            "risk_level": risk,
+            "reason": "risk_level=high，概要/详细 design-grill 必跑",
+        }
+    if chain == "light" and risk == "low":
+        return {
+            "policy": "skippable",
+            "guru_chain": chain,
+            "risk_level": risk,
+            "reason": "guru_chain=light 且 risk_level=low，可用 guru_gate.py grill-skip 留痕",
+        }
+    return {
+        "policy": "required",
+        "guru_chain": chain,
+        "risk_level": risk,
+        "reason": "risk_level 未显式标为 low，按保守策略要求运行 design-grill",
+    }
 
 
 def _developer_name() -> str:
@@ -709,6 +781,7 @@ def _record_confirm(task_dir: str, gate: str, via: str, user_quote=None) -> int:
 def _record_grill(task_dir: str, gate: str, status: str, via: str, user_quote=None) -> int:
     """写入 design-grill 完成/跳过记录（严格 JSON 守卫 + 原子写）。via ∈ tty|agent。"""
     from datetime import datetime
+    policy = _grill_policy(task_dir, gate)
     data = _task_data_for_write(task_dir, f"grill-{status}")
     if data is None:
         return BLOCK
@@ -721,6 +794,10 @@ def _record_grill(task_dir: str, gate: str, status: str, via: str, user_quote=No
         "status": status,
         "by": _developer_name(),
         "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "policy": policy["policy"],
+        "policy_reason": policy["reason"],
+        "guru_chain": policy["guru_chain"],
+        "risk_level": policy["risk_level"],
     }
     if status == "done":
         record["digest"] = _gate_digest(task_dir, gate)
@@ -744,12 +821,14 @@ def _record_grill(task_dir: str, gate: str, status: str, via: str, user_quote=No
 
 
 def _grill_ok(task_dir: str, gate: str) -> bool:
-    """design-grill 前置状态：done 且 digest 匹配，或 skipped 留痕。"""
+    """design-grill 前置状态：done 且 digest 匹配，或当前 policy 允许的 skipped 留痕。"""
     state = _gate_states(task_dir).get(gate)
     grill = state.get("grill") if isinstance(state, dict) else None
     if not isinstance(grill, dict):
         return False
     if grill.get("status") == "skipped":
+        if _grill_policy(task_dir, gate)["policy"] != "skippable":
+            return False
         return bool((grill.get("reason") or "").strip()) and grill.get("digest") == _gate_digest(task_dir, gate)
     if grill.get("status") == "done" and grill.get("digest") == _gate_digest(task_dir, gate):
         return True
@@ -759,14 +838,19 @@ def _grill_ok(task_dir: str, gate: str) -> bool:
 def _grill_problem(task_dir: str, gate: str) -> str:
     state = _gate_states(task_dir).get(gate)
     grill = state.get("grill") if isinstance(state, dict) else None
+    policy = _grill_policy(task_dir, gate)
     if not isinstance(grill, dict):
-        return "未记录 design-grill 完成凭据"
+        if policy["policy"] == "skippable":
+            return "未记录 design-grill 完成或低风险跳过凭据"
+        return f"未记录 design-grill 完成凭据（{policy['reason']}）"
     if grill.get("status") == "done":
         if not grill.get("digest"):
             return "design-grill 完成记录缺 digest"
         if grill.get("digest") != _gate_digest(task_dir, gate):
             return "design-grill digest 失配（产物在 grill 后被修改）"
     if grill.get("status") == "skipped":
+        if policy["policy"] != "skippable":
+            return f"design-grill 跳过记录不适用：当前策略为 required（{policy['reason']}）"
         if not (grill.get("reason") or "").strip():
             return "design-grill 跳过记录缺理由（reason）"
         if grill.get("digest") != _gate_digest(task_dir, gate):
@@ -779,9 +863,13 @@ def _grill_status_mark(task_dir: str, gate: str) -> str:
     """status 呈现用：design-grill 子状态（与 confirm 同口径，避免 status 漏报 grill 卡点）。"""
     state = _gate_states(task_dir).get(gate)
     grill = state.get("grill") if isinstance(state, dict) else None
+    policy = _grill_policy(task_dir, gate)
+    policy_mark = "必跑" if policy["policy"] == "required" else "可跳过需留痕"
     if not isinstance(grill, dict):
-        return "grill ⬜ 待拷问"
+        return f"grill ⬜ {policy_mark}"
     if grill.get("status") == "skipped":
+        if policy["policy"] != "skippable":
+            return "grill ⚠️ 跳过不适用"
         if not (grill.get("reason") or "").strip():
             return "grill ⚠️ 跳过缺理由"
         return "grill ⏭ 跳过" if grill.get("digest") == _gate_digest(task_dir, gate) else "grill ⚠️ 跳过后产物已改"
@@ -792,11 +880,15 @@ def _grill_status_mark(task_dir: str, gate: str) -> str:
 
 def _block_grill(channel: str, task_dir: str, gate: str) -> int:
     reason = _grill_problem(task_dir, gate)
+    policy = _grill_policy(task_dir, gate)
     sys.stderr.write(f"[guru-gate:{channel}] 拦截：{GATE_LABEL[gate]} Gate 未完成 design-grill 前置：{reason}\n")
-    sys.stderr.write("先跑：\n")
+    sys.stderr.write("先跑 design-grill 后记录完成：\n")
     sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py grill-done {gate} {task_dir}\n")
-    sys.stderr.write("如用户明确选择跳过，请留理由：\n")
-    sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py grill-skip {gate} {task_dir} --user-quote \"<跳过理由>\"\n")
+    if policy["policy"] == "skippable":
+        sys.stderr.write("若本阶段确认保持 low-risk，也可记录跳过（必须留理由）：\n")
+        sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py grill-skip {gate} {task_dir} --user-quote \"<跳过理由>\"\n")
+    else:
+        sys.stderr.write(f"当前策略不允许 grill-skip：{policy['reason']}\n")
     return BLOCK
 
 
@@ -896,6 +988,14 @@ def cmd_grill_skip(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=N
     if not (user_quote and user_quote.strip()):
         sys.stderr.write("[guru-gate:grill-skip] 必须带 --user-quote \"<跳过理由>\" 记录用户选择跳过的原因\n")
         return BLOCK
+    policy = _grill_policy(task_dir, gate_arg)
+    if policy["policy"] != "skippable":
+        sys.stderr.write(
+            f"[guru-gate:grill-skip] 拒绝：{GATE_LABEL[gate_arg]} Gate 当前不允许跳过 design-grill。"
+            f"{policy['reason']}。请先运行 design-grill，再记录：\n"
+            f"  python3 .trellis/scripts/guru/guru_gate.py grill-done {gate_arg} {task_dir}\n"
+        )
+        return BLOCK
     allowed, interactive, _mode = _authorize_gate_write("grill-skip", via_agent, user_quote)
     if not allowed:
         return BLOCK
@@ -939,9 +1039,13 @@ def cmd_status(task_dir_arg) -> int:
     if pending:
         g0 = pending[0]
         if not _grill_ok(task_dir, g0):
+            policy = _grill_policy(task_dir, g0)
             print(f"下一步：{GATE_LABEL[g0]} 阶段需先完成 design-grill（{_grill_problem(task_dir, g0)}）：")
             print(f"  python3 .trellis/scripts/guru/guru_gate.py grill-done {g0} {task_dir}")
-            print(f"  （用户明确跳过则：grill-skip {g0} {task_dir} --user-quote \"<理由>\"）")
+            if policy["policy"] == "skippable":
+                print(f"  或低风险跳过留痕：python3 .trellis/scripts/guru/guru_gate.py grill-skip {g0} {task_dir} --user-quote \"<理由>\"")
+            else:
+                print(f"  当前不允许 skip：{policy['reason']}")
         else:
             print(f"下一步：完成 {GATE_LABEL[g0]} 阶段 review 后，由用户本人在终端运行：")
             print(f"  python3 .trellis/scripts/guru/guru_gate.py confirm {g0} {task_dir}")
