@@ -40,6 +40,11 @@
   - Tightened Domain Grill ADR guidance from "or" to "and" so ADRs are proposed only when a decision is hard-to-reverse, surprising-without-context, and a real trade-off.
   - Made `guru_gate.py status` explicitly report stale review digest mismatches instead of collapsing them into missing review evidence.
   - Added npm tarball coverage for the Guru command, dist templates, gate/supervise scripts, key skills, and `@mindfoldhq/trellis-core` npm alias.
+- Review repair after current PRD/plan audit:
+  - Removed stale overview-writing guide instructions that routed disputed ownership rows to old `design-grill` / overview-stage user confirmation.
+  - Overview writing guides now route unresolved code-evidence-vs-user-intent conflicts back to requirement discovery / Domain Grill and emit `REQ_BLOCKER` when they cannot be resolved from evidence.
+  - Reworded `trellis-local` customization history so installed projects see `design-grill` as legacy compatibility only, not as an overview/detail Gate path.
+  - Added a Guru bundled regression proving packaged overview writing guides keep the Domain Grill / `REQ_BLOCKER` route and do not reintroduce the stale `design-grill` or overview user-confirmation wording.
 
 Validation run:
 
@@ -55,7 +60,7 @@ pnpm -C packages/cli typecheck
 pnpm -C packages/cli build
 pnpm -C packages/cli pack --pack-destination <tmp> --json
 git diff --check
-npx gitnexus detect-changes --scope staged --repo Trellis
+npx gitnexus detect-changes --scope all --repo Trellis
 ```
 
 Observed validation results:
@@ -64,7 +69,7 @@ Observed validation results:
 - Source overlay apply regression: `49 通过 / 0 失败`.
 - Dist Guru gate shell regression: `123 通过 / 0 失败`.
 - Dist overlay apply regression: `49 通过 / 0 失败`.
-- CLI targeted Vitest: `4 files passed / 105 tests passed`.
+- CLI targeted Vitest: `4 files passed / 106 tests passed`.
 - CLI lint: passed.
 - TypeScript typecheck: passed.
 - CLI build: passed.
@@ -74,9 +79,9 @@ Observed validation results:
 
 Delivery record / risk disposition:
 
-- Delivery state: implementation is validation-clean and staged; the remaining boundary is human confirmation for commit/archive/finish-work.
-- Risk disposition: accept the GitNexus `critical` classification as expected blast-radius reporting, not a functional blocker. The staged scope intentionally spans Guru source overlay, packaged Guru templates, workflow/spec/skill contracts, CLI apply/init wiring, task records, and focused regression tests for the five-phase Gate model replacement.
-- Evidence used for disposition: live `npx gitnexus detect-changes --scope staged --repo Trellis` returned 133 files, 625 symbols, 34 affected processes, risk level `critical`; `git diff --cached --check` passed.
+- Delivery state: implementation is validation-clean; the remaining hard boundary is human confirmation for commit/archive/finish-work.
+- Risk disposition: current GitNexus all-scope classification is `low`; the diff is limited to Guru source overlay wording, synced packaged Guru templates, task evidence, and focused regression tests.
+- Evidence used for disposition: live `npx gitnexus detect-changes --scope all --repo Trellis` returned 10 files, 20 symbols, 0 affected processes, risk level `low`; `git diff --check` passed.
 - No CLI/template/source follow-up is required from this pass unless a later check identifies a concrete PRD mismatch.
 
 ## Phase 0: Preflight

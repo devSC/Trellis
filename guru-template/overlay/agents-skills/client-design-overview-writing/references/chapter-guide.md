@@ -82,7 +82,7 @@ Given 相机权限已授予且预览就绪 When 用户点击快门并确认 Then
 | BHV-021 | RecognitionUseCase | 识别是有状态业务流（上传→轮询→结果） | controller 只该转发事件不该拥有重试规则 | 是：被拍照/文字两入口复用 |
 ```
 
-争议行先加载 `design-grill` 拷问再定稿。状态归属单独列一小节：每个状态字段一行（状态名/写 owner/读取方）。
+争议行先回到需求发现 / Domain Grill 核对代码证据与用户意图；仍无法定稿时输出 `REQ_BLOCKER`，不要在 overview 阶段加载旧 `design-grill`。状态归属单独列一小节：每个状态字段一行（状态名/写 owner/读取方）。
 
 ## 5. 第 4 章「页面流与路由」写法
 

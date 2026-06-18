@@ -31,4 +31,4 @@ description: "本仓库的 Trellis 团队定制登记（guru-template）。记�
 |------|------|------|
 | 2026-06-12 | 初版：五阶段 Harness 全套定制落地 | client_agent#4 #5 #6 #7 |
 | 2026-06-12 | 编号纪律+trace-matrix；产物语言中文优先 | client_agent#14 |
-| 2026-06-12 | design-grill 接入（Gate 前拷问拍）+ prd/归属表成形自动提示 hook（grill-nudge） | — |
+| 2026-06-12 | legacy design-grill 兼容提示接入；新流程的 Domain Grill 已前移到需求发现，不再作为概要/详细 Gate | — |

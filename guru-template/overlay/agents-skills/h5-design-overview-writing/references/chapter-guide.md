@@ -125,7 +125,7 @@ owner 取七类之一；按概要 L1 §4.1 判定表 + 三问理由（为什么�
 - **外部触发只进 route**：浏览器请求/外部角色只能进 `route` 段（`page`/`route handler`），不能直连 `data-access` / `server-action` / `domain-type`；发现直连先补 route 段入口。
 - `ui-component` 纯展示叶子，不取数、不依赖 `data-access`/`server-action`、不被 `domain-type` 之外的运行层反向依赖；`domain-type` 是横切被依赖叶子，自身不依赖任何运行层。
 
-争议行先加载 `h5-design-overview` 相关拷问（或与用户确认）再定稿。发现归属错误回退本章重判，不在下游补救。
+争议行先回到需求发现 / Domain Grill 核对代码证据与用户意图；仍无法定稿时输出 `REQ_BLOCKER`，不要在 overview 阶段转成人工确认。发现归属错误回退本章重判，不在下游补救。
 
 ## 5. 第 3 章续「关键取舍与 ADR」写法（阶段 4）
 

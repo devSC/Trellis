@@ -123,7 +123,7 @@ iOS 专属遗漏自查：
   3. **View 不直接导航**：View → View 直接 push/present 即违例，必经 `AppCoordinator`（改 `@Published activeDestination` 或注入 `navigateToXxx` Factory 闭包）。
   4. **View 不直接访问持久化**：View / ViewModel 直接 import `DatabaseManager` / WCDBSwift / repository 实现类即违例，必经 `IXxxRepository` 接口。
 - **FactoryKit DI 强制**：跨层依赖一律 `@Injected`（示例 `HomeViewModel` 全 `@Injected(\.storyManageUseCase)` 等），禁手动 `init` 硬编码依赖；DI 装配归 `coordinator`。
-- 争议行先加载 `design-grill`（或同等拷问）再定稿。
+- 争议行先回到需求发现 / Domain Grill 核对代码证据与用户意图；仍无法定稿时输出 `REQ_BLOCKER`，不要在 overview 阶段加载旧 `design-grill`。
 
 ### 4.5 纯函数技术能力（不是层、不是依赖对象）
 

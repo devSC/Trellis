@@ -394,6 +394,31 @@ describe("bundled guru overlay", () => {
     expect(
       fs.existsSync(overlayPath("hooks", "platform", "grill-nudge.sh")),
     ).toBe(true);
+
+    const trellisLocal = readOverlayFile("trellis-local", "SKILL.md");
+    expect(trellisLocal).toContain("Domain Grill 已前移到需求发现");
+    expect(trellisLocal).toContain("不再作为概要/详细 Gate");
+    expect(trellisLocal).not.toContain("Gate 前拷问拍");
+  });
+
+  it("keeps overview writing guides on the Domain Grill route", () => {
+    for (const skill of [
+      "client-design-overview-writing",
+      "h5-design-overview-writing",
+      "ios-design-overview-writing",
+    ]) {
+      const guide = readOverlayFile(
+        "agents-skills",
+        skill,
+        "references",
+        "chapter-guide.md",
+      );
+      expect(guide).toContain("Domain Grill");
+      expect(guide).toContain("REQ_BLOCKER");
+      expect(guide).not.toContain("争议行先加载 `design-grill`");
+      expect(guide).not.toContain("争议行先加载 `h5-design-overview`");
+      expect(guide).not.toContain("或与用户确认");
+    }
   });
 
   it("keeps packaged Guru helper scripts in sync with the source overlay", () => {
