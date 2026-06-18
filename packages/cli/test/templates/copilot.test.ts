@@ -93,4 +93,29 @@ describe("copilot getAllPrompts", () => {
 		expect(names).toContain("start");
 		expect(names).toContain("update-spec");
 	});
+
+	it("includes the Domain Grill contract in the brainstorm prompt", () => {
+		const brainstorm = getAllPrompts().find((p) => p.name === "brainstorm");
+		const content = brainstorm?.content ?? "";
+		expect(content).toContain("Domain Grill Subroutine");
+		expect(content).toContain(
+			"If a question can be answered by exploring the codebase, explore the codebase instead.",
+		);
+		expect(content).toContain("new domain terms or renamed concepts");
+		expect(content).toContain(
+			"term conflicts with `CONTEXT.md`, `CONTEXT-MAP.md`",
+		);
+		expect(content).toContain(
+			"mismatch between current code facts and the user's requested behavior",
+		);
+		expect(content).toContain("CONTEXT-MAP");
+		expect(content).toContain("current code vs user intent");
+		expect(content).toContain(
+			"Write confirmed long-term glossary or domain-boundary decisions to `CONTEXT.md` only when they are durable. Keep temporary task decisions in `prd.md`.",
+		);
+		expect(content).toContain(
+			"hard-to-reverse, surprising-without-context, and a real trade-off",
+		);
+		expect(content).not.toContain("or real trade-off decisions");
+	});
 });

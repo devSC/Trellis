@@ -18,6 +18,29 @@ This is mandatory. Before asking the user a question, first check whether the an
 
 Do not ask the user to confirm facts that the repository can answer. Ask only for product intent, preference, scope, risk tolerance, or decisions that remain ambiguous after inspection.
 
+## Domain Grill Subroutine
+
+Run this subroutine before asking requirement questions when evidence shows any of the following:
+
+- new domain terms or renamed concepts
+- term conflicts with `CONTEXT.md`, `CONTEXT-MAP.md`, docs, ADRs, specs, or existing code
+- overloaded or ambiguous wording
+- unclear lifecycle, state, ownership, or boundary rules
+- cross-context ownership ambiguity
+- mismatch between current code facts and the user's requested behavior
+
+When triggered:
+
+1. Build a short context map from repository evidence first: code, tests, configs, docs, `.trellis/spec/`, `CONTEXT.md`, `CONTEXT-MAP.md`, `docs/adr/`, and relevant task history.
+2. Point out term conflicts directly instead of asking the user to rediscover them.
+3. Recommend canonical terms for overloaded language and explain the trade-off.
+4. Pressure-test boundaries with concrete scenarios, especially state transitions, ownership, failure paths, and cross-layer responsibilities.
+5. When current code behavior conflicts with user intent, ask a "current code vs user intent" product decision question with a recommended answer.
+6. Write confirmed long-term glossary or domain-boundary decisions to `CONTEXT.md` only when they are durable. Keep temporary task decisions in `prd.md`.
+7. Propose an ADR only when the decision is hard-to-reverse, surprising-without-context, and a real trade-off.
+
+Do not turn Domain Grill into a separate post-draft Gate. It is part of requirement discovery and feeds the requirements confirmation Gate.
+
 ---
 
 Use this skill during Phase 1 planning to turn the user's request into clear requirements and planning artifacts.
@@ -41,10 +64,11 @@ Use a concise title from the user's request. Use a slug without a date prefix. `
 1. Capture the user's request and initial known facts in `prd.md`.
 2. Inspect available evidence before asking questions:
    - code, tests, fixtures, and configs
-   - README files, docs, existing specs, and domain notes
+   - README files, docs, existing specs, domain notes, `CONTEXT.md`, `CONTEXT-MAP.md`, and `docs/adr/`
    - related Trellis tasks, research files, and session history when present
 3. Separate what you found into:
    - confirmed facts
+   - domain terms, ownership boundaries, and current code vs user intent conflicts
    - product intent still needed from the user
    - scope or risk decisions still needed from the user
    - likely out-of-scope items

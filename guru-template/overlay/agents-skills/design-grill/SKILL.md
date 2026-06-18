@@ -1,19 +1,20 @@
 ---
 name: design-grill
-description: 通用 Guru Gate 前拷问会话。运行时读取当前项目 .trellis/spec/ 的 golden-path、project-conventions、harness / conventions 权威源，自动生成本端拷问清单摘要；逐分支拷问 prd 或概要归属表，磨尖术语、压测边界场景、与目标仓库代码交叉核对，并把决策当场固化进 prd/design/CONTEXT/ADR。触碰红线时当场 fail 回退，不打开硬 gate，不替代 brainstorm、writing、review 或 trellis-check。
+description: 兼容用 Guru 对抗式拷问会话。新流程的 Domain Grill 已前移到 trellis-brainstorm；本 skill 只用于旧任务兼容审计或用户显式要求的额外深挖，不作为 requirements、overview 或 detail 的 Guru Gate 前置条件，不替代 brainstorm、writing、review 或 trellis-check。
 ---
 
-# design-grill — Guru Gate 前拷问
+# design-grill — compatibility-only 对抗式拷问
 
 ## 做什么
 
-对当前 task 产物发起送审前的对抗式拷问：需求 Gate 前拷问 `prd.md` 的行为集合；概要 Gate 前拷问 `design.md` 或 `design-main.md` 的归属表、三问理由与承接索引；详细 Gate 前拷问可编码合同、失败收口、测试映射和不得补造声明。沿设计树逐分支推进，决策间依赖逐个解开，每个归属判定都必须经得起"为什么属于它 / 为什么不属于别人 / 为什么需要或不需要独立存在"三问。
+对当前 task 产物发起 compatibility-only 的对抗式拷问：需求侧拷问 `prd.md` 的行为集合；概要侧拷问 `design.md` 或 `design-main.md` 的归属表、三问理由与承接索引；详细侧拷问可编码合同、失败收口、测试映射和不得补造声明。沿设计树逐分支推进，决策间依赖逐个解开，每个归属判定都必须经得起"为什么属于它 / 为什么不属于别人 / 为什么需要或不需要独立存在"三问。
 
 - 默认先输出一个有界 **Design Grill Packet**，批量暴露多个问题/建议；每个 packet 默认不超过 8 个候选项。
 - 独立、低风险的 `NORMAL` 项允许用户批量批准；`BLOCKER`、红线、合规、会设定依赖顺序的决策仍必须逐项确认。
 - 能从代码或 spec 找到答案的问题不要问用户，先自己读取证据。
-- 本 skill 不从零生成需求或设计，不给正式 Gate 结论；它只在送审前磨稿、排雷、回写决策。
-- 是否必须运行本 skill 由 `.trellis/spec/harness/gate/gate-confirmation-model.md` 定义：`requirements` 必跑；`overview` / `detail` 在 full 或 high-risk 时必跑；只有 low-risk 非 full 可由 `guru_gate.py grill-skip` 留痕跳过。
+- 本 skill 不从零生成需求或设计，不给正式 Gate 结论；它只在用户显式要求、旧任务迁移或兼容审计时磨稿、排雷、回写决策。
+- 新流程的 Domain Grill 归属于 `trellis-brainstorm` 需求发现阶段；不要把本 skill 当作 requirements / overview / detail 的放行前置。
+- `guru_gate.py check` / `auto` 不依赖本 skill；overview / detail 的放行凭据来自 `record-review`，requirements / detail 的硬边界来自人类 `confirm`。
 
 ## 拷问对照物
 
@@ -50,7 +51,7 @@ description: 通用 Guru Gate 前拷问会话。运行时读取当前项目 .tre
 
 ## Design Grill Packet
 
-完成适用域门控、权威源读取和本端拷问清单摘要后，先输出一个 **Design Grill Packet**。Packet 是交互提速器，不是 Gate 凭据；它只能帮助用户批量处理独立低风险项，不能替代 review、confirm 或 `guru_gate.py` 留痕。
+完成适用域门控、权威源读取和本端拷问清单摘要后，先输出一个 **Design Grill Packet**。Packet 是交互提速器，不是 Gate 凭据；它只能帮助用户批量处理独立低风险项，不能替代 review、confirm、`record-review` 或 `guru_gate.py status`。
 
 Packet 约束：
 
@@ -86,34 +87,32 @@ Packet 约束：
 Durable 状态约束：
 
 - Gate 凭据模型、digest 覆盖范围与失配恢复流程以 `.trellis/spec/harness/gate/gate-confirmation-model.md` 为准；本 skill 只定义拷问会话执行方式。
-- Packet 文本、聊天确认、手写 marker 都不是完成凭据。
-- 只有 `python3 .trellis/scripts/guru/guru_gate.py grill-done <gate> <task_dir>` 能记录完成。
-- `requirements` 不允许跳过；`overview` / `detail` 只有在 `guru_chain=light` 且显式 `risk_level=low` 时，才能用 `python3 .trellis/scripts/guru/guru_gate.py grill-skip <gate> <task_dir> --user-quote "<跳过理由>"` 记录跳过。
-- strict 模式由用户本人在交互式终端运行；soft 模式必须有本轮明确确认并带 `--via-agent --user-quote "<用户确认原话>"`。
-- `grill-done` / `grill-skip` 写入的 digest 或 policy 失配后，必须重新拷问或重新合法跳过；不得用 packet 复用旧凭据。
+- Packet 文本、聊天确认、手写 marker、`grill-done` 和 `grill-skip` 都不是新模型的 Gate 凭据。
+- `python3 .trellis/scripts/guru/guru_gate.py grill-done <gate> <task_dir>` 和 `grill-skip` 仅保留为旧任务兼容审计记录；如果用户没有显式要求维护旧记录，不要把它们列为下一步命令。
+- 兼容记录写入的 digest 或 policy 失配后，只说明旧记录过期；不要要求为了新模型放行而重跑本 skill。
+- 新模型下一步只能是按当前阶段运行 brainstorm / writing / review、`record-review`、`confirm requirements`、`confirm detail` 或 `guru_gate.py status`。
 
 ## 收口输出
 
-每次会话结束必须输出一个 **Design Grill Result**，方便用户判断下一步命令，但不得代替 `guru_gate.py` 留痕：
+每次会话结束必须输出一个 **Design Grill Result**，方便用户判断建议修订；输出必须标明 compatibility-only，且不得把 `grill-done` / `grill-skip` 作为新模型的放行命令：
 
 ```markdown
 ## Design Grill Result
 
 - Gate: requirements | overview | detail
-- Policy: required | skippable
+- Policy: compatibility-only
 - Risk Level: low | high | unknown
 - Risk Reasons: ...
-- Result: passed | blocked | needs-revision | not-required
+- Result: passed | blocked | needs-revision | advisory-only
 - Written Back: yes | no
-- Next Command: python3 .trellis/scripts/guru/guru_gate.py grill-done <gate> <task_dir>
+- Next Step: trellis-brainstorm | platform writing skill | platform review skill | guru_gate.py status | record-review | confirm requirements | confirm detail
 ```
 
 规则：
 
-- `requirements` 的 `Policy` 必须是 `required`；若用户要求跳过，明确说明 `grill-skip requirements` 会被 `guru_gate.py` 拒绝。
-- `overview` / `detail` 若是 `guru_chain=full`、`risk_level=high` 或风险无法判定，`Policy` 必须是 `required`。
-- `overview` / `detail` 只有在 `guru_chain=light` 且显式 `risk_level=low` 时，`Policy` 才能是 `skippable`；此时 `Result` 可为 `not-required`，`Next Command` 应给出 `grill-skip <gate> ... --user-quote "<理由>"`。
-- 如果拷问中发现当前 low-risk 判断过低，必须把 `Risk Level` 建议改为 `high`，`Policy` 改为 `required`，并要求回写 task 风险原因后再走 `grill-done`。
+- `Policy` 固定为 `compatibility-only`；不得输出 `required` / `skippable` 作为新 Gate 策略。
+- 若用户显式要求维护旧记录，可附加一行 `Legacy Record: grill-done ...` 或 `Legacy Record: grill-skip ...`，并说明这只用于旧审计，不会放行新模型 Gate。
+- 如果拷问中发现当前 low-risk 判断过低，只能建议回写 task 风险原因并重新走 brainstorm / review，不得要求为了放行而走 `grill-done`。
 
 ## 会话六动作
 
@@ -135,7 +134,7 @@ Durable 状态约束：
 
 ## 触碰红线 fail 回退
 
-拷问清单摘要里的任一平台硬红线被当前产物触碰时，立即判定本次拷问分支 **fail**，不放行进对应 Gate。输出必须包含：
+拷问清单摘要里的任一平台硬红线被当前产物触碰时，立即判定本次拷问分支 **fail**，不输出通过建议，也不作为任何 Gate 放行依据。输出必须包含：
 
 - 红线名称。
 - 证据锚点：行为编号、设计章节、归属表行、承接索引项或代码路径。
@@ -148,11 +147,11 @@ fail 后停止继续问普通澄清题，直到相关产物修正。存量违例
 
 ## 边界
 
-- 不替代 `trellis-brainstorm`：探索和初稿生成在前，本 skill 只拷问已有草稿。
+- 不替代 `trellis-brainstorm`：探索、初稿生成和新流程 Domain Grill 在前，本 skill 只用于 compatibility-only 的额外拷问。
 - 不替代平台 writing skill：本 skill 不代写完整需求或设计章节，只把拷问决策最小回写到既有产物。
-- 不替代平台 review skill：拷问后的产物仍必须交给对应 review / Gate 得出互斥结论。
+- 不替代平台 review skill：拷问后的产物仍必须交给对应 review 得出互斥结论，并由 `record-review` 写入新模型证据。
 - 不替代 `trellis-check`：不做实现期构建、测试、lint 或代码质量 Gate。
 - 不进入实现细节：方法签名全集、字段级 schema、DDL、SDK 参数、secret value、完整测试代码属于详细设计或实现阶段。
 - 产物语言中文优先；代码标识符、命令、路径、协议字段、库名和原文引用保留原文。
 
-一句话定位链：brainstorm 定"做什么" → writing 写"分哪层、边界、谁承接" → **design-grill 在送审前对抗式拷问、磨尖术语、固化决策、红线 fail 回退** → review 判"能否进下一阶段" → trellis-check 判"代码是否达标"。
+一句话定位链：brainstorm 通过 Domain Grill 定"做什么"并磨尖术语 → writing 写"分哪层、边界、谁承接" → review 判"能否进下一阶段" → trellis-check 判"代码是否达标"；**design-grill 只在旧任务兼容审计或用户显式要求时额外使用**。

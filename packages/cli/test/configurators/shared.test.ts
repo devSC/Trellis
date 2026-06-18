@@ -566,4 +566,32 @@ describe("resolveSkillsNeutral / resolveAllAsSkillsNeutral", () => {
       expect(match?.content).toBe(five.content);
     }
   });
+
+  it("renders the Domain Grill contract in the shared brainstorm skill", () => {
+    const skills = resolveSkillsNeutral(AI_TOOLS.codex.templateContext);
+    const brainstorm = skills.find((s) => s.name === "trellis-brainstorm");
+    if (!brainstorm) {
+      throw new Error("missing trellis-brainstorm skill");
+    }
+    expect(brainstorm.content).toContain("Domain Grill Subroutine");
+    expect(brainstorm.content).toContain(
+      "If a question can be answered by exploring the codebase, explore the codebase instead.",
+    );
+    expect(brainstorm.content).toContain("new domain terms or renamed concepts");
+    expect(brainstorm.content).toContain(
+      "term conflicts with `CONTEXT.md`, `CONTEXT-MAP.md`",
+    );
+    expect(brainstorm.content).toContain(
+      "mismatch between current code facts and the user's requested behavior",
+    );
+    expect(brainstorm.content).toContain("CONTEXT-MAP");
+    expect(brainstorm.content).toContain("current code vs user intent");
+    expect(brainstorm.content).toContain(
+      "Write confirmed long-term glossary or domain-boundary decisions to `CONTEXT.md` only when they are durable. Keep temporary task decisions in `prd.md`.",
+    );
+    expect(brainstorm.content).toContain(
+      "hard-to-reverse, surprising-without-context, and a real trade-off",
+    );
+    expect(brainstorm.content).not.toContain("or real trade-off decisions");
+  });
 });
