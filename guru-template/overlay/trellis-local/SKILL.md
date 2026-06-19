@@ -32,3 +32,4 @@ description: "本仓库的 Trellis 团队定制登记（guru-template）。记�
 | 2026-06-12 | 初版：五阶段 Harness 全套定制落地 | client_agent#4 #5 #6 #7 |
 | 2026-06-12 | 编号纪律+trace-matrix；产物语言中文优先 | client_agent#14 |
 | 2026-06-12 | legacy design-grill 兼容提示接入；新流程的 Domain Grill 已前移到需求发现，不再作为概要/详细 Gate | — |
+| 2026-06-19 | 详细设计 Gate 增加 L1 骨架假绿回归拦截；detail clean review 必须记录 deletion audit；四端 detail writing/review skills 增加删除审计与破坏性压缩保护 | devSC/Trellis#6 |

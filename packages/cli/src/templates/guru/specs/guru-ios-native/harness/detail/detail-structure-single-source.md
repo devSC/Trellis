@@ -125,6 +125,8 @@ pending 四类（`domain-model`/`view`/`coordinator`/`external`）无 L2 文件�
 
 full 链每个章节文件按以下骨架撰写（light 链 design.md §2 的每章同构，可压缩小节层级）。骨架与合同八问的映射在末表——**模板是表达形式，八问是完成条件**，二者必须同时满足。
 
+**破坏性编辑保护（删除/压缩/替换）**：详细章节被重写时，接口或平台事实可删除或替换，但仍有效的合同义务不得消失。删除前必须列 deletion ledger：`deleted_category` / `reason` / `replacement_location` / `removes_contract_obligation` / `reviewer_decision`。L1 章节骨架、UNIT/BHV 承接、行为定义、输入输出错误合同、状态 owner、失败收口、事件/后置、测试映射、不得补造清单必须保留、迁移到命名替代位置，或以 `N/A：<理由>` 显式声明；不得用 endpoint/interface 映射表替代行为合同。
+
 ```markdown
 # <chapter_target> 详细设计
 

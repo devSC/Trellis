@@ -2,7 +2,7 @@
 
 > 编排层产物：只承载逐 doc_type 取证操作、判级细则与一份最小成稿示例；规则正文与完成条件（G1~G8）以 L1
 > `.trellis/spec/harness/detail/detail-structure-single-source.md` 为唯一来源，类型差异以命中 L2（`detail-type-{server-component,client-component,data-access}.md`）为准。冲突时 **L1 > L2 > references > SKILL.md**。
-> 本文不复写 L1/L2 规则正文：每条取证操作都回指 L1 章节号（§N）/ L2 / golden-path 条目。本文的 D1~D8 与 G1~G8 编号即 SKILL.md 诊断流程与 L1 §8 Gate 的同名项；横向硬规则真源 `.trellis/spec/guides/golden-path.md`，项目槽位 `.trellis/spec/harness/detail/detail-structure-single-source.md` §6（路由模式 / 内容源 / 状态 / UI 库 / 样式 / 测试 / lint / 数据库 / 认证 / 图像 / 部署）。
+> 本文不复写 L1/L2 规则正文：每条取证操作都回指 L1 章节号（§N）/ L2 / golden-path 条目。本文的 D1~D9 与 G1~G8 编号即 SKILL.md 诊断流程与 L1 §8 Gate 的同名项；横向硬规则真源 `.trellis/spec/guides/golden-path.md`，项目槽位 `.trellis/spec/harness/detail/detail-structure-single-source.md` §6（路由模式 / 内容源 / 状态 / UI 库 / 样式 / 测试 / lint / 数据库 / 认证 / 图像 / 部署）。
 > 平台基线：Next.js（**App Router 生产形态为目标**）+ React + TypeScript(strict)。`doc_type` 一律用 L1 §1 钉死的 **H5 七类**（`server-component` / `client-component` / `data-access` / `route` / `ui-component` / `domain-type` / `server-action`），禁止照抄 flutter（page-entry/controller/usecase/repository-datasource）或 Go（entry-api/biz/repository-data）类型名。
 
 ## 0. 完成条件锚点对照（取证前先固化）
@@ -41,7 +41,7 @@ L1 §8 钉死的完成条件为 **G1~G8**（G1~G5 两轨共用；G6~G8 仅 full 
 4. 命中 doc_type 后装载对应 L2（只装命中类型，不全量装）：`server-component`→`detail-type-server-component.md`（render）、`client-component`→`detail-type-client-component.md`（interactive）、`data-access`→`detail-type-data-access.md`（data）；pending 四类（`route`/`ui-component`/`domain-type`/`server-action`）不装 L2，按 L1 §3 合同八问展开，并核查 `l2_status: pending` 头标与 design-main `L2豁免：<doc_type> 理由：…` 声明（L1 §2.5）。
 5. 跨层下游合同取证（D3/D4 用）：被审单元八问 4 声明的依赖逐条到对应章节文件，核对被调用的下层组件行为名/取数合同/action 签名确实存在，且方向符合 §2.1。
 
-## 2. 通用诊断矩阵（七类 doc_type 共用，对应 D1~D8）
+## 2. 通用诊断矩阵（七类 doc_type 共用，对应 D1~D9）
 
 每条 Finding 必须带「文件 + 小节/表格行/TS 签名」锚点或明确缺失对象，并回指规则（`rule_ref=<规范文件#锚点>`）。
 
@@ -55,8 +55,9 @@ L1 §8 钉死的完成条件为 **G1~G8**（G1~G5 两轨共用；G6~G8 仅 full 
 | **D6 测试映射** | 每条承接行为 ≥1 成功用例 + 全部失败路径各 1 用例，逐行映射 `BHV-NNN`/`UNIT-<slug>`；测试层合理（RSC/数据层 Vitest+RTL 或集成、交互流 Playwright E2E，按 L1 §6 测试槽位）；成功+失败路径覆盖。 | 高风险链路（认证/支付/数据删除/server-action 变更）漏测 P1；普通失败路径漏测 P2；测试层错配 P2 | `detail-structure-single-source.md#§3-合同八问所有-doc_type-通用骨架`（八问 7） |
 | **D7 合规核查（server/client 边界 + secret 红线）** | 私有数据获取 / 内容源访问 / secret / `process.env` 私有变量 / 带鉴权 token 的 fetch / DB 连接只允许在 `server-component`/`data-access`/`server-action`；`client-component`/`ui-component` 禁直取（只接收脱敏 props 或调用 action 引用）。`rg -i "secret\|api_key\|access_key\|token\|password\|NEXTAUTH"` 扫硬编码凭证；`.env` 当线上配置合同 / 制裁 TLD / 私有 API / 动态执行（`eval`/`new Function`/未净化 `dangerouslySetInnerHTML`）/ 全局样式污染扫描；`'use client'` 最小化（仅交互叶子，不裹可服务端渲染子树）；跨 server→client props 须可序列化。 | client-component/ui-component 直取私有数据或持 secret P1；真实 secret value / `.env` 当线上合同 P1；私有 API / 动态执行 / 制裁 TLD P1；`'use client'` 过度蔓延 P2（污染主链或致私有数据下放升 P1）；全局样式污染 P2；不可序列化 props 跨界 P2 | `golden-path.md#22-server-client-边界h5-平台特有最高优先级硬规则`、`detail-structure-single-source.md#22-硬规则golden-path-锁定` |
 | **D8 补造红线 + 层级越界** | 概要外结构、改 owner、改 doc_type 名、私自拍板未选定技术决策（替概要选内容源/状态管理/UI 库等）、超签名级实现体（>15 行）、把私有数据/secret 下沉 client、引入 §2.1 反向边/越层调用、偏离 §6 项目约定槽位取值。异常表逐行对应一条失败路径 BHV 或八问 1 行为分支；错误转换位置（`error.tsx` / data-access 转换点 / action 返回）两侧一致。 | 补造 / 改 owner / 改 doc_type 名 / 拍板未选定决策 / 越界实现体 / 层级越界 P1；异常表↔失败 BHV 失配、错误转换位置缺标 P2 | `detail-structure-single-source.md#91-禁止补造清单`、`golden-path.md#7-禁止清单汇总门禁拦` |
+| **D9 删除审计** | 破坏性删除/压缩/替换必须有 deletion ledger；区分 obsolete fact 删除、合同迁移、N/A 声明、blocking contract loss；核对 L1 骨架、UNIT/BHV、行为定义、测试映射、不得补造清单未丢失；endpoint/route/interface 覆盖不能替代行为合同。 | 无 deletion ledger P1；仍有效合同无替代位置 P1；ledger 字段缺失 P2 | `detail-structure-single-source.md#§4-章节正文骨架合同` |
 
-> 说明：SKILL.md 诊断流程把「骨架」为 D1、「八问」D2、「追溯」D3、「分层」D4、「粒度（含签名级）」D5、「测试」D6、「合规（边界/secret）」D7、「补造红线+层级越界」D8，本表与之一一对齐；L1 §8 的 G2 同时覆盖本表 D2/D4/D5（八问、分层、粒度合并判定），G4 覆盖 D7，G5 覆盖 D8 的八问 8。
+> 说明：SKILL.md 诊断流程把「骨架」为 D1、「八问」D2、「追溯」D3、「分层」D4、「粒度（含签名级）」D5、「测试」D6、「合规（边界/secret）」D7、「补造红线+层级越界」D8、「删除审计」D9，本表与之一一对齐；L1 §8 的 G2 同时覆盖本表 D2/D4/D5（八问、分层、粒度合并判定），G4 覆盖 D7，G5 覆盖 D8 的八问 8。
 
 ## 3. 逐 doc_type 附加检查
 
@@ -108,7 +109,7 @@ L1 §8 钉死的完成条件为 **G1~G8**（G1~G5 两轨共用；G6~G8 仅 full 
 
 ## 7. 严重度判级规则（L1 §8.1）
 
-- **P1（阻断）**：D1~D8 表中标注 P1 的项；§4 跨链 P1 项；薄文档；章节闭合失败、编号断链（机检并入，幽灵/悬空/重号/方向违例）；§2.1 分层依赖律违例；§2.2 硬规则违例（非 strict、`'use client'` 取私有数据、secret 边界泄漏、route 段约定缺、错误边界静默吞错）；doc_type 越七类；八问缺项；pending L2 缺 `L2豁免`——红线违例不可豁免、不给通过性结论。
+- **P1（阻断）**：D1~D9 表中标注 P1 的项；§4 跨链 P1 项；薄文档；章节闭合失败、编号断链（机检并入，幽灵/悬空/重号/方向违例）；§2.1 分层依赖律违例；§2.2 硬规则违例（非 strict、`'use client'` 取私有数据、secret 边界泄漏、route 段约定缺、错误边界静默吞错）；doc_type 越七类；八问缺项；pending L2 缺 `L2豁免`——红线违例不可豁免、不给通过性结论。
 - **P2（应修）**：表中 P2 项；粒度局部不达标（单个行为）；类型漂移；`metadata`/`revalidate` 缺失（非核心入口）；错误转换位置缺标；异常表逐行失配；样式污染；不可序列化 props；孤儿合同；`'use client'` 误用未污染主链；测试漏普通失败路径。
 - **P3（建议）**：表述/格式/术语一致性；命名规范建议（不做「有没有写某个词」的纯形式检查）。
 - 判级冲突取高；同根因合并为一条 finding 列全部位置；影响主链的 P2 升 P1。

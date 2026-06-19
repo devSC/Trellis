@@ -1,6 +1,6 @@
 ---
 name: h5-design-detail-review
-description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设计文档，判定能否进入编码。先做 EX 前置检查（判轨/索引/概要 review evidence/承接源/机检），再按 review_scope 三模式执行：current_chapter 单章诊断、layer_checkpoint 跨章协同诊断（checkpoint_layer=server-chain|interactive-chain|mutation|route）、directory_final 目录级三段式终审（逐文档 D1~D8 诊断 → 跨链路链接 → 索引与 SEO/scenario 覆盖率）。核查章节骨架符合性、合同八问、概要 owner 追溯、分层依赖律、编号断链拦截、server/client 边界与 secret 红线、测试映射与粒度；先证据后结论，输出分级 findings 与互斥三选一结论，输出 record-review 证据，并在双 clean 后等待 detail confirm。doc_type 严格用 H5_BRIEF 钉死的七类。规则唯一来源是 `.trellis/spec/harness/detail/` 的 L1/L2 SSOT 与 `.trellis/spec/guides/golden-path.md`。
+description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设计文档，判定能否进入编码。先做 EX 前置检查（判轨/索引/概要 review evidence/承接源/机检），再按 review_scope 三模式执行：current_chapter 单章诊断、layer_checkpoint 跨章协同诊断（checkpoint_layer=server-chain|interactive-chain|mutation|route）、directory_final 目录级三段式终审（逐文档 D1~D9 诊断 → 跨链路链接 → 索引与 SEO/scenario 覆盖率）。核查章节骨架符合性、合同八问、概要 owner 追溯、分层依赖律、编号断链拦截、server/client 边界与 secret 红线、测试映射、删除审计与粒度；先证据后结论，输出分级 findings 与互斥三选一结论，输出 record-review 证据，并在双 clean 后等待 detail confirm。doc_type 严格用 H5_BRIEF 钉死的七类。规则唯一来源是 `.trellis/spec/harness/detail/` 的 L1/L2 SSOT 与 `.trellis/spec/guides/golden-path.md`。
 ---
 
 # H5（Next.js）详细设计审核
@@ -88,7 +88,7 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 
 1. L3 不重定义 L1/L2/golden-path；逐项检查回指 L1/L2 章节号或 golden-path 条目。
 2. 先证据后结论；finding 带「文件 + 小节/表格行」锚点。
-3. **directory_final 不得跳过逐文档阶段**：每个现存目标文档必须有独立的 D1~D8 诊断与 finding 摘要；缺失目标文档只输出缺失结论与修订方案，不进入 D 诊断。
+3. **directory_final 不得跳过逐文档阶段**：每个现存目标文档必须有独立的 D1~D9 诊断与 finding 摘要；缺失目标文档只输出缺失结论与修订方案，不进入 D 诊断。
 4. current_chapter 不得扩大为全目录主审，但必须读取关联锚点核对上游（概要索引/归属）与下游（被引用方）边界。
 5. 「范围内/范围外」仅由概要承接索引的目标集合判定；批次/单章无 findings 只代表本范围 `findings=none`，不代表目录通过。
 6. EX 失败一律回退上游（概要/判轨/改 doc_type 名），不得在详细侧补造后继续审。
@@ -113,15 +113,15 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 **Step 1** EX-1~EX-6（全部 scope 模式都执行）。
 
 **Step 2** 解析 review_scope：
-- `current_chapter`：对指定章节执行 D1~D8 + 上下游边界核对。
+- `current_chapter`：对指定章节执行 D1~D9 + 上下游边界核对。
 - `layer_checkpoint`：按 checkpoint_layer 执行对应跨章取证：
   - `server-chain`：route → server-component → data-access → domain-type 的调用与数据流闭合，metadata/SEO 承接，server-first 边界。
   - `interactive-chain`：client-component → ui-component 的事件/状态流闭合，`'use client'` 最小化与状态订阅/释放成对。
   - `mutation`：server-action → data-access 的变更链、入参 zod 校验、错误返回与 revalidate 约定。
   - `route`：route 段（page/layout/loading/error）职责齐全、metadata/SEO、错误边界 owner 唯一。
-- `directory_final`（默认）三段式：① 逐现存目标文档 D1~D8，产出 per_document_results[]；② 基于①核对跨链链路（server-chain / interactive-chain / mutation / route 四链调用与状态流闭合 + server/client 边界）；③ 核对概要索引目标、UC 承接表、时序图、SEO/scenario 与详细正文的覆盖率。
+- `directory_final`（默认）三段式：① 逐现存目标文档 D1~D9，产出 per_document_results[]；② 基于①核对跨链链路（server-chain / interactive-chain / mutation / route 四链调用与状态流闭合 + server/client 边界）；③ 核对概要索引目标、UC 承接表、时序图、SEO/scenario 与详细正文的覆盖率。
 
-**逐文档诊断 D1~D8**：
+**逐文档诊断 D1~D9**：
 - D1 骨架符合性：L1 §4 模板节齐全（含 N/A 声明）；`doc_type`（七类之一）/`l2_status`（v1 三类标 full，pending 四类标 pending）头部标注正确。
 - D2 八问完整性：逐 UNIT 八问可回指可验证信号。
 - D3 追溯核查：UNIT↔BHV 闭合（编号断链拦截）；状态/数据 owner 回指概要归属表；依赖出现在概要架构图。
@@ -130,6 +130,7 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 - D6 测试映射：成功+失败路径覆盖；测试层合理（Vitest+RTL vs Playwright）。
 - D7 合规核查：规则 11（secret/env/client 越界/动态执行/全局样式）。
 - D8 补造红线：规则 12 + 错误表↔失败路径 BHV 对应 + error.tsx/data-access 错误转换一致。
+- D9 删除审计：对破坏性删除/压缩/替换检查 deletion ledger；obsolete fact 删除、合同迁移、N/A 声明、blocking contract loss 必须区分。L1 章节骨架消失、仍有效 UNIT/BHV/行为合同被 endpoint/interface 覆盖替代、测试映射或不得补造清单丢失 → P1。
 
 **Step 3** Findings 组织与修订形态判定（L1 §9）。
 **Step 4** 输出（按下「输出合同」）。
@@ -180,7 +181,7 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 
 ## 严重度判级规则
 
-- **P1（阻断）**：D1~D8 表中标注 P1 的项；分层依赖律违例；编号断链；server/client 边界 secret 越界；跨链 P1 项；薄文档；章节闭合失败（机检并入）。
+- **P1（阻断）**：D1~D9 表中标注 P1 的项；分层依赖律违例；编号断链；server/client 边界 secret 越界；跨链 P1 项；薄文档；章节闭合失败（机检并入）。
 - **P2（应修）**：表中 P2 项；粒度局部不达标（单个行为）；类型漂移；metadata/revalidate 缺失；孤儿合同。
 - **P3（建议）**：表述/格式/术语一致性。
 - 判级冲突取高；同根因合并为一条 finding 列全部位置。
@@ -210,10 +211,10 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
 2. **逐文档概况表**（current_chapter / directory_final 必含）：
 
    ```markdown
-   | 章节 | doc_type | l2 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | findings |
-   |------|----------|----|----|----|----|----|----|----|----|----|----|
-   | post-list-rsc | server-component | v1 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | P2×1 |
-   | post-detail-route | route | pending | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | P1×1 |
+   | 章节 | doc_type | l2 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | D9 | findings |
+   |------|----------|----|----|----|----|----|----|----|----|----|----|----------|
+   | post-list-rsc | server-component | v1 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ✅ | P2×1 |
+   | post-detail-route | route | pending | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P1×1 |
    ```
 
    缺失目标文档单列：`缺失清单 + 修订方案`（不进 D 诊断）。
@@ -234,7 +235,7 @@ description: 用于审核 Guru H5（Next.js App Router 生产形态）详细设�
    | G 项 | 状态 | 证据/阻塞 finding |
    ```
 
-   light 链 G6~G7 标注 `N/A(light)` 并说明单文件口径已满足。
+   light 链 G6~G8 标注 `N/A(light)` 并说明单文件口径已满足。
 7. **三选一结论**（互斥，见「结论判定」）。
 8. **Gate 收口指引**（结论为可进入/带假设可进入时必须输出，见「Gate 收口」）。
 
@@ -263,7 +264,8 @@ python3 .trellis/scripts/guru/guru_gate.py record-review detail <task_dir> \
   --max-severity low \
   --reviewer clean-context \
   --run-id <fresh-run-id> \
-  --evidence "<本次 detail review 证据摘要>"
+  --evidence "<本次 detail review 证据摘要>" \
+  --deletion-audit "<none|删除审计摘要>"
 ```
 
 若存在 medium+ finding，必须输出 `--result findings --max-severity medium|high|critical --finding-class REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT`，并停止进入编码。

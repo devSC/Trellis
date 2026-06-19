@@ -135,7 +135,21 @@ EX 编号语义（详见 SKILL.md「装载顺序与 EX 前置检查」）：EX-1
 - 概要缺陷（归属错 / 索引漏 / 技术决策未选定）→ 回退概要修订，禁止在详细侧就地改归属或私自拍板。
 ```
 
-### 9. Gate 收口指引（结论为「可进入」/「带明确假设可进入」时必须输出）
+### 9. Review Evidence（结论为「可进入」/「带明确假设可进入」时必须输出）
+
+```markdown
+python3 .trellis/scripts/guru/guru_gate.py record-review detail <task_dir> \
+  --result clean \
+  --max-severity low \
+  --reviewer clean-context \
+  --run-id <fresh-run-id> \
+  --evidence "<本次 detail review 证据摘要>" \
+  --deletion-audit "<none|删除审计摘要>"
+```
+
+`--deletion-audit none` 仅用于本轮确认无破坏性删除；若存在删除/压缩/替换，摘要必须覆盖 deletion ledger 的删除类别、原因、替代位置与 reviewer_decision。
+
+### 10. Gate 收口指引（结论为「可进入」/「带明确假设可进入」时必须输出）
 
 按 config `guru.gate_mode`（通道主定义见 workflow Trellis System 节）：
 

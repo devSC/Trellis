@@ -107,7 +107,7 @@ description: 用于审核 Guru iOS 原生平台（SwiftUI 主 + RxSwift 遗留�
 - **D6 粒度判定**：抽查行为全流程（规则 11）+ `repository` 事务边界三分法（read/write/transaction）结论。
 - **D7 测试映射**：规则 12。
 - **D8 错误与合规**：per-domain `enum XxxError` 分层 + 三态收口（`viewmodel`）/ 错误映射表（`repository`）/ case 全集与上抛降级（`usecase`）（规则 10）+ 合规扫描（规则 13）；异常表逐行对应一条失败路径 BHV 或八问 1 的行为分支，失配 P2。
-- **D9 补造红线 + 层级越界**：规则 14。
+- **D9 删除审计 + 补造红线 + 层级越界**：规则 14；对破坏性删除/压缩/替换检查 deletion ledger，区分 obsolete fact 删除、合同迁移、N/A 声明、blocking contract loss。L1 章节骨架消失、仍有效 UNIT/BHV/行为合同被 endpoint/interface 覆盖替代、测试映射或不得补造清单丢失 → P1。
 
 **Step 3** Findings 组织（同根因合并为一条，列全部位置；判级冲突取高）与修订形态判定（L1 修订形态章；概要缺陷标注「回退概要」）。
 
@@ -142,7 +142,8 @@ python3 .trellis/scripts/guru/guru_gate.py record-review detail <task_dir> \
   --max-severity low \
   --reviewer clean-context \
   --run-id <fresh-run-id> \
-  --evidence "<本次 detail review 证据摘要>"
+  --evidence "<本次 detail review 证据摘要>" \
+  --deletion-audit "<none|删除审计摘要>"
 ```
 
 若存在 medium+ finding，必须输出 `--result findings --max-severity medium|high|critical --finding-class REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT`，并停止进入编码。

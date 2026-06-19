@@ -553,11 +553,22 @@ def build_run_plan(
         if config.adversarial:
             reviewer = f"clean-context-adversarial-{provider_slug}"
             review_run_id = f"{run_id}-{provider_slug}"
+        deletion_audit_option = (
+            ' --deletion-audit "<none|deletion audit summary>"'
+            if action == "detail"
+            else ""
+        )
+        detail_audit_line = (
+            " For detail review, D9 deletion audit is mandatory: distinguish obsolete facts removed, "
+            "contracts moved to a named replacement, intentional N/A with reason, and blocking contract loss."
+            if action == "detail"
+            else ""
+        )
         responsibility = (
             f"Write or repair the {action} design artifact, run two clean review passes for the current digest, "
             f"and record each clean pass with `python3 .trellis/scripts/guru/guru_gate.py record-review {action} "
             f"{task_dir} --result clean --max-severity low --reviewer {reviewer} --run-id {review_run_id}-rN "
-            "--evidence \"<review evidence>\"`. If medium+ findings remain, record findings with "
+            f"--evidence \"<review evidence>\"{deletion_audit_option}`.{detail_audit_line} If medium+ findings remain, record findings with "
             "--finding-class REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT and stop."
         )
     elif action == "implement":

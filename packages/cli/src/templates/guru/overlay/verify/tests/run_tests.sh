@@ -10,6 +10,49 @@ export PYTHONDONTWRITEBYTECODE=1  # 测试不得在可打包 overlay 中留下 _
 trap 'rm -rf "$TMP"' EXIT
 pass=0; failn=0
 
+append_detail_chapter() { # append_detail_chapter <file> [unit] [type_heading] [test_hint]
+  file="$1"
+  unit="${2:-UNIT-order-usecase}"
+  type_heading="${3:-Widget 设计}"
+  test_hint="${4:-unit test}"
+  cat >> "$file" <<EOF
+### ${unit}
+## 1. 单元职责
+${unit}：承接的行为：BHV-001、BHV-002；owner 为 UseCase；不拥有 UI 状态。
+## 2. 行为定义
+### 2.1 行为清单
+- 下单成功：承接的行为：BHV-001。
+- 下单失败提示：承接的行为：BHV-002。
+### 2.2 接口定义
+- execute(input: OrderInput) -> OrderResult（签名级）。
+## 3. 核心数据结构
+### 3.1 数据模型
+- OrderInput / OrderResult：签名级结构。
+### 3.2 错误类型表
+- NetworkError：失败收口：上抛枚举并保留重试。
+## 4. 逐行为设计
+### 4.1 下单成功
+1. 校验输入。
+2. 调用 repository 创建订单。
+3. 失败如何收口：上抛错误并保留重试入口。
+## 5. 状态管理
+N/A：本单元无持久状态；理由：状态 owner 在概要归属表。
+## 6. ${type_heading}
+N/A：本单元不拥有平台 UI/数据合同；理由：按 L1 八问展开。
+## 7. 测试映射
+- BHV-001：${test_hint} 成功路径 1 条。
+- BHV-002：${test_hint} 失败路径 1 条。
+## 8. 不得补造清单
+- 不得补造：不决定缓存策略。
+- 不在此补造接口事实。
+EOF
+}
+
+write_detail_chapter() { # write_detail_chapter <file> [unit] [type_heading] [test_hint]
+  : > "$1"
+  append_detail_chapter "$@"
+}
+
 mk_good() {
   d="$TMP/good"; mkdir -p "$d"
   cat > "$d/prd.md" <<'EOF'
@@ -33,9 +76,8 @@ EOF
 归属表：BHV-002 → owner: Controller（error 态展示）。三问理由同上格式。
 承接索引：chapter_target=下单 → doc_type=usecase
 ## §2 详细设计
-### UNIT-order-usecase
-承接的行为：BHV-001、BHV-002。失败收口：上抛枚举。测试映射：unit test 成功+失败各1。不得补造：不决定缓存策略。
 EOF
+  append_detail_chapter "$d/design.md"
   cat > "$d/implement.md" <<'EOF'
 ## 计划（切片）
 片1：UNIT-order-usecase 接口与实现
@@ -158,8 +200,13 @@ PY
 }
 
 write_clean_reviews() { # write_clean_reviews <gate> <task_dir>
-  python3 "$GATE" record-review "$1" "$2" --result clean --max-severity none --reviewer clean-context --run-id "$1-clean-a" --evidence "$1 clean a" >/dev/null
-  python3 "$GATE" record-review "$1" "$2" --result clean --max-severity low --reviewer clean-context-adversarial-codex --run-id "$1-clean-adversarial-codex" --evidence "$1 adversarial clean" >/dev/null
+  if [ "$1" = "detail" ]; then
+    python3 "$GATE" record-review "$1" "$2" --result clean --max-severity none --reviewer clean-context --run-id "$1-clean-a" --evidence "$1 clean a" --deletion-audit "none" >/dev/null
+    python3 "$GATE" record-review "$1" "$2" --result clean --max-severity low --reviewer clean-context-adversarial-codex --run-id "$1-clean-adversarial-codex" --evidence "$1 adversarial clean" --deletion-audit "none" >/dev/null
+  else
+    python3 "$GATE" record-review "$1" "$2" --result clean --max-severity none --reviewer clean-context --run-id "$1-clean-a" --evidence "$1 clean a" >/dev/null
+    python3 "$GATE" record-review "$1" "$2" --result clean --max-severity low --reviewer clean-context-adversarial-codex --run-id "$1-clean-adversarial-codex" --evidence "$1 adversarial clean" >/dev/null
+  fi
 }
 
 write_reviews_all() { # write_reviews_all <task_dir>
@@ -278,6 +325,20 @@ if printf '%s' "$out" | grep -q "record-review overview"; then
   pass=$((pass+1)); echo "PASS  status 需求确认后提示 overview record-review"
 else failn=$((failn+1)); echo "FAIL  status 未提示 overview record-review"; printf '%s\n' "$out" | tail -6; fi
 
+LOSS=$(make_gate_case detail-skeleton-loss)
+cat > "$LOSS/design.md" <<'EOF'
+## §1 概要设计
+归属表：BHV-001 → owner: UseCase。为什么属于它：业务规则；为什么不属于别人：controller 无规则；是否需独立存在：是。
+归属表：BHV-002 → owner: Controller。三问理由同上格式。
+承接索引：chapter_target=下单 → doc_type=usecase
+## §2 详细设计
+### UNIT-order-usecase
+| endpoint | method | BHV | error | test | non-goal |
+|---|---|---|---|---|---|
+| /orders | POST | 承接的行为：BHV-001、BHV-002 | 失败收口：上抛枚举 | 测试映射：unit test 成功+失败各1 | 不得补造：不决定缓存策略 |
+EOF
+expect "detail skeleton loss：保留 UNIT/BHV/测试/红线但删除 L1 章节被拦" 2 python3 "$GATE" detail "$LOSS"
+expect_grep "detail skeleton loss：报错指向缺 L1 章节" "缺 L1 章节" python3 "$GATE" detail "$LOSS"
 expect "requirements 合格通过" 0 python3 "$GATE" requirements "$G"
 expect "overview 合格通过"     0 python3 "$GATE" overview "$G"
 expect "detail 合格通过"       0 python3 "$GATE" detail "$G"
@@ -301,7 +362,7 @@ expect_grep "detail 幽灵报错指名 BHV-099" "BHV-099" python3 "$GATE" detail
 
 # 断链样本2：行为无单元承接
 B4="$TMP/bad-orphan"; mkdir -p "$B4"; cp "$G/prd.md" "$B4/"; cp "$G/implement.md" "$B4/"
-sed 's/、BHV-002//' "$G/design.md" > "$B4/design.md"
+sed 's/BHV-002/BHV-001/g' "$G/design.md" > "$B4/design.md"
 expect "detail 行为无承接被拦" 2 python3 "$GATE" detail "$B4"
 expect "trace-matrix strict 断链被拦" 2 python3 "$GATE" trace-matrix "$B4" --strict
 
@@ -345,10 +406,7 @@ graph TD
 ## 架构就绪自检
 G1~G8 逐项通过（行为覆盖/归属/合规/索引/未决/图表/时序/技术决策）。
 EOF
-  cat > "$pkg/chapters/order-usecase.md" <<'EOF'
-### UNIT-order-usecase
-承接的行为：BHV-001、BHV-002。失败收口：上抛枚举。测试映射：unit test 成功+失败各1。不得补造：不决定缓存策略。
-EOF
+  write_detail_chapter "$pkg/chapters/order-usecase.md"
   echo "$d"
 }
 
@@ -409,10 +467,7 @@ expect_grep "时序缺口报错指向 L1 §2.5" "时序图" python3 "$GATE" over
 
 PK6=$(mk_pkg pkg-pending)
 printf -- "- chapter_target=page → doc_type=page-entry → chapters/page-entry.md\n" >> "$PK6-docs/design-main.md"
-cat > "$PK6-docs/chapters/page-entry.md" <<'EOF'
-### UNIT-page-entry
-承接的行为：BHV-002。失败收口：上抛。测试映射：widget test。不得补造：无。
-EOF
+write_detail_chapter "$PK6-docs/chapters/page-entry.md" UNIT-page-entry "Widget 设计" "widget test"
 expect "full 详细 pending L2 无豁免被拦" 2 python3 "$GATE" detail "$PK6"
 expect_grep "pending 报错指名 page-entry" "page-entry" python3 "$GATE" detail "$PK6"
 printf "L2豁免：page-entry 理由：首发版页面结构简单，按 L1 八问展开\n" >> "$PK6-docs/design-main.md"
@@ -442,6 +497,10 @@ expect "record-review requirements 被拒（需求不写 review_runs）" 2 pytho
 expect "record-review clean 带 finding_class 被拒" 2 python3 "$GATE" record-review overview "$RV2" --result clean --max-severity low --finding-class OVERVIEW_DEFECT --reviewer clean-context --run-id clean-class --evidence "bad"
 expect "record-review findings 缺 finding_class 被拒" 2 python3 "$GATE" record-review overview "$RV2" --result findings --max-severity medium --reviewer clean-context --run-id finding-no-class --evidence "bad"
 expect "record-review findings 带路由码可写入" 0 python3 "$GATE" record-review overview "$RV2" --result findings --max-severity medium --finding-class OVERVIEW_DEFECT --reviewer clean-context --run-id finding-a --evidence "overview defect"
+RV_DA=$(make_gate_case review-detail-audit)
+expect "record-review detail clean 缺 deletion audit 被拒" 2 python3 "$GATE" record-review detail "$RV_DA" --result clean --max-severity low --reviewer clean-context --run-id detail-no-audit --evidence "detail clean"
+expect "record-review detail clean 带 deletion audit 可写入" 0 python3 "$GATE" record-review detail "$RV_DA" --result clean --max-severity low --reviewer clean-context --run-id detail-audit --evidence "detail clean" --deletion-audit "none"
+expect_grep "status 显示 detail deletion audit" "deletion-audit ✅ none" python3 "$GATE" status "$RV_DA"
 RV_DUP=$(make_gate_case review-duplicate-status)
 python3 - "$GATE" "$RV_DUP" <<'PY'
 import json, subprocess, sys
@@ -477,20 +536,14 @@ expect_grep "check 中 REQ_BLOCKER 回到需求" "需求澄清" python3 "$GATE" 
 # 豁免理由里的普通英文词不得豁免其他类型（service 在理由中出现 ≠ 豁免 service）
 PK6B=$(mk_pkg pkg-exempt-word)
 printf -- "- chapter_target=svc → doc_type=service → chapters/svc-service.md\n" >> "$PK6B-docs/design-main.md"
-cat > "$PK6B-docs/chapters/svc-service.md" <<'EOF'
-### UNIT-svc-service
-承接的行为：BHV-002。失败收口：上抛。测试映射：unit test。不得补造：无。
-EOF
+write_detail_chapter "$PK6B-docs/chapters/svc-service.md" UNIT-svc-service "数据合同" "unit test"
 printf "L2豁免：page-entry 理由：this service layer is simple\n" >> "$PK6B-docs/design-main.md"
 expect "豁免理由含 service 一词不豁免 service 类型" 2 python3 "$GATE" detail "$PK6B"
 
 # pending L2：表格行形式（无 doc_type= 前缀）也必须被识别
 PK9=$(mk_pkg pkg-tablerow)
 printf -- "| page | page-entry | chapters/page-entry.md |\n" >> "$PK9-docs/design-main.md"
-cat > "$PK9-docs/chapters/page-entry.md" <<'EOF'
-### UNIT-page-entry
-承接的行为：BHV-002。失败收口：上抛。测试映射：widget test。不得补造：无。
-EOF
+write_detail_chapter "$PK9-docs/chapters/page-entry.md" UNIT-page-entry "Widget 设计" "widget test"
 expect "full 详细表格形式 pending 被拦" 2 python3 "$GATE" detail "$PK9"
 
 # 人工 Gate：confirm 无 TTY 被拒（agent 代跑场景）
@@ -751,9 +804,8 @@ cat > "$HDR/design.md" <<'EOF'
 ## 详细设计承接索引
 chapter_target=下单 → doc_type=usecase
 ## §2 详细设计
-### UNIT-order-usecase
-承接的行为：BHV-001、BHV-002。失败收口：上抛枚举。测试映射：unit test。不得补造：不决定缓存。
 EOF
+append_detail_chapter "$HDR/design.md"
 expect "light overview：'## 详细设计承接索引'标题+行内§2 不误拦（#7）" 0 python3 "$GATE" overview "$HDR"
 expect "light detail：同上仍正确从 §2 切出 UNIT（#7）" 0 python3 "$GATE" detail "$HDR"
 
@@ -783,9 +835,8 @@ cat > "$NSP/design.md" <<'EOF'
 归属表：BHV-002 → owner: Controller。三问理由同上格式。
 承接索引：chapter_target=下单 → doc_type=usecase
 ## §2详细设计
-### UNIT-order-usecase
-承接的行为：BHV-001、BHV-002。失败收口：上抛枚举。测试映射：unit test。不得补造：不决定缓存。
 EOF
+append_detail_chapter "$NSP/design.md"
 expect "light detail：'## §2详细设计' CJK 紧贴仍正确从 §2 切出 UNIT（#2 回归）" 0 python3 "$GATE" detail "$NSP"
 
 # ===== #8 假阳性闭合：核心能力段仅含 snake_case 标识符(user_P0_flag)无真实 P0/P1 → 仍被拦 =====
@@ -808,10 +859,7 @@ expect "requirements：仅 user_P0_flag 无真 P0/P1 被正确拦（#8 假阳性
 # ===== #3 full 链 config-l10n（九类唯一带数字的 doc_type）pending-L2 豁免能放行（修 [a-z][a-z-]* 漏数字）=====
 PKL=$(mk_pkg pkg-l10n)
 printf -- "- chapter_target=l10n → doc_type=config-l10n → chapters/l10n-config.md\n" >> "$PKL-docs/design-main.md"
-cat > "$PKL-docs/chapters/l10n-config.md" <<'EOF'
-### UNIT-l10n-config
-承接的行为：BHV-002。失败收口：上抛。测试映射：unit test。不得补造：无。
-EOF
+write_detail_chapter "$PKL-docs/chapters/l10n-config.md" UNIT-l10n-config "Widget 设计" "unit test"
 expect "full 详细 config-l10n 无豁免被拦（前提）" 2 python3 "$GATE" detail "$PKL"
 printf "L2豁免：config-l10n 理由：本地化资源章节首发按 L1 八问展开\n" >> "$PKL-docs/design-main.md"
 expect "full 详细 config-l10n 显式豁免放行（#3：数字 doc_type 不再死锁）" 0 python3 "$GATE" detail "$PKL"
@@ -823,7 +871,7 @@ cp "$G/prd.md" "$G/implement.md" "$GOROOT/task/"
 printf '{"guru_chain":"full","design_package":"task-docs"}\n' > "$GOROOT/task/task.json"
 echo "# nav" > "$GOROOT/task-docs/README.md"
 printf '%s\n' '# 概要' '## 详细设计承接索引' '- chapter_target=d → doc_type=domain → chapters/d.md' > "$GOROOT/task-docs/design-main.md"
-printf '%s\n' '### UNIT-order-usecase' '承接的行为：BHV-001、BHV-002。失败收口：上抛。测试映射：unit test。不得补造：无。' > "$GOROOT/task-docs/chapters/d.md"
+write_detail_chapter "$GOROOT/task-docs/chapters/d.md" UNIT-order-usecase "数据合同" "unit test"
 out=$(cd "$GOROOT" && python3 "$GATE" detail task 2>&1); rc=$?
 { [ "$rc" = 2 ] && printf '%s' "$out" | grep -q domain; } && { pass=$((pass+1)); echo "PASS  非flutter(go) domain(pending) 无豁免被拦（#1 运行时 SSOT taxonomy）"; } || { failn=$((failn+1)); echo "FAIL  go domain 应被拦 (rc=$rc)"; printf '%s\n' "$out" | head -2; }
 printf 'L2豁免：domain 理由：领域模型首发按八问展开\n' >> "$GOROOT/task-docs/design-main.md"

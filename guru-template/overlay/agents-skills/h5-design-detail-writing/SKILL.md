@@ -85,6 +85,8 @@ light 链执行 WX-3/WX-4/WX-5/WX-6 的等价检查（索引在 `design.md` §1�
 
 ## 强制约束
 
+**破坏性编辑保护**：任何删除、压缩、替换既有详细章节的改动，必须先列 deletion ledger（deleted_category / reason / replacement_location / removes_contract_obligation / reviewer_decision）。接口、路由或内容源事实可删除，仍有效的 L1 章节骨架、UNIT/BHV 承接、行为列表、输入输出错误合同、状态/边界 owner、失败收口、后置结果、测试映射、不得补造清单必须保留、移到命名替代位置，或以 `N/A：<理由>` 显式声明；不得把行为合同压扁成 endpoint/interface 映射表。
+
 1. L3 不重定义 L1/L2/references；规则疑义回 L1，引用时给章节号并使用结构化字段 `rule_id=<规则ID>`、`rule_ref=<规范文件路径#章节锚点>`。
 2. **禁止一轮全量生成**全部章节；每批 ≤3 章并完成批内审修后才进下一批（违反 → L1 §8 G7 拦截、§9.2 文档级重构）。
 3. 不新增概要归属表之外的结构；不变更 owner / 技术决策 / scope；缺口回退概要（L1 §9）。`technology_decision_handoff[]` 中"未选定"的决策不得在详细阶段私自拍板。

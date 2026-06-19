@@ -144,7 +144,21 @@ current_chapter 模式只回填当前目标覆盖证据并保留 `directory_fina
 - 文档级重构：合同与概要 owner 系统性脱节、单元划分跟随名词而非行为、八问大面积空缺、多章雷同骨架（薄文档）、分层归属系统性错位、错误范式整体偏离 sentinel 三件套。
 - 概要缺陷（归属错、索引漏、技术决策/SLOT 槽位未选定）→ 回退概要修订，禁止详细侧就地改归属或私自拍板槽位。
 
-### 9. Gate 收口指引（结论为可进入 / 带假设可进入时必须输出）
+### 9. Review Evidence（结论为可进入 / 带假设可进入时必须输出）
+
+```markdown
+python3 .trellis/scripts/guru/guru_gate.py record-review detail <task_dir> \
+  --result clean \
+  --max-severity low \
+  --reviewer clean-context \
+  --run-id <fresh-run-id> \
+  --evidence "<本次 detail review 证据摘要>" \
+  --deletion-audit "<none|删除审计摘要>"
+```
+
+`--deletion-audit none` 仅用于本轮确认无破坏性删除；若存在删除/压缩/替换，摘要必须覆盖 deletion ledger 的删除类别、原因、替代位置与 reviewer_decision。
+
+### 10. Gate 收口指引（结论为可进入 / 带假设可进入时必须输出）
 
 ```markdown
 请按 config guru.gate_mode 完成人工收口：

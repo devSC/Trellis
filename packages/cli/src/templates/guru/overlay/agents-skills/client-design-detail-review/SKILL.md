@@ -1,6 +1,6 @@
 ---
 name: client-design-detail-review
-description: 用于审核 Flutter 客户端详细设计文档，判定能否进入编码。先做 EX 前置检查（判轨/索引/概要 review evidence/承接源），再按 review_scope 三模式执行：current_chapter 单章诊断、layer_checkpoint 跨章协同诊断、directory_final 目录级三段式终审（逐文档 D1~D8 诊断→跨层链路→索引与时序覆盖率）。核查章节骨架符合性、合同八问、概要 owner 追溯、分层依赖律、测试映射、合规红线与粒度；先证据后结论，输出分级 findings 与互斥三选一结论，输出 record-review 证据，并在双 clean 后等待 detail confirm。规则唯一来源是 `.trellis/spec/harness/detail/` 的 L1/L2 SSOT。
+description: 用于审核 Flutter 客户端详细设计文档，判定能否进入编码。先做 EX 前置检查（判轨/索引/概要 review evidence/承接源），再按 review_scope 三模式执行：current_chapter 单章诊断、layer_checkpoint 跨章协同诊断、directory_final 目录级三段式终审（逐文档 D1~D9 诊断→跨层链路→索引与时序覆盖率）。核查章节骨架符合性、合同八问、概要 owner 追溯、分层依赖律、测试映射、合规红线、删除审计与粒度；先证据后结论，输出分级 findings 与互斥三选一结论，输出 record-review 证据，并在双 clean 后等待 detail confirm。规则唯一来源是 `.trellis/spec/harness/detail/` 的 L1/L2 SSOT。
 ---
 
 # 客户端详细设计审核
@@ -36,7 +36,7 @@ description: 用于审核 Flutter 客户端详细设计文档，判定能否进�
 
 1. L3 不重定义 L1/L2；逐项检查回指 L1/L2 章节号。
 2. 先证据后结论；finding 带「文件 + 小节/表格行」锚点。
-3. **directory_final 不得跳过逐文档阶段**：每个现存目标文档必须有独立的 D1~D8 诊断与 finding 摘要；缺失目标文档只输出缺失结论与修订方案，不进入 D 诊断。
+3. **directory_final 不得跳过逐文档阶段**：每个现存目标文档必须有独立的 D1~D9 诊断与 finding 摘要；缺失目标文档只输出缺失结论与修订方案，不进入 D 诊断。
 4. current_chapter 不得扩大为全目录主审，但必须读取关联锚点核对上游（概要索引/归属）与下游（被引用方）边界。
 5. 「范围内/范围外」仅由概要承接索引的目标集合判定；批次/单章无 findings 只代表本范围 `findings=none`，不代表目录通过。
 6. EX 失败一律回退上游（概要/判轨），不得在详细侧补造后继续审。
@@ -53,11 +53,11 @@ description: 用于审核 Flutter 客户端详细设计文档，判定能否进�
 
 **Step 1** EX-1~EX-6（全部 scope 模式都执行）。
 **Step 2** 解析 review_scope：
-- `current_chapter`：对指定章节执行 D1~D8 + 上下游边界核对。
+- `current_chapter`：对指定章节执行 D1~D9 + 上下游边界核对。
 - `layer_checkpoint`：按 checkpoint_layer 执行 L1 §5.4 对应核对项的跨章取证。
-- `directory_final`（默认）三段式：① 逐现存目标文档 D1~D8，产出 per_document_results[]；② 基于①核对跨层链路（presentation→domain→data→横切 调用与状态流闭合）；③ 核对概要索引目标、UC 承接表、时序图与详细正文的覆盖率。
+- `directory_final`（默认）三段式：① 逐现存目标文档 D1~D9，产出 per_document_results[]；② 基于①核对跨层链路（presentation→domain→data→横切 调用与状态流闭合）；③ 核对概要索引目标、UC 承接表、时序图与详细正文的覆盖率。
 
-**逐文档诊断 D1~D8**：
+**逐文档诊断 D1~D9**：
 - D1 骨架符合性：L1 §4 模板节齐全（含 N/A 声明）；doc_type/l2_status 头部标注正确。
 - D2 八问完整性：逐 UNIT 八问可回指可验证信号。
 - D3 追溯核查：UNIT↔BHV 闭合；状态写 owner 回指概要归属表；依赖出现在概要架构图。
@@ -66,6 +66,7 @@ description: 用于审核 Flutter 客户端详细设计文档，判定能否进�
 - D6 测试映射：成功+失败路径覆盖；测试层合理。
 - D7 合规核查：规则 11。
 - D8 补造红线：规则 12 + 错误表↔失败路径 BHV 对应。
+- D9 删除审计：对破坏性删除/压缩/替换检查 deletion ledger； obsolete fact 删除、合同迁移、N/A 声明、blocking contract loss 必须区分。L1 章节骨架消失、仍有效 UNIT/BHV/行为合同被 endpoint/interface 覆盖替代、测试映射或不得补造清单丢失 → P1。
 
 **Step 3** Findings 组织与修订形态判定（L1 §9）。
 **Step 4** 输出（按 review-output.md 合同）。
@@ -94,7 +95,8 @@ python3 .trellis/scripts/guru/guru_gate.py record-review detail <task_dir> \
   --max-severity low \
   --reviewer clean-context \
   --run-id <fresh-run-id> \
-  --evidence "<本次 detail review 证据摘要>"
+  --evidence "<本次 detail review 证据摘要>" \
+  --deletion-audit "<none|删除审计摘要>"
 ```
 
 若存在 medium+ finding，必须输出 `--result findings --max-severity medium|high|critical --finding-class REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT`，并停止进入编码。

@@ -21,9 +21,9 @@
 ### 2. 逐文档概况表（current_chapter / directory_final 必含）
 
 ```markdown
-| 章节 | doc_type | l2 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | findings |
-|------|----------|----|----|----|----|----|----|----|----|----|----|
-| recognition-usecase | usecase | v1 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | P2×1 |
+| 章节 | doc_type | l2 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | D9 | findings |
+|------|----------|----|----|----|----|----|----|----|----|----|----|----|
+| recognition-usecase | usecase | v1 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ✅ | P2×1 |
 ```
 
 缺失目标文档单列：`缺失清单 + 修订方案`（不进 D 诊断）。
@@ -60,7 +60,21 @@ light 链 G6~G7 标注 `N/A(light)` 并说明单文件口径已满足。
 - `带明确假设可进入`：逐条假设、依据、验证时点
 - `不可进入`：阻塞 P1 清单 + 修订形态建议（局部修订 / 文档级重构，按 L1 §9；概要缺陷标注"回退概要"）
 
-### 8. Gate 收口指引（结论为可进入/带假设可进入时必须输出）
+### 8. Review Evidence（结论为可进入/带假设可进入时必须输出）
+
+```markdown
+python3 .trellis/scripts/guru/guru_gate.py record-review detail <task_dir> \
+  --result clean \
+  --max-severity low \
+  --reviewer clean-context \
+  --run-id <fresh-run-id> \
+  --evidence "<本次 detail review 证据摘要>" \
+  --deletion-audit "<none|删除审计摘要>"
+```
+
+`--deletion-audit none` 仅用于本轮确认无破坏性删除；若存在删除/压缩/替换，摘要必须覆盖 deletion ledger 的删除类别、原因、替代位置与 reviewer_decision。
+
+### 9. Gate 收口指引（结论为可进入/带假设可进入时必须输出）
 
 ```markdown
 请用户本人在终端运行（agent 不得代跑）：

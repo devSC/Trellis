@@ -1,7 +1,7 @@
 # H5 详细审核输出合同（references）
 
 > 输出分支、字段与顺序以本文件为**唯一主定义**；字段新增/删改/命名调整只改本文件，SKILL.md 与 `review-baseline.md` 不并行维护输出字段名。规则正文仍以 L1 `.trellis/spec/harness/detail/detail-structure-single-source.md` 为准，取证矩阵见 `references/review-baseline.md`；冲突时 **L1 > L2 > references > SKILL.md**。
-> 规则回指口径：用结构化字段 `rule_ref=<规范文件路径#锚点>`，不复制规则正文。D1~D8 / G1~G8 / EX-1~EX-6 / P1~P3 编号即 SKILL.md 与 L1 同名项。
+> 规则回指口径：用结构化字段 `rule_ref=<规范文件路径#锚点>`，不复制规则正文。D1~D9 / G1~G8 / EX-1~EX-6 / P1~P3 编号即 SKILL.md 与 L1 同名项。
 > 平台基线：Next.js（App Router 生产形态为目标）。doc_type 一律用 L1 §1 **H5 七类**（`server-component` / `client-component` / `data-access` / `route` / `ui-component` / `domain-type` / `server-action`），输出中禁止出现 flutter（page-entry/controller/usecase/repository-datasource）或 Go（entry-api/biz/repository-data）类型名。
 > 详细 Gate 口径对齐 L1 §8 的 **G1~G8**（G1~G5 两轨共用，G6~G8 仅 full 链强制）；light 链 G6~G8 标 `N/A(light)` 并说明单文件口径已满足。
 
@@ -60,19 +60,19 @@
 
 ### 2. 逐文档概况表（current_chapter / directory_final 必含）
 
-每个现存目标文档一行独立 D1~D8 诊断（directory_final 不得跳过逐文档阶段）。
+每个现存目标文档一行独立 D1~D9 诊断（directory_final 不得跳过逐文档阶段）。
 
 ```markdown
-| 章节(chapter_target) | doc_type | l2 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | findings |
-|----------------------|----------|----|----|----|----|----|----|----|----|----|----------|
-| post-list-server | server-component | v1 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | P2×1 |
-| post-detail-route | route | pending | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | P1×1 |
+| 章节(chapter_target) | doc_type | l2 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | D8 | D9 | findings |
+|----------------------|----------|----|----|----|----|----|----|----|----|----|----|----------|
+| post-list-server | server-component | v1 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ✅ | P2×1 |
+| post-detail-route | route | pending | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | P1×1 |
 ```
 
 - 状态符号：`✅` 通过 / `⚠️` 有 P2/P3 / `❌` 有 P1 / `N/A` 非适用（须在 findings 列或下方注明依据）。
 - 缺失目标文档单列（不进 D 诊断）：`缺失清单 + 修订方案`；`per_document_results[]` 对应行写 `skipped_by_missing_target_docs:{missing_target_docs}`。
 - 文档分流结果：`existing_target_docs=<列表>`，`missing_target_docs=<列表>`。
-- per_document_results[]（与表同源，可结构化展开）：每条含 `chapter_target` / `detail_doc_type` / `l2_status` / `loaded_l2_ref`（命中 v1 类型 SSOT 或 `pending_no_l2`）/ `D1~D8 结果` / `findings_refs[]`。
+- per_document_results[]（与表同源，可结构化展开）：每条含 `chapter_target` / `detail_doc_type` / `l2_status` / `loaded_l2_ref`（命中 v1 类型 SSOT 或 `pending_no_l2`）/ `D1~D9 结果` / `findings_refs[]`。
 - 薄文档命中时（review-baseline §6）：跳过本表逐列，改输出薄文档证据（雷同章节对照 + 占位统计：空参数表数 / 无签名方法数 / `sequenceDiagram` 缺失章数 / 测试映射 ≤1 行的章数）+ 文档级重构方案。
 
 ### 3. Findings（按严重度分组，每条五字段 + 受影响 G 项）
@@ -166,7 +166,21 @@
 - 概要缺陷（归属错 / 索引漏 / 技术决策/槽位未选定）→ 回退概要修订，禁止在详细阶段就地改归属或私自拍板。
 ```
 
-### 9. Gate 收口指引（结论为「可进入」/「带明确假设可进入」时必须输出）
+### 9. Review Evidence（结论为「可进入」/「带明确假设可进入」时必须输出）
+
+```markdown
+python3 .trellis/scripts/guru/guru_gate.py record-review detail <task_dir> \
+  --result clean \
+  --max-severity low \
+  --reviewer clean-context \
+  --run-id <fresh-run-id> \
+  --evidence "<本次 detail review 证据摘要>" \
+  --deletion-audit "<none|删除审计摘要>"
+```
+
+`--deletion-audit none` 仅用于本轮确认无破坏性删除；若存在删除/压缩/替换，摘要必须覆盖 deletion ledger 的删除类别、原因、替代位置与 reviewer_decision。
+
+### 10. Gate 收口指引（结论为「可进入」/「带明确假设可进入」时必须输出）
 
 按 config `guru.gate_mode`（通道主定义见 workflow Trellis System 节）：
 

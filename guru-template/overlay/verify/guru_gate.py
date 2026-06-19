@@ -16,7 +16,7 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
                                                   # 人工确认 Gate（需求确认 + 详细设计 review 双 clean 后确认）
                                                   # strict 模式（默认）：仅限用户本人在交互式终端运行，agent 代跑被拒
                                                   # soft 模式（config guru.gate_mode: soft）：用户对话确认后 agent 以 --via-agent 代跑（记录留痕标注）
-  python3 guru_gate.py record-review <overview|detail> <task_dir> --result clean|findings --max-severity none|low|medium|high|critical --reviewer clean-context --run-id <id> --evidence <text> [--finding-class <class>]
+  python3 guru_gate.py record-review <overview|detail> <task_dir> --result clean|findings --max-severity none|low|medium|high|critical --reviewer clean-context --run-id <id> --evidence <text> [--finding-class <class>] [--deletion-audit <summary>]
                                                   # 记录概要/详细设计 review 证据；当前产物 digest 下需两个不同 run-id 的 clean 记录，且至少一条 reviewer 含 adversarial
   python3 guru_gate.py grill-done <gate> [task_dir] [--via-agent] --user-quote "<用户确认原话>"
                                                   # 兼容旧流程：记录 design-grill 已完成（不再作为新 gate 放行条件）
@@ -66,6 +66,24 @@ _TAXONOMY_CACHE = {}
 DOC_TYPE_REF = re.compile(r"(?:detail_)?doc_type\s*[=:：]\s*`?([a-z][a-z0-9-]*)`?")
 CHAPTER_FILE_REF = re.compile(r"chapters/([A-Za-z0-9_][A-Za-z0-9_.-]*\.md)")
 L2_EXEMPT_LINE = re.compile(r"L2豁免[^\n]*")
+
+DETAIL_SECTION_PATTERNS = [
+    ("单元职责", r"单元职责"),
+    ("行为定义", r"行为定义"),
+    ("核心数据结构", r"核心数据结构"),
+    ("逐行为设计", r"逐行为设计"),
+    ("状态/边界", r"状态管理|状态与事务|状态\s*/\s*边界管理|状态\s*/\s*边界"),
+    ("类型专属章节", r"Widget\s*设计|View\s*设计|导航设计|数据合同|路由\s*/\s*渲染\s*/\s*SEO"),
+    ("测试映射", r"测试映射"),
+    ("不得补造清单", r"不得补造清单|不得补造"),
+]
+
+DETAIL_CONTRACT_PATTERNS = [
+    ("行为定义/清单", r"行为清单|行为定义|承接.{0,8}行为"),
+    ("失败收口", r"失败.{0,8}收口|失败如何|错误类型表|异常表|错误映射"),
+    ("测试映射", r"测试映射|哪些测试"),
+    ("不得补造声明", r"不得.{0,8}补造|不在此补造|不决定|不拥有"),
+]
 
 
 def fail(gate: str, problems: list) -> int:
@@ -174,6 +192,44 @@ def _artifact_sources(task_dir: str) -> dict:
     design = read(os.path.join(task_dir, "design.md"))
     overview, detail = _design_sections(design)
     return {"prd": prd, "overview": overview, "detail": detail, "imp": imp}
+
+
+def _has_detail_heading(text: str, pattern: str) -> bool:
+    return bool(re.search(rf"(?m)^#{{1,6}}\s*(?:\d+(?:\.\d+)?[.)、]?\s*)?(?:{pattern})", text))
+
+
+def detail_chapter_blocks(task_dir: str) -> list:
+    """返回当前 detail gate 作用域内的章节块。full 逐文件；light 按 §2 整体检查。"""
+    if task_chain(task_dir) == "full":
+        pkg = _package_dir(task_dir)
+        if not pkg:
+            return []
+        blocks = []
+        for name in _chapter_files(pkg):
+            text = read(os.path.join(pkg, "chapters", name))
+            if text:
+                blocks.append((f"chapters/{name}", text))
+        return blocks
+    design = read(os.path.join(task_dir, "design.md"))
+    _overview, detail = _design_sections(design)
+    return [("design.md §2 详细设计", detail)] if detail else []
+
+
+def analyze_detail_chapter_skeleton(name: str, text: str) -> list:
+    problems = []
+    if not text.strip():
+        return [f"{name} 为空"]
+    if not UNIT_DEF.search(text):
+        problems.append(f"{name} 缺设计单元编号：单元须以 `### UNIT-<slug>` 标题定义")
+    if not BHV_REF.search(text):
+        problems.append(f"{name} 缺 BHV-NNN 承接引用")
+    for label, pattern in DETAIL_SECTION_PATTERNS:
+        if not _has_detail_heading(text, pattern):
+            problems.append(f"{name} 缺 L1 章节：{label}")
+    for label, pattern in DETAIL_CONTRACT_PATTERNS:
+        if not re.search(pattern, text):
+            problems.append(f"{name} 缺合同标记：{label}")
+    return problems
 
 
 # =========================================================================
@@ -455,16 +511,8 @@ def check_detail(task_dir: str) -> int:
     if not detail:
         problems.append("chapters/ 无任何章节正文（详细设计未开始）" if full else "缺详细设计章（§2）")
     else:
-        if not UNIT_DEF.search(detail):
-            problems.append("缺设计单元编号：单元须以 `### UNIT-<slug>` 标题定义（编号纪律）")
-        for label, pat in [
-            ("承接行为（八问之1）", r"承接.{0,6}行为"),
-            ("失败收口（八问之5）", r"失败.{0,6}收口|失败如何"),
-            ("测试映射（八问之7）", r"测试映射|哪些测试"),
-            ("不得补造声明（八问之8）", r"不得.{0,6}补造|不在此补造"),
-        ]:
-            if not re.search(pat, detail):
-                problems.append(f"详细章缺{label}")
+        for name, text in detail_chapter_blocks(task_dir):
+            problems += analyze_detail_chapter_skeleton(name, text)
     if not read(os.path.join(task_dir, "implement.md")):
         problems.append("implement.md（trace §1 实现计划）不存在")
     # 承接断链拦截（编号闭合）
@@ -946,9 +994,32 @@ def _review_status_mark(task_dir: str, gate: str) -> str:
     return f"review ⬜ {state['clean_count']}/{REQUIRED_CLEAN_REVIEWS} clean — {problem}"
 
 
+def _review_deletion_audit_mark(task_dir: str, gate: str) -> str:
+    if gate != "detail":
+        return ""
+    digest = _gate_digest(task_dir, gate)
+    audits = [
+        str(run.get("deletion_audit", "")).strip()
+        for run in _review_runs(task_dir, gate)
+        if (
+            isinstance(run, dict)
+            and run.get("artifact_digest") == digest
+            and str(run.get("result", "")).strip().lower() == "clean"
+            and str(run.get("deletion_audit", "")).strip()
+        )
+    ]
+    if not audits:
+        return " ｜ deletion-audit ⬜ missing"
+    latest = audits[-1]
+    if len(latest) > 120:
+        latest = latest[:117] + "..."
+    return f" ｜ deletion-audit ✅ {latest}"
+
+
 def _block_review(channel: str, task_dir: str, gate: str) -> int:
     state = _review_state(task_dir, gate)
     route_guidance = _review_route_guidance(task_dir, gate)
+    audit_hint = ' --deletion-audit "<none|删除审计摘要>"' if gate == "detail" else ""
     if route_guidance:
         sys.stderr.write(
             f"[guru-gate:{channel}] 拦截：{GATE_LABEL[gate]} review 路由上游："
@@ -971,7 +1042,7 @@ def _block_review(channel: str, task_dir: str, gate: str) -> int:
         sys.stderr.write(
             f"  python3 .trellis/scripts/guru/guru_gate.py record-review {gate} {task_dir} "
             "--result clean --max-severity low --reviewer clean-context-adversarial-<provider> "
-            "--run-id <id> --evidence \"<review证据>\"\n"
+            f"--run-id <id> --evidence \"<review证据>\"{audit_hint}\n"
         )
         return BLOCK
     sys.stderr.write(
@@ -981,7 +1052,7 @@ def _block_review(channel: str, task_dir: str, gate: str) -> int:
     sys.stderr.write(
         "由 review worker 记录两次不同 run-id 的 clean 证据，且至少一次来自 opposite-provider adversarial review：\n"
         f"  python3 .trellis/scripts/guru/guru_gate.py record-review {gate} {task_dir} "
-        "--result clean --max-severity low --reviewer clean-context[-adversarial-<provider>] --run-id <id> --evidence \"<review证据>\"\n"
+        f"--result clean --max-severity low --reviewer clean-context[-adversarial-<provider>] --run-id <id> --evidence \"<review证据>\"{audit_hint}\n"
     )
     return BLOCK
 
@@ -1001,6 +1072,10 @@ def _record_review(task_dir: str, gate: str, options: dict) -> int:
     run_id = str(options.get("run_id") or "").strip()
     reviewer = str(options.get("reviewer") or "").strip()
     evidence = str(options.get("evidence") or "").strip()
+    deletion_audit = str(options.get("deletion_audit") or "").strip()
+    if gate == "detail" and result == "clean" and not deletion_audit:
+        sys.stderr.write("[guru-gate:record-review] 拒绝写入：detail clean review 必须带 --deletion-audit\n")
+        return BLOCK
     record = {
         "run_id": run_id,
         "reviewer": reviewer,
@@ -1012,6 +1087,8 @@ def _record_review(task_dir: str, gate: str, options: dict) -> int:
     }
     if finding_class:
         record["finding_class"] = finding_class
+    if deletion_audit:
+        record["deletion_audit"] = deletion_audit[:1000]
     error = _review_run_validation_error(record)
     if error:
         sys.stderr.write(f"[guru-gate:record-review] 拒绝写入：{error}\n")
@@ -1331,7 +1408,8 @@ def cmd_status(task_dir_arg) -> int:
     review_pending = []
     for g in REVIEW_GATES:
         mark = _review_status_mark(task_dir, g)
-        print(f"  {GATE_LABEL[g]} Review — {mark} ｜ legacy {_grill_status_mark(task_dir, g)}")
+        audit_mark = _review_deletion_audit_mark(task_dir, g)
+        print(f"  {GATE_LABEL[g]} Review — {mark}{audit_mark} ｜ legacy {_grill_status_mark(task_dir, g)}")
         if not _review_state(task_dir, g)["ready"]:
             review_pending.append(g)
 
@@ -1349,6 +1427,7 @@ def cmd_status(task_dir_arg) -> int:
             state["clean_count"] >= REQUIRED_CLEAN_REVIEWS
             and not state.get("has_adversarial_clean")
         ):
+            audit_hint = ' --deletion-audit "<none|删除审计摘要>"' if g0 == "detail" else ""
             print(
                 f"下一步：{GATE_LABEL[g0]} 已有双 clean，但缺 opposite-provider adversarial clean review；运行："
             )
@@ -1357,13 +1436,14 @@ def cmd_status(task_dir_arg) -> int:
             )
             print(
                 f"  python3 .trellis/scripts/guru/guru_gate.py record-review {g0} {task_dir} "
-                "--result clean --max-severity low --reviewer clean-context-adversarial-<provider> --run-id <id> --evidence \"<review证据>\""
+                f"--result clean --max-severity low --reviewer clean-context-adversarial-<provider> --run-id <id> --evidence \"<review证据>\"{audit_hint}"
             )
             return PASS
         print(f"下一步：继续 {GATE_LABEL[g0]} review，当前 digest 需要两个不同 run-id 的 clean 记录：")
+        audit_hint = ' --deletion-audit "<none|删除审计摘要>"' if g0 == "detail" else ""
         print(
             f"  python3 .trellis/scripts/guru/guru_gate.py record-review {g0} {task_dir} "
-            "--result clean --max-severity low --reviewer clean-context[-adversarial-<provider>] --run-id <id> --evidence \"<review证据>\""
+            f"--result clean --max-severity low --reviewer clean-context[-adversarial-<provider>] --run-id <id> --evidence \"<review证据>\"{audit_hint}"
         )
     elif "detail" in confirm_pending:
         print("下一步：详细设计已双 clean，由用户本人在终端运行：")
@@ -1516,6 +1596,7 @@ def main() -> int:
         "reviewer": _pop_value_option(argv, "--reviewer"),
         "run_id": _pop_value_option(argv, "--run-id"),
         "evidence": _pop_value_option(argv, "--evidence"),
+        "deletion_audit": _pop_value_option(argv, "--deletion-audit"),
     }
     rest = [a for a in argv if not a.startswith("--")]
     flags = {a for a in argv if a.startswith("--")}

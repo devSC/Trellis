@@ -32,9 +32,9 @@
 | D6 粒度判定 | 抽查 ≥1 行为全流程（§3.1 四条）：步骤逐条有具体被调用下层方法 + 参数（如 `userRepo.Create(ctx, params)`）、本单元内部判定、错误返回点、状态写入点、context/timeout；事务边界三选一给结论（无显式事务 / 本地 DB 事务 / 一致性模式） | 「见概要」「处理 XX」「调用 service」无调用对象 P1；事务边界缺结论 P2 |
 | D7 测试映射 | 每条承接行为 ≥1 成功用例 + 全部失败路径各 1 用例，逐行映射 `BHV-NNN`/`UNIT-<slug>`；测试层合理（biz 用 mock repository 的 unit test、handler 用 `httptest`+mock service、repository 用集成测试，测试框架取 SLOT-04） | 高风险链路（鉴权/会话/数据删除/迁移/付费）漏测 P1；普通失败路径漏测 P2 |
 | D8 错误与合规 | sentinel error 全集逐条 + 错误三态映射（入口校验失败 / service sentinel / 兜底未知错误 → HTTP 状态码），每个 sentinel 有 `errors.Is` 分支且存在兜底 500；异常表逐行对应一条失败路径 BHV 或八问 1 行为分支；`rg -i "secret\|api_key\|password\|token\|AKID\|-----BEGIN"` 扫硬编码凭证；制裁 TLD / 私有 API / 动态执行扫描；密钥只写 env 变量名引用回指 config（SLOT-08） | 字符串比较错误 / 吞错（`_ = err`、裸 `return`）/ handler 自造平行错误体系 / 内部文案直接回客户端 / 真实 secret / 私有 API / 动态执行 P1；异常表↔失败 BHV 失配、sentinel 枚举不全、转换位置缺标 P2 |
-| D9 补造红线 + 层级越界 | 概要外结构、改 owner、私自拍板未选定 SLOT 槽位、超签名级实现体（>15 行）；项目约定声明引入 wire/sqlc 等 profile 时，业务详细正文展开 generated Repo 方法表 / `PropertyFilter/PageRequest/WithTx` / `*_guru.pb.go` / ProviderSet/Wire / proto·buf generate 细节（除非仅出现在 `framework_reference_ref`/实现期参考字段） | 补造 / 改 owner / 拍板槽位 / 越界实现体 P1；层级越界 P1 |
+| D9 删除审计 + 补造红线 + 层级越界 | 破坏性删除/压缩/替换必须有 deletion ledger；区分 obsolete fact 删除、合同迁移、N/A 声明、blocking contract loss；核对 L1 骨架、UNIT/BHV、行为定义、测试映射、不得补造清单未丢失；同时检查概要外结构、改 owner、私自拍板未选定 SLOT 槽位、超签名级实现体（>15 行）与 generated/DI/proto 实现期细节越界 | 无 deletion ledger P1；仍有效合同无替代位置 P1；补造 / 改 owner / 拍板槽位 / 越界实现体 P1；层级越界 P1；ledger 字段缺失 P2 |
 
-> 说明：SKILL.md 诊断流程把「接口签名级」单列为 D5、「粒度」为 D6、「测试」为 D7、「错误与合规」为 D8、「补造红线+层级越界」为 D9，本表与之一一对齐；L1 §7 的 G2 同时覆盖本表 D2/D4/D5/D6（粒度与分层在 G2 内合并判定）。
+> 说明：SKILL.md 诊断流程把「接口签名级」单列为 D5、「粒度」为 D6、「测试」为 D7、「错误与合规」为 D8、「删除审计+补造红线+层级越界」为 D9，本表与之一一对齐；L1 §7 的 G2 同时覆盖本表 D2/D4/D5/D6（粒度与分层在 G2 内合并判定）。
 
 ## 3. 逐 doc_type 附加检查
 
