@@ -82,7 +82,7 @@ Delivery record / risk disposition:
 - Delivery state: implementation is validation-clean; the remaining hard boundary is human confirmation for commit/archive/finish-work.
 - Risk disposition: current GitNexus all-scope classification is `low`; the diff is limited to Guru source overlay wording, synced packaged Guru templates, task evidence, and focused regression tests.
 - Evidence used for disposition: live `npx gitnexus detect-changes --scope all --repo Trellis` returned 10 files, 20 symbols, 0 affected processes, risk level `low`; `git diff --check` passed.
-- No CLI/template/source follow-up is required from this pass unless a later check identifies a concrete PRD mismatch.
+- Follow-up identified after the later GitHub #4 review: requirements-stage adversarial review is a separate plan repair. The current implementation evidence above only proves the #3 overview/detail adversarial review increment, not #4.
 
 ## Phase 0: Preflight
 
@@ -334,3 +334,229 @@ pnpm -C packages/cli build
 - Keep implementation boring. The first durable mechanism is `task.json` review evidence plus digest checks.
 - Do not create a new review database, queue, or state machine.
 - Do not make a semantic parser for comments/logs.
+
+## Incremental Evidence (2026-06-19 adversarial review)
+
+- Added opposite-provider adversarial review support without adding a new phase or state machine.
+- `guru_supervise.py --adversarial` now resolves the current provider first, then spawns the opposite provider:
+  - `codex -> claude`
+  - `claude -> codex`
+  - other providers -> `codex`
+- Overview/detail dry-runs and worker prompts now mark adversarial clean-context reviews and emit reviewer/run-id guidance such as `clean-context-adversarial-claude`.
+- `guru_gate.py` review readiness now requires:
+  - two distinct current-digest clean review run ids
+  - at least one counted clean record whose reviewer contains `adversarial`
+  - requirements remain human-confirm only and still do not support `record-review`
+- Updated Guru gate SSOT and workflows for Flutter, Go, H5, and iOS; synced packaged templates with `pnpm -C packages/cli sync:guru`.
+- Added regressions for:
+  - two clean records without adversarial reviewer still blocked
+  - adversarial clean moving overview to the next missing review
+  - `codex -> claude`, `claude -> codex`, and unknown-provider -> `codex`
+  - dist CLI Guru install test timeout widened to avoid false timeout after overlay install work
+- Updated `.trellis/spec/cli/backend/script-conventions.md` with the executable contract for Guru adversarial review supervision.
+
+Validation run:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  guru-template/overlay/verify/guru_gate.py \
+  guru-template/overlay/verify/guru_supervise.py \
+  packages/cli/src/templates/guru/overlay/verify/guru_gate.py \
+  packages/cli/src/templates/guru/overlay/verify/guru_supervise.py
+bash guru-template/overlay/verify/tests/run_tests.sh
+bash packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh
+bash packages/cli/dist/templates/guru/overlay/verify/tests/run_tests.sh
+pnpm -C packages/cli exec vitest run test/guru/guru-bundled.test.ts
+pnpm -C packages/cli lint
+pnpm -C packages/cli typecheck
+pnpm -C packages/cli build
+git diff --check
+```
+
+Observed validation results:
+
+- Source Guru gate shell regression: `126 通过 / 0 失败`.
+- Packaged source Guru gate shell regression: `126 通过 / 0 失败`.
+- Dist Guru gate shell regression: `126 通过 / 0 失败`.
+- Focused Guru bundled Vitest: `1 file passed / 37 tests passed`.
+- CLI lint: passed.
+- TypeScript typecheck: passed.
+- CLI build: passed.
+- Git diff whitespace check: passed.
+- No `__pycache__` directories remain under Guru template trees after cleanup.
+- GitNexus detect-changes: `25 files / 194 symbols / 30 affected processes / risk critical`; accepted for this increment because the expected diff intentionally changes core Guru Gate and supervision flows, and the focused source/package/dist regressions above cover the changed paths.
+
+## Plan Repair (2026-06-19 GitHub #4 requirements adversarial review)
+
+Scope:
+
+- Source issue: [devSC/Trellis#4](https://github.com/devSC/Trellis/issues/4).
+- Goal: add an opposite-provider adversarial review step before `confirm requirements`.
+- Current state: implementation currently covers #3 overview/detail adversarial clean evidence only. It does not yet implement the #4 requirements-stage action.
+- Required behavior: `guru_supervise.py --adversarial requirements <task-dir>` must produce a requirements adversarial review plan that can return either `route_class=REQ_BLOCKER` or `review_result=clean/requirements-ready`.
+- Hard boundary: even when requirements review is clean, the system must stop before human `confirm requirements`.
+- Accepted MVP boundary: requirements adversarial review is a mandatory workflow/supervision step, not a persisted hard Gate. `guru_gate.py confirm requirements` keeps its existing structure + human-confirm semantics; enforcement for this increment comes from workflow/SSOT guidance and the repeatable supervisor command.
+- Non-goals: no requirements clean streak, no `record-review requirements`, no `guru_gates.requirements.adversarial_reviewed_at`, no auto-confirm, no new Trellis task status, no new review database or arbitration engine, no provider registry.
+
+### Review Findings To Fix
+
+| Priority | Finding | Required repair |
+| --- | --- | --- |
+| P0 | `requirements` is not a valid `guru_supervise.py` action, so `--adversarial requirements` fails before running. | Add `requirements` to the supervisor action map and parser in source and packaged templates. |
+| P0 | The adversarial prompt branch currently applies only to `overview` and `detail`. | Add a requirements-specific branch with explicit blocker/clean output rules. |
+| P0 | Requirements workflow still jumps from structure Gate / Domain Grill to `confirm requirements`. | Insert adversarial requirements review between structure readiness and human confirmation in every Guru workflow. |
+| P1 | Gate SSOT does not describe requirements adversarial review as a pre-confirmation planning step. | Update all platform Gate SSOT docs and automation-driver guidance. |
+| P1 | Packaged install would still miss the action even if source is fixed manually. | Run `pnpm -C packages/cli sync:guru` and verify packaged source/dist behavior. |
+| P1 | Tests only cover overview/detail adversarial dry-runs. | Add requirements dry-run tests for provider inversion, required output tokens, and no `record-review requirements`. |
+| P1 | Validation order can test stale `packages/cli/dist` templates if dist shell tests run before `pnpm -C packages/cli build`. | Run source/src tests first, build the CLI, then run dist template tests. |
+
+### Risk Matrix
+
+| Area | Risk | Decision |
+| --- | --- | --- |
+| Product contract | Making adversarial review a persisted Gate would change the requirements approval model. | Keep it as a required workflow/supervision step before human confirm; do not add task-state fields for MVP. |
+| Backward compatibility | Existing projects may already have `confirm requirements` habits. | Update workflow/SSOT guidance, but preserve `guru_gate.py confirm requirements` semantics. |
+| State model | Adding requirements review to `review_runs` would conflict with the existing rejection of `record-review requirements`. | Preserve the rejection; requirements review is advisory evidence in the model output, not clean-streak state. |
+| Hard enforcement | Leaving `confirm requirements` unchanged means a user can still manually confirm without running the new adversarial supervisor command. | Accepted MVP boundary for #4: the new step is enforced by workflow/SSOT and automated command availability, not by a persisted confirm prerequisite. Add a persistent marker only if a later requirement demands hard blocking. |
+| Repository evidence | A requirements reviewer that asks questions before reading repo evidence can push answerable facts back to the user. | Prompt requirements review to inspect task context, requirement package, code, tests, configs, docs, `.trellis/spec/`, `CONTEXT.md`, `CONTEXT-MAP.md`, and ADRs before asking product questions. |
+| Artifact injection | Existing supervisor plans inject only task-local artifacts, so a formal requirements package outside the task directory could be missed. | For `requirements`, include `prd.md`, task metadata/jsonl, and any formal requirement-package files referenced by `task.json.relatedFiles` or task markdown links; otherwise instruct the worker to discover repository evidence from `cwd` without broad template-specific scanning. |
+| Domain knowledge write-back | Adversarial review could pollute long-term glossary/spec files with temporary task choices. | Keep temporary decisions in `prd.md`; only confirmed long-term terminology or boundary decisions remain eligible for Domain Grill write-back. |
+| Provider routing | Wrong fallback could call the same model and weaken adversarial value. | Reuse existing opposite-provider rule: `codex -> claude`, `claude -> codex`, unknown -> `codex`. |
+| Prompt drift | Worker may produce generic plan review instead of actionable requirements blocker routing. | Prompt must require `route_class=REQ_BLOCKER` for medium-or-higher blockers and `review_result=clean/requirements-ready` only when clean. |
+| Install completeness | Source-only fix would not help newly installed projects. | Source template, packaged template, and dist template must all be validated. |
+| Over-engineering | A new queue/state machine would expand scope beyond PRD. | Do not add scheduler, DB, provider registry, arbitration engine, Trellis task status, or new Gate state. |
+| GitNexus process | Editing supervisor symbols can affect core Guru flows. | Run impact analysis before code edits and `detect_changes()` before commit. If HIGH/CRITICAL appears, report blast radius before proceeding. |
+
+### Minimal Implementation Plan
+
+- [x] Preflight: run GitNexus impact for `VALID_ACTIONS`, `SKILL_BY_PLATFORM`, `build_run_plan`, `run_action`, and `build_parser` before code edits.
+- [x] Extend source `guru-template/overlay/verify/guru_supervise.py` with a `requirements` action.
+- [x] Add requirements skill mapping using the smallest required context, preferably `requirement-review`; do not inject brainstorm or writing skills unless implementation evidence proves they are needed.
+- [x] Add a requirements-specific run-plan branch:
+  - review `prd.md`, task metadata/jsonl, the formal requirements package if referenced, task context, and relevant repository evidence before asking product questions;
+  - inject existing task-local requirements artifacts and formal package files found through `task.json.relatedFiles` or task markdown links; do not add broad repo-wide file injection;
+  - inspect code, tests, configs, docs, `.trellis/spec/`, `CONTEXT.md`, `CONTEXT-MAP.md`, and ADRs when available;
+  - challenge behavior, terminology, scope, lifecycle, ownership, failure paths, acceptance criteria, compliance, and current-code-vs-user-intent conflicts;
+  - emit `route_class=REQ_BLOCKER` for medium/high/critical requirement blockers;
+  - state that `REQ_BLOCKER` routes back to requirements repair and downstream overview/detail evidence must be treated as non-current after requirements change;
+  - treat low-severity wording nits or observations as non-blocking;
+  - emit `review_result=clean/requirements-ready` only when no blocker remains;
+  - keep temporary requirement decisions in `prd.md`; do not write long-term glossary/spec/ADR content unless the user has confirmed it through the existing Domain Grill rules;
+  - explicitly say requirements has no review-evidence command, but do not print the literal `record-review requirements` sequence in the dry-run prompt;
+  - explicitly stop before `confirm requirements`.
+- [x] Reuse `--adversarial` for requirements and apply the opposite-provider line to `requirements`, `overview`, and `detail`.
+- [x] Leave `guru_gate.py` requirements confirmation behavior unchanged; add or keep a focused rejection test proving `guru_gate.py record-review requirements ...` fails.
+- [x] Make workflow and Gate SSOT wording explicit: requirements adversarial review is required before `confirm requirements`, but it is not stored as requirements review evidence and does not change `cmd_confirm()`.
+- [x] Make workflow and Gate SSOT wording explicit that a requirements-stage `REQ_BLOCKER` returns to requirements repair and downstream overview/detail evidence must be rerun after requirements digest changes.
+- [x] Update all four source workflows:
+  - `guru-template/workflows/guru-client-workflow.md`
+  - `guru-template/workflows/guru-go-workflow.md`
+  - `guru-template/workflows/guru-h5-workflow.md`
+  - `guru-template/workflows/guru-ios-workflow.md`
+- [x] Update all four Gate SSOT docs:
+  - `guru-template/specs/guru-flutter-client/harness/gate/gate-confirmation-model.md`
+  - `guru-template/specs/guru-go-backend/harness/gate/gate-confirmation-model.md`
+  - `guru-template/specs/guru-h5-web/harness/gate/gate-confirmation-model.md`
+  - `guru-template/specs/guru-ios-native/harness/gate/gate-confirmation-model.md`
+- [x] Sync packaged templates with `pnpm -C packages/cli sync:guru`.
+- [x] Add package test coverage in `packages/cli/test/guru/guru-bundled.test.ts`:
+  - `--adversarial requirements` dry-run exits 0;
+  - `codex -> claude` and `claude -> codex` are asserted for requirements;
+  - dry-run output contains `REQ_BLOCKER`;
+  - dry-run output contains `review_result=clean/requirements-ready`;
+  - dry-run output tells the reviewer to inspect repository evidence before asking product questions;
+  - dry-run output preserves the temporary-PRD vs confirmed-long-term-knowledge boundary;
+  - dry-run output does not contain the exact literal `record-review requirements` sequence;
+  - packaged workflow and Gate SSOT text include `guru_supervise.py --adversarial requirements <task_dir>` before `confirm requirements`;
+  - `guru_gate.py record-review requirements ...` rejection is covered by a focused source/package shell or bundled-template test.
+- [x] Build before testing dist templates so dist evidence cannot come from a stale prior build.
+- [x] Run the validation commands below and append observed evidence to this document.
+
+### Validation Plan
+
+```bash
+pnpm -C packages/cli sync:guru
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile \
+  guru-template/overlay/verify/guru_supervise.py \
+  packages/cli/src/templates/guru/overlay/verify/guru_supervise.py
+python3 guru-template/overlay/verify/guru_supervise.py --platform flutter --adversarial requirements .trellis/tasks/06-18-guru-five-phase-automation-issue-2 --dry-run
+bash guru-template/overlay/verify/tests/run_tests.sh
+bash packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh
+pnpm -C packages/cli exec vitest run test/guru/guru-bundled.test.ts
+pnpm -C packages/cli lint
+pnpm -C packages/cli typecheck
+pnpm -C packages/cli build
+bash packages/cli/dist/templates/guru/overlay/verify/tests/run_tests.sh
+git diff --check
+find guru-template packages/cli/src/templates/guru packages/cli/dist/templates/guru -type d -name __pycache__ -print -prune
+npx gitnexus detect-changes --scope all --repo Trellis
+```
+
+### Plan Status
+
+- Plan repaired locally: yes.
+- Implementation status for #4: implemented locally.
+- Known blocker before implementation: none. GitNexus impact was run before supervisor edits; all checked symbols were LOW risk.
+- Acceptance boundary: met locally. Source templates, packaged `src/templates/guru`, and freshly built `dist/templates/guru` expose the same requirements adversarial review command and workflow guidance.
+
+### Implementation Evidence (2026-06-19 #4)
+
+- Added `requirements` to `guru_supervise.py` actions for source, packaged, and dist templates.
+- Added `--adversarial requirements <task-dir>` dry-run/run-plan behavior:
+  - `codex -> claude`, `claude -> codex`, unknown provider -> `codex`;
+  - injects `prd.md`, task metadata, task jsonl manifests, and explicitly referenced requirement-package files;
+  - referenced requirement-package directories are traversed recursively for `.md`, `.markdown`, `.json`, and `.jsonl`;
+  - prompts the reviewer to inspect repository evidence before asking product questions;
+  - requires `route_class=REQ_BLOCKER` for medium+ requirement blockers;
+  - requires `review_result=clean/requirements-ready` only when no blocker remains;
+  - states that requirements has no review-evidence command or clean streak and stops before `confirm requirements`.
+- Kept `guru_gate.py confirm requirements` semantics unchanged and retained `record-review requirements` rejection.
+- Updated all four Guru workflows, all four Gate SSOT docs, and all four harness indexes so newly installed projects see the requirements adversarial review step before human confirmation.
+- Updated `.trellis/spec/cli/backend/script-conventions.md` with the executable Guru adversarial review supervision contract.
+- Added/extended packaged regression coverage:
+  - requirements dry-run provider inversion and output tokens;
+  - no exact `record-review requirements` in requirements dry-run output;
+  - recursive formal requirement-package directory injection;
+  - packaged workflow/Gate SSOT/harness-index guidance;
+  - source/package helper script sync;
+  - Python cache artifact guard.
+
+### Review Loop Evidence (2026-06-19)
+
+- Review loop 1 initially found two issues and did not count as clean:
+  - formal requirement-package directory references only injected top-level `.md`; fixed with recursive restricted suffix traversal and tests;
+  - platform `harness/index.md` summaries still skipped requirements adversarial review; fixed across Flutter/Go/H5/iOS source and packaged specs with a bundled regression.
+- Clean review round 1 after fixes: no remaining mismatch found against GitHub #4, task PRD, or local implementation plan. Checked help output, dry-run output, provider fallback, no stale harness summary, no requirements clean-streak state, and source/src/dist sync.
+- Clean review round 2 after fixes: no remaining mismatch found. Verified installed Guru project smoke path creates `.trellis/scripts/guru/guru_supervise.py`, installs `.agents/skills/requirement-review/SKILL.md`, and dry-runs `--adversarial requirements` with opposite-provider routing and required output tokens.
+
+### Validation Evidence (2026-06-19)
+
+Passed:
+
+```bash
+pnpm -C packages/cli sync:guru
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile guru-template/overlay/verify/guru_supervise.py packages/cli/src/templates/guru/overlay/verify/guru_supervise.py
+python3 guru-template/overlay/verify/guru_supervise.py --platform flutter --provider codex --adversarial requirements .trellis/tasks/06-18-guru-five-phase-automation-issue-2 --dry-run
+bash guru-template/overlay/verify/tests/run_tests.sh
+bash packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh
+pnpm -C packages/cli exec vitest run test/guru/guru-bundled.test.ts
+pnpm -C packages/cli lint
+pnpm -C packages/cli typecheck
+pnpm -C packages/cli build
+bash packages/cli/dist/templates/guru/overlay/verify/tests/run_tests.sh
+python3 packages/cli/dist/templates/guru/overlay/verify/guru_supervise.py --platform flutter --provider claude --adversarial requirements .trellis/tasks/06-18-guru-five-phase-automation-issue-2 --dry-run
+git diff --check
+find guru-template packages/cli/src/templates/guru packages/cli/dist/templates/guru -type d -name __pycache__ -print -prune
+npx gitnexus detect-changes --scope all --repo /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree
+```
+
+Observed results:
+
+- Source shell tests: 127 passed / 0 failed.
+- Packaged source shell tests: 127 passed / 0 failed.
+- Dist shell tests: 127 passed / 0 failed.
+- Bundled Guru vitest: 40 passed / 0 failed.
+- `lint`, `typecheck`, and `build` passed.
+- `git diff --check` passed.
+- Final `__pycache__` scan was cleaned to empty after `py_compile` generated transient cache.
+- `gitnexus detect-changes --scope all` completed and reported CRITICAL risk because the full local diff spans 33 files, 229 indexed symbols, and 30 affected execution flows. Treat this as a commit-time review signal; the touched flows are expected for this task because it intentionally changes Guru gate/supervision templates plus all source/packaged/dist workflow/spec surfaces.

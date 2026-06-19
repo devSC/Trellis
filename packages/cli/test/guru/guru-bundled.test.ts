@@ -217,6 +217,18 @@ describe("bundled multi-platform guru spec packages", () => {
     }
   });
 
+  it("each platform harness index mentions requirements adversarial review before confirmation", () => {
+    for (const id of ["guru-flutter-client", ...SPECS]) {
+      const files = getBundledSpecFiles(id);
+      if (files === null) throw new Error(`expected bundled spec ${id}`);
+      const index = files.get("harness/index.md");
+      expect(index).toContain(
+        "requirements 结构通过后先运行 opposite-provider adversarial requirements review",
+      );
+      expect(index).toContain("clean/requirements-ready 后由用户确认");
+    }
+  });
+
   it("each platform spec ships its by-layer project-spec index files", () => {
     const BYLAYER: Record<string, string[]> = {
       "guru-flutter-client": ["flutter", "service", "shared"],
@@ -350,7 +362,7 @@ describe("bundled guru overlay", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it("ships workflow names that packaged apply.sh can resolve", () => {
     const applyScript = readOverlayFile("apply.sh");
@@ -399,6 +411,67 @@ describe("bundled guru overlay", () => {
     expect(trellisLocal).toContain("Domain Grill 已前移到需求发现");
     expect(trellisLocal).toContain("不再作为概要/详细 Gate");
     expect(trellisLocal).not.toContain("Gate 前拷问拍");
+  });
+
+  it("ships requirements adversarial review before requirements confirmation", () => {
+    const workflowFiles = [
+      "guru-client.md",
+      "guru-go.md",
+      "guru-h5.md",
+      "guru-ios.md",
+    ];
+    for (const file of workflowFiles) {
+      const workflow = fs.readFileSync(
+        path.join(GURU_TEMPLATE_ROOT, "workflows", file),
+        "utf8",
+      );
+      const reviewIndex = workflow.indexOf(
+        "guru_supervise.py --adversarial requirements <task_dir>",
+      );
+      const confirmIndex = workflow.indexOf(
+        "guru_gate.py confirm requirements <task_dir>",
+        reviewIndex,
+      );
+      expect(reviewIndex).toBeGreaterThanOrEqual(0);
+      expect(confirmIndex).toBeGreaterThan(reviewIndex);
+      expect(workflow).toContain(
+        "requirements review 不使用 review-evidence Gate",
+      );
+      expect(workflow).toContain("review_result=clean/requirements-ready");
+      expect(workflow).toContain("route_class=REQ_BLOCKER");
+    }
+
+    const gateFiles = [
+      "guru-flutter-client",
+      "guru-go-backend",
+      "guru-h5-web",
+      "guru-ios-native",
+    ];
+    for (const spec of gateFiles) {
+      const gateModel = fs.readFileSync(
+        path.join(
+          GURU_TEMPLATE_ROOT,
+          "specs",
+          spec,
+          "harness",
+          "gate",
+          "gate-confirmation-model.md",
+        ),
+        "utf8",
+      );
+      const reviewIndex = gateModel.indexOf(
+        "guru_supervise.py --adversarial requirements <task_dir>",
+      );
+      const confirmIndex = gateModel.indexOf(
+        "guru_gate.py confirm requirements",
+        reviewIndex,
+      );
+      expect(reviewIndex).toBeGreaterThanOrEqual(0);
+      expect(confirmIndex).toBeGreaterThan(reviewIndex);
+      expect(gateModel).toContain("review_result=clean/requirements-ready");
+      expect(gateModel).toContain("route_class=REQ_BLOCKER");
+      expect(gateModel).toContain("不写 `review_runs`");
+    }
   });
 
   it("keeps overview writing guides on the Domain Grill route", () => {
@@ -810,6 +883,202 @@ fi
     expect(output).toContain("two clean review passes");
     expect(output).toContain(
       "REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT",
+    );
+  });
+
+  it("dry-runs requirements adversarial review with evidence-first blocker routing", () => {
+    writeConfig("go");
+    const requirementSkill = writeSkill(
+      ".agents/skills/requirement-review/SKILL.md",
+    );
+    const taskDir = writeTask("task-requirements");
+    const formalDoc = path.join(
+      tmpDir,
+      "docs",
+      "requirements",
+      "feature",
+      "requirement-main.md",
+    );
+    const formalTrace = path.join(
+      tmpDir,
+      "docs",
+      "requirements",
+      "feature",
+      "trace.jsonl",
+    );
+    const formalModule = path.join(
+      tmpDir,
+      "docs",
+      "requirements",
+      "feature",
+      "modules",
+      "requirement-api.md",
+    );
+    fs.mkdirSync(path.dirname(formalDoc), { recursive: true });
+    fs.mkdirSync(path.dirname(formalModule), { recursive: true });
+    fs.writeFileSync(formalDoc, "# Requirement Main\n", "utf8");
+    fs.writeFileSync(formalTrace, "{}\n", "utf8");
+    fs.writeFileSync(formalModule, "# Requirement API\n", "utf8");
+    const taskJson = path.join(taskDir, "task.json");
+    fs.writeFileSync(
+      taskJson,
+      JSON.stringify(
+        {
+          relatedFiles: ["docs/requirements/feature"],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    const implementManifest = path.join(taskDir, "implement.jsonl");
+    const checkManifest = path.join(taskDir, "check.jsonl");
+    fs.writeFileSync(implementManifest, "{}\n", "utf8");
+    fs.writeFileSync(checkManifest, "{}\n", "utf8");
+
+    const codexOutput = runSupervisor([
+      "--provider",
+      "codex",
+      "--adversarial",
+      "requirements",
+      taskDir,
+      "--run-id",
+      "r11",
+      "--dry-run",
+    ]);
+
+    expect(codexOutput).toContain(
+      "trellis channel spawn guru-task-requirements-requirements-r11 --agent requirements --provider claude --as requirements-claude-r11",
+    );
+    expect(codexOutput).toContain(`--file ${requirementSkill}`);
+    expect(codexOutput).toContain(`--file ${taskJson}`);
+    expect(codexOutput).toContain(`--file ${formalDoc}`);
+    expect(codexOutput).toContain(`--file ${formalTrace}`);
+    expect(codexOutput).toContain(`--file ${formalModule}`);
+    expect(codexOutput).toContain(`--jsonl ${implementManifest}`);
+    expect(codexOutput).toContain(`--jsonl ${checkManifest}`);
+    expect(codexOutput).toContain(
+      "adversarial requirements reviewer from the opposite provider (codex -> claude)",
+    );
+    expect(codexOutput).toContain("repository evidence before asking product questions");
+    expect(codexOutput).toContain(
+      "code, tests, configs, docs, .trellis/spec/, CONTEXT.md, CONTEXT-MAP.md, and docs/adr/",
+    );
+    expect(codexOutput).toContain("current-code-vs-user-intent");
+    expect(codexOutput).toContain("route_class=REQ_BLOCKER");
+    expect(codexOutput).toContain("review_result=clean/requirements-ready");
+    expect(codexOutput).toContain("Low severity wording nits or observations are non-blocking");
+    expect(codexOutput).toContain("Keep temporary requirement decisions in prd.md");
+    expect(codexOutput).toContain("confirmed via Domain Grill rules");
+    expect(codexOutput).toContain("Stop before confirm requirements");
+    expect(codexOutput).not.toContain("record-review requirements");
+
+    const claudeOutput = runSupervisor([
+      "--provider",
+      "claude",
+      "--adversarial",
+      "requirements",
+      taskDir,
+      "--run-id",
+      "r12",
+      "--dry-run",
+    ]);
+
+    expect(claudeOutput).toContain(
+      "trellis channel spawn guru-task-requirements-requirements-r12 --agent requirements --provider codex --as requirements-codex-r12",
+    );
+    expect(claudeOutput).toContain(
+      "adversarial requirements reviewer from the opposite provider (claude -> codex)",
+    );
+
+    const unknownOutput = runSupervisor([
+      "--provider",
+      "gemini",
+      "--adversarial",
+      "requirements",
+      taskDir,
+      "--run-id",
+      "r13",
+      "--dry-run",
+    ]);
+
+    expect(unknownOutput).toContain(
+      "trellis channel spawn guru-task-requirements-requirements-r13 --agent requirements --provider codex --as requirements-codex-r13",
+    );
+    expect(unknownOutput).toContain(
+      "adversarial requirements reviewer from the opposite provider (gemini -> codex)",
+    );
+  });
+
+  it("dry-runs adversarial planning reviews with the opposite provider and marked evidence", () => {
+    writeConfig("go");
+    writeSkill(".agents/skills/go-design-overview-writing/SKILL.md");
+    writeSkill(".agents/skills/go-design-overview-review/SKILL.md");
+    writeSkill(".agents/skills/go-design-detail-writing/SKILL.md");
+    writeSkill(".agents/skills/go-design-detail-review/SKILL.md");
+    const taskDir = writeTask("task-adversarial");
+
+    const codexOutput = runSupervisor([
+      "--provider",
+      "codex",
+      "--adversarial",
+      "overview",
+      taskDir,
+      "--run-id",
+      "r8",
+      "--dry-run",
+    ]);
+
+    expect(codexOutput).toContain(
+      "trellis channel spawn guru-task-adversarial-overview-r8 --agent overview --provider claude --as overview-claude-r8",
+    );
+    expect(codexOutput).toContain(
+      "adversarial clean-context reviewer from the opposite provider (codex -> claude)",
+    );
+    expect(codexOutput).toContain(
+      "--reviewer clean-context-adversarial-claude --run-id r8-claude-rN",
+    );
+
+    const claudeOutput = runSupervisor([
+      "--provider",
+      "claude",
+      "--adversarial",
+      "overview",
+      taskDir,
+      "--run-id",
+      "r10",
+      "--dry-run",
+    ]);
+
+    expect(claudeOutput).toContain(
+      "trellis channel spawn guru-task-adversarial-overview-r10 --agent overview --provider codex --as overview-codex-r10",
+    );
+    expect(claudeOutput).toContain(
+      "adversarial clean-context reviewer from the opposite provider (claude -> codex)",
+    );
+    expect(claudeOutput).toContain(
+      "--reviewer clean-context-adversarial-codex --run-id r10-codex-rN",
+    );
+
+    const unknownOutput = runSupervisor([
+      "--provider",
+      "gemini",
+      "--adversarial",
+      "detail",
+      taskDir,
+      "--run-id",
+      "r9",
+      "--dry-run",
+    ]);
+
+    expect(unknownOutput).toContain(
+      "trellis channel spawn guru-task-adversarial-detail-r9 --agent detail --provider codex --as detail-codex-r9",
+    );
+    expect(unknownOutput).toContain(
+      "adversarial clean-context reviewer from the opposite provider (gemini -> codex)",
+    );
+    expect(unknownOutput).toContain(
+      "--reviewer clean-context-adversarial-codex --run-id r9-codex-rN",
     );
   });
 

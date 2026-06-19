@@ -6,9 +6,9 @@
 
 本文覆盖从 planning 进入 implementation 前的 Guru Gate：
 
-- `requirements` - 需求 Gate：结构检查 + 需求发现/Domain Grill + 用户确认。
-- `overview` - 概要设计 Gate：结构检查 + 当前 digest 下两次 clean review，自动通过，不需要用户确认。
-- `detail` - 详细设计 Gate：结构检查 + 当前 digest 下两次 clean review，随后用户确认。
+- `requirements` - 需求 Gate：结构检查 + 需求发现/Domain Grill + opposite-provider adversarial requirements review + 用户确认。
+- `overview` - 概要设计 Gate：结构检查 + 当前 digest 下两次 clean review（至少一次 opposite-provider adversarial clean），自动通过，不需要用户确认。
+- `detail` - 详细设计 Gate：结构检查 + 当前 digest 下两次 clean review（至少一次 opposite-provider adversarial clean），随后用户确认。
 
 实现 Gate、代码质量检查、测试证据和 commit 前审核属于实现/审核阶段，由 implementation trace 合同、平台 golden-path、实现 review skill、`guru_supervise.py implement-check` 与 `trellis-check` 承载。
 
@@ -18,15 +18,16 @@
 |------|------|------------------|
 | 结构 Gate | `guru_gate.py requirements/overview/detail` 复查产物结构、编号纪律、引用闭合与最低可机检条件。 | 不替代语义 review 或用户确认。 |
 | Domain Grill | 需求发现阶段的对抗式领域拷问，磨尖术语、边界、失败路径、状态/owner 和红线，并把已确认决策回写需求产物或长期知识。 | 不替代结构 Gate，不单独作为 post-draft Gate。 |
-| review evidence | overview/detail review worker 把当前 artifact digest 下的 clean/findings 结果写入 `task.json.guru_gates.review_runs`。 | 不替代 requirements/detail 的人工确认。 |
+| requirements adversarial review | `confirm requirements` 前的 opposite-provider 需求复核：先查 `prd.md`、正式需求包、task metadata/jsonl、task context 与 repo evidence，再输出 `route_class=REQ_BLOCKER` 或 `review_result=clean/requirements-ready`。 | 不写 `review_runs`，不形成 requirements clean streak，不替代人工确认。 |
+| review evidence | overview/detail review worker 把当前 artifact digest 下的 clean/findings 结果写入 `task.json.guru_gates.review_runs`；双 clean 中至少一条 clean reviewer 必须包含 `adversarial`。 | 不替代 requirements/detail 的人工确认。 |
 | confirm | 用户确认 requirements 或 detail 当前产物可以作为后续输入，并写入确认快照。 | 不替代结构 Gate 或 review evidence。 |
 
 完整 planning 跃迁顺序：
 
 ```text
-requirements writing/review + Domain Grill -> guru_gate.py confirm requirements
-overview writing -> overview review/fix loop -> two clean current-digest reviews -> auto pass
-detail writing -> detail review/fix loop -> two clean current-digest reviews -> guru_gate.py confirm detail
+requirements writing/review + Domain Grill -> guru_supervise.py --adversarial requirements <task_dir> -> guru_gate.py confirm requirements
+overview writing -> overview review/fix loop -> two clean current-digest reviews (one adversarial opposite-provider clean) -> auto pass
+detail writing -> detail review/fix loop -> two clean current-digest reviews (one adversarial opposite-provider clean) -> guru_gate.py confirm detail
 ```
 
 `confirm overview` 不是正常路径，必须失败并提示改用 `record-review overview`。
@@ -36,7 +37,7 @@ detail writing -> detail review/fix loop -> two clean current-digest reviews -> 
 Guru planning 只保留两个阶段性人工确认：
 
 - `requirements`：确认用户可感知行为、失败路径、验收口径、术语和产品边界已定。
-- `detail`：在 overview/detail 都已有当前 digest 双 clean review 后，确认可编码合同、测试映射、不得补造清单和实现切片已定。
+- `detail`：在 overview/detail 都已有当前 digest 双 clean review（各自至少一次 opposite-provider adversarial clean）后，确认可编码合同、测试映射、不得补造清单和实现切片已定。
 
 硬边界确认另行存在：commit、archive、finish-work、publish、外部系统写入和其他不可逆操作仍必须等待用户明确确认。
 
@@ -44,9 +45,9 @@ Guru planning 只保留两个阶段性人工确认：
 
 | Gate | 完成条件 | artifact digest 覆盖范围 | 决策含义 |
 |------|----------|--------------------------|----------|
-| `requirements` | `guru_gate.py requirements <task_dir>` 通过 + `guru_gate.py confirm requirements <task_dir>` | `prd.md` | 需求行为、失败路径、验收口径、术语边界已定。 |
-| `overview` | `guru_gate.py overview <task_dir>` 通过 + 两个不同 `run_id` 的当前 digest clean review | `prd.md` + `design_package/README.md` + `design_package/design-main.md`；light 链为 `prd.md` + `design.md` | owner、架构归属、技术决策承接和详细设计索引已定。 |
-| `detail` | `guru_gate.py detail <task_dir>` 通过 + 两个不同 `run_id` 的当前 digest clean review + `guru_gate.py confirm detail <task_dir>` | overview 覆盖范围 + `design_package/chapters/*.md` + `implement.md`；light 链为 `prd.md` + `design.md` + `implement.md` | 可编码合同、测试映射、不得补造清单和实现切片已定。 |
+| `requirements` | `guru_gate.py requirements <task_dir>` 通过 + `guru_supervise.py --adversarial requirements <task_dir>` 输出 `review_result=clean/requirements-ready` + `guru_gate.py confirm requirements <task_dir>` | `prd.md` | 需求行为、失败路径、验收口径、术语边界已定。 |
+| `overview` | `guru_gate.py overview <task_dir>` 通过 + 两个不同 `run_id` 的当前 digest clean review，且其中至少一条 reviewer 含 `adversarial` | `prd.md` + `design_package/README.md` + `design_package/design-main.md`；light 链为 `prd.md` + `design.md` | owner、架构归属、技术决策承接和详细设计索引已定。 |
+| `detail` | `guru_gate.py detail <task_dir>` 通过 + 两个不同 `run_id` 的当前 digest clean review，且其中至少一条 reviewer 含 `adversarial` + `guru_gate.py confirm detail <task_dir>` | overview 覆盖范围 + `design_package/chapters/*.md` + `implement.md`；light 链为 `prd.md` + `design.md` + `implement.md` | 可编码合同、测试映射、不得补造清单和实现切片已定。 |
 
 ## 5. Digest 与失效规则
 
@@ -83,7 +84,7 @@ overview/detail review evidence 存在 `task.json.guru_gates.review_runs`：
       "overview": [
         {
           "run_id": "overview-20260618-a",
-          "reviewer": "clean-context",
+          "reviewer": "clean-context-adversarial-claude",
           "recorded_at": "2026-06-18T00:10:00+08:00",
           "artifact_digest": "<overview digest>",
           "result": "clean",
@@ -125,7 +126,8 @@ python3 .trellis/scripts/guru/guru_gate.py record-review overview <task_dir> \
 - `clean` 只允许 `max_severity=none|low`，且不得写 `finding_class`。
 - `findings` 必须是 `max_severity=medium|high|critical`，且必须写 `finding_class`。
 - `finding_class` 只用于路由：`REQ_BLOCKER`、`OVERVIEW_DEFECT`、`DETAIL_DEFECT`、`IMPLEMENT_DEFECT`、`PROCESS_DEFECT`。
-- 两次 clean 必须来自当前 digest 下两个不同 `run_id`。
+- 两次 clean 必须来自当前 digest 下两个不同 `run_id`，且当前 clean streak 中至少一条 clean 记录的 `reviewer` 包含 `adversarial`（推荐形如 `clean-context-adversarial-<provider>`）。
+- requirements 阶段通过需求发现 / Domain Grill / adversarial review 暴露 blocker 或 clean/ready 结论；requirements review 不写 `review_runs`，不得添加 requirements clean streak，且不改变 `confirm requirements` 语义。
 - medium+ findings 会打断当前 clean streak；后续需要重新得到两个不同 run-id 的 clean。
 
 ## 7. Automation Driver
@@ -135,15 +137,19 @@ planning 阶段使用 `guru_supervise.py` 的最小 channel 驱动，不引入�
 ```bash
 python3 .trellis/scripts/guru/guru_supervise.py overview <task_dir>
 python3 .trellis/scripts/guru/guru_supervise.py detail <task_dir>
+python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements <task_dir>
+python3 .trellis/scripts/guru/guru_supervise.py --adversarial overview <task_dir>
+python3 .trellis/scripts/guru/guru_supervise.py --adversarial detail <task_dir>
 ```
 
 stop conditions：
 
-- `REQ_BLOCKER`：回到 requirements；下游证据不得视为当前。
+- requirements adversarial review：先查 code/tests/config/docs/.trellis/spec/CONTEXT.md/CONTEXT-MAP.md/ADRs，再问产品问题；medium+ 需求阻断输出 `route_class=REQ_BLOCKER`，回到 requirements repair；低严重度措辞 nit 不阻断；clean 输出 `review_result=clean/requirements-ready`，并停在 confirm requirements 前。
+- `REQ_BLOCKER`：回到 requirements；需求 digest 变更后 overview/detail 下游证据不得视为当前，必须重跑。
 - `OVERVIEW_DEFECT`：修复 overview 产物并重新 review。
 - `DETAIL_DEFECT`：修复 detail 产物并重新 review。
 - `PROCESS_DEFECT`：修复受影响流程产物并重新 review。
-- 当前 digest 两个 clean review：overview 自动通过；detail 停下等待用户确认。
+- 当前 digest 两个 clean review，且至少一条为 opposite-provider adversarial clean：overview 自动通过；detail 停下等待用户确认。
 - 工具失败、timeout、killed：向主会话暴露 blocker。
 
 实现阶段使用：
@@ -184,10 +190,10 @@ python3 .trellis/scripts/guru/guru_gate.py status <task_dir>
 按最早缺口恢复：
 
 1. 缺结构产物或结构 Gate 不通过：回到对应 writing/review 阶段修产物。
-2. 需求未确认或需求确认快照失配：重新复核需求并运行 `confirm requirements`。
-3. overview 缺当前 digest 双 clean：运行 `guru_supervise.py overview <task_dir>` 或继续 overview review/fix loop。
-4. detail 缺当前 digest 双 clean：运行 `guru_supervise.py detail <task_dir>` 或继续 detail review/fix loop。
-5. detail 未确认或确认快照失配：双 clean 后重新运行 `confirm detail`。
+2. 需求未确认或需求确认快照失配：先运行 `guru_supervise.py --adversarial requirements <task_dir>`，clean/ready 后再运行 `confirm requirements`；若输出 `REQ_BLOCKER`，修订需求并重跑下游 overview/detail 证据。
+3. overview 缺当前 digest 双 clean或缺 adversarial clean：运行 `guru_supervise.py overview <task_dir>`，缺 adversarial 时运行 `guru_supervise.py --adversarial overview <task_dir>`。
+4. detail 缺当前 digest 双 clean或缺 adversarial clean：运行 `guru_supervise.py detail <task_dir>`，缺 adversarial 时运行 `guru_supervise.py --adversarial detail <task_dir>`。
+5. detail 未确认或确认快照失配：双 clean（含 adversarial）后重新运行 `confirm detail`。
 6. `guru_gate.py check <task_dir>` 通过后才允许 `task.py start`。
 
 最终检查：

@@ -85,7 +85,7 @@
 | 实现 | 代码 + `implement.md`（trace） | `.trellis/spec/guides/golden-path.md` + `.trellis/spec/harness/implementation/implementation-trace-contract.md` |
 | 审核/复盘 | findings + spec 回写 | 各 SSOT 审核基线章节 + `.trellis/spec/harness/extraction-template.md` |
 
-Guru Gate、review_runs 证据、confirm 快照、累积 digest 与失配恢复流程见 `.trellis/spec/harness/gate/gate-confirmation-model.md`。摘要：requirements 结构通过后由用户确认；overview/detail 由当前 digest 下两个不同 run-id 的 clean review 记录驱动；detail 双 clean 后再由用户确认。
+Guru Gate、review_runs 证据、confirm 快照、累积 digest 与失配恢复流程见 `.trellis/spec/harness/gate/gate-confirmation-model.md`。摘要：requirements 结构通过后先运行 opposite-provider adversarial requirements review，clean/requirements-ready 后由用户确认；overview/detail 由当前 digest 下两个不同 run-id 的 clean review 记录驱动；detail 双 clean 后再由用户确认。
 
 ---
 

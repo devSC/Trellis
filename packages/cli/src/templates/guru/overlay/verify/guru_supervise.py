@@ -2,11 +2,12 @@
 """Run Guru implement/check work through the official trellis channel runtime.
 
 Usage:
-    python3 guru_supervise.py overview <task-dir> [--dry-run]
-    python3 guru_supervise.py detail <task-dir> [--dry-run]
-    python3 guru_supervise.py implement <task-dir> [--dry-run]
-    python3 guru_supervise.py check <task-dir> [--dry-run]
-    python3 guru_supervise.py implement-check <task-dir> [--dry-run]
+    python3 guru_supervise.py [--adversarial] requirements <task-dir> [--dry-run]
+    python3 guru_supervise.py [--adversarial] overview <task-dir> [--dry-run]
+    python3 guru_supervise.py [--adversarial] detail <task-dir> [--dry-run]
+    python3 guru_supervise.py [--adversarial] implement <task-dir> [--dry-run]
+    python3 guru_supervise.py [--adversarial] check <task-dir> [--dry-run]
+    python3 guru_supervise.py [--adversarial] implement-check <task-dir> [--dry-run]
     python3 guru_supervise.py status <task-dir>
     python3 guru_supervise.py kill <task-dir> --channel <name> --worker <name>
 """
@@ -24,9 +25,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
+from urllib.parse import unquote, urlparse
 
 
-VALID_ACTIONS = {"overview", "detail", "implement", "check", "implement-check"}
+VALID_ACTIONS = {"requirements", "overview", "detail", "implement", "check", "implement-check"}
 VALID_PLATFORMS = {"flutter", "go", "ios", "h5"}
 
 DEFAULT_PROVIDER = "codex"
@@ -48,6 +50,7 @@ ROUTE_RE = re.compile(
 
 SKILL_BY_PLATFORM: dict[str, dict[str, list[str]]] = {
     "flutter": {
+        "requirements": [".agents/skills/requirement-review/SKILL.md"],
         "overview": [
             ".agents/skills/client-design-overview-writing/SKILL.md",
             ".agents/skills/client-design-overview-review/SKILL.md",
@@ -64,6 +67,7 @@ SKILL_BY_PLATFORM: dict[str, dict[str, list[str]]] = {
         ],
     },
     "go": {
+        "requirements": [".agents/skills/requirement-review/SKILL.md"],
         "overview": [
             ".agents/skills/go-design-overview-writing/SKILL.md",
             ".agents/skills/go-design-overview-review/SKILL.md",
@@ -80,6 +84,7 @@ SKILL_BY_PLATFORM: dict[str, dict[str, list[str]]] = {
         ],
     },
     "ios": {
+        "requirements": [".agents/skills/requirement-review/SKILL.md"],
         "overview": [
             ".agents/skills/ios-design-overview-writing/SKILL.md",
             ".agents/skills/ios-design-overview-review/SKILL.md",
@@ -96,6 +101,7 @@ SKILL_BY_PLATFORM: dict[str, dict[str, list[str]]] = {
         ],
     },
     "h5": {
+        "requirements": [".agents/skills/requirement-review/SKILL.md"],
         "overview": [
             ".agents/skills/h5-design-overview-writing/SKILL.md",
             ".agents/skills/h5-design-overview-review/SKILL.md",
@@ -114,6 +120,7 @@ SKILL_BY_PLATFORM: dict[str, dict[str, list[str]]] = {
 }
 
 KEY_RE = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z0-9_-]+)\s*:\s*(?P<value>.*)$")
+MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 
 
 class GuruSupervisionError(RuntimeError):
@@ -124,7 +131,9 @@ class GuruSupervisionError(RuntimeError):
 class SupervisionConfig:
     root: Path
     platform: str
+    current_provider: str
     provider: str
+    adversarial: bool
     implement_timeout: str
     check_timeout: str
     warn_before: str
@@ -230,6 +239,74 @@ def _existing_paths(paths: Sequence[Path]) -> list[Path]:
     return [path for path in paths if path.exists()]
 
 
+def _dedupe_paths(paths: Sequence[Path]) -> list[Path]:
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in paths:
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def _read_json_object(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _files_from_reference(root: Path, base_dir: Path, reference: str) -> list[Path]:
+    raw = reference.strip().strip("<>")
+    if not raw:
+        return []
+    parsed = urlparse(raw)
+    if parsed.scheme and parsed.scheme not in {"file"}:
+        return []
+    raw_path = unquote(parsed.path if parsed.scheme == "file" else raw)
+    raw_path = raw_path.split("#", 1)[0].split("?", 1)[0].strip()
+    if not raw_path:
+        return []
+
+    ref_path = Path(raw_path).expanduser()
+    candidates = [ref_path] if ref_path.is_absolute() else [root / ref_path, base_dir / ref_path]
+    files: list[Path] = []
+    for candidate in candidates:
+        if candidate.is_file():
+            if candidate.suffix.lower() in {".md", ".markdown", ".json", ".jsonl"}:
+                files.append(candidate)
+        elif candidate.is_dir():
+            files.extend(
+                sorted(
+                    path
+                    for path in candidate.rglob("*")
+                    if path.is_file()
+                    and path.suffix.lower() in {".md", ".markdown", ".json", ".jsonl"}
+                )
+            )
+    return _dedupe_paths(files)
+
+
+def _requirements_reference_files(root: Path, task_dir: Path) -> list[Path]:
+    files: list[Path] = []
+    task_json = task_dir / "task.json"
+    data = _read_json_object(task_json)
+    related = data.get("relatedFiles") if data else None
+    if isinstance(related, list):
+        for item in related:
+            if isinstance(item, str):
+                files.extend(_files_from_reference(root, task_dir, item))
+
+    for markdown_path in sorted(task_dir.glob("*.md")):
+        text = markdown_path.read_text(encoding="utf-8", errors="replace")
+        for match in MARKDOWN_LINK_RE.finditer(text):
+            files.extend(_files_from_reference(root, markdown_path.parent, match.group(1)))
+    return _dedupe_paths(files)
+
+
 def _trellis_cmd(config: SupervisionConfig, args: Sequence[str]) -> list[str]:
     return [config.trellis_bin, *args]
 
@@ -249,11 +326,21 @@ def _route_from_output(text: str) -> str | None:
     return None
 
 
+def _opposite_provider(provider: str) -> str:
+    current = provider.strip().lower()
+    if current == "codex":
+        return "claude"
+    if current == "claude":
+        return "codex"
+    return DEFAULT_PROVIDER
+
+
 def _load_config(
     root: Path,
     *,
     platform: str | None,
     provider: str | None,
+    adversarial: bool,
     trellis_bin: str | None,
 ) -> SupervisionConfig:
     resolved_platform = platform or _config_value(root, ("guru", "platform"))
@@ -264,12 +351,19 @@ def _load_config(
             "or set guru.platform in .trellis/config.yaml"
         )
 
+    current_provider = (
+        provider
+        or _config_value(root, ("guru", "supervision", "provider"))
+        or DEFAULT_PROVIDER
+    )
+    spawned_provider = _opposite_provider(current_provider) if adversarial else current_provider
+
     return SupervisionConfig(
         root=root,
         platform=resolved_platform,
-        provider=provider
-        or _config_value(root, ("guru", "supervision", "provider"))
-        or DEFAULT_PROVIDER,
+        current_provider=current_provider,
+        provider=spawned_provider,
+        adversarial=adversarial,
         implement_timeout=_config_value(
             root, ("guru", "supervision", "implement_timeout")
         )
@@ -298,7 +392,7 @@ def build_run_plan(
     if not task_dir.is_dir():
         raise GuruSupervisionError(f"task directory not found: {task_dir}")
 
-    action_timeout = config.check_timeout if action == "check" else config.implement_timeout
+    action_timeout = config.check_timeout if action in {"requirements", "check"} else config.implement_timeout
     run_slug = _sanitize(run_id, limit=40)
     provider_slug = _sanitize(config.provider, limit=24)
     task_slug = _sanitize(task_dir.name, limit=70)
@@ -307,18 +401,27 @@ def build_run_plan(
 
     skill_rels = SKILL_BY_PLATFORM[config.platform][action]
     skill_paths = [config.root / rel for rel in skill_rels]
-    artifact_files = _existing_paths(
-        [
-            *skill_paths,
-            task_dir / "prd.md",
-            task_dir / "design.md",
-            task_dir / "implement.md",
-        ]
-    )
+    artifact_candidates = [
+        *skill_paths,
+        task_dir / "prd.md",
+        task_dir / "design.md",
+        task_dir / "implement.md",
+    ]
+    if action == "requirements":
+        artifact_candidates.extend(
+            [
+                task_dir / "task.json",
+                *_requirements_reference_files(config.root, task_dir),
+            ]
+        )
+    artifact_files = _dedupe_paths(_existing_paths(artifact_candidates))
     jsonl_names = [f"{action}.jsonl"]
     if action == "implement-check":
         jsonl_names = ["implement.jsonl", "check.jsonl"]
-    jsonls = _existing_paths([task_dir / name for name in jsonl_names])
+    if action == "requirements":
+        jsonls = _dedupe_paths(sorted(task_dir.glob("*.jsonl")))
+    else:
+        jsonls = _existing_paths([task_dir / name for name in jsonl_names])
 
     create_cmd = _trellis_cmd(
         config,
@@ -411,11 +514,49 @@ def build_run_plan(
 
     skill_names = ", ".join(Path(rel).parts[-2] for rel in skill_rels)
     skill_line = f"Load the injected Guru {config.platform} skill(s): {skill_names}."
-    if action in {"overview", "detail"}:
+    adversarial_line = ""
+    if config.adversarial and action in {"requirements", "overview", "detail"}:
+        review_kind = (
+            "requirements reviewer"
+            if action == "requirements"
+            else "clean-context reviewer"
+        )
+        adversarial_line = (
+            f"You are the adversarial {review_kind} from the opposite provider "
+            f"({config.current_provider} -> {config.provider}); challenge the current plan before "
+            "allowing it to proceed."
+        )
+    if action == "requirements":
+        review_mode = (
+            "opposite-provider adversarial requirements review"
+            if config.adversarial
+            else "requirements review"
+        )
+        responsibility = (
+            f"Run the {review_mode} before human requirements confirmation. Review prd.md, task.json "
+            "metadata, task jsonl manifests, any formal requirements package referenced by "
+            "task.json relatedFiles or task markdown links, task context, and repository evidence before "
+            "asking product questions. Inspect code, tests, configs, docs, .trellis/spec/, CONTEXT.md, "
+            "CONTEXT-MAP.md, and docs/adr/ when available before asking product questions. Challenge "
+            "behavior, terms, scope, lifecycle, ownership, failure paths, acceptance criteria, compliance, "
+            "and current-code-vs-user-intent conflicts. Emit route_class=REQ_BLOCKER for any medium/high/"
+            "critical requirement blocker; route REQ_BLOCKER back to requirements repair and rerun "
+            "downstream overview/detail evidence after the requirements digest changes. Low severity "
+            "wording nits or observations are non-blocking. Emit review_result=clean/requirements-ready "
+            "only when no blocker remains. Keep temporary requirement decisions in prd.md; do not write "
+            "long-term glossary/spec/ADR content unless confirmed via Domain Grill rules. Requirements "
+            "has no review-evidence command or clean streak. Stop before confirm requirements."
+        )
+    elif action in {"overview", "detail"}:
+        reviewer = "clean-context"
+        review_run_id = run_id
+        if config.adversarial:
+            reviewer = f"clean-context-adversarial-{provider_slug}"
+            review_run_id = f"{run_id}-{provider_slug}"
         responsibility = (
             f"Write or repair the {action} design artifact, run two clean review passes for the current digest, "
             f"and record each clean pass with `python3 .trellis/scripts/guru/guru_gate.py record-review {action} "
-            f"{task_dir} --result clean --max-severity low --reviewer clean-context --run-id {run_id}-rN "
+            f"{task_dir} --result clean --max-severity low --reviewer {reviewer} --run-id {review_run_id}-rN "
             "--evidence \"<review evidence>\"`. If medium+ findings remain, record findings with "
             "--finding-class REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT and stop."
         )
@@ -433,12 +574,13 @@ def build_run_plan(
     else:
         responsibility = "Review the current diff under Guru quality rules and self-fix only mechanical issues."
     brief = "\n".join(
-        [
+        [line for line in [
             f"Active task: {task_dir}",
             skill_line,
+            adversarial_line,
             responsibility,
             "Do not commit, push, merge, archive, or run finish-work.",
-        ]
+        ] if line]
     )
     if extra_brief:
         brief = f"{brief}\n{extra_brief}"
@@ -534,6 +676,7 @@ def run_action(args: argparse.Namespace, action: str) -> int:
         root,
         platform=args.platform,
         provider=args.provider,
+        adversarial=args.adversarial,
         trellis_bin=args.trellis_bin,
     )
     run_id = args.run_id or _default_run_id()
@@ -554,6 +697,7 @@ def run_implement_check(args: argparse.Namespace) -> int:
         root,
         platform=args.platform,
         provider=args.provider,
+        adversarial=args.adversarial,
         trellis_bin=args.trellis_bin,
     )
     base_run_id = args.run_id or _default_run_id()
@@ -676,6 +820,7 @@ def status_action(args: argparse.Namespace) -> int:
         root,
         platform=args.platform,
         provider=args.provider,
+        adversarial=args.adversarial,
         trellis_bin=args.trellis_bin,
     )
     task_slug = _sanitize(task_dir.name, limit=70)
@@ -769,6 +914,7 @@ def kill_action(args: argparse.Namespace) -> int:
         root,
         platform=args.platform,
         provider=args.provider,
+        adversarial=args.adversarial,
         trellis_bin=args.trellis_bin,
     )
     if not args.channel or not args.worker:
@@ -791,10 +937,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--root", help="Trellis project root")
     parser.add_argument("--platform", choices=sorted(VALID_PLATFORMS))
     parser.add_argument("--provider")
+    parser.add_argument(
+        "--adversarial",
+        action="store_true",
+        help="Spawn the opposite provider for clean-context adversarial review",
+    )
     parser.add_argument("--trellis-bin", default=os.environ.get("TRELLIS_BIN"))
     sub = parser.add_subparsers(dest="command", required=True)
 
-    for action in ("overview", "detail", "implement", "check"):
+    for action in ("requirements", "overview", "detail", "implement", "check"):
         p = sub.add_parser(action)
         p.add_argument("task_dir")
         p.add_argument("--run-id")

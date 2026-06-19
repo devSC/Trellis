@@ -17,7 +17,7 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
                                                   # strict 模式（默认）：仅限用户本人在交互式终端运行，agent 代跑被拒
                                                   # soft 模式（config guru.gate_mode: soft）：用户对话确认后 agent 以 --via-agent 代跑（记录留痕标注）
   python3 guru_gate.py record-review <overview|detail> <task_dir> --result clean|findings --max-severity none|low|medium|high|critical --reviewer clean-context --run-id <id> --evidence <text> [--finding-class <class>]
-                                                  # 记录概要/详细设计 review 证据；当前产物 digest 下需两个不同 run-id 的 clean 记录
+                                                  # 记录概要/详细设计 review 证据；当前产物 digest 下需两个不同 run-id 的 clean 记录，且至少一条 reviewer 含 adversarial
   python3 guru_gate.py grill-done <gate> [task_dir] [--via-agent] --user-quote "<用户确认原话>"
                                                   # 兼容旧流程：记录 design-grill 已完成（不再作为新 gate 放行条件）
   python3 guru_gate.py grill-skip <gate> [task_dir] [--via-agent] --user-quote "<跳过理由>"
@@ -838,6 +838,7 @@ def _review_state(task_dir: str, gate: str) -> dict:
         if run.get("artifact_digest") != digest
     ]
     clean_run_ids = []
+    adversarial_clean_run_ids = []
     duplicate_clean_run_ids = []
     latest_blocker = None
     for run in current_runs:
@@ -845,23 +846,33 @@ def _review_state(task_dir: str, gate: str) -> dict:
         if error:
             latest_blocker = {"run_id": run.get("run_id", "?"), "reason": error}
             clean_run_ids = []
+            adversarial_clean_run_ids = []
             continue
         if _review_run_is_clean(run):
             run_id = str(run.get("run_id", "")).strip()
             if run_id not in clean_run_ids:
                 clean_run_ids.append(run_id)
+                reviewer = str(run.get("reviewer", "")).strip().lower()
+                if "adversarial" in reviewer:
+                    adversarial_clean_run_ids.append(run_id)
             else:
                 duplicate_clean_run_ids.append(run_id)
             continue
         latest_blocker = run
         clean_run_ids = []
-    ready = len(clean_run_ids) >= REQUIRED_CLEAN_REVIEWS
+        adversarial_clean_run_ids = []
+    ready = (
+        len(clean_run_ids) >= REQUIRED_CLEAN_REVIEWS
+        and bool(adversarial_clean_run_ids)
+    )
     return {
         "digest": digest,
         "runs": current_runs,
         "stale_run_count": len(stale_runs),
         "latest_stale_digest": stale_runs[-1].get("artifact_digest") if stale_runs else "",
         "clean_run_ids": clean_run_ids,
+        "adversarial_clean_run_ids": adversarial_clean_run_ids,
+        "has_adversarial_clean": bool(adversarial_clean_run_ids),
         "duplicate_clean_run_ids": duplicate_clean_run_ids,
         "clean_count": len(clean_run_ids),
         "ready": ready,
@@ -880,6 +891,14 @@ def _review_problem(task_dir: str, gate: str) -> str:
                 f"但当前产物 digest 尚无 {GATE_LABEL[gate]} review 记录"
             )
         return f"当前产物 digest 尚无 {GATE_LABEL[gate]} review 记录"
+    if (
+        state["clean_count"] >= REQUIRED_CLEAN_REVIEWS
+        and not state.get("has_adversarial_clean")
+    ):
+        return (
+            f"当前 digest 已有 {state['clean_count']}/{REQUIRED_CLEAN_REVIEWS} 个不同 run-id 的 clean review，"
+            "但 clean streak 缺少 reviewer 含 adversarial 的 opposite-provider clean review"
+        )
     blocker = state["latest_blocker"]
     if isinstance(blocker, dict):
         reason = blocker.get("reason")
@@ -921,12 +940,14 @@ def _review_status_mark(task_dir: str, gate: str) -> str:
     state = _review_state(task_dir, gate)
     if state["ready"]:
         ids = ", ".join(state["clean_run_ids"][-REQUIRED_CLEAN_REVIEWS:])
-        return f"review ✅ clean x{state['clean_count']} ({ids})"
+        adv = ", ".join(state["adversarial_clean_run_ids"])
+        return f"review ✅ clean x{state['clean_count']} ({ids}; adversarial {adv})"
     problem = _review_problem(task_dir, gate)
     return f"review ⬜ {state['clean_count']}/{REQUIRED_CLEAN_REVIEWS} clean — {problem}"
 
 
 def _block_review(channel: str, task_dir: str, gate: str) -> int:
+    state = _review_state(task_dir, gate)
     route_guidance = _review_route_guidance(task_dir, gate)
     if route_guidance:
         sys.stderr.write(
@@ -935,14 +956,32 @@ def _block_review(channel: str, task_dir: str, gate: str) -> int:
         )
         sys.stderr.write(f"下一步：{route_guidance}\n")
         return BLOCK
+    if (
+        state["clean_count"] >= REQUIRED_CLEAN_REVIEWS
+        and not state.get("has_adversarial_clean")
+    ):
+        sys.stderr.write(
+            f"[guru-gate:{channel}] 拦截：{GATE_LABEL[gate]} Gate 已有双 clean，"
+            "但缺少 reviewer 含 adversarial 的 opposite-provider clean review。\n"
+        )
+        sys.stderr.write("下一步：运行对抗 clean-context review，并记录 adversarial reviewer：\n")
+        sys.stderr.write(
+            f"  python3 .trellis/scripts/guru/guru_supervise.py --adversarial {gate} {task_dir}\n"
+        )
+        sys.stderr.write(
+            f"  python3 .trellis/scripts/guru/guru_gate.py record-review {gate} {task_dir} "
+            "--result clean --max-severity low --reviewer clean-context-adversarial-<provider> "
+            "--run-id <id> --evidence \"<review证据>\"\n"
+        )
+        return BLOCK
     sys.stderr.write(
         f"[guru-gate:{channel}] 拦截：{GATE_LABEL[gate]} Gate 缺少当前产物的双 clean review 证据："
         f"{_review_problem(task_dir, gate)}\n"
     )
     sys.stderr.write(
-        "由 review worker 记录两次不同 run-id 的 clean 证据：\n"
+        "由 review worker 记录两次不同 run-id 的 clean 证据，且至少一次来自 opposite-provider adversarial review：\n"
         f"  python3 .trellis/scripts/guru/guru_gate.py record-review {gate} {task_dir} "
-        "--result clean --max-severity low --reviewer clean-context --run-id <id> --evidence \"<review证据>\"\n"
+        "--result clean --max-severity low --reviewer clean-context[-adversarial-<provider>] --run-id <id> --evidence \"<review证据>\"\n"
     )
     return BLOCK
 
@@ -1301,14 +1340,30 @@ def cmd_status(task_dir_arg) -> int:
         print(f"  python3 .trellis/scripts/guru/guru_gate.py confirm requirements {task_dir}")
     elif review_pending:
         g0 = review_pending[0]
+        state = _review_state(task_dir, g0)
         route_guidance = _review_route_guidance(task_dir, g0)
         if route_guidance:
             print(f"下一步：{route_guidance}")
             return PASS
+        if (
+            state["clean_count"] >= REQUIRED_CLEAN_REVIEWS
+            and not state.get("has_adversarial_clean")
+        ):
+            print(
+                f"下一步：{GATE_LABEL[g0]} 已有双 clean，但缺 opposite-provider adversarial clean review；运行："
+            )
+            print(
+                f"  python3 .trellis/scripts/guru/guru_supervise.py --adversarial {g0} {task_dir}"
+            )
+            print(
+                f"  python3 .trellis/scripts/guru/guru_gate.py record-review {g0} {task_dir} "
+                "--result clean --max-severity low --reviewer clean-context-adversarial-<provider> --run-id <id> --evidence \"<review证据>\""
+            )
+            return PASS
         print(f"下一步：继续 {GATE_LABEL[g0]} review，当前 digest 需要两个不同 run-id 的 clean 记录：")
         print(
             f"  python3 .trellis/scripts/guru/guru_gate.py record-review {g0} {task_dir} "
-            "--result clean --max-severity low --reviewer clean-context --run-id <id> --evidence \"<review证据>\""
+            "--result clean --max-severity low --reviewer clean-context[-adversarial-<provider>] --run-id <id> --evidence \"<review证据>\""
         )
     elif "detail" in confirm_pending:
         print("下一步：详细设计已双 clean，由用户本人在终端运行：")

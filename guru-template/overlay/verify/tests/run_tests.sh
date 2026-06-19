@@ -6,6 +6,7 @@ GATE="$HERE/../guru_gate.py"
 TMP="$(mktemp -d)"
 export GURU_GATE_ALLOW_ABS=1  # 夹具的 design_package 用绝对路径；生产环境默认拒绝绝对路径
 export GURU_GATE_ALLOW_ENV_SOFT=1  # 允许夹具用 env 开 soft；生产降级只能改 config（留 git 痕迹）
+export PYTHONDONTWRITEBYTECODE=1  # 测试不得在可打包 overlay 中留下 __pycache__
 trap 'rm -rf "$TMP"' EXIT
 pass=0; failn=0
 
@@ -158,7 +159,7 @@ PY
 
 write_clean_reviews() { # write_clean_reviews <gate> <task_dir>
   python3 "$GATE" record-review "$1" "$2" --result clean --max-severity none --reviewer clean-context --run-id "$1-clean-a" --evidence "$1 clean a" >/dev/null
-  python3 "$GATE" record-review "$1" "$2" --result clean --max-severity low --reviewer clean-context --run-id "$1-clean-b" --evidence "$1 clean b" >/dev/null
+  python3 "$GATE" record-review "$1" "$2" --result clean --max-severity low --reviewer clean-context-adversarial-codex --run-id "$1-clean-adversarial-codex" --evidence "$1 adversarial clean" >/dev/null
 }
 
 write_reviews_all() { # write_reviews_all <task_dir>
@@ -437,6 +438,7 @@ if [ "$rc" = 0 ] && grep -q '"review_runs"' "$RV2/task.json"; then pass=$((pass+
 else failn=$((failn+1)); echo "FAIL  record-review clean 写入 (rc=$rc)"; echo "$out" | head -4; fi
 expect "record-review 重复 run-id 被拒" 2 python3 "$GATE" record-review overview "$RV2" --result clean --max-severity low --reviewer clean-context --run-id same --evidence "dup"
 expect "record-review reviewer 非 clean-context 被拒" 2 python3 "$GATE" record-review overview "$RV2" --result clean --max-severity low --reviewer casual-reviewer --run-id casual-review --evidence "bad"
+expect "record-review requirements 被拒（需求不写 review_runs）" 2 python3 "$GATE" record-review requirements "$RV2" --result clean --max-severity none --reviewer clean-context --run-id req-clean --evidence "bad"
 expect "record-review clean 带 finding_class 被拒" 2 python3 "$GATE" record-review overview "$RV2" --result clean --max-severity low --finding-class OVERVIEW_DEFECT --reviewer clean-context --run-id clean-class --evidence "bad"
 expect "record-review findings 缺 finding_class 被拒" 2 python3 "$GATE" record-review overview "$RV2" --result findings --max-severity medium --reviewer clean-context --run-id finding-no-class --evidence "bad"
 expect "record-review findings 带路由码可写入" 0 python3 "$GATE" record-review overview "$RV2" --result findings --max-severity medium --finding-class OVERVIEW_DEFECT --reviewer clean-context --run-id finding-a --evidence "overview defect"
@@ -458,6 +460,14 @@ data = {
 open(f"{task_dir}/task.json", "w", encoding="utf-8").write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 PY
 expect_grep "status 明示重复 clean run-id 不计入双 clean" "重复 clean review run_id" python3 "$GATE" status "$RV_DUP"
+RV_ADV=$(make_gate_case review-adversarial-required)
+write_req_confirm "$RV_ADV"
+python3 "$GATE" record-review overview "$RV_ADV" --result clean --max-severity none --reviewer clean-context --run-id normal-a --evidence "normal clean a" >/dev/null
+python3 "$GATE" record-review overview "$RV_ADV" --result clean --max-severity low --reviewer clean-context --run-id normal-b --evidence "normal clean b" >/dev/null
+expect "auto 双 clean 但缺 adversarial review 被拦" 2 python3 "$GATE" auto "$RV_ADV"
+expect_grep "status 指明缺 adversarial clean review" "adversarial" python3 "$GATE" status "$RV_ADV"
+python3 "$GATE" record-review overview "$RV_ADV" --result clean --max-severity low --reviewer clean-context-adversarial-claude --run-id adversarial-claude --evidence "opposite provider clean" >/dev/null
+expect_grep "adversarial clean 后 auto 前进到 detail review 缺口" "record-review detail" python3 "$GATE" auto "$RV_ADV"
 RV_REQ=$(make_gate_case review-req-blocker)
 write_req_confirm "$RV_REQ"
 python3 "$GATE" record-review overview "$RV_REQ" --result findings --max-severity high --finding-class REQ_BLOCKER --reviewer clean-context --run-id req-blocker-a --evidence "requirements boundary missing" >/dev/null

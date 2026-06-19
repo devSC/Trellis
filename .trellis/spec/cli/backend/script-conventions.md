@@ -1635,6 +1635,99 @@ def get_phase_info(task_json: Path) -> str:
 
 ---
 
+## Scenario: Guru adversarial review supervision
+
+### 1. Scope / Trigger
+
+Trigger: changing `guru_supervise.py` planning review behavior, `guru_gate.py`
+review readiness, or the review evidence stored in `task.json.guru_gates`.
+These scripts are installed into downstream projects under `.trellis/scripts/guru/`,
+so their command signatures and evidence rules are a user-facing contract.
+
+### 2. Signatures
+
+```bash
+python3 .trellis/scripts/guru/guru_supervise.py [--provider <provider>] [--adversarial] overview <task-dir> [--run-id <id>] [--dry-run]
+python3 .trellis/scripts/guru/guru_supervise.py [--provider <provider>] [--adversarial] detail <task-dir> [--run-id <id>] [--dry-run]
+python3 .trellis/scripts/guru/guru_supervise.py [--provider <provider>] --adversarial requirements <task-dir> [--run-id <id>] [--dry-run]
+python3 .trellis/scripts/guru/guru_gate.py record-review <overview|detail> <task-dir> --result clean|findings --max-severity none|low|medium|high|critical --reviewer <reviewer> --run-id <id> --evidence <text> [--finding-class <class>]
+```
+
+### 3. Contracts
+
+- `--adversarial` resolves the current provider first, then spawns the opposite
+  provider: `codex -> claude`, `claude -> codex`, any other provider -> `codex`.
+- `--provider` still names the current provider before inversion.
+- Requirements adversarial review is a workflow-required pre-confirmation step:
+  the dry-run prompt must review `prd.md`, task metadata/jsonl, referenced
+  formal requirements-package files, task context, and repo evidence before
+  product questions; it emits `route_class=REQ_BLOCKER` for medium+ blockers or
+  `review_result=clean/requirements-ready` when clean, then stops before
+  `confirm requirements`.
+- Overview/detail readiness requires two distinct current-digest clean review
+  run ids and at least one counted clean record whose `reviewer` contains
+  `adversarial`.
+- Requirements do not support `record-review`; adversarial requirement review
+  can surface blockers, but it must not create a requirements clean streak.
+- Requirements review blockers route back to requirements repair; after the
+  requirements digest changes, downstream overview/detail review evidence must
+  be rerun. Low-severity wording nits are non-blocking.
+- Temporary requirements decisions stay in `prd.md`; long-term glossary/spec/ADR
+  writes require confirmed Domain Grill decisions.
+- `reviewer` for adversarial clean evidence must still contain `clean-context`,
+  for example `clean-context-adversarial-claude`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|-----------|----------|
+| Two clean review records use the same `run_id` | Count once; status explains the duplicate. |
+| Two clean records exist but neither reviewer contains `adversarial` | Block overview/detail readiness and tell the user to run `guru_supervise.py --adversarial`. |
+| `guru_supervise.py --adversarial requirements ...` | Spawn the opposite provider and print the requirements review contract without adding review evidence state. |
+| `record-review requirements ...` | Reject; requirements remains human-confirm only. |
+| `clean` record has medium+ severity or `finding_class` | Reject. |
+| `findings` record lacks medium+ severity or `finding_class` | Reject. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Codex writes an overview, `guru_supervise.py --provider codex --adversarial overview <task>` spawns Claude, and the recorded clean reviewer is `clean-context-adversarial-claude`.
+- Good: Codex runs `guru_supervise.py --provider codex --adversarial requirements <task>` and the dry-run plan spawns Claude, requires repo-evidence inspection before product questions, and stops before `confirm requirements`.
+- Base: Non-adversarial clean plus adversarial clean with distinct run ids makes the review evidence ready.
+- Bad: Two non-adversarial clean records pass by run-id count alone.
+- Bad: Requirements adversarial dry-run tells the worker to write requirements review evidence or omits `REQ_BLOCKER` / `review_result=clean/requirements-ready`.
+
+### 6. Tests Required
+
+- Shell regression for two clean records without adversarial reviewer staying blocked.
+- Shell regression for adversarial clean moving the gate to the next missing review.
+- Shell or bundled-template regression proving `record-review requirements ...` is rejected.
+- Bundled-template regression for `codex -> claude`, `claude -> codex`, and unknown-provider -> `codex`, including requirements.
+- Bundled-template regression that requirements dry-run prints `REQ_BLOCKER`,
+  `review_result=clean/requirements-ready`, repo-evidence-first guidance, the
+  temporary-PRD vs confirmed-long-term-knowledge boundary, and no requirements
+  review-evidence command.
+- Transient cache regression must stay green: Python verification must not leave `__pycache__` in template trees.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```bash
+python3 .trellis/scripts/guru/guru_gate.py record-review overview "$TASK" \
+  --result clean --max-severity low --reviewer clean-context --run-id clean-b \
+  --evidence "second clean"
+```
+
+#### Correct
+
+```bash
+python3 .trellis/scripts/guru/guru_gate.py record-review overview "$TASK" \
+  --result clean --max-severity low --reviewer clean-context-adversarial-claude \
+  --run-id overview-claude-clean-b --evidence "opposite-provider adversarial clean"
+```
+
+---
+
 ## DO / DON'T
 
 ### DO
