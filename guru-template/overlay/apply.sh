@@ -8,13 +8,14 @@ set -euo pipefail
 # 边界（本脚本不做）：
 # - CLI core 脚本（task.py 等）：归 trellis update 的 hash 三方合并管理，这里只检测依赖并警告；
 # - .codex/skills 项目级内容（如 guru-ai-guides 的 requirement-* 技能）：项目自有，入项目 git 管理；
-# - AGENTS.md 项目自有区块。
+# - AGENTS.md 项目自有区块（GURU_WITH_GITNEXUS=1 时仅刷新 gitnexus 受管块）。
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"   # guru-template/
 TARGET="${1:?用法: apply.sh <目标项目路径>}"
 TARGET="$(cd "$TARGET" && pwd)"
 [ -d "$TARGET/.trellis" ] || { echo "ERROR: $TARGET 不是 Trellis 项目（缺 .trellis/），先 trellis init"; exit 1; }
+GURU_WITH_GITNEXUS="${GURU_WITH_GITNEXUS:-0}"
 
 # 平台选择（第二位置参数，默认 flutter）：决定 spec 包 / workflow / verify analyze 命令。
 PLATFORM="${2:-flutter}"
@@ -54,6 +55,70 @@ install_skill_dir() {  # $1=源目录（内容到末尾）  $2=目标目录
   rm -rf "$2"; mkdir -p "$2"
   cp -R "$1/." "$2/"
   find "$2" \( -name .DS_Store -o -name __pycache__ \) -exec rm -rf {} + 2>/dev/null || true
+}
+
+gitnexus_requested() {
+  case "$(printf '%s' "$GURU_WITH_GITNEXUS" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+bootstrap_gitnexus() {
+  command -v npx >/dev/null 2>&1 || { echo "ERROR: GURU_WITH_GITNEXUS=1 需要 npx（用于运行 gitnexus）"; exit 1; }
+
+  echo ""
+  echo "== GitNexus opt-in bootstrap =="
+  (cd "$TARGET" && npx gitnexus analyze)
+  (cd "$TARGET" && npx gitnexus status)
+  [ -f "$TARGET/.gitnexus/meta.json" ] || { echo "ERROR: GitNexus analyze 未生成 .gitnexus/meta.json"; exit 1; }
+
+  python3 - "$TARGET" <<'PYEOF'
+import json
+import os
+import re
+import shlex
+import sys
+
+root = sys.argv[1]
+agents_path = os.path.join(root, "AGENTS.md")
+meta_path = os.path.join(root, ".gitnexus", "meta.json")
+with open(meta_path, encoding="utf-8") as fh:
+    meta = json.load(fh)
+
+stats = meta.get("stats") if isinstance(meta.get("stats"), dict) else {}
+repo_name = os.path.basename(root.rstrip(os.sep)) or root
+repo_arg = shlex.quote(root)
+runner = "node .gitnexus/run.cjs analyze" if os.path.isfile(os.path.join(root, ".gitnexus", "run.cjs")) else "npx gitnexus analyze"
+block = f"""<!-- gitnexus:start -->
+# GitNexus - Code Intelligence
+
+This project has a GitNexus index for **{repo_name}** ({stats.get("files", 0)} files, {stats.get("nodes", 0)} symbols, {stats.get("edges", 0)} relationships, {stats.get("processes", 0)} execution flows). The index was refreshed at `{meta.get("indexedAt", "unknown")}`.
+
+> Index stale? Run `{runner}` from the project root, then `npx gitnexus status`.
+
+## Agent Rules
+
+- Use GitNexus MCP tools when available for unfamiliar code, impact analysis, and change detection.
+- Before editing a function, class, or method, run impact analysis with `gitnexus_impact` or `npx gitnexus impact -r {repo_arg} <symbol>`.
+- Before committing, run change detection with `gitnexus_detect_changes` or `npx gitnexus detect-changes --scope all -r {repo_arg}`.
+- If MCP tools are missing, run `npx gitnexus setup`, restart the agent host, and use the GitNexus CLI meanwhile.
+
+<!-- gitnexus:end -->
+"""
+
+content = ""
+if os.path.isfile(agents_path):
+    with open(agents_path, encoding="utf-8") as fh:
+        content = fh.read()
+
+content = re.sub(r"\n?<!-- gitnexus:start -->.*?<!-- gitnexus:end -->\n?", "\n", content, flags=re.S).rstrip()
+new_content = f"{content}\n\n{block}" if content else block
+with open(agents_path, "w", encoding="utf-8") as fh:
+    fh.write(new_content.rstrip() + "\n")
+PYEOF
+  echo "  GitNexus: analyze/status 完成，AGENTS.md gitnexus 块已刷新"
+  echo "  MCP: 如 agent 宿主未显示 gitnexus_* 工具，请运行 'npx gitnexus setup' 后重启宿主会话"
 }
 
 cleanup_legacy_grill_skills() {
@@ -555,6 +620,10 @@ if [ -f "$BOOTSTRAP_PRD" ]; then
   fi
 else
   echo "  ⚠ bootstrap prd 缺失: $BOOTSTRAP_PRD（跳过 bootstrap 接线）"
+fi
+
+if gitnexus_requested; then
+  bootstrap_gitnexus
 fi
 
 # 8) 装配自检（失败即非零退出；警告不阻塞）

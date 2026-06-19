@@ -288,20 +288,32 @@ guru
   .description("Install or refresh the Guru overlay in a Trellis project")
   .argument("<platform>", "flutter, go, ios, or h5")
   .argument("[target]", "Target project directory", process.cwd())
-  .action(async (platform: string, target: string) => {
-    try {
-      await applyGuruOverlay(platform, target);
-    } catch (error) {
-      console.error(
-        chalk.red("Error:"),
-        error instanceof Error ? error.message : error,
-      );
-      if (process.env.DEBUG || process.env.TRELLIS_DEBUG) {
-        console.error(error instanceof Error ? error.stack : error);
+  .option(
+    "--with-gitnexus",
+    "Run GitNexus analysis and write target AGENTS.md GitNexus instructions",
+  )
+  .action(
+    async (
+      platform: string,
+      target: string,
+      options: { withGitnexus?: boolean },
+    ) => {
+      try {
+        await applyGuruOverlay(platform, target, {
+          withGitnexus: options.withGitnexus,
+        });
+      } catch (error) {
+        console.error(
+          chalk.red("Error:"),
+          error instanceof Error ? error.message : error,
+        );
+        if (process.env.DEBUG || process.env.TRELLIS_DEBUG) {
+          console.error(error instanceof Error ? error.stack : error);
+        }
+        process.exit(1);
       }
-      process.exit(1);
-    }
-  });
+    },
+  );
 
 registerChannelCommand(program);
 

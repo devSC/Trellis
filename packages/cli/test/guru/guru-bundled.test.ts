@@ -158,10 +158,7 @@ describe("bundled multi-platform guru workflows", () => {
   it("defaults ordinary in_progress routing to channel while preserving rollback modes", async () => {
     for (const id of [GURU_CLIENT_WORKFLOW_ID, ...PLATFORMS]) {
       const resolved = await resolveWorkflowTemplate(id);
-      const defaultRoute = workflowStateBlock(
-        resolved.content,
-        "in_progress",
-      );
+      const defaultRoute = workflowStateBlock(resolved.content, "in_progress");
       const channelRoute = workflowStateBlock(
         resolved.content,
         "in_progress-channel",
@@ -248,14 +245,41 @@ describe("bundled multi-platform guru spec packages", () => {
 });
 
 describe("bundled guru overlay", () => {
+  it("exposes opt-in GitNexus bootstrap through guru apply", () => {
+    const cliSource = fs.readFileSync(
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../src/cli/index.ts",
+      ),
+      "utf8",
+    );
+    const guruSource = fs.readFileSync(
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../src/commands/guru.ts",
+      ),
+      "utf8",
+    );
+
+    expect(cliSource).toContain("--with-gitnexus");
+    expect(cliSource).toContain("withGitnexus");
+    expect(guruSource).toContain("GURU_WITH_GITNEXUS");
+    expect(readOverlayFile("apply.sh")).toContain("GURU_WITH_GITNEXUS");
+  });
+
   it("packs the Guru command and overlay files into the npm tarball", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "guru-pack-"));
     try {
       execFileSync("pnpm", ["pack", "--pack-destination", tmpDir, "--json"], {
-        cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+        cwd: path.resolve(
+          path.dirname(fileURLToPath(import.meta.url)),
+          "../..",
+        ),
         encoding: "utf8",
       });
-      const tarball = fs.readdirSync(tmpDir).find((file) => file.endsWith(".tgz"));
+      const tarball = fs
+        .readdirSync(tmpDir)
+        .find((file) => file.endsWith(".tgz"));
       if (!tarball) {
         throw new Error("pnpm pack did not produce a tarball");
       }
@@ -326,9 +350,7 @@ describe("bundled guru overlay", () => {
       });
 
       expect(
-        fs.existsSync(
-          path.join(tmpDir, ".trellis/scripts/guru/guru_gate.py"),
-        ),
+        fs.existsSync(path.join(tmpDir, ".trellis/scripts/guru/guru_gate.py")),
       ).toBe(true);
       expect(
         fs.existsSync(
@@ -356,9 +378,118 @@ describe("bundled guru overlay", () => {
       ).toContain("guru_gate.py auto");
       execFileSync(
         "python3",
-        [path.join(tmpDir, ".trellis/scripts/guru/guru_supervise.py"), "--help"],
+        [
+          path.join(tmpDir, ".trellis/scripts/guru/guru_supervise.py"),
+          "--help",
+        ],
         { cwd: tmpDir, encoding: "utf8" },
       );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("passes --with-gitnexus from the dist CLI into the overlay installer", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "guru-gitnexus-e2e-"));
+    try {
+      fs.mkdirSync(path.join(tmpDir, ".trellis/scripts/common"), {
+        recursive: true,
+      });
+      fs.mkdirSync(path.join(tmpDir, ".trellis/spec/conventions"), {
+        recursive: true,
+      });
+      fs.mkdirSync(path.join(tmpDir, ".claude"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, ".trellis/scripts/common/task_utils.py"),
+        "def run_blocking_task_hooks():\n    pass\n",
+        "utf8",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, ".trellis/spec/conventions/project-conventions.md"),
+        "# Project conventions\n",
+        "utf8",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, ".claude/settings.json"),
+        "{}\n",
+        "utf8",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "package.json"),
+        '{"scripts":{"test":"echo ok"}}\n',
+        "utf8",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "AGENTS.md"),
+        `# User instructions
+
+<!-- TRELLIS:START -->
+# Trellis Instructions
+<!-- TRELLIS:END -->
+`,
+        "utf8",
+      );
+
+      const fakeBin = path.join(tmpDir, "fake-bin");
+      const logPath = path.join(tmpDir, "gitnexus.log");
+      fs.mkdirSync(fakeBin);
+      const fakeNpx = path.join(fakeBin, "npx");
+      fs.writeFileSync(
+        fakeNpx,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$FAKE_GITNEXUS_LOG"
+if [ "$1" = "gitnexus" ] && [ "$2" = "analyze" ]; then
+  mkdir -p .gitnexus
+  cat > .gitnexus/meta.json <<JSON
+{"repoPath":"$PWD","indexedAt":"2026-06-19T00:00:00.000Z","stats":{"files":3,"nodes":5,"edges":8,"processes":2}}
+JSON
+elif [ "$1" = "gitnexus" ] && [ "$2" = "status" ]; then
+  echo "Repository indexed."
+else
+  exit 9
+fi
+`,
+        "utf8",
+      );
+      fs.chmodSync(fakeNpx, 0o755);
+
+      execFileSync(process.execPath, [DIST_CLI, "guru", "apply", "h5", tmpDir], {
+        cwd: tmpDir,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FAKE_GITNEXUS_LOG: logPath,
+          GURU_WITH_GITNEXUS: "1",
+          PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+      });
+
+      expect(fs.existsSync(logPath)).toBe(false);
+      expect(fs.readFileSync(path.join(tmpDir, "AGENTS.md"), "utf8")).not.toContain(
+        "<!-- gitnexus:start -->",
+      );
+
+      execFileSync(
+        process.execPath,
+        [DIST_CLI, "guru", "apply", "h5", tmpDir, "--with-gitnexus"],
+        {
+          cwd: tmpDir,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            FAKE_GITNEXUS_LOG: logPath,
+            PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
+          },
+        },
+      );
+
+      expect(fs.readFileSync(logPath, "utf8")).toContain("gitnexus analyze");
+      const agents = fs.readFileSync(path.join(tmpDir, "AGENTS.md"), "utf8");
+      expect(agents).toContain("GitNexus - Code Intelligence");
+      expect(agents).toContain("5 symbols");
+      expect(agents).toContain("npx gitnexus setup");
+      expect(agents.match(/<!-- gitnexus:start -->/g)).toHaveLength(1);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -388,13 +519,21 @@ describe("bundled guru overlay", () => {
     );
     expect(designGrill).toContain("Design Grill Packet");
     expect(designGrill).toContain("compatibility-only");
-    expect(designGrill).toContain("新流程的 Domain Grill 归属于 `trellis-brainstorm`");
-    expect(designGrill).toContain("`guru_gate.py check` / `auto` 不依赖本 skill");
+    expect(designGrill).toContain(
+      "新流程的 Domain Grill 归属于 `trellis-brainstorm`",
+    );
+    expect(designGrill).toContain(
+      "`guru_gate.py check` / `auto` 不依赖本 skill",
+    );
     expect(designGrill).toContain("grill-done");
     expect(designGrill).toContain("grill-skip");
-    expect(designGrill).not.toContain("overview` / `detail` 在 full 或 high-risk 时必跑");
+    expect(designGrill).not.toContain(
+      "overview` / `detail` 在 full 或 high-risk 时必跑",
+    );
     expect(designGrill).not.toContain("Policy: required | skippable");
-    expect(designGrill).not.toContain("Next Command: python3 .trellis/scripts/guru/guru_gate.py grill-done");
+    expect(designGrill).not.toContain(
+      "Next Command: python3 .trellis/scripts/guru/guru_gate.py grill-done",
+    );
     expect(fs.existsSync(overlayPath("apply.sh"))).toBe(true);
     expect(fs.existsSync(overlayPath("verify", "guru_gate.py"))).toBe(true);
     expect(fs.existsSync(overlayPath("verify", "guru_config_patch.py"))).toBe(
@@ -495,6 +634,9 @@ describe("bundled guru overlay", () => {
   });
 
   it("keeps packaged Guru helper scripts in sync with the source overlay", () => {
+    expect(readOverlayFile("apply.sh")).toBe(
+      fs.readFileSync(path.join(GURU_SOURCE_OVERLAY_ROOT, "apply.sh"), "utf8"),
+    );
     for (const helper of ["guru_config_patch.py", "guru_supervise.py"]) {
       const source = fs.readFileSync(
         path.join(GURU_SOURCE_OVERLAY_ROOT, "verify", helper),
@@ -960,15 +1102,21 @@ fi
     expect(codexOutput).toContain(
       "adversarial requirements reviewer from the opposite provider (codex -> claude)",
     );
-    expect(codexOutput).toContain("repository evidence before asking product questions");
+    expect(codexOutput).toContain(
+      "repository evidence before asking product questions",
+    );
     expect(codexOutput).toContain(
       "code, tests, configs, docs, .trellis/spec/, CONTEXT.md, CONTEXT-MAP.md, and docs/adr/",
     );
     expect(codexOutput).toContain("current-code-vs-user-intent");
     expect(codexOutput).toContain("route_class=REQ_BLOCKER");
     expect(codexOutput).toContain("review_result=clean/requirements-ready");
-    expect(codexOutput).toContain("Low severity wording nits or observations are non-blocking");
-    expect(codexOutput).toContain("Keep temporary requirement decisions in prd.md");
+    expect(codexOutput).toContain(
+      "Low severity wording nits or observations are non-blocking",
+    );
+    expect(codexOutput).toContain(
+      "Keep temporary requirement decisions in prd.md",
+    );
     expect(codexOutput).toContain("confirmed via Domain Grill rules");
     expect(codexOutput).toContain("Stop before confirm requirements");
     expect(codexOutput).not.toContain("record-review requirements");
@@ -1113,9 +1261,7 @@ fi
     );
     expect(output).toContain("WORKER=implement-codex-r7-implement-1");
     expect(output).toContain("WORKER=check-codex-r7-check-1");
-    expect(output).toContain(
-      "repeat: implement -> check -> route",
-    );
+    expect(output).toContain("repeat: implement -> check -> route");
     expect(output).toContain(`--file ${writingSkill}`);
     expect(output).toContain(`--file ${reviewSkill}`);
     expect(output).toContain(`--jsonl ${implementManifest}`);

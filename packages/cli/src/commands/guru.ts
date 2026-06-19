@@ -7,6 +7,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export type GuruPlatform = "flutter" | "go" | "ios" | "h5";
 
+export interface GuruApplyOptions {
+  withGitnexus?: boolean;
+}
+
 const GURU_TEMPLATE_PLATFORMS: Record<string, GuruPlatform> = {
   "guru-flutter-client": "flutter",
   "guru-go-backend": "go",
@@ -41,6 +45,7 @@ export function inferGuruPlatform(
 export async function applyGuruOverlay(
   platform: string,
   target = process.cwd(),
+  options: GuruApplyOptions = {},
 ): Promise<void> {
   if (!isGuruPlatform(platform)) {
     throw new Error("platform must be one of: flutter, go, ios, h5");
@@ -57,6 +62,10 @@ export async function applyGuruOverlay(
   await new Promise<void>((resolve, reject) => {
     const child = spawn("bash", [applyScript, path.resolve(target), platform], {
       stdio: "inherit",
+      env: {
+        ...process.env,
+        GURU_WITH_GITNEXUS: options.withGitnexus ? "1" : "0",
+      },
     });
     child.on("error", reject);
     child.on("exit", (code) => {

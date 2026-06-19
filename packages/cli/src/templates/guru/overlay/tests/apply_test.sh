@@ -298,5 +298,67 @@ out=$(bash "$APPLY" "$T17" go 2>&1); rc=$?
 printf '%s' "$out" | grep -q "跳过疑似用户自建同名 skill" \
   && ok "场景17 输出用户自建跳过警告" || bad "场景17 缺用户自建跳过警告"
 
+# ============ 场景 18：GitNexus opt-in bootstrap 默认不触发；显式开启后写目标项目 AGENTS 块且幂等 ============
+T18=$(mk_target gitnexus yes)
+cat > "$T18/AGENTS.md" <<'EOF'
+# User instructions
+
+Keep this user-owned preface.
+
+<!-- TRELLIS:START -->
+# Trellis Instructions
+Managed by Trellis.
+<!-- TRELLIS:END -->
+EOF
+fakebin="$TMP/fakebin-gitnexus"
+mkdir -p "$fakebin"
+cat > "$fakebin/npx" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${FAKE_GITNEXUS_LOG:?}"
+if [ "$1" = "gitnexus" ] && [ "$2" = "analyze" ]; then
+  mkdir -p .gitnexus
+  cat > .gitnexus/meta.json <<JSON
+{"repoPath":"$PWD","indexedAt":"2026-06-19T00:00:00.000Z","stats":{"files":12,"nodes":34,"edges":56,"processes":7}}
+JSON
+elif [ "$1" = "gitnexus" ] && [ "$2" = "status" ]; then
+  echo "Repository indexed."
+else
+  echo "unexpected fake npx args: $*" >&2
+  exit 9
+fi
+EOF
+chmod +x "$fakebin/npx"
+gitnexus_log="$T18/gitnexus.log"
+PATH="$fakebin:$PATH" FAKE_GITNEXUS_LOG="$gitnexus_log" bash "$APPLY" "$T18" flutter >/dev/null 2>&1
+[ ! -f "$gitnexus_log" ] && ok "场景18 默认 apply 不调用 GitNexus" || bad "场景18 默认 apply 不应调用 GitNexus"
+grep -q "gitnexus:start" "$T18/AGENTS.md" && bad "场景18 默认 apply 不应写 gitnexus 块" || ok "场景18 默认 apply 不写 gitnexus 块"
+
+out=$(GURU_WITH_GITNEXUS=1 PATH="$fakebin:$PATH" FAKE_GITNEXUS_LOG="$gitnexus_log" bash "$APPLY" "$T18" flutter 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "场景18 opt-in apply 退出码 0" || { bad "场景18 opt-in apply 失败 (rc=$rc)"; echo "$out" | tail -5; }
+grep -q '^gitnexus analyze$' "$gitnexus_log" && grep -q '^gitnexus status$' "$gitnexus_log" \
+  && ok "场景18 opt-in 调用 gitnexus analyze/status" || bad "场景18 未调用 gitnexus analyze/status"
+grep -q "Keep this user-owned preface" "$T18/AGENTS.md" && grep -q "TRELLIS:START" "$T18/AGENTS.md" \
+  && ok "场景18 AGENTS 用户内容和 Trellis 块保留" || bad "场景18 AGENTS 既有内容丢失"
+grep -q "GitNexus - Code Intelligence" "$T18/AGENTS.md" && grep -q "34 symbols" "$T18/AGENTS.md" \
+  && grep -q "npx gitnexus setup" "$T18/AGENTS.md" \
+  && ok "场景18 写入目标项目 GitNexus 指令块" || bad "场景18 GitNexus 指令块缺失或内容不完整"
+block_n=$(grep -c "<!-- gitnexus:start -->" "$T18/AGENTS.md" || true)
+[ "$block_n" = 1 ] && ok "场景18 GitNexus 块仅一份" || bad "场景18 GitNexus 块数量异常：$block_n"
+agents_hash_before=$(python3 - "$T18/AGENTS.md" <<'PYS'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PYS
+)
+GURU_WITH_GITNEXUS=1 PATH="$fakebin:$PATH" FAKE_GITNEXUS_LOG="$gitnexus_log" bash "$APPLY" "$T18" flutter >/dev/null 2>&1
+agents_hash_after=$(python3 - "$T18/AGENTS.md" <<'PYS'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PYS
+)
+block_n=$(grep -c "<!-- gitnexus:start -->" "$T18/AGENTS.md" || true)
+[ "$block_n" = 1 ] && [ "$agents_hash_before" = "$agents_hash_after" ] \
+  && ok "场景18 opt-in 二跑不重复/不改写 AGENTS" || bad "场景18 opt-in 二跑不幂等"
+
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]
