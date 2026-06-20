@@ -1658,6 +1658,19 @@ python3 .trellis/scripts/guru/guru_gate.py record-review <overview|detail> <task
 - `--adversarial` resolves the current provider first, then spawns the opposite
   provider: `codex -> claude`, `claude -> codex`, any other provider -> `codex`.
 - `--provider` still names the current provider before inversion.
+- Adversarial requirements/overview/detail workers set stronger default models:
+  `claude-sonnet-4-6` for Claude and `gpt-5.4` with `high` reasoning effort
+  for Codex.
+- Adversarial worker execution is best-effort: missing provider CLIs,
+  provider launch failures, wait failures, or worker `error` / `killed`
+  terminal states must print a skip warning and return success so the main Guru
+  task flow can continue. The skip reason is also persisted under
+  `task.json.guru_gates.adversarial_skips[]` and shown by `guru_gate.py status`.
+  Non-adversarial workers keep fail-fast behavior.
+- Projects may override those pass-through values in `.trellis/config.yaml`:
+  `guru.supervision.adversarial_claude_model`,
+  `guru.supervision.adversarial_codex_model`, and
+  `guru.supervision.adversarial_codex_reasoning_effort`.
 - Requirements adversarial review is a workflow-required pre-confirmation step:
   the dry-run prompt must review `prd.md`, task metadata/jsonl, referenced
   formal requirements-package files, task context, and repo evidence before

@@ -1,5 +1,63 @@
 # Implementation Plan
 
+## Implementation Evidence (2026-06-19)
+
+- Implemented scoped adversarial-review model defaults:
+  - Claude adversarial reviewers default to `claude-sonnet-4-6`.
+  - Codex adversarial reviewers default to `gpt-5.4` with `--reasoning-effort high`.
+  - Defaults apply only to `guru_supervise.py --adversarial requirements|overview|detail`.
+  - Adversarial reviewer execution is best-effort: missing provider CLIs or provider runtime errors are skipped, persisted to `task.json.guru_gates.adversarial_skips[]`, shown by `guru_gate.py status`, and do not block the main task flow.
+  - Normal `implement`, `check`, and `implement-check` workers do not receive adversarial model overrides.
+- Added project-level overrides under existing `.trellis/config.yaml`:
+  - `guru.supervision.adversarial_claude_model`
+  - `guru.supervision.adversarial_codex_model`
+  - `guru.supervision.adversarial_codex_reasoning_effort`
+  - Old written defaults `claude-sonnet-4.8` and `claude-sonnet-4.6` are migrated to `claude-sonnet-4-6`; custom model names remain preserved.
+  - Missing, blank, quoted-empty, or comment-only values fall back to defaults.
+- Added the narrow CLI surface needed for Codex high reasoning:
+  - `trellis channel spawn --reasoning-effort <level>`
+  - supervisor config/view carries the optional value
+  - Codex adapter emits `-c model_reasoning_effort="<level>"`
+  - `trellis channel run` remains unchanged.
+- Synced source Guru overlay changes into packaged CLI templates with `pnpm -C packages/cli sync:guru`.
+- Updated bundled channel references and backend specs so installed projects document the same spawn-only contract.
+- Added regressions for:
+  - Codex adapter `model_reasoning_effort` argument shape
+  - channel spawn supervisor config persistence
+  - Guru default dry-runs for Claude/Codex adversarial reviewers
+  - custom `.trellis/config.yaml` model/effort overrides
+  - blank/comment-only override fallback
+  - config patch default insertion and custom-value preservation
+- Independent adversarial review fixed one config parsing edge case: comment-only values such as `adversarial_codex_reasoning_effort: # decide later` are now treated as unset instead of being passed through as literal CLI values.
+- Follow-up install hygiene: `guru apply` now idempotently adds `.claude/projects/`, `.codex/sessions/`, and `.trellis/channels/` to the target project `.gitignore` so local AI/Trellis runtime logs stay out of Git.
+
+Validation run:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile guru-template/overlay/verify/guru_supervise.py guru-template/overlay/verify/guru_config_patch.py packages/cli/src/templates/guru/overlay/verify/guru_supervise.py packages/cli/src/templates/guru/overlay/verify/guru_config_patch.py
+bash guru-template/overlay/verify/tests/run_tests.sh
+PYTHONDONTWRITEBYTECODE=1 bash packages/cli/dist/templates/guru/overlay/verify/tests/run_tests.sh
+pnpm -C packages/cli exec vitest run test/guru/guru-bundled.test.ts test/commands/channel-codex-adapter.test.ts test/commands/channel-spawn-config.test.ts
+pnpm -C packages/cli lint
+pnpm -C packages/cli typecheck
+pnpm -C packages/cli build
+pnpm -C packages/cli pack --pack-destination <tmp> --json
+git diff --check
+npx gitnexus detect-changes --scope all --repo Trellis
+```
+
+Observed validation results:
+
+- Source Guru verify shell regression: `132 passed / 0 failed`.
+- Dist Guru verify shell regression: `132 passed / 0 failed`.
+- Targeted CLI Vitest: `3 files passed / 52 tests passed`.
+- CLI lint: passed.
+- TypeScript typecheck: passed.
+- CLI build: passed.
+- Package tarball contains updated Guru overlay scripts/config snippets and bundled `trellis-channel` references.
+- Git diff whitespace check: passed.
+- GitNexus detect-changes: 19 files, 41 symbols, 45 affected processes, risk level `critical`; expected blast radius because the diff touches shared channel spawn/supervisor paths plus Guru supervision.
+
 ## Implementation Evidence (2026-06-18)
 
 - Implemented the new Guru Gate model:
