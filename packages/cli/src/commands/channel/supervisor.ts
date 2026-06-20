@@ -44,6 +44,8 @@ export interface SupervisorConfig {
   env?: Record<string, string>;
   /** Optional model override. */
   model?: string;
+  /** Optional Codex reasoning-effort override. */
+  reasoningEffort?: string;
   /** Resume an existing session/thread if id is provided. */
   resume?: string;
   /** Auto-kill worker after this many ms (anti-zombie). */
@@ -98,6 +100,7 @@ export async function runSupervisor(
   const view = {
     resume: config.resume,
     model: config.model,
+    reasoningEffort: config.reasoningEffort,
     systemPrompt: config.systemPrompt,
     cwd: config.cwd,
   };

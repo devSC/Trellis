@@ -291,6 +291,7 @@ export function registerChannelCommand(program: Command): void {
     )
     .option("--cwd <path>", "worker working directory (default: process cwd)")
     .option("--model <id>", "model override")
+    .option("--reasoning-effort <level>", "Codex reasoning effort override")
     .option("--resume <id>", "resume an existing session/thread id")
     .option(
       "--timeout <duration>",
@@ -336,6 +337,7 @@ export function registerChannelCommand(program: Command): void {
         as?: string;
         cwd?: string;
         model?: string;
+        reasoningEffort?: string;
         resume?: string;
         timeout?: string;
         warnBefore?: string;
@@ -361,6 +363,7 @@ export function registerChannelCommand(program: Command): void {
           as: opts.as,
           cwd: opts.cwd,
           model: opts.model,
+          reasoningEffort: opts.reasoningEffort,
           resume: opts.resume,
           timeoutMs: parseDuration(opts.timeout),
           warnBeforeMs: parseDuration(opts.warnBefore),

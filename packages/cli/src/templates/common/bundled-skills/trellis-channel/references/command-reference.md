@@ -219,6 +219,7 @@ trellis channel spawn <name>
   [--as <worker-name>]                    # default: agent name
   [--cwd <path>]
   [--model <id>]
+  [--reasoning-effort <level>]            # Codex reasoning effort override
   [--resume <id>]                         # session/thread id resume
   [--timeout <Ns|Nm|Nh>]                  # auto-kill after duration
   [--warn-before <Ns|Nm|Nh>]              # supervisor_warning lead time

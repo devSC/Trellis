@@ -602,9 +602,15 @@ export function encodeCodexInterruptMessage(
   );
 }
 
-export function buildCodexArgs(opts: { model?: string }): string[] {
+export function buildCodexArgs(opts: {
+  model?: string;
+  reasoningEffort?: string;
+}): string[] {
   const args = ["app-server"];
   if (opts.model) args.push("-c", `model="${opts.model}"`);
+  if (opts.reasoningEffort) {
+    args.push("-c", `model_reasoning_effort="${opts.reasoningEffort}"`);
+  }
   return args;
 }
 

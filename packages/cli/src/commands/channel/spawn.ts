@@ -30,6 +30,7 @@ export interface SpawnOptions {
   agent?: string;
   cwd?: string;
   model?: string;
+  reasoningEffort?: string;
   resume?: string;
   /** Auto-kill the worker after this many milliseconds (anti-zombie). */
   timeoutMs?: number;
@@ -62,6 +63,7 @@ interface ResolvedSpawn {
   as: string;
   systemPrompt: string;
   model?: string;
+  reasoningEffort?: string;
   contextFiles: string[];
   contextManifests: string[];
 }
@@ -103,6 +105,7 @@ function resolveSpawn(channelName: string, opts: SpawnOptions): ResolvedSpawn {
     as,
     systemPrompt,
     model,
+    reasoningEffort: opts.reasoningEffort,
     contextFiles: context.paths,
     contextManifests: context.manifests,
   };
@@ -259,6 +262,7 @@ async function spawnLocked(
       cwd: opts.cwd ?? process.cwd(),
       systemPrompt: resolved.systemPrompt,
       model: resolved.model,
+      reasoningEffort: resolved.reasoningEffort,
       resume: opts.resume,
       timeoutMs: opts.timeoutMs,
       warnBeforeMs: opts.warnBeforeMs,

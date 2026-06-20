@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildCodexArgs,
   createCodexCtx,
   parseCodexLine,
 } from "../../src/commands/channel/adapters/codex.js";
@@ -10,6 +11,18 @@ function parse(line: Record<string, unknown>, ctx = createCodexCtx()) {
 }
 
 describe("Codex channel adapter", () => {
+  it("passes model and reasoning effort to Codex app-server config", () => {
+    expect(
+      buildCodexArgs({ model: "gpt-5.4", reasoningEffort: "high" }),
+    ).toEqual([
+      "app-server",
+      "-c",
+      'model="gpt-5.4"',
+      "-c",
+      'model_reasoning_effort="high"',
+    ]);
+  });
+
   it("classifies streamed commentary deltas by item phase", () => {
     const ctx = createCodexCtx();
     parse(

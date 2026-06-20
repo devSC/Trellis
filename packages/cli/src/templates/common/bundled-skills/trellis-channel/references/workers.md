@@ -29,6 +29,7 @@ Key `spawn` flags:
 - `--as <name>` — channel worker handle; defaults to the agent name.
 - `--cwd <path>` — worker working directory (also the jail root for `--file`/`--jsonl`).
 - `--model <id>` — model override.
+- `--reasoning-effort <level>` — Codex reasoning effort override.
 - `--resume <id>` — resume an existing claude session / codex thread.
 - `--timeout <duration>` — auto-kill after `30s` / `2m` / `1h`.
 - `--warn-before <duration>` — supervisor_warning lead time (default `5m`; `0ms` disables).

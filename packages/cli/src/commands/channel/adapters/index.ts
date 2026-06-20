@@ -47,9 +47,10 @@ export type WorkerChild = ChildProcessByStdio<Writable, Readable, Readable>;
 export type AdapterCtx = unknown;
 
 export interface SupervisorView {
-  /** Args passed to `buildArgs`. Adapters read what they need (model, resume, systemPrompt). */
+  /** Args passed to `buildArgs`. Adapters read what they need (model, reasoningEffort, resume, systemPrompt). */
   resume?: string;
   model?: string;
+  reasoningEffort?: string;
   systemPrompt: string;
   cwd: string;
 }
@@ -122,7 +123,10 @@ const claudeAdapter: WorkerAdapter<undefined> = {
 const codexAdapter: WorkerAdapter<CodexCtx> = {
   provider: "codex",
   buildArgs(view) {
-    return buildCodexArgs({ model: view.model });
+    return buildCodexArgs({
+      model: view.model,
+      reasoningEffort: view.reasoningEffort,
+    });
   },
   createCtx() {
     return createCodexCtx();

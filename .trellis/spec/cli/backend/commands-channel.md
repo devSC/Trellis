@@ -49,6 +49,7 @@ trellis channel spawn <name> [opts]
   --as <worker-name>     : worker identifier (default = agent name)
   --cwd <path>           : worker cwd (default process.cwd())
   --model <id>           : model override
+  --reasoning-effort <level>: Codex reasoning effort override
   --resume <id>          : resume an existing session/thread id
   --timeout <duration>   : auto-kill after duration (e.g. "30m", "1h", "7200s")
                            — no default; opt-in hard cutoff
