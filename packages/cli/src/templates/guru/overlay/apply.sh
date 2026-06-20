@@ -57,6 +57,32 @@ install_skill_dir() {  # $1=源目录（内容到末尾）  $2=目标目录
   find "$2" \( -name .DS_Store -o -name __pycache__ \) -exec rm -rf {} + 2>/dev/null || true
 }
 
+ensure_local_runtime_gitignore() {
+  local gitignore="$TARGET/.gitignore" added=0
+  touch "$gitignore"
+  add_ignore() {
+    local pattern="$1"
+    if ! grep -qxF "$pattern" "$gitignore"; then
+      if [ "$added" = 0 ]; then
+        if ! grep -qxF "# Local AI/Trellis runtime logs" "$gitignore"; then
+          [ -s "$gitignore" ] && printf '\n' >> "$gitignore"
+          printf '# Local AI/Trellis runtime logs\n' >> "$gitignore"
+        fi
+      fi
+      printf '%s\n' "$pattern" >> "$gitignore"
+      added=$((added + 1))
+    fi
+  }
+  add_ignore ".claude/projects/"
+  add_ignore ".codex/sessions/"
+  add_ignore ".trellis/channels/"
+  if [ "$added" = 0 ]; then
+    echo "  gitignore: local AI/Trellis runtime logs already ignored"
+  else
+    echo "  gitignore: added local AI/Trellis runtime log ignores ×${added}"
+  fi
+}
+
 gitnexus_requested() {
   case "$(printf '%s' "$GURU_WITH_GITNEXUS" | tr '[:upper:]' '[:lower:]')" in
     1|true|yes|on) return 0 ;;
@@ -175,6 +201,7 @@ case ",${detect_hint}," in
 esac
 
 echo "== guru overlay 装配 → ${TARGET} （平台: ${PLATFORM} → spec=${SPEC_NAME} workflow=${WF_NAME}）=="
+ensure_local_runtime_gitignore
 
 # 1) skills → .agents/skills/（装本平台集合 + shared 需求三件套，剪枝他平台 guru skill）
 mkdir -p "$TARGET/.agents/skills"

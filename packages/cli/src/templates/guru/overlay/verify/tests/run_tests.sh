@@ -69,6 +69,13 @@ Given 网络异常 When 点击 Then 提示重试
 下单成功可见订单
 ## 未决问题
 无（显式声明）
+## Brainstorm Evidence
+- Skill loaded: trellis-brainstorm loaded for fixture setup
+- Repository evidence inspected: fixture PRD/design/implement inspected
+- Domain/terminology triggers: none — no new terms or code/user-intent conflict in fixture
+- Current code vs user intent conflicts: none — fixture uses generated local artifacts only
+- Product decisions confirmed: fixture behavior and acceptance criteria confirmed
+- Open product/scope/risk questions: none — fixture explicitly declares no unresolved questions
 EOF
   cat > "$d/design.md" <<'EOF'
 ## §1 概要设计
@@ -199,6 +206,36 @@ open(p, "w", encoding="utf-8").write(json.dumps(data, ensure_ascii=False, indent
 PY
 }
 
+write_requirements_review() { # write_requirements_review <task_dir> <status> [reason]
+  python3 - "$GATE" "$1" "$2" "${3:-fixture}" <<'PY'
+import json, sys, importlib.util
+gate, task_dir, status, reason = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+spec = importlib.util.spec_from_file_location("gg", gate)
+gg = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gg)
+p = f"{task_dir}/task.json"
+try:
+    data = json.load(open(p, encoding="utf-8"))
+except Exception:
+    data = {}
+gates = data.setdefault("guru_gates", {})
+gates["requirements_review"] = {
+    "action": "requirements",
+    "provider": "claude",
+    "current_provider": "codex",
+    "adversarial": True,
+    "status": status,
+    "artifact_digest": gg._gate_digest(task_dir, "requirements"),
+    "run_id": "requirements-review-fixture",
+    "channel": "guru-fixture",
+    "worker": "requirements-claude-fixture",
+    "reason": reason,
+    "timestamp": "2026-06-20T00:00:00+00:00",
+}
+open(p, "w", encoding="utf-8").write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+PY
+}
+
 write_clean_reviews() { # write_clean_reviews <gate> <task_dir>
   if [ "$1" = "detail" ]; then
     python3 "$GATE" record-review "$1" "$2" --result clean --max-severity none --reviewer clean-context --run-id "$1-clean-a" --evidence "$1 clean a" --deletion-audit "none" >/dev/null
@@ -325,6 +362,25 @@ if printf '%s' "$out" | grep -q "record-review overview"; then
   pass=$((pass+1)); echo "PASS  status 需求确认后提示 overview record-review"
 else failn=$((failn+1)); echo "FAIL  status 未提示 overview record-review"; printf '%s\n' "$out" | tail -6; fi
 
+RR_STATUS=$(make_gate_case requirements-review-status)
+write_requirements_review "$RR_STATUS" clean "review_result=clean/requirements-ready"
+expect_grep "status 显示 requirements adversarial clean/current" "需求对抗 Review — ✅ clean/current" python3 "$GATE" status "$RR_STATUS"
+printf '\n需求补充：触发 requirements digest 变化。\n' >> "$RR_STATUS/prd.md"
+expect_grep "status 显示 requirements adversarial stale" "需求对抗 Review — ⚠️ clean/stale" python3 "$GATE" status "$RR_STATUS"
+
+RR_CONFIRM_MISSING=$(make_gate_case requirements-review-confirm-missing)
+out=$(env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RR_CONFIRM_MISSING" --via-agent --user-quote "用户接受风险并确认需求" 2>&1); rc=$?
+if [ "$rc" = 0 ] && printf '%s' "$out" | grep -q "缺少 clean/current 的对抗审查证据"; then
+  pass=$((pass+1)); echo "PASS  confirm requirements 缺对抗审查时警告但不硬阻断"
+else failn=$((failn+1)); echo "FAIL  confirm requirements 缺对抗审查警告/放行异常 (rc=$rc)"; echo "$out" | head -5; fi
+
+RR_CONFIRM_DEFERRED=$(make_gate_case requirements-review-confirm-deferred)
+write_requirements_review "$RR_CONFIRM_DEFERRED" deferred "provider launch failed"
+out=$(env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RR_CONFIRM_DEFERRED" --via-agent --user-quote "用户接受 deferred 风险" 2>&1); rc=$?
+if [ "$rc" = 0 ] && printf '%s' "$out" | grep -q "requirements adversarial review deferred"; then
+  pass=$((pass+1)); echo "PASS  confirm requirements deferred 对抗审查时警告但不硬阻断"
+else failn=$((failn+1)); echo "FAIL  confirm requirements deferred 警告/放行异常 (rc=$rc)"; echo "$out" | head -5; fi
+
 LOSS=$(make_gate_case detail-skeleton-loss)
 cat > "$LOSS/design.md" <<'EOF'
 ## §1 概要设计
@@ -345,12 +401,23 @@ expect "detail 合格通过"       0 python3 "$GATE" detail "$G"
 expect "implement 合格通过"    0 python3 "$GATE" implement "$G"
 expect "trace-matrix 闭合通过(strict)" 0 python3 "$GATE" trace-matrix "$G" --strict
 expect_grep "trace-matrix 含矩阵行" "BHV-001" python3 "$GATE" trace-matrix "$G"
+expect_grep "status 显示 Brainstorm Evidence present" "Brainstorm Evidence.*present" python3 "$GATE" status "$G"
 
 # 缺章样本
 B="$TMP/bad-req"; mkdir -p "$B"; grep -v "失败路径\|网络失败" "$G/prd.md" > "$B/prd.md"
 expect "requirements 缺失败路径被拦" 2 python3 "$GATE" requirements "$B"
 B0="$TMP/bad-nobhv"; mkdir -p "$B0"; sed 's/### BHV-[0-9]*//' "$G/prd.md" > "$B0/prd.md"
 expect "requirements 无 BHV 编号被拦" 2 python3 "$GATE" requirements "$B0"
+BMISS="$TMP/bad-brainstorm-missing"; mkdir -p "$BMISS"; awk 'BEGIN{drop=0} /^## Brainstorm Evidence/{drop=1} /^## Notes/{drop=0} !drop{print}' "$G/prd.md" > "$BMISS/prd.md"
+expect "requirements 缺 Brainstorm Evidence 被拦" 2 python3 "$GATE" requirements "$BMISS"
+expect_grep "requirements 缺 Brainstorm Evidence 给恢复步骤" "load trellis-brainstorm" python3 "$GATE" requirements "$BMISS"
+expect_grep "status 显示 Brainstorm Evidence missing" "Brainstorm Evidence.*missing" python3 "$GATE" status "$BMISS"
+BPEND="$TMP/bad-brainstorm-pending"; mkdir -p "$BPEND"; sed 's/Skill loaded:.*/Skill loaded: pending/' "$G/prd.md" > "$BPEND/prd.md"
+expect "requirements pending Brainstorm Evidence 被拦" 2 python3 "$GATE" requirements "$BPEND"
+BNOREASON="$TMP/bad-brainstorm-no-reason"; mkdir -p "$BNOREASON"; perl -pe 's#Domain/terminology triggers:.*#Domain/terminology triggers: none#' "$G/prd.md" > "$BNOREASON/prd.md"
+expect "requirements 负证据无原因被拦" 2 python3 "$GATE" requirements "$BNOREASON"
+BALIAS="$TMP/good-brainstorm-alias"; mkdir -p "$BALIAS"; perl -pe 's/Domain\/terminology triggers:/Domain Grill triggers:/' "$G/prd.md" > "$BALIAS/prd.md"
+expect "requirements 接受 Domain Grill triggers 兼容别名" 0 python3 "$GATE" requirements "$BALIAS"
 B2="$TMP/bad-ov"; mkdir -p "$B2"; cp "$G/prd.md" "$B2/"; sed 's/承接索引.*//' "$G/design.md" > "$B2/design.md"
 expect "overview 缺承接索引被拦" 2 python3 "$GATE" overview "$B2"
 
@@ -823,6 +890,13 @@ x
 y
 ## 未决问题
 无
+## Brainstorm Evidence
+- Skill loaded: trellis-brainstorm loaded for CJK P0 fixture
+- Repository evidence inspected: fixture PRD inspected
+- Domain/terminology triggers: none — no new terms in fixture
+- Current code vs user intent conflicts: none — fixture is requirements-only
+- Product decisions confirmed: CJK-adjacent P0 parsing confirmed
+- Open product/scope/risk questions: none — fixture declares no unresolved questions
 EOF
 expect "requirements：'优先级P0' CJK 紧贴被识别（#8）" 0 python3 "$GATE" requirements "$CJKP"
 

@@ -20,6 +20,15 @@ DEFAULTS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("guru", "supervision", "implement_timeout"), "45m"),
     (("guru", "supervision", "check_timeout"), "30m"),
     (("guru", "supervision", "warn_before"), "5m"),
+    (("guru", "supervision", "adversarial_claude_model"), "claude-sonnet-4-6"),
+    (("guru", "supervision", "adversarial_codex_model"), "gpt-5.4"),
+    (("guru", "supervision", "adversarial_codex_reasoning_effort"), "high"),
+)
+LEGACY_DEFAULTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        ("guru", "supervision", "adversarial_claude_model"),
+        ("claude-sonnet-4.8", "claude-sonnet-4.6"),
+    ),
 )
 
 KEY_RE = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z0-9_-]+)\s*:\s*(?P<value>.*)$")
@@ -66,6 +75,8 @@ def _has_scalar_value(raw_value: str) -> bool:
 
 def _scalar_value(raw_value: str) -> str:
     value = raw_value.strip()
+    if value.startswith("#"):
+        return ""
     for marker in (" #", "\t#"):
         idx = value.find(marker)
         if idx >= 0:
@@ -77,6 +88,13 @@ def _scalar_value(raw_value: str) -> str:
     ):
         value = value[1:-1]
     return value
+
+
+def _legacy_default_values(path: tuple[str, ...]) -> tuple[str, ...]:
+    for legacy_path, values in LEGACY_DEFAULTS:
+        if legacy_path == path:
+            return values
+    return ()
 
 
 def _find_key(lines: Sequence[str], path: tuple[str, ...]) -> ParsedKey | None:
@@ -157,6 +175,12 @@ def _ensure_scalar(
     if existing is not None:
         current = _scalar_value(existing.raw_value)
         if current:
+            if current in _legacy_default_values(path):
+                lines[existing.index] = f"{' ' * existing.indent}{path[-1]}: {value}"
+                actions.append(
+                    f"updated {dotted}={value} from legacy default {current}"
+                )
+                return
             actions.append(f"preserved {dotted}={current}")
             if warn_if_different and current != value:
                 warnings.append(f"{dotted} already {current}; did not overwrite {value}")

@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -36,6 +37,14 @@ DEFAULT_IMPLEMENT_TIMEOUT = "45m"
 DEFAULT_CHECK_TIMEOUT = "30m"
 DEFAULT_WARN_BEFORE = "5m"
 DEFAULT_IMPLEMENT_CHECK_MAX_LOOPS = 3
+DEFAULT_ADVERSARIAL_CLAUDE_MODEL = "claude-sonnet-4-6"
+DEFAULT_ADVERSARIAL_CODEX_MODEL = "gpt-5.4"
+DEFAULT_ADVERSARIAL_CODEX_REASONING_EFFORT = "high"
+ADVERSARIAL_MODEL_ACTIONS = {"requirements", "overview", "detail"}
+GATES_KEY = "guru_gates"
+ADVERSARIAL_SKIPS_KEY = "adversarial_skips"
+REQUIREMENTS_REVIEW_KEY = "requirements_review"
+REQUIREMENTS_CLEAN_MARKER = "review_result=clean/requirements-ready"
 
 REPAIRABLE_IMPLEMENT_ROUTES = {"IMPLEMENT_DEFECT", "PROCESS_DEFECT"}
 UPSTREAM_ROUTE_TARGETS = {
@@ -140,12 +149,15 @@ class SupervisionConfig:
     idle_timeout: str | None
     max_live_workers: str | None
     trellis_bin: str
+    adversarial_model: str | None
+    adversarial_reasoning_effort: str | None
 
 
 @dataclass(frozen=True)
 class RunPlan:
     action: str
     task_dir: Path
+    run_id: str
     channel: str
     worker: str
     create_cmd: list[str]
@@ -175,6 +187,8 @@ def _has_scalar(raw_value: str) -> bool:
 
 def _scalar(raw_value: str) -> str:
     value = raw_value.strip()
+    if value.startswith("#"):
+        return ""
     for marker in (" #", "\t#"):
         idx = value.find(marker)
         if idx >= 0:
@@ -335,6 +349,32 @@ def _opposite_provider(provider: str) -> str:
     return DEFAULT_PROVIDER
 
 
+def _adversarial_model(root: Path, provider: str) -> str | None:
+    if provider == "claude":
+        return (
+            _config_value(root, ("guru", "supervision", "adversarial_claude_model"))
+            or DEFAULT_ADVERSARIAL_CLAUDE_MODEL
+        )
+    if provider == "codex":
+        return (
+            _config_value(root, ("guru", "supervision", "adversarial_codex_model"))
+            or DEFAULT_ADVERSARIAL_CODEX_MODEL
+        )
+    return None
+
+
+def _adversarial_reasoning_effort(root: Path, provider: str) -> str | None:
+    if provider == "codex":
+        return (
+            _config_value(
+                root,
+                ("guru", "supervision", "adversarial_codex_reasoning_effort"),
+            )
+            or DEFAULT_ADVERSARIAL_CODEX_REASONING_EFFORT
+        )
+    return None
+
+
 def _load_config(
     root: Path,
     *,
@@ -377,6 +417,12 @@ def _load_config(
             root, ("channel", "worker_guard", "max_live_workers")
         ),
         trellis_bin=trellis_bin or os.environ.get("TRELLIS_BIN", "trellis"),
+        adversarial_model=_adversarial_model(root, spawned_provider)
+        if adversarial
+        else None,
+        adversarial_reasoning_effort=_adversarial_reasoning_effort(root, spawned_provider)
+        if adversarial
+        else None,
     )
 
 
@@ -464,6 +510,13 @@ def build_run_plan(
         spawn_cmd.extend(["--idle-timeout", config.idle_timeout])
     if config.max_live_workers:
         spawn_cmd.extend(["--max-live-workers", config.max_live_workers])
+    if config.adversarial and action in ADVERSARIAL_MODEL_ACTIONS:
+        if config.adversarial_model:
+            spawn_cmd.extend(["--model", config.adversarial_model])
+        if config.adversarial_reasoning_effort:
+            spawn_cmd.extend(
+                ["--reasoning-effort", config.adversarial_reasoning_effort]
+            )
     for file_path in artifact_files:
         spawn_cmd.extend(["--file", str(file_path)])
     for jsonl_path in jsonls:
@@ -599,6 +652,7 @@ def build_run_plan(
     return RunPlan(
         action=action,
         task_dir=task_dir,
+        run_id=run_id,
         channel=channel,
         worker=worker,
         create_cmd=create_cmd,
@@ -650,21 +704,200 @@ def _run(cmd: Sequence[str], *, cwd: Path, stdin: str | None = None) -> subproce
     return result
 
 
+def _record_adversarial_skip(plan: RunPlan, config: SupervisionConfig, reason: str) -> None:
+    task_json = plan.task_dir / "task.json"
+    try:
+        data = json.loads(task_json.read_text(encoding="utf-8")) if task_json.exists() else {}
+        if not isinstance(data, dict):
+            return
+        gates = data.setdefault(GATES_KEY, {})
+        if not isinstance(gates, dict):
+            return
+        skips = gates.setdefault(ADVERSARIAL_SKIPS_KEY, [])
+        if not isinstance(skips, list):
+            return
+        skips.append(
+            {
+                "action": plan.action,
+                "provider": config.provider,
+                "current_provider": config.current_provider,
+                "channel": plan.channel,
+                "worker": plan.worker,
+                "reason": reason,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        task_json.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = task_json.with_name(f"{task_json.name}.tmp.{os.getpid()}")
+        tmp_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(tmp_path, task_json)
+    except Exception as exc:
+        # Skip persistence is advisory; it must never block the main workflow.
+        sys.stderr.write(f"[guru-supervise] failed to record adversarial skip: {exc}\n")
+
+
+def _requirements_digest(task_dir: Path) -> str:
+    digest = hashlib.sha256()
+    prd_path = task_dir / "prd.md"
+    digest.update(prd_path.name.encode("utf-8"))
+    digest.update(b"\0")
+    try:
+        digest.update(prd_path.read_text(encoding="utf-8").encode("utf-8"))
+    except OSError:
+        pass
+    digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _requirements_review_verdict(messages: str) -> tuple[str, str]:
+    if REQUIREMENTS_CLEAN_MARKER in messages:
+        return "clean", REQUIREMENTS_CLEAN_MARKER
+    match = ROUTE_RE.search(messages)
+    if match:
+        route = match.group(1).upper()
+        if route != "NONE":
+            return "blocked", f"route_class={route}"
+    return "deferred", "missing requirements review verdict"
+
+
+def _record_requirements_review(
+    plan: RunPlan,
+    config: SupervisionConfig,
+    status: str,
+    reason: str,
+) -> None:
+    if not (config.adversarial and plan.action == "requirements"):
+        return
+    task_json = plan.task_dir / "task.json"
+    try:
+        data = json.loads(task_json.read_text(encoding="utf-8")) if task_json.exists() else {}
+        if not isinstance(data, dict):
+            return
+        gates = data.setdefault(GATES_KEY, {})
+        if not isinstance(gates, dict):
+            return
+        gates[REQUIREMENTS_REVIEW_KEY] = {
+            "action": plan.action,
+            "provider": config.provider,
+            "current_provider": config.current_provider,
+            "adversarial": True,
+            "status": status,
+            "artifact_digest": _requirements_digest(plan.task_dir),
+            "run_id": plan.run_id,
+            "channel": plan.channel,
+            "worker": plan.worker,
+            "reason": reason,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        task_json.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = task_json.with_name(f"{task_json.name}.tmp.{os.getpid()}")
+        tmp_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(tmp_path, task_json)
+    except Exception as exc:
+        # Requirements review state is advisory visibility; do not block the main workflow.
+        sys.stderr.write(f"[guru-supervise] failed to record requirements review: {exc}\n")
+
+
+def _skip_adversarial(
+    plan: RunPlan,
+    config: SupervisionConfig,
+    reason: str,
+    messages: str = "",
+) -> tuple[int, str, str]:
+    _record_adversarial_skip(plan, config, reason)
+    _record_requirements_review(plan, config, "deferred", reason)
+    sys.stderr.write(
+        f"[guru-supervise] skipped adversarial {config.provider} review: {reason}\n"
+    )
+    return 0, "skipped", messages
+
+
 def _execute_plan(plan: RunPlan, config: SupervisionConfig) -> tuple[int, str | None, str]:
     for command in (plan.create_cmd, plan.spawn_cmd):
-        result = _run(command, cwd=config.root)
+        try:
+            result = _run(command, cwd=config.root)
+        except OSError as exc:
+            if config.adversarial:
+                return _skip_adversarial(
+                    plan,
+                    config,
+                    f"{shlex.join(command)} failed: {exc}",
+                )
+            raise
         if result.returncode != 0:
+            if config.adversarial:
+                return _skip_adversarial(
+                    plan,
+                    config,
+                    f"{shlex.join(command)} exited {result.returncode}",
+                )
             return result.returncode, None, ""
 
-    result = _run(plan.send_cmd, cwd=config.root, stdin=plan.brief)
+    try:
+        result = _run(plan.send_cmd, cwd=config.root, stdin=plan.brief)
+    except OSError as exc:
+        if config.adversarial:
+            return _skip_adversarial(
+                plan,
+                config,
+                f"{shlex.join(plan.send_cmd)} failed: {exc}",
+            )
+        raise
     if result.returncode != 0:
+        if config.adversarial:
+            return _skip_adversarial(
+                plan,
+                config,
+                f"{shlex.join(plan.send_cmd)} exited {result.returncode}",
+            )
         return result.returncode, None, ""
 
-    wait = _run(plan.wait_cmd, cwd=config.root)
+    try:
+        wait = _run(plan.wait_cmd, cwd=config.root)
+    except OSError as exc:
+        if config.adversarial:
+            return _skip_adversarial(
+                plan,
+                config,
+                f"{shlex.join(plan.wait_cmd)} failed: {exc}",
+            )
+        raise
     terminal = _terminal_status(wait.stdout)
-    messages = _run(plan.messages_cmd, cwd=config.root)
+    try:
+        messages = _run(plan.messages_cmd, cwd=config.root)
+    except OSError as exc:
+        if config.adversarial:
+            return _skip_adversarial(
+                plan,
+                config,
+                f"{shlex.join(plan.messages_cmd)} failed: {exc}",
+            )
+        raise
     if wait.returncode != 0:
+        if config.adversarial:
+            return _skip_adversarial(
+                plan,
+                config,
+                f"{shlex.join(plan.wait_cmd)} exited {wait.returncode}",
+                messages.stdout,
+            )
         return wait.returncode, terminal, messages.stdout
+    if config.adversarial and terminal != "done":
+        return _skip_adversarial(
+            plan,
+            config,
+            f"worker terminal status was {terminal or 'missing'}",
+            messages.stdout,
+        )
+    if config.adversarial and plan.action == "requirements":
+        status, reason = _requirements_review_verdict(messages.stdout)
+        _record_requirements_review(plan, config, status, reason)
     return (0 if terminal == "done" else 1), terminal, messages.stdout
 
 

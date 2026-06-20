@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -39,10 +39,22 @@ const GURU_SOURCE_OVERLAY_ROOT = path.resolve(
   GURU_OVERLAY_ROOT,
   "../../../../../../guru-template/overlay",
 );
+const TRELLIS_SOURCE_TASK_STORE = path.resolve(
+  GURU_OVERLAY_ROOT,
+  "../../../../../../.trellis/scripts/common/task_store.py",
+);
+const TRELLIS_TEMPLATE_SCRIPTS_ROOT = path.resolve(
+  GURU_OVERLAY_ROOT,
+  "../../trellis/scripts",
+);
 const DIST_CLI = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../dist/cli/index.js",
 );
+const PYTHON_NO_BYTECODE_ENV = {
+  ...process.env,
+  PYTHONDONTWRITEBYTECODE: "1",
+};
 
 function overlayPath(...segments: string[]): string {
   return path.join(GURU_OVERLAY_ROOT, ...segments);
@@ -376,6 +388,10 @@ describe("bundled guru overlay", () => {
       expect(
         fs.readFileSync(path.join(tmpDir, ".trellis/worktree.yaml"), "utf8"),
       ).toContain("guru_gate.py auto");
+      const gitignore = fs.readFileSync(path.join(tmpDir, ".gitignore"), "utf8");
+      expect(gitignore).toContain(".claude/projects/");
+      expect(gitignore).toContain(".codex/sessions/");
+      expect(gitignore).toContain(".trellis/channels/");
       execFileSync(
         "python3",
         [
@@ -637,7 +653,11 @@ fi
     expect(readOverlayFile("apply.sh")).toBe(
       fs.readFileSync(path.join(GURU_SOURCE_OVERLAY_ROOT, "apply.sh"), "utf8"),
     );
-    for (const helper of ["guru_config_patch.py", "guru_supervise.py"]) {
+    for (const helper of [
+      "guru_config_patch.py",
+      "guru_gate.py",
+      "guru_supervise.py",
+    ]) {
       const source = fs.readFileSync(
         path.join(GURU_SOURCE_OVERLAY_ROOT, "verify", helper),
         "utf8",
@@ -645,6 +665,103 @@ fi
       const packaged = readOverlayFile("verify", helper);
       expect(packaged).toBe(source);
     }
+    expect(readOverlayFile("verify", "tests", "run_tests.sh")).toBe(
+      fs.readFileSync(
+        path.join(GURU_SOURCE_OVERLAY_ROOT, "verify", "tests", "run_tests.sh"),
+        "utf8",
+      ),
+    );
+  });
+
+  it("keeps the packaged task creation script in sync with the local Trellis script", () => {
+    const packaged = fs.readFileSync(
+      path.join(TRELLIS_TEMPLATE_SCRIPTS_ROOT, "common", "task_store.py"),
+      "utf8",
+    );
+    const source = fs.readFileSync(TRELLIS_SOURCE_TASK_STORE, "utf8");
+    expect(packaged).toBe(source);
+  });
+
+  it("creates packaged Trellis PRDs with brainstorm evidence and brainstorm-first guidance", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "trellis-task-create-"));
+    const python = process.env.PYTHON ?? "python3";
+    try {
+      fs.mkdirSync(path.join(tmpDir, ".trellis"), { recursive: true });
+      fs.cpSync(TRELLIS_TEMPLATE_SCRIPTS_ROOT, path.join(tmpDir, ".trellis", "scripts"), {
+        recursive: true,
+      });
+      fs.mkdirSync(path.join(tmpDir, ".trellis", "tasks"), { recursive: true });
+      execFileSync("git", ["init"], { cwd: tmpDir, encoding: "utf8" });
+      execFileSync("git", ["config", "user.email", "trellis@example.invalid"], {
+        cwd: tmpDir,
+        encoding: "utf8",
+      });
+      execFileSync("git", ["config", "user.name", "Trellis Test"], {
+        cwd: tmpDir,
+        encoding: "utf8",
+      });
+      execFileSync("git", ["commit", "--allow-empty", "-m", "init"], {
+        cwd: tmpDir,
+        encoding: "utf8",
+      });
+      execFileSync(python, [".trellis/scripts/init_developer.py", "reviewer"], {
+        cwd: tmpDir,
+        encoding: "utf8",
+        env: PYTHON_NO_BYTECODE_ENV,
+      });
+
+      const result = spawnSync(
+        python,
+        [
+          ".trellis/scripts/task.py",
+          "create",
+          "Brainstorm smoke",
+          "--slug",
+          "brainstorm-smoke",
+        ],
+        {
+          cwd: tmpDir,
+          encoding: "utf8",
+          env: PYTHON_NO_BYTECODE_ENV,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain("Load trellis-brainstorm");
+      const taskPath = result.stdout.trim();
+      const prd = fs.readFileSync(path.join(tmpDir, taskPath, "prd.md"), "utf8");
+      expect(prd).toContain("## Brainstorm Evidence");
+      expect(prd).toContain("Domain/terminology triggers: pending");
+    } catch (error) {
+      if (error && typeof error === "object" && "stderr" in error) {
+        const stderr = Buffer.isBuffer(error.stderr)
+          ? error.stderr.toString("utf8")
+          : String(error.stderr);
+        throw new Error(stderr);
+      }
+      throw error;
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ships requirements adversarial review state visibility", () => {
+    const gate = readOverlayFile("verify", "guru_gate.py");
+    const supervise = readOverlayFile("verify", "guru_supervise.py");
+
+    expect(gate).toContain('REQUIREMENTS_REVIEW_KEY = "requirements_review"');
+    expect(gate).toContain("需求对抗 Review");
+    expect(gate).toContain("缺少 clean/current 的对抗审查证据");
+    expect(gate).toContain(
+      "python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements",
+    );
+
+    expect(supervise).toContain(
+      'REQUIREMENTS_REVIEW_KEY = "requirements_review"',
+    );
+    expect(supervise).toContain(
+      'REQUIREMENTS_CLEAN_MARKER = "review_result=clean/requirements-ready"',
+    );
+    expect(supervise).toContain("missing requirements review verdict");
   });
 
   it("does not bundle transient cache artifacts from the overlay source", () => {
@@ -687,7 +804,7 @@ describe("guru_config_patch.py", () => {
         "--platform",
         platform,
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", env: PYTHON_NO_BYTECODE_ENV },
     );
   }
 
@@ -713,6 +830,9 @@ describe("guru_config_patch.py", () => {
     implement_timeout: 45m
     check_timeout: 30m
     warn_before: 5m
+    adversarial_claude_model: claude-sonnet-4-6
+    adversarial_codex_model: gpt-5.4
+    adversarial_codex_reasoning_effort: high
   platform: go`);
   });
 
@@ -731,6 +851,8 @@ guru:
   supervision:
     provider: claude
     implement_timeout: 90m
+    adversarial_claude_model: custom-claude
+    adversarial_codex_reasoning_effort: max
 `,
       "utf8",
     );
@@ -748,6 +870,57 @@ guru:
     expect(once).toContain("implement_timeout: 90m");
     expect(once).toContain("check_timeout: 30m");
     expect(once).toContain("warn_before: 5m");
+    expect(once).toContain("adversarial_claude_model: custom-claude");
+    expect(once).toContain("adversarial_codex_model: gpt-5.4");
+    expect(once).toContain("adversarial_codex_reasoning_effort: max");
+  });
+
+  it("upgrades legacy adversarial Claude defaults without replacing custom models", () => {
+    const configPath = path.join(tmpDir, ".trellis", "config.yaml");
+    for (const legacyModel of ["claude-sonnet-4.8", "claude-sonnet-4.6"]) {
+      fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(
+        configPath,
+        `guru:
+  supervision:
+    adversarial_claude_model: ${legacyModel}
+    adversarial_codex_model: custom-codex
+`,
+        "utf8",
+      );
+
+      runPatch("go");
+      const once = configText();
+      runPatch("go");
+
+      expect(configText()).toBe(once);
+      expect(once).toContain("adversarial_claude_model: claude-sonnet-4-6");
+      expect(once).toContain("adversarial_codex_model: custom-codex");
+    }
+  });
+
+  it("treats blank adversarial model choices as missing defaults", () => {
+    const configPath = path.join(tmpDir, ".trellis", "config.yaml");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      `guru:
+  supervision:
+    adversarial_claude_model:
+    adversarial_codex_model: # decide later
+    adversarial_codex_reasoning_effort: ""
+`,
+      "utf8",
+    );
+
+    runPatch("go");
+    const patched = configText();
+
+    expect(patched).toContain("adversarial_claude_model: claude-sonnet-4-6");
+    expect(patched).toContain("adversarial_codex_model: gpt-5.4");
+    expect(patched).toContain("adversarial_codex_reasoning_effort: high");
+    expect(patched).not.toContain("decide later");
   });
 
   it("fails fast when an existing mapping path is scalar", () => {
@@ -766,7 +939,7 @@ guru:
           "--platform",
           "ios",
         ],
-        { encoding: "utf8", stdio: "pipe" },
+        { encoding: "utf8", env: PYTHON_NO_BYTECODE_ENV, stdio: "pipe" },
       ),
     ).toThrow(/guru is a scalar/);
   });
@@ -776,6 +949,7 @@ describe("guru_supervise.py", () => {
   let tmpDir: string;
   const python = process.env.PYTHON ?? "python3";
   const supervisor = overlayPath("verify", "guru_supervise.py");
+  const gate = overlayPath("verify", "guru_gate.py");
 
   beforeEach(() => {
     tmpDir = fs.realpathSync(
@@ -826,6 +1000,7 @@ channel:
   function runSupervisor(args: string[]): string {
     return execFileSync(python, [supervisor, "--root", tmpDir, ...args], {
       encoding: "utf8",
+      env: PYTHON_NO_BYTECODE_ENV,
     });
   }
 
@@ -919,6 +1094,85 @@ fi
     );
     fs.chmodSync(fake, 0o755);
     return { fake, log };
+  }
+
+  function writeFailingSpawnTrellis(): string {
+    const fake = path.join(tmpDir, "fake-spawn-fail-trellis.sh");
+    fs.writeFileSync(
+      fake,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "channel" ] && [ "$2" = "create" ]; then
+  exit 0
+elif [ "$1" = "channel" ] && [ "$2" = "spawn" ]; then
+  echo "provider executable not found" >&2
+  exit 127
+else
+  echo "unexpected fake trellis args: $*" >&2
+  exit 2
+fi
+`,
+      "utf8",
+    );
+    fs.chmodSync(fake, 0o755);
+    return fake;
+  }
+
+  function writeTerminalErrorTrellis(): string {
+    const fake = path.join(tmpDir, "fake-terminal-error-trellis.sh");
+    fs.writeFileSync(
+      fake,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "channel" ] && [ "$2" = "create" ]; then
+  exit 0
+elif [ "$1" = "channel" ] && [ "$2" = "spawn" ]; then
+  exit 0
+elif [ "$1" = "channel" ] && [ "$2" = "send" ]; then
+  cat >/dev/null
+elif [ "$1" = "channel" ] && [ "$2" = "wait" ]; then
+  echo '{"kind":"error","by":"requirements-claude-r1"}'
+elif [ "$1" = "channel" ] && [ "$2" = "messages" ]; then
+  echo '{"kind":"message","by":"requirements-claude-r1","text":"model unavailable"}'
+else
+  echo "unexpected fake trellis args: $*" >&2
+  exit 2
+fi
+`,
+      "utf8",
+    );
+    fs.chmodSync(fake, 0o755);
+    return fake;
+  }
+
+  function writeRequirementsVerdictTrellis(verdictText: string): string {
+    const suffix = verdictText.includes("clean/requirements-ready")
+      ? "clean"
+      : "blocked";
+    const fake = path.join(tmpDir, `fake-requirements-verdict-${suffix}.sh`);
+    fs.writeFileSync(
+      fake,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "channel" ] && [ "$2" = "create" ]; then
+  exit 0
+elif [ "$1" = "channel" ] && [ "$2" = "spawn" ]; then
+  exit 0
+elif [ "$1" = "channel" ] && [ "$2" = "send" ]; then
+  cat >/dev/null
+elif [ "$1" = "channel" ] && [ "$2" = "wait" ]; then
+  echo '{"kind":"done","by":"requirements-claude-fixture"}'
+elif [ "$1" = "channel" ] && [ "$2" = "messages" ]; then
+  echo ${JSON.stringify(JSON.stringify({ kind: "message", by: "requirements-claude-fixture", text: verdictText }))}
+else
+  echo "unexpected fake trellis args: $*" >&2
+  exit 2
+fi
+`,
+      "utf8",
+    );
+    fs.chmodSync(fake, 0o755);
+    return fake;
   }
 
   it("dry-runs implement with codex provider, run id names, jsonl, and Guru skill context", () => {
@@ -1092,6 +1346,8 @@ fi
     expect(codexOutput).toContain(
       "trellis channel spawn guru-task-requirements-requirements-r11 --agent requirements --provider claude --as requirements-claude-r11",
     );
+    expect(codexOutput).toContain("--model claude-sonnet-4-6");
+    expect(codexOutput).not.toContain("--reasoning-effort high");
     expect(codexOutput).toContain(`--file ${requirementSkill}`);
     expect(codexOutput).toContain(`--file ${taskJson}`);
     expect(codexOutput).toContain(`--file ${formalDoc}`);
@@ -1135,6 +1391,7 @@ fi
     expect(claudeOutput).toContain(
       "trellis channel spawn guru-task-requirements-requirements-r12 --agent requirements --provider codex --as requirements-codex-r12",
     );
+    expect(claudeOutput).toContain("--model gpt-5.4 --reasoning-effort high");
     expect(claudeOutput).toContain(
       "adversarial requirements reviewer from the opposite provider (claude -> codex)",
     );
@@ -1153,9 +1410,246 @@ fi
     expect(unknownOutput).toContain(
       "trellis channel spawn guru-task-requirements-requirements-r13 --agent requirements --provider codex --as requirements-codex-r13",
     );
+    expect(unknownOutput).toContain("--model gpt-5.4 --reasoning-effort high");
     expect(unknownOutput).toContain(
       "adversarial requirements reviewer from the opposite provider (gemini -> codex)",
     );
+  });
+
+  it("skips failed adversarial reviewers without hiding normal worker failures", () => {
+    writeConfig("go");
+    writeSkill(".agents/skills/requirement-review/SKILL.md");
+    const taskDir = writeTask("task-adversarial-skip");
+    const failingSpawn = writeFailingSpawnTrellis();
+    const terminalError = writeTerminalErrorTrellis();
+
+    expect(() =>
+      runSupervisor([
+        "--trellis-bin",
+        failingSpawn,
+        "--provider",
+        "codex",
+        "--adversarial",
+        "requirements",
+        taskDir,
+        "--run-id",
+        "skip1",
+      ]),
+    ).not.toThrow();
+    expect(() =>
+      runSupervisor([
+        "--trellis-bin",
+        terminalError,
+        "--provider",
+        "codex",
+        "--adversarial",
+        "requirements",
+        taskDir,
+        "--run-id",
+        "skip2",
+      ]),
+    ).not.toThrow();
+    expect(() =>
+      runSupervisor([
+        "--trellis-bin",
+        failingSpawn,
+        "--provider",
+        "codex",
+        "requirements",
+        taskDir,
+        "--run-id",
+        "fail",
+      ]),
+    ).toThrow();
+
+    const task = JSON.parse(
+      fs.readFileSync(path.join(taskDir, "task.json"), "utf8"),
+    ) as { guru_gates?: { adversarial_skips?: Array<Record<string, string>> } };
+    const skips = task.guru_gates?.adversarial_skips ?? [];
+    expect(skips).toHaveLength(2);
+    expect(skips[0]).toMatchObject({
+      action: "requirements",
+      provider: "claude",
+      current_provider: "codex",
+    });
+    expect(skips[0]?.reason).toContain("exited 127");
+    expect(skips[1]?.reason).toContain("worker terminal status was error");
+
+    const statusOutput = execFileSync(python, [gate, "status", taskDir], {
+      encoding: "utf8",
+      env: PYTHON_NO_BYTECODE_ENV,
+    });
+    expect(statusOutput).toContain("对抗审查跳过记录");
+    expect(statusOutput).toContain("requirements/claude");
+    expect(statusOutput).toContain("worker terminal status was error");
+  });
+
+  it("persists requirements adversarial clean and blocked verdicts", () => {
+    writeConfig("go");
+    writeSkill(".agents/skills/requirement-review/SKILL.md");
+    const cleanTask = writeTask("task-requirements-clean");
+    const blockedTask = writeTask("task-requirements-blocked");
+    const cleanTrellis = writeRequirementsVerdictTrellis(
+      "review_result=clean/requirements-ready route_class=none",
+    );
+    const blockedTrellis = writeRequirementsVerdictTrellis(
+      "route_class=REQ_BLOCKER missing acceptance boundary",
+    );
+
+    runSupervisor([
+      "--trellis-bin",
+      cleanTrellis,
+      "--provider",
+      "codex",
+      "--adversarial",
+      "requirements",
+      cleanTask,
+      "--run-id",
+      "clean1",
+    ]);
+    runSupervisor([
+      "--trellis-bin",
+      blockedTrellis,
+      "--provider",
+      "codex",
+      "--adversarial",
+      "requirements",
+      blockedTask,
+      "--run-id",
+      "blocked1",
+    ]);
+
+    const clean = JSON.parse(
+      fs.readFileSync(path.join(cleanTask, "task.json"), "utf8"),
+    ) as {
+      guru_gates?: {
+        requirements_review?: Record<string, string | boolean>;
+      };
+    };
+    const blocked = JSON.parse(
+      fs.readFileSync(path.join(blockedTask, "task.json"), "utf8"),
+    ) as {
+      guru_gates?: {
+        requirements_review?: Record<string, string | boolean>;
+      };
+    };
+
+    expect(clean.guru_gates?.requirements_review).toMatchObject({
+      action: "requirements",
+      provider: "claude",
+      current_provider: "codex",
+      adversarial: true,
+      status: "clean",
+      reason: "review_result=clean/requirements-ready",
+      run_id: "clean1",
+    });
+    expect(clean.guru_gates?.requirements_review?.artifact_digest).toMatch(
+      /^[a-f0-9]{64}$/,
+    );
+    expect(blocked.guru_gates?.requirements_review).toMatchObject({
+      action: "requirements",
+      provider: "claude",
+      current_provider: "codex",
+      adversarial: true,
+      status: "blocked",
+      reason: "route_class=REQ_BLOCKER",
+      run_id: "blocked1",
+    });
+  });
+
+  it("dry-runs adversarial reviews with project model overrides", () => {
+    const configPath = path.join(tmpDir, ".trellis", "config.yaml");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      `guru:
+  platform: go
+  supervision:
+    adversarial_claude_model: custom-claude
+    adversarial_codex_model: custom-codex
+    adversarial_codex_reasoning_effort: max
+`,
+      "utf8",
+    );
+    writeSkill(".agents/skills/requirement-review/SKILL.md");
+    const taskDir = writeTask("task-models");
+
+    const claudeReviewer = runSupervisor([
+      "--provider",
+      "codex",
+      "--adversarial",
+      "requirements",
+      taskDir,
+      "--run-id",
+      "m1",
+      "--dry-run",
+    ]);
+    const codexReviewer = runSupervisor([
+      "--provider",
+      "claude",
+      "--adversarial",
+      "requirements",
+      taskDir,
+      "--run-id",
+      "m2",
+      "--dry-run",
+    ]);
+
+    expect(claudeReviewer).toContain("--provider claude");
+    expect(claudeReviewer).toContain("--model custom-claude");
+    expect(claudeReviewer).not.toContain("--reasoning-effort");
+    expect(codexReviewer).toContain("--provider codex");
+    expect(codexReviewer).toContain(
+      "--model custom-codex --reasoning-effort max",
+    );
+  });
+
+  it("dry-runs blank adversarial model overrides with defaults", () => {
+    const configPath = path.join(tmpDir, ".trellis", "config.yaml");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      `guru:
+  platform: go
+  supervision:
+    adversarial_claude_model:
+    adversarial_codex_model: ""
+    adversarial_codex_reasoning_effort: # decide later
+`,
+      "utf8",
+    );
+    writeSkill(".agents/skills/requirement-review/SKILL.md");
+    const taskDir = writeTask("task-blank-models");
+
+    const claudeReviewer = runSupervisor([
+      "--provider",
+      "codex",
+      "--adversarial",
+      "requirements",
+      taskDir,
+      "--run-id",
+      "b1",
+      "--dry-run",
+    ]);
+    const codexReviewer = runSupervisor([
+      "--provider",
+      "claude",
+      "--adversarial",
+      "requirements",
+      taskDir,
+      "--run-id",
+      "b2",
+      "--dry-run",
+    ]);
+
+    expect(claudeReviewer).toContain("--provider claude");
+    expect(claudeReviewer).toContain("--model claude-sonnet-4-6");
+    expect(claudeReviewer).not.toContain("--reasoning-effort");
+    expect(codexReviewer).toContain("--provider codex");
+    expect(codexReviewer).toContain(
+      "--model gpt-5.4 --reasoning-effort high",
+    );
+    expect(codexReviewer).not.toContain("decide later");
   });
 
   it("dry-runs adversarial planning reviews with the opposite provider and marked evidence", () => {
@@ -1180,6 +1674,7 @@ fi
     expect(codexOutput).toContain(
       "trellis channel spawn guru-task-adversarial-overview-r8 --agent overview --provider claude --as overview-claude-r8",
     );
+    expect(codexOutput).toContain("--model claude-sonnet-4-6");
     expect(codexOutput).toContain(
       "adversarial clean-context reviewer from the opposite provider (codex -> claude)",
     );
@@ -1201,6 +1696,7 @@ fi
     expect(claudeOutput).toContain(
       "trellis channel spawn guru-task-adversarial-overview-r10 --agent overview --provider codex --as overview-codex-r10",
     );
+    expect(claudeOutput).toContain("--model gpt-5.4 --reasoning-effort high");
     expect(claudeOutput).toContain(
       "adversarial clean-context reviewer from the opposite provider (claude -> codex)",
     );
@@ -1222,6 +1718,7 @@ fi
     expect(unknownOutput).toContain(
       "trellis channel spawn guru-task-adversarial-detail-r9 --agent detail --provider codex --as detail-codex-r9",
     );
+    expect(unknownOutput).toContain("--model gpt-5.4 --reasoning-effort high");
     expect(unknownOutput).toContain(
       "adversarial clean-context reviewer from the opposite provider (gemini -> codex)",
     );

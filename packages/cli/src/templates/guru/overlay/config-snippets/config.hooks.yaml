@@ -2,6 +2,10 @@
 # 另：人工 Gate 通道可在 config.yaml 顶层（marker 块外）配置：
 #   guru:
 #     gate_mode: soft   # strict（默认）=用户终端 TTY；soft=对话确认后 agent --via-agent 代跑
+#     supervision:
+#       adversarial_claude_model: claude-sonnet-4-6
+#       adversarial_codex_model: gpt-5.4
+#       adversarial_codex_reasoning_effort: high
 hooks:
   after_create:
     - "python3 .trellis/scripts/guru/guru_after_create.py"

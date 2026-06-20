@@ -85,6 +85,33 @@ DETAIL_CONTRACT_PATTERNS = [
     ("不得补造声明", r"不得.{0,8}补造|不在此补造|不决定|不拥有"),
 ]
 
+BRAINSTORM_EVIDENCE_LABELS = [
+    ("Skill loaded", ("skill loaded",)),
+    ("Repository evidence inspected", ("repository evidence inspected",)),
+    ("Domain/terminology triggers", ("domain/terminology triggers", "domain grill triggers")),
+    ("Current code vs user intent conflicts", ("current code vs user intent conflicts",)),
+    ("Product decisions confirmed", ("product decisions confirmed",)),
+    ("Open product/scope/risk questions", ("open product/scope/risk questions",)),
+]
+BRAINSTORM_PLACEHOLDERS = {
+    "",
+    "pending",
+    "tbd",
+    "todo",
+    "待定",
+    "未填写",
+    "未确认",
+}
+BRAINSTORM_NEGATIVE_PREFIXES = (
+    "none",
+    "not triggered",
+    "no open questions",
+    "无",
+    "没有",
+    "不触发",
+)
+BRAINSTORM_RECOVERY = "load trellis-brainstorm, complete Domain Grill / one-question loop, then update prd.md"
+
 
 def fail(gate: str, problems: list) -> int:
     sys.stderr.write(f"[guru-gate:{gate}] 未通过，缺口：\n")
@@ -105,6 +132,61 @@ def read(path: str) -> str:
             return f.read()
     except OSError:
         return ""
+
+
+def _brainstorm_section(prd: str) -> str:
+    match = re.search(r"(?im)^##\s+Brainstorm Evidence\s*$", prd)
+    if not match:
+        return ""
+    rest = prd[match.end():]
+    next_heading = re.search(r"(?m)^##\s+", rest)
+    return rest[: next_heading.start()] if next_heading else rest
+
+
+def _brainstorm_line_value(section: str, aliases: tuple) -> str | None:
+    for raw_line in section.splitlines():
+        line = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s*", "", raw_line).strip()
+        lower = line.lower()
+        for alias in aliases:
+            if lower.startswith(alias):
+                return line[len(alias):].lstrip(" \t:-—").strip()
+    return None
+
+
+def _negative_evidence_has_reason(value: str) -> bool:
+    lowered = value.strip().lower()
+    if not lowered.startswith(BRAINSTORM_NEGATIVE_PREFIXES):
+        return True
+    return bool(re.search(r"(?:--?|—|:|：|because|due to|因为|理由|原因)\s*\S+", value))
+
+
+def _brainstorm_evidence_problems(prd: str) -> list:
+    section = _brainstorm_section(prd)
+    if not section.strip():
+        return ["Brainstorm Evidence missing: add `## Brainstorm Evidence` to prd.md"]
+
+    problems = []
+    for label, aliases in BRAINSTORM_EVIDENCE_LABELS:
+        value = _brainstorm_line_value(section, aliases)
+        if value is None:
+            problems.append(f"Brainstorm Evidence missing: {label}")
+            continue
+        normalized = value.strip().lower()
+        if normalized in BRAINSTORM_PLACEHOLDERS:
+            problems.append(f"Brainstorm Evidence pending: {label}")
+        elif not _negative_evidence_has_reason(value):
+            problems.append(f"Brainstorm Evidence needs reason: {label}")
+    return problems
+
+
+def _brainstorm_status_mark(task_dir: str) -> str:
+    problems = _brainstorm_evidence_problems(read(os.path.join(task_dir, "prd.md")))
+    if not problems:
+        return "✅ present"
+    summary = "; ".join(problems[:3])
+    if len(problems) > 3:
+        summary += f"; +{len(problems) - 3} more"
+    return f"⬜ missing: {summary}"
 
 
 def _design_sections(design: str):
@@ -351,6 +433,10 @@ def check_requirements(task_dir: str) -> int:
         problems.append("缺验收场景/标准章节")
     if not re.search(r"未决|open question|待确认", prd, re.I):
         problems.append("缺未决问题章节（无未决也须显式声明）")
+    brainstorm_problems = _brainstorm_evidence_problems(prd)
+    if brainstorm_problems:
+        problems.extend(brainstorm_problems)
+        problems.append(f"恢复步骤：{BRAINSTORM_RECOVERY}")
     return fail("requirements", problems) if problems else ok("requirements")
 
 
@@ -623,6 +709,8 @@ REVIEW_GATES = ("overview", "detail")
 GATE_LABEL = {"requirements": "需求", "overview": "概要设计", "detail": "详细设计"}
 GATES_KEY = "guru_gates"
 REVIEW_RUNS_KEY = "review_runs"
+ADVERSARIAL_SKIPS_KEY = "adversarial_skips"
+REQUIREMENTS_REVIEW_KEY = "requirements_review"
 REQUIRED_CLEAN_REVIEWS = 2
 SEVERITY_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 FINDING_CLASSES = {
@@ -1316,6 +1404,8 @@ def cmd_confirm(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None
         if checkers[g](task_dir) != PASS:
             sys.stderr.write(f"[guru-gate:confirm] {GATE_LABEL[g]}结构 Gate 未过，先修复缺口再确认；本次到此为止。\n")
             return BLOCK
+        if g == "requirements":
+            _warn_requirements_review_before_confirm(task_dir)
         if g == "detail":
             for review_gate in REVIEW_GATES:
                 if not _review_state(task_dir, review_gate)["ready"]:
@@ -1379,6 +1469,71 @@ def _gate_states(task_dir: str) -> dict:
     return gates if isinstance(gates, dict) else {}
 
 
+def _adversarial_skips(task_dir: str) -> list:
+    skips = _gate_states(task_dir).get(ADVERSARIAL_SKIPS_KEY)
+    return skips if isinstance(skips, list) else []
+
+
+def _requirements_review(task_dir: str) -> dict:
+    review = _gate_states(task_dir).get(REQUIREMENTS_REVIEW_KEY)
+    return review if isinstance(review, dict) else {}
+
+
+def _requirements_review_problem(task_dir: str) -> str:
+    review = _requirements_review(task_dir)
+    if not review:
+        return "缺少当前需求 digest 的 opposite-provider requirements adversarial review 记录"
+    recorded = review.get("artifact_digest")
+    current = _gate_digest(task_dir, "requirements")
+    if recorded != current:
+        return "requirements adversarial review digest 失配（prd.md 已改动）"
+    status = str(review.get("status", "")).strip().lower()
+    if status == "clean":
+        return ""
+    if status == "blocked":
+        reason = str(review.get("reason", "")).strip() or "requirements review blocked"
+        return f"requirements adversarial review blocked：{reason}"
+    if status == "deferred":
+        reason = str(review.get("reason", "")).strip() or "requirements review deferred"
+        return f"requirements adversarial review deferred：{reason}"
+    return f"requirements adversarial review 状态非法：{status or '<missing>'}"
+
+
+def _requirements_review_status_mark(task_dir: str) -> str:
+    review = _requirements_review(task_dir)
+    if not review:
+        return "⬜ missing — 缺少 opposite-provider requirements adversarial review"
+    status = str(review.get("status", "")).strip().lower() or "missing"
+    fresh = "current" if review.get("artifact_digest") == _gate_digest(task_dir, "requirements") else "stale"
+    provider = review.get("provider", "?")
+    reason = str(review.get("reason", "")).strip()
+    suffix = f" — {reason}" if reason else ""
+    if status == "clean" and fresh == "current":
+        return f"✅ clean/current ({provider}){suffix}"
+    if status == "blocked" and fresh == "current":
+        return f"⚠️ blocked/current ({provider}){suffix}"
+    if status == "deferred" and fresh == "current":
+        return f"⚠️ deferred/current ({provider}){suffix}"
+    return f"⚠️ {status}/{fresh} ({provider}){suffix}"
+
+
+def _warn_requirements_review_before_confirm(task_dir: str) -> None:
+    problem = _requirements_review_problem(task_dir)
+    if not problem:
+        return
+    sys.stderr.write(
+        "[guru-gate:confirm] 警告：当前需求缺少 clean/current 的对抗审查证据；"
+        f"{problem}。\n"
+    )
+    sys.stderr.write(
+        "这不会硬阻断人工确认，但不得把 missing/deferred/blocked 当成 clean；"
+        "若要补齐审查，请先运行：\n"
+    )
+    sys.stderr.write(
+        f"  python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements {task_dir}\n"
+    )
+
+
 def cmd_status(task_dir_arg) -> int:
     task_dir = resolve_task_dir(task_dir_arg)
     if not task_dir:
@@ -1386,6 +1541,7 @@ def cmd_status(task_dir_arg) -> int:
         return BLOCK
     states = _gate_states(task_dir)
     print(f"任务：{task_dir}")
+    print(f"  Brainstorm Evidence — {_brainstorm_status_mark(task_dir)}")
     confirm_pending = []
     for g in HUMAN_GATES:
         s = states.get(g)
@@ -1405,6 +1561,8 @@ def cmd_status(task_dir_arg) -> int:
             confirm_pending.append(g)
             print(f"  ⬜ {GATE_LABEL[g]} Gate — 未确认")
 
+    print(f"  需求对抗 Review — {_requirements_review_status_mark(task_dir)}")
+
     review_pending = []
     for g in REVIEW_GATES:
         mark = _review_status_mark(task_dir, g)
@@ -1412,6 +1570,16 @@ def cmd_status(task_dir_arg) -> int:
         print(f"  {GATE_LABEL[g]} Review — {mark}{audit_mark} ｜ legacy {_grill_status_mark(task_dir, g)}")
         if not _review_state(task_dir, g)["ready"]:
             review_pending.append(g)
+
+    skips = [skip for skip in _adversarial_skips(task_dir) if isinstance(skip, dict)]
+    if skips:
+        print("  ⚠️ 对抗审查跳过记录：")
+        for skip in skips[-3:]:
+            action = skip.get("action", "?")
+            provider = skip.get("provider", "?")
+            reason = skip.get("reason", "?")
+            timestamp = skip.get("timestamp", "?")
+            print(f"    - {timestamp} {action}/{provider}: {reason}")
 
     if "requirements" in confirm_pending:
         print("下一步：完成需求 review 后，由用户本人在终端运行：")

@@ -62,6 +62,10 @@ grep -q "SENTINEL_KEEP_ME" "$T1/.trellis/spec/conventions/project-conventions.md
   && ok "场景1 project-conventions.md 未被覆盖" || bad "场景1 项目约定被覆盖！"
 
 grep -q "before_start" "$T1/.trellis/config.yaml" && ok "场景1 config.yaml before_start 接线" || bad "场景1 config 缺 before_start"
+grep -qx ".claude/projects/" "$T1/.gitignore" \
+  && grep -qx ".codex/sessions/" "$T1/.gitignore" \
+  && grep -qx ".trellis/channels/" "$T1/.gitignore" \
+  && ok "场景1 本地 AI/Trellis 运行日志写入 .gitignore" || bad "场景1 .gitignore 缺本地运行日志规则"
 
 # 幂等：第二遍跑完无任何文件变化
 snapshot() { # 可移植目录快照（macOS 无 sha256sum、Linux 无 md5 -q，统一用 python）

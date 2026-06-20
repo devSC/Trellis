@@ -180,6 +180,15 @@ def _default_prd_content(title: str, description: str | None = None) -> str:
 
 - [ ] TBD
 
+## Brainstorm Evidence
+
+- Skill loaded: pending
+- Repository evidence inspected: pending
+- Domain/terminology triggers: pending
+- Current code vs user intent conflicts: pending
+- Product decisions confirmed: pending
+- Open product/scope/risk questions: pending
+
 ## Notes
 
 - Keep `prd.md` focused on requirements, constraints, and acceptance criteria.
@@ -349,8 +358,9 @@ def cmd_create(args: argparse.Namespace) -> int:
 
     print(colored(f"Created task: {dir_name}", Colors.GREEN), file=sys.stderr)
     print("", file=sys.stderr)
-    print(colored("Next steps:", Colors.BLUE), file=sys.stderr)
-    print("  - Fill prd.md with requirements and acceptance criteria", file=sys.stderr)
+    print(colored("Next required step:", Colors.BLUE), file=sys.stderr)
+    print("  - Load trellis-brainstorm and update prd.md before design.md or implement.md.", file=sys.stderr)
+    print("  - Inspect repository evidence first; if a user decision remains, ask one product/scope/risk question next.", file=sys.stderr)
     print("  - Lightweight task: PRD-only is valid", file=sys.stderr)
     print("  - Complex task: add design.md and implement.md before task.py start", file=sys.stderr)
     if seeded_jsonl:
