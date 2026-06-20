@@ -292,15 +292,20 @@ guru
     "--with-gitnexus",
     "Run GitNexus analysis and write target AGENTS.md GitNexus instructions",
   )
+  .option(
+    "--adversarial-enabled <true|false>",
+    "Set guru.supervision.adversarial_enabled during install",
+  )
   .action(
     async (
       platform: string,
       target: string,
-      options: { withGitnexus?: boolean },
+      options: { withGitnexus?: boolean; adversarialEnabled?: string },
     ) => {
       try {
         await applyGuruOverlay(platform, target, {
           withGitnexus: options.withGitnexus,
+          adversarialEnabled: options.adversarialEnabled,
         });
       } catch (error) {
         console.error(

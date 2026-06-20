@@ -20,6 +20,7 @@ DEFAULTS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("guru", "supervision", "implement_timeout"), "45m"),
     (("guru", "supervision", "check_timeout"), "30m"),
     (("guru", "supervision", "warn_before"), "5m"),
+    (("guru", "supervision", "adversarial_enabled"), "true"),
     (("guru", "supervision", "adversarial_claude_model"), "claude-sonnet-4-6"),
     (("guru", "supervision", "adversarial_codex_model"), "gpt-5.4"),
     (("guru", "supervision", "adversarial_codex_reasoning_effort"), "high"),
@@ -30,6 +31,8 @@ LEGACY_DEFAULTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
         ("claude-sonnet-4.8", "claude-sonnet-4.6"),
     ),
 )
+BOOLEAN_TRUE = {"1", "true", "yes", "on"}
+BOOLEAN_FALSE = {"0", "false", "no", "off"}
 
 KEY_RE = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z0-9_-]+)\s*:\s*(?P<value>.*)$")
 
@@ -95,6 +98,15 @@ def _legacy_default_values(path: tuple[str, ...]) -> tuple[str, ...]:
         if legacy_path == path:
             return values
     return ()
+
+
+def _config_bool_string(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in BOOLEAN_TRUE:
+        return "true"
+    if normalized in BOOLEAN_FALSE:
+        return "false"
+    raise ConfigPatchError("adversarial-enabled must be true or false")
 
 
 def _find_key(lines: Sequence[str], path: tuple[str, ...]) -> ParsedKey | None:
@@ -199,7 +211,34 @@ def _ensure_scalar(
     actions.append(f"set {dotted}={value}")
 
 
-def patch_config_text(text: str, platform: str) -> tuple[str, PatchResult]:
+def _set_scalar(
+    lines: list[str],
+    path: tuple[str, ...],
+    value: str,
+    actions: list[str],
+) -> None:
+    existing = _find_key(lines, path)
+    dotted = ".".join(path)
+    if existing is not None:
+        lines[existing.index] = f"{' ' * existing.indent}{path[-1]}: {value}"
+        actions.append(f"set {dotted}={value}")
+        return
+
+    if len(path) == 1:
+        _append_top_level(lines, f"{path[-1]}: {value}")
+    else:
+        parent = _ensure_mapping(lines, path[:-1], actions)
+        indent = parent.indent + 2
+        insert_at = _section_end(lines, parent)
+        lines.insert(insert_at, f"{' ' * indent}{path[-1]}: {value}")
+    actions.append(f"set {dotted}={value}")
+
+
+def patch_config_text(
+    text: str,
+    platform: str,
+    adversarial_enabled: str | None = None,
+) -> tuple[str, PatchResult]:
     if platform not in VALID_PLATFORMS:
         allowed = "|".join(sorted(VALID_PLATFORMS))
         raise ConfigPatchError(f"unknown platform {platform!r}; expected {allowed}")
@@ -219,6 +258,13 @@ def patch_config_text(text: str, platform: str) -> tuple[str, PatchResult]:
         warnings,
         warn_if_different=True,
     )
+    if adversarial_enabled is not None:
+        _set_scalar(
+            lines,
+            ("guru", "supervision", "adversarial_enabled"),
+            _config_bool_string(adversarial_enabled),
+            actions,
+        )
 
     patched = "\n".join(lines).rstrip() + "\n"
     return patched, PatchResult(changed=patched != text, actions=actions, warnings=warnings)
@@ -232,7 +278,11 @@ def ensure_supervision_defaults(args: argparse.Namespace) -> int:
         else root / ".trellis" / "config.yaml"
     )
     original = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
-    patched, result = patch_config_text(original, args.platform)
+    patched, result = patch_config_text(
+        original,
+        args.platform,
+        args.adversarial_enabled,
+    )
 
     for action in result.actions:
         print(f"  {action}")
@@ -270,6 +320,11 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         choices=sorted(VALID_PLATFORMS),
         help="Guru platform for guru.platform when missing",
+    )
+    ensure.add_argument(
+        "--adversarial-enabled",
+        choices=sorted(BOOLEAN_TRUE | BOOLEAN_FALSE),
+        help="override guru.supervision.adversarial_enabled",
     )
     ensure.add_argument("--dry-run", action="store_true")
     ensure.set_defaults(func=ensure_supervision_defaults)

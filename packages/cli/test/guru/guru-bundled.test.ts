@@ -257,7 +257,7 @@ describe("bundled multi-platform guru spec packages", () => {
 });
 
 describe("bundled guru overlay", () => {
-  it("exposes opt-in GitNexus bootstrap through guru apply", () => {
+  it("exposes Guru apply install-time switches", () => {
     const cliSource = fs.readFileSync(
       path.resolve(
         path.dirname(fileURLToPath(import.meta.url)),
@@ -274,9 +274,13 @@ describe("bundled guru overlay", () => {
     );
 
     expect(cliSource).toContain("--with-gitnexus");
+    expect(cliSource).toContain("--adversarial-enabled");
     expect(cliSource).toContain("withGitnexus");
+    expect(cliSource).toContain("adversarialEnabled");
     expect(guruSource).toContain("GURU_WITH_GITNEXUS");
+    expect(guruSource).toContain("GURU_ADVERSARIAL_ENABLED");
     expect(readOverlayFile("apply.sh")).toContain("GURU_WITH_GITNEXUS");
+    expect(readOverlayFile("apply.sh")).toContain("GURU_ADVERSARIAL_ENABLED");
   });
 
   it("packs the Guru command and overlay files into the npm tarball", () => {
@@ -400,6 +404,26 @@ describe("bundled guru overlay", () => {
         ],
         { cwd: tmpDir, encoding: "utf8" },
       );
+
+      execFileSync(
+        process.execPath,
+        [
+          DIST_CLI,
+          "guru",
+          "apply",
+          "h5",
+          tmpDir,
+          "--adversarial-enabled",
+          "false",
+        ],
+        {
+          cwd: tmpDir,
+          encoding: "utf8",
+        },
+      );
+      expect(
+        fs.readFileSync(path.join(tmpDir, ".trellis/config.yaml"), "utf8"),
+      ).toContain("adversarial_enabled: false");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -793,7 +817,7 @@ describe("guru_config_patch.py", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  function runPatch(platform: string): void {
+  function runPatch(platform: string, extraArgs: string[] = []): void {
     execFileSync(
       python,
       [
@@ -803,6 +827,7 @@ describe("guru_config_patch.py", () => {
         tmpDir,
         "--platform",
         platform,
+        ...extraArgs,
       ],
       { encoding: "utf8", env: PYTHON_NO_BYTECODE_ENV },
     );
@@ -830,6 +855,7 @@ describe("guru_config_patch.py", () => {
     implement_timeout: 45m
     check_timeout: 30m
     warn_before: 5m
+    adversarial_enabled: true
     adversarial_claude_model: claude-sonnet-4-6
     adversarial_codex_model: gpt-5.4
     adversarial_codex_reasoning_effort: high
@@ -870,9 +896,47 @@ guru:
     expect(once).toContain("implement_timeout: 90m");
     expect(once).toContain("check_timeout: 30m");
     expect(once).toContain("warn_before: 5m");
+    expect(once).toContain("adversarial_enabled: true");
     expect(once).toContain("adversarial_claude_model: custom-claude");
     expect(once).toContain("adversarial_codex_model: gpt-5.4");
     expect(once).toContain("adversarial_codex_reasoning_effort: max");
+  });
+
+  it("preserves explicit adversarial disable switches", () => {
+    const configPath = path.join(tmpDir, ".trellis", "config.yaml");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      `guru:
+  supervision:
+    adversarial_enabled: false
+`,
+      "utf8",
+    );
+
+    runPatch("go");
+    const once = configText();
+    runPatch("go");
+
+    expect(configText()).toBe(once);
+    expect(once).toContain("adversarial_enabled: false");
+  });
+
+  it("overrides adversarial switch when requested by install", () => {
+    const configPath = path.join(tmpDir, ".trellis", "config.yaml");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      `guru:
+  supervision:
+    adversarial_enabled: true
+`,
+      "utf8",
+    );
+
+    runPatch("go", ["--adversarial-enabled", "false"]);
+
+    expect(configText()).toContain("adversarial_enabled: false");
   });
 
   it("upgrades legacy adversarial Claude defaults without replacing custom models", () => {
@@ -1111,6 +1175,22 @@ else
   echo "unexpected fake trellis args: $*" >&2
   exit 2
 fi
+`,
+      "utf8",
+    );
+    fs.chmodSync(fake, 0o755);
+    return fake;
+  }
+
+  function writeForbiddenTrellis(): string {
+    const fake = path.join(tmpDir, "fake-forbidden-trellis.sh");
+    const log = path.join(tmpDir, "forbidden-trellis.log");
+    fs.writeFileSync(
+      fake,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "${log}"
+exit 9
 `,
       "utf8",
     );
@@ -1464,7 +1544,7 @@ fi
 
     const task = JSON.parse(
       fs.readFileSync(path.join(taskDir, "task.json"), "utf8"),
-    ) as { guru_gates?: { adversarial_skips?: Array<Record<string, string>> } };
+    ) as { guru_gates?: { adversarial_skips?: Record<string, string>[] } };
     const skips = task.guru_gates?.adversarial_skips ?? [];
     expect(skips).toHaveLength(2);
     expect(skips[0]).toMatchObject({
@@ -1482,6 +1562,64 @@ fi
     expect(statusOutput).toContain("对抗审查跳过记录");
     expect(statusOutput).toContain("requirements/claude");
     expect(statusOutput).toContain("worker terminal status was error");
+  });
+
+  it("skips disabled adversarial reviews before creating trellis channels", () => {
+    const configPath = path.join(tmpDir, ".trellis", "config.yaml");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      `guru:
+  platform: go
+  supervision:
+    adversarial_enabled: false
+`,
+      "utf8",
+    );
+    writeSkill(".agents/skills/requirement-review/SKILL.md");
+    const taskDir = writeTask("task-adversarial-disabled");
+    const forbiddenTrellis = writeForbiddenTrellis();
+
+    expect(() =>
+      runSupervisor([
+        "--trellis-bin",
+        forbiddenTrellis,
+        "--provider",
+        "codex",
+        "--adversarial",
+        "requirements",
+        taskDir,
+        "--run-id",
+        "disabled1",
+      ]),
+    ).not.toThrow();
+    expect(fs.existsSync(path.join(tmpDir, "forbidden-trellis.log"))).toBe(
+      false,
+    );
+
+    const task = JSON.parse(
+      fs.readFileSync(path.join(taskDir, "task.json"), "utf8"),
+    ) as {
+      guru_gates?: {
+        adversarial_skips?: Record<string, string>[];
+        requirements_review?: Record<string, string | boolean>;
+      };
+    };
+    expect(task.guru_gates?.adversarial_skips?.[0]).toMatchObject({
+      action: "requirements",
+      provider: "claude",
+      current_provider: "codex",
+      reason: "disabled by guru.supervision.adversarial_enabled=false",
+    });
+    expect(task.guru_gates?.requirements_review).toMatchObject({
+      action: "requirements",
+      provider: "claude",
+      current_provider: "codex",
+      adversarial: true,
+      status: "deferred",
+      reason: "disabled by guru.supervision.adversarial_enabled=false",
+      run_id: "disabled1",
+    });
   });
 
   it("persists requirements adversarial clean and blocked verdicts", () => {

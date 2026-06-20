@@ -16,6 +16,7 @@ TARGET="${1:?用法: apply.sh <目标项目路径>}"
 TARGET="$(cd "$TARGET" && pwd)"
 [ -d "$TARGET/.trellis" ] || { echo "ERROR: $TARGET 不是 Trellis 项目（缺 .trellis/），先 trellis init"; exit 1; }
 GURU_WITH_GITNEXUS="${GURU_WITH_GITNEXUS:-0}"
+GURU_ADVERSARIAL_ENABLED="${GURU_ADVERSARIAL_ENABLED:-}"
 
 # 平台选择（第二位置参数，默认 flutter）：决定 spec 包 / workflow / verify analyze 命令。
 PLATFORM="${2:-flutter}"
@@ -503,9 +504,11 @@ else
 fi
 
 # 7) Guru official supervision defaults (child-key merge, no user-value overwrite)
-python3 "$TARGET/.trellis/scripts/guru/guru_config_patch.py" ensure-supervision-defaults \
-  --root "$TARGET" \
-  --platform "$PLATFORM"
+CONFIG_PATCH_ARGS=(ensure-supervision-defaults --root "$TARGET" --platform "$PLATFORM")
+if [ -n "$GURU_ADVERSARIAL_ENABLED" ]; then
+  CONFIG_PATCH_ARGS+=(--adversarial-enabled "$GURU_ADVERSARIAL_ENABLED")
+fi
+python3 "$TARGET/.trellis/scripts/guru/guru_config_patch.py" "${CONFIG_PATCH_ARGS[@]}"
 
 # 7.1) config 合并（幂等：marker 检测）
 python3 - "$TARGET" "$ANALYZE_CMD" <<'PYEOF'

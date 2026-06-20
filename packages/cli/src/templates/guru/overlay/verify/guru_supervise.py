@@ -143,6 +143,7 @@ class SupervisionConfig:
     current_provider: str
     provider: str
     adversarial: bool
+    adversarial_enabled: bool
     implement_timeout: str
     check_timeout: str
     warn_before: str
@@ -217,6 +218,13 @@ def _config_value(root: Path, path: tuple[str, ...]) -> str | None:
         if not _has_scalar(raw_value):
             stack.append((indent, key))
     return None
+
+
+def _config_bool(root: Path, path: tuple[str, ...], default: bool) -> bool:
+    value = _config_value(root, path)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _find_repo_root(start: Path) -> Path:
@@ -404,6 +412,11 @@ def _load_config(
         current_provider=current_provider,
         provider=spawned_provider,
         adversarial=adversarial,
+        adversarial_enabled=_config_bool(
+            root,
+            ("guru", "supervision", "adversarial_enabled"),
+            True,
+        ),
         implement_timeout=_config_value(
             root, ("guru", "supervision", "implement_timeout")
         )
@@ -929,6 +942,14 @@ def run_action(args: argparse.Namespace, action: str) -> int:
     if args.dry_run:
         _print_dry_run(plan)
         return 0
+
+    if config.adversarial and not config.adversarial_enabled:
+        rc, _terminal, _messages = _skip_adversarial(
+            plan,
+            config,
+            "disabled by guru.supervision.adversarial_enabled=false",
+        )
+        return rc
 
     rc, _terminal, _messages = _execute_plan(plan, config)
     return rc

@@ -9,6 +9,7 @@ export type GuruPlatform = "flutter" | "go" | "ios" | "h5";
 
 export interface GuruApplyOptions {
   withGitnexus?: boolean;
+  adversarialEnabled?: string;
 }
 
 const GURU_TEMPLATE_PLATFORMS: Record<string, GuruPlatform> = {
@@ -27,6 +28,15 @@ const GURU_WORKFLOW_PLATFORMS: Record<string, GuruPlatform> = {
 
 function isGuruPlatform(value: string): value is GuruPlatform {
   return ["flutter", "go", "ios", "h5"].includes(value);
+}
+
+function normalizeOptionalBoolean(value?: string): string | undefined {
+  if (value === undefined) return undefined;
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return "true";
+  if (["0", "false", "no", "off"].includes(normalized)) return "false";
+  throw new Error("--adversarial-enabled must be true or false");
 }
 
 export function inferGuruPlatform(
@@ -58,6 +68,9 @@ export async function applyGuruOverlay(
   if (!fs.existsSync(applyScript)) {
     throw new Error(`Guru overlay installer not found: ${applyScript}`);
   }
+  const adversarialEnabled = normalizeOptionalBoolean(
+    options.adversarialEnabled,
+  );
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn("bash", [applyScript, path.resolve(target), platform], {
@@ -65,6 +78,7 @@ export async function applyGuruOverlay(
       env: {
         ...process.env,
         GURU_WITH_GITNEXUS: options.withGitnexus ? "1" : "0",
+        GURU_ADVERSARIAL_ENABLED: adversarialEnabled ?? "",
       },
     });
     child.on("error", reject);
