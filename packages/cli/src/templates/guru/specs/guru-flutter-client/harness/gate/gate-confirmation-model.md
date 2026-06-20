@@ -30,6 +30,8 @@ overview writing -> overview review/fix loop -> two clean current-digest reviews
 detail writing -> detail review/fix loop -> two clean current-digest reviews (one adversarial opposite-provider clean) -> guru_gate.py confirm detail
 ```
 
+`guru.supervision.adversarial_enabled: false` 可临时关闭 `guru_supervise.py --adversarial ...` 的 opposite-provider worker；关闭后 requirements review 记录为 `deferred`，overview/detail 不会得到 adversarial clean 证据，`status`/`check` 仍按缺口提示。
+
 `confirm overview` 不是正常路径，必须失败并提示改用 `record-review overview`。
 
 ## 3. 人工确认边界

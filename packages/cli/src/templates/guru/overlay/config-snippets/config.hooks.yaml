@@ -3,6 +3,7 @@
 #   guru:
 #     gate_mode: soft   # strict（默认）=用户终端 TTY；soft=对话确认后 agent --via-agent 代跑
 #     supervision:
+#       adversarial_enabled: true  # false=即使命令传 --adversarial 也不启动 opposite-provider worker；不会产生 clean 证据
 #       adversarial_claude_model: claude-sonnet-4-6
 #       adversarial_codex_model: gpt-5.4
 #       adversarial_codex_reasoning_effort: high

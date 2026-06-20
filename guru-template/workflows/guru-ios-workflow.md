@@ -32,6 +32,7 @@
   - `requirements`：结构 Gate 通过后，先运行 `python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements <task_dir>` 做 opposite-provider 需求 review；`route_class=REQ_BLOCKER` 回需求修订并使下游 overview/detail 证据在需求 digest 变化后重跑，`review_result=clean/requirements-ready` 后才停下等待用户运行 `guru_gate.py confirm requirements <task_dir>`。requirements review 不使用 review-evidence Gate、不写 review_runs，且不改变 `guru_gate.py confirm requirements` 语义；需求发现阶段内置 Domain Grill，不再要求 post-draft grill Gate。
   - `overview`：结构 Gate 通过 + 当前 digest 下两个不同 `run_id` 的 clean review（至少一条 reviewer 含 `adversarial`，通常由 `guru_supervise.py --adversarial overview` 的 opposite provider 记录）后自动通过；`confirm overview` 必须失败。
   - `detail`：结构 Gate 通过 + 当前 digest 下两个不同 `run_id` 的 clean review（至少一条 reviewer 含 `adversarial`，通常由 `guru_supervise.py --adversarial detail` 的 opposite provider 记录）后，用户运行 `guru_gate.py confirm detail <task_dir>`。
+  - 配置 `guru.supervision.adversarial_enabled: false` 可临时关闭 `--adversarial` 的 opposite-provider worker；它只记录 skip/deferred，不产生 clean 证据，overview/detail 仍需 review evidence。
   - **strict（默认）**：用户本人在交互式终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm requirements|detail`；agent 经工具运行因无 TTY 被拒。
   - **soft**：用户在对话中明确确认后，agent 运行 `guru_gate.py confirm requirements|detail --via-agent --user-quote "<用户确认原话>"` 代跑（`--user-quote` 必填，留痕标注 soft/agent + 用户原话）；**未获用户本轮明确确认不得执行**。
   - 进度用 `guru_gate.py status <task_dir>` 查；最终以 `guru_gate.py check <task_dir>` 作为 `task.py start` 前强制复查。
