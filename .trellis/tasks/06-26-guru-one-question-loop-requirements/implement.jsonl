@@ -1,0 +1,7 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/cli/backend/index.md", "reason": "CLI/backend conventions for Trellis workflow, template, and gate changes"}
+{"file": ".trellis/spec/cli/backend/workflow-state-contract.md", "reason": "Workflow-state breadcrumb contract touched by one-question planning rules"}
+{"file": ".trellis/spec/cli/backend/platform-integration.md", "reason": "Platform skill/template integration conventions for generated Trellis files"}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Python script conventions for guru_gate.py changes"}
+{"file": ".trellis/spec/cli/unit-test/index.md", "reason": "Unit-test conventions for gate and template regression coverage"}
+{"file": ".trellis/spec/guides/cross-platform-thinking-guide.md", "reason": "Keep local overlay and generated platform templates aligned"}

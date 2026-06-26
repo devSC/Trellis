@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "Quality review rules for CLI/backend changes"}
+{"file": ".trellis/spec/cli/backend/workflow-state-contract.md", "reason": "Verify breadcrumb and planning-state contract compliance"}
+{"file": ".trellis/spec/cli/unit-test/index.md", "reason": "Verify gate and template regression tests follow CLI test conventions"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Review workflow, skill, gate, and template changes for cross-layer consistency"}
+{"file": ".trellis/spec/guides/cross-platform-thinking-guide.md", "reason": "Verify overlay/template parity across generated platform surfaces"}
