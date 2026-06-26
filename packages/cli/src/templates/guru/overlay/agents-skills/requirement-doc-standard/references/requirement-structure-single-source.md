@@ -240,9 +240,12 @@ API 必要步骤判定（适用于 `requirement-api.md` 主定义）：
 
 - 初版时间位置：完成文档骨架后，在 `requirement-main.md` 第一章内先完成 `1.1`~`1.4` 的全量场景清单，再基于该清单产出候选池与正式核心能力清单。
 - `1.6 场景编号与接口意图追踪` 在阶段 0 只建立 `REQ-UC-XXX` 与入口类型占位，可标记“API 待判定 / CLI 待判定 / 无接口入口 / 无命令入口”；不得在 API/CLI 主定义完成前强行生成最终 `API-INTENT-XXX` 或 `CLI-INTENT-XXX`。
-- 阶段 0 默认采用 `AI 草拟 -> 用户校准 -> 用户拍板` 的写作合同：AI 可先产出 `confirmation_status=ai_drafted`；证据齐全且无高风险待确认问题时可标记为 `evidence_ready`；只有用户明确拍板后，才可写为 `user_confirmed` 或 `user_confirmed_with_edits`。
+- 阶段 0 默认采用 `AI 草拟 -> 用户校准 -> 用户拍板` 的写作合同：AI 可先产出 `confirmation_status=ai_drafted`；证据齐全且无高风险待确认问题时可标记为 `evidence_ready`。`evidence_ready` 只表示 AI 证据已收敛，不是用户确认，不得在 `continue` 或阶段推进中被静默升级为 `user_confirmed*`。
+- `requirement-writing` 只能生成需求包草稿、证据、`ai_drafted` / `evidence_ready` 状态和 `open_questions`；不得替用户拍板，不得把需要用户确认的 P0/P1、范围、验收、合规、API/数据合同、付费、账号或安全决策写成 `user_confirmed*`。
+- 只有用户在当前轮明确回答对应 OQ / decision，或当前轮明确引用已有 `confirmed_ref` 并确认沿用后，才可写为 `user_confirmed` 或 `user_confirmed_with_edits`；每条 confirmed decision 的同一条目或直接子块必须至少包含 `user_quote` 或 `confirmed_ref`。
 - `requirement-review` 只检查 `confirmation_status` 与 `open_questions` 是否满足进入概要设计的条件，不替代用户完成业务确认。
-- 用户确认问题应压缩到 `1~4` 个关键问题。
+- 用户确认默认采用 one-question loop：一次只问 1 个最高优先级高风险问题，包含决策点、影响、推荐答案和取舍；用户答复后先回写需求包 / `prd.md`，再继续下一个问题。
+- 只有当用户当前消息明确要求“批量确认”“一次性确认”“这几个都按推荐处理”等覆盖多个 OQ / decision id 时，才可一次列出 2~4 个问题并逐项记录回答。未被明确覆盖的问题继续保留 open；模糊“继续”“好”“按推荐”不得推断为批量确认，必须回退为单个 `next_question`。
 - 阶段 0 初版至少要产出标准包 `5.2` 规定的三部分内容：全量场景清单、候选池与取舍记录、正式核心能力清单。
 - 未完成阶段 0 初版收敛前，不得进入第二章及后续详细展开。
 - 第二章及后续页面/API/CLI/非功能细化过程中，若新增 `REQ-UC`、改变关键行为链、发现新的系统难点或证伪已选核心能力，必须回写候选池与正式核心能力清单；这属于阶段 0 校正，不视为流程倒退。
@@ -264,11 +267,12 @@ API 必要步骤判定（适用于 `requirement-api.md` 主定义）：
 ### 7.3 阶段切换与轻量确认
 
 - 阶段写作默认由 `requirement-writing` 先执行内置轻量自检，不额外调用 `$requirement-review`。
-- 仅当存在高风险未决项时才暂停，并向用户提出 `1~4` 个关键问题：
+- 仅当存在高风险未决项时才暂停，并按 one-question loop 向用户提出 1 个最高优先级关键问题：
   - 核心能力入选/落选难以判断；
   - API/CLI 适用性无法从现有范围直接判定；
   - 验收口径、边界条件或编号映射存在明显分叉风险；
   - 继续推进会高概率造成后续大面积返工。
+- 若用户当前消息明确要求批量确认，可列出 2~4 个问题；每个被标记 confirmed 的 OQ / decision 必须记录覆盖它的 `user_quote` 或 `confirmed_ref`，以及被覆盖的具体 OQ id / decision id。
 - 若不存在上述高风险未决项，允许连续推进到下一阶段，不机械逐阶段等待确认。
 
 ## 8. 固定阶段流程

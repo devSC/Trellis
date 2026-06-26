@@ -191,6 +191,8 @@ Complex task: ask the user if you can create a Trellis task and enter the planni
 
 [workflow-state:planning]
 Load `trellis-brainstorm`; stay in planning.
+High-risk product/scope/risk decisions use one-question loop: ask exactly one highest-priority question with a recommended answer and trade-off, wait for the user answer, then update `prd.md` / requirements before asking the next.
+For Guru full chain, requirement-writing may draft evidence and requirements, but it must not mark decisions `user_confirmed*` or collapse high-risk OQs into confirmation unless the current user turn explicitly confirms them.
 Lightweight: `prd.md` can be enough. Complex: finish `prd.md`, `design.md`, and `implement.md`; ask for review before `task.py start`.
 Multi-deliverable scope: consider a parent task plus independently verifiable child tasks; dependencies must be written in child artifacts, not implied by tree position.
 Sub-agent mode: curate `implement.jsonl` and `check.jsonl` as spec/research manifests before start.
@@ -204,6 +206,8 @@ Sub-agent mode: curate `implement.jsonl` and `check.jsonl` as spec/research mani
 
 [workflow-state:planning-inline]
 Load `trellis-brainstorm`; stay in planning.
+High-risk product/scope/risk decisions use one-question loop: ask exactly one highest-priority question with a recommended answer and trade-off, wait for the user answer, then update `prd.md` / requirements before asking the next.
+For Guru full chain, requirement-writing may draft evidence and requirements, but it must not mark decisions `user_confirmed*` or collapse high-risk OQs into confirmation unless the current user turn explicitly confirms them.
 Lightweight: `prd.md` can be enough. Complex: finish `prd.md`, `design.md`, and `implement.md`; ask for review before `task.py start`.
 Multi-deliverable scope: consider a parent task plus independently verifiable child tasks; dependencies must be written in child artifacts, not implied by tree position.
 Inline mode: skip jsonl curation; Phase 2 reads artifacts/specs via `trellis-before-dev`.
@@ -335,6 +339,7 @@ The brainstorm skill will guide you to:
 - Prefer researching over asking the user
 - Prefer offering options over open-ended questions
 - Update `prd.md` immediately after each user answer
+- Treat high-risk product/scope/risk decisions as one-question loop work: one highest-priority question per turn, recommendation and trade-off included, then update artifacts after the answer
 - Split large scopes into a parent task plus child tasks when the deliverables can be verified independently
 - Keep `prd.md` focused on requirements and acceptance criteria
 - For complex tasks, produce `design.md` and `implement.md` before implementation starts

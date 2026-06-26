@@ -101,19 +101,19 @@ Phase 3: Finish  → 验证（swift build/test）→ 萃取回写 spec → commi
 - 1.7 完成判定
 
 [workflow-state:planning]
-无需求→1.1；无概要→1.3；无详细→1.4。Gate=req adversarial review+confirm→overview 双 clean(含 adversarial)→detail 双 clean(含 adversarial)+confirm；planning 默认 guru_supervise requirements/overview/detail；jsonl 齐后 start。
+无需求→1.1；高风险决策 one-question：每轮 1 问，答后回写 prd/需求包；requirement-writing 只草拟，不代确认。无概要→1.3；无详细→1.4。Gate=req review+confirm→overview/detail 双 clean(含 adversarial)→detail confirm；jsonl 齐后 start。
 [/workflow-state:planning]
 
 [workflow-state:planning-channel]
-无需求→1.1；无概要→1.3；无详细→1.4。Gate=req adversarial review+confirm→overview 双 clean(含 adversarial)→detail 双 clean(含 adversarial)+confirm；主会话跑 guru_supervise.py requirements/overview/detail/channel。
+无需求→1.1；高风险决策 one-question：每轮 1 问，答后回写 prd/需求包；requirement-writing 只草拟，不代确认。无概要→1.3；无详细→1.4。Gate=req review+confirm→overview/detail 双 clean(含 adversarial)→detail confirm；主会话跑 guru_supervise。
 [/workflow-state:planning-channel]
 
 [workflow-state:planning-sub-agent]
-无需求→1.1；无概要→1.3；无详细→1.4。Gate=req adversarial review+confirm→overview 双 clean(含 adversarial)→detail 双 clean(含 adversarial)+confirm；legacy sub-agent用Active task提示。
+无需求→1.1；高风险决策 one-question：每轮 1 问，答后回写 prd/需求包；requirement-writing 只草拟，不代确认。无概要→1.3；无详细→1.4。Gate=req review+confirm→overview/detail 双 clean(含 adversarial)→detail confirm；legacy sub-agent 用 Active task。
 [/workflow-state:planning-sub-agent]
 
 [workflow-state:planning-inline]
-无需求→1.1；无概要→1.3；无详细→1.4。Gate=req adversarial review+confirm→overview 双 clean(含 adversarial)→detail 双 clean(含 adversarial)+confirm；inline先trellis-before-dev。
+无需求→1.1；高风险决策 one-question：每轮 1 问，答后回写 prd/需求包；requirement-writing 只草拟，不代确认。无概要→1.3；无详细→1.4。Gate=req review+confirm→overview/detail 双 clean(含 adversarial)→detail confirm；inline 先 trellis-before-dev。
 [/workflow-state:planning-inline]
 
 ### Phase 2: Execute（实现阶段）
@@ -213,9 +213,9 @@ after_create 钩子默认写入 `guru_chain: full`；按 Request Triage 判定�
 
 #### 1.1 需求阶段 `[required · repeatable]`
 
-**full 链**：先加载 `requirement-writing`（guru-ai-guides，硬前置=其标准包 requirement-doc-standard 可读，缺即停）撰写/补齐**正式需求包**（项目 docs 需求目录），全稿后加载 `requirement-review` 做门禁审核；review 通过后把行为规格抽取为任务内 `prd.md`（BHV 编号承接需求包场景）。`trellis-brainstorm` 仅作前置探索，不替代正式需求链。
+**full 链**：先加载 `requirement-writing`（guru-ai-guides，硬前置=其标准包 requirement-doc-standard 可读，缺即停）撰写/补齐**正式需求包草稿**（项目 docs 需求目录），全稿后加载 `requirement-review` 做门禁审核；review 通过后把行为规格抽取为任务内 `prd.md`（BHV 编号承接需求包场景）。`trellis-brainstorm` 的 one-question loop 仍是高风险产品/范围/风险确认合同；`requirement-writing` 只能生成 `ai_drafted` / `evidence_ready` / open questions，不得绕过用户逐项确认。
 **light 链**：加载 `trellis-brainstorm` 探索需求，直接产出 `prd.md`。
-两轨 `prd.md` 口径一致，**需求五要素**：① 行为规格（Given/When/Then，每条 `BHV-NNN` 标题）② 核心能力清单（P0/P1）③ 失败路径（含 `enum Error` 预期分支，如校验失败 / 持久化失败 / 网络失败）④ 验收场景（可被 `swift test` 断言的可验证信号）⑤ 显式未决问题（一次问用户 1~4 个，不私自拍板）。
+两轨 `prd.md` 口径一致，**需求五要素**：① 行为规格（Given/When/Then，每条 `BHV-NNN` 标题）② 核心能力清单（P0/P1）③ 失败路径（含 `enum Error` 预期分支，如校验失败 / 持久化失败 / 网络失败）④ 验收场景（可被 `swift test` 断言的可验证信号）⑤ 显式未决问题（默认一次只问用户 1 个最高优先级问题；仅当用户当前消息明确要求“批量确认/一次性确认/这几个都按推荐处理”等覆盖多个 OQ/decision id 时，才可列出 2~4 个并逐项记录确认；模糊“继续/好/按推荐”回退为单个 next_question，其余保持 open）。
 prd 草稿成形后执行 Domain Grill：对照 golden-path/项目约定/既有 BHV 磨术语、压测边界、核对当前代码事实与用户意图，确认的长期术语/边界才回写长期知识，临时需求决策写入 prd。
 **需求 Gate**：五要素缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），先运行 `python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements <task_dir>`。review 必须先查 `prd.md`、正式需求包、task context 与 repo evidence；medium+ 需求阻断输出 `route_class=REQ_BLOCKER` 并留在 1.1 修订，需求 digest 变更后下游 overview/detail 证据需重跑；低严重度措辞 nit 不阻断；clean 输出 `review_result=clean/requirements-ready`。requirements review 不使用 review-evidence Gate、不写 review_runs、不代替人工确认；clean 后停下等待 **confirm 人工收口**（通道按 gate_mode，见 Trellis System 节）；确认落盘后方可进 1.3。
 

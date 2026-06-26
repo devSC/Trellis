@@ -74,7 +74,10 @@ Given 网络异常 When 点击 Then 提示重试
 - Repository evidence inspected: fixture PRD/design/implement inspected
 - Domain/terminology triggers: none — no new terms or code/user-intent conflict in fixture
 - Current code vs user intent conflicts: none — fixture uses generated local artifacts only
-- Product decisions confirmed: fixture behavior and acceptance criteria confirmed
+- Product decisions confirmed:
+  - DEC-001: fixture behavior and acceptance criteria confirmed
+    - user_quote: "fixture confirms DEC-001"
+    - confirmed_ref: fixture-session DEC-001
 - Open product/scope/risk questions: none — fixture explicitly declares no unresolved questions
 EOF
   cat > "$d/design.md" <<'EOF'
@@ -418,6 +421,150 @@ BNOREASON="$TMP/bad-brainstorm-no-reason"; mkdir -p "$BNOREASON"; perl -pe 's#Do
 expect "requirements 负证据无原因被拦" 2 python3 "$GATE" requirements "$BNOREASON"
 BALIAS="$TMP/good-brainstorm-alias"; mkdir -p "$BALIAS"; perl -pe 's/Domain\/terminology triggers:/Domain Grill triggers:/' "$G/prd.md" > "$BALIAS/prd.md"
 expect "requirements 接受 Domain Grill triggers 兼容别名" 0 python3 "$GATE" requirements "$BALIAS"
+
+BNOQUOTE="$TMP/bad-brainstorm-decision-no-quote"; mkdir -p "$BNOQUOTE"; cp "$G/prd.md" "$BNOQUOTE/prd.md"
+python3 - "$BNOQUOTE/prd.md" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = s.replace('    - user_quote: "fixture confirms DEC-001"\n', '')
+s = s.replace('    - confirmed_ref: fixture-session DEC-001\n', '')
+open(p, "w", encoding="utf-8").write(s)
+PY
+expect "requirements positive Product decisions 缺 user_quote/confirmed_ref 被拦" 2 python3 "$GATE" requirements "$BNOQUOTE"
+
+BOQ="$TMP/bad-brainstorm-multiple-oq-no-next"; mkdir -p "$BOQ"; cp "$G/prd.md" "$BOQ/prd.md"
+python3 - "$BOQ/prd.md" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = s.replace(
+    "- Open product/scope/risk questions: none — fixture explicitly declares no unresolved questions\n",
+    "- Open product/scope/risk questions:\n"
+    "  - OQ-001: 是否调整 P0 范围\n"
+    "    - risk: changes launch scope\n"
+    "  - OQ-002: 是否调整验收口径\n"
+    "    - risk: changes acceptance\n",
+)
+open(p, "w", encoding="utf-8").write(s)
+PY
+expect "requirements 多个 OQ 缺单一 next_action 被拦" 2 python3 "$GATE" requirements "$BOQ"
+
+BOQOK="$TMP/good-brainstorm-multiple-oq-next"; mkdir -p "$BOQOK"; cp "$BOQ/prd.md" "$BOQOK/prd.md"
+cat >> "$BOQOK/prd.md" <<'EOF'
+  - next_question: OQ-001
+  - next_action: ask user one question; OQ-002 remains open
+EOF
+expect "requirements 多个 OQ 有单一 next_action 放行" 0 python3 "$GATE" requirements "$BOQOK"
+
+BUC="$TMP/bad-user-confirmed-no-evidence"; mkdir -p "$BUC"; cp "$G/prd.md" "$BUC/prd.md"
+cat >> "$BUC/prd.md" <<'EOF'
+
+## 核心能力确认
+- DEC-002:
+  - confirmation_status=user_confirmed
+EOF
+expect "requirements user_confirmed 缺确认引用被拦" 2 python3 "$GATE" requirements "$BUC"
+
+BTABLE="$TMP/bad-user-confirmed-table-no-evidence"; mkdir -p "$BTABLE"; cp "$G/prd.md" "$BTABLE/prd.md"
+cat >> "$BTABLE/prd.md" <<'EOF'
+
+## 核心能力表格确认
+| decision | confirmation_status |
+| --- | --- |
+| DEC-002 | user_confirmed |
+EOF
+expect "requirements 表格 user_confirmed 缺确认引用被拦" 2 python3 "$GATE" requirements "$BTABLE"
+
+BEV="$TMP/bad-evidence-ready-upgrade"; mkdir -p "$BEV"; cp "$G/prd.md" "$BEV/prd.md"
+cat >> "$BEV/prd.md" <<'EOF'
+
+## 核心能力确认
+- DEC-002:
+  - confirmation_status=evidence_ready
+  - user_quote: "historical quote"
+- DEC-003:
+  - confirmation_status=user_confirmed
+  - user_quote: "historical quote"
+EOF
+expect "requirements evidence_ready 静默升级 user_confirmed 被拦" 2 python3 "$GATE" requirements "$BEV"
+
+BEVTABLE="$TMP/bad-evidence-ready-table-upgrade"; mkdir -p "$BEVTABLE"; cp "$G/prd.md" "$BEVTABLE/prd.md"
+cat >> "$BEVTABLE/prd.md" <<'EOF'
+
+## 核心能力表格确认
+| decision | confirmation_status | user_quote |
+| --- | --- | --- |
+| DEC-002 | evidence_ready | historical quote |
+| DEC-003 | user_confirmed | historical quote |
+EOF
+expect "requirements 表格 evidence_ready 静默升级 user_confirmed 被拦" 2 python3 "$GATE" requirements "$BEVTABLE"
+
+BEVTABLEOK="$TMP/good-evidence-ready-table-current-turn"; mkdir -p "$BEVTABLEOK"; cp "$BEVTABLE/prd.md" "$BEVTABLEOK/prd.md"
+cat >> "$BEVTABLEOK/prd.md" <<'EOF'
+- current-turn-confirmation: DEC-003 confirmed by current user answer
+EOF
+expect "requirements 表格 user_confirmed 有引用和 current-turn 放行" 0 python3 "$GATE" requirements "$BEVTABLEOK"
+
+BEVOK="$TMP/good-evidence-ready-current-turn"; mkdir -p "$BEVOK"; cp "$BEV/prd.md" "$BEVOK/prd.md"
+cat >> "$BEVOK/prd.md" <<'EOF'
+- current-turn-confirmation: DEC-003 confirmed by current user answer
+EOF
+expect "requirements evidence_ready 有 current-turn-confirmation 放行" 0 python3 "$GATE" requirements "$BEVOK"
+
+BMIX="$TMP/good-independent-evidence-ready-and-confirmed"; mkdir -p "$BMIX"; cp "$G/prd.md" "$BMIX/prd.md"
+cat >> "$BMIX/prd.md" <<'EOF'
+
+## 核心能力确认
+- DEC-010:
+  - confirmation_status=evidence_ready
+  - user_quote: "repository evidence only"
+- DEC-011:
+  - confirmation_status=user_confirmed
+  - user_quote: "current user confirmed another decision"
+EOF
+expect "requirements 独立 evidence_ready 与 user_confirmed 混合状态放行" 0 python3 "$GATE" requirements "$BMIX"
+
+BST="$TMP/bad-stale-confirmation-continue"; mkdir -p "$BST"; cp "$G/prd.md" "$BST/prd.md"
+cat >> "$BST/prd.md" <<'EOF'
+
+## Continue planning state
+- DEC-004:
+  - confirmation_status=evidence_ready
+  - user_quote: "old confirmed quote"
+- DEC-005:
+  - confirmation_status=user_confirmed_with_edits
+  - user_quote: "old confirmed quote"
+EOF
+expect "requirements stale confirmation 不作 current-turn 放行" 2 python3 "$GATE" requirements "$BST"
+
+BBATCH="$TMP/good-explicit-batch-confirmation"; mkdir -p "$BBATCH"; cp "$G/prd.md" "$BBATCH/prd.md"
+cat >> "$BBATCH/prd.md" <<'EOF'
+
+## 批量确认记录
+- DEC-006:
+  - confirmation_status=user_confirmed
+  - user_quote: "批量确认 OQ-006/OQ-007 都按推荐处理"
+  - covered_oq: OQ-006
+- DEC-007:
+  - confirmation_status=user_confirmed
+  - user_quote: "批量确认 OQ-006/OQ-007 都按推荐处理"
+  - covered_oq: OQ-007
+EOF
+expect "requirements 显式批量确认逐项覆盖放行" 0 python3 "$GATE" requirements "$BBATCH"
+
+BVAGUE="$TMP/bad-vague-batch-confirmation"; mkdir -p "$BVAGUE"; cp "$G/prd.md" "$BVAGUE/prd.md"
+cat >> "$BVAGUE/prd.md" <<'EOF'
+
+## 批量确认记录
+- DEC-008:
+  - confirmation_status=user_confirmed
+  - user_quote: "好，批量确认"
+EOF
+expect "requirements 模糊批量确认缺 covered id 被拦" 2 python3 "$GATE" requirements "$BVAGUE"
+
+BNOLOG="$TMP/good-no-question-loop-log"; mkdir -p "$BNOLOG"; cp "$G/prd.md" "$BNOLOG/prd.md"
+expect "requirements 缺 Question loop log 但有最小确认引用放行" 0 python3 "$GATE" requirements "$BNOLOG"
 B2="$TMP/bad-ov"; mkdir -p "$B2"; cp "$G/prd.md" "$B2/"; sed 's/承接索引.*//' "$G/design.md" > "$B2/design.md"
 expect "overview 缺承接索引被拦" 2 python3 "$GATE" overview "$B2"
 
@@ -895,7 +1042,9 @@ y
 - Repository evidence inspected: fixture PRD inspected
 - Domain/terminology triggers: none — no new terms in fixture
 - Current code vs user intent conflicts: none — fixture is requirements-only
-- Product decisions confirmed: CJK-adjacent P0 parsing confirmed
+- Product decisions confirmed:
+  - DEC-001: CJK-adjacent P0 parsing confirmed
+    - user_quote: "fixture confirms CJK P0"
 - Open product/scope/risk questions: none — fixture declares no unresolved questions
 EOF
 expect "requirements：'优先级P0' CJK 紧贴被识别（#8）" 0 python3 "$GATE" requirements "$CJKP"

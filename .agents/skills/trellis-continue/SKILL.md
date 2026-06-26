@@ -30,6 +30,7 @@ Shows the Phase Index (Plan / Execute / Finish) with routing + skill mapping.
 `get_context.py` shows the active task's `status` field. Route by `status` + artifact presence. This command replaces the user needing to remember the Trellis flow; it does not itself approve implementation.
 
 - `status=planning` + no `prd.md` → **1.1** (load `trellis-brainstorm`)
+- `status=planning` + high-risk open product/scope/risk questions, or P0/P1 `confirmation_status=ai_drafted` / `confirmation_status=evidence_ready` → **1.1** one-question loop. Continue may enrich evidence, structure, or review notes, but must not promote to `user_confirmed*`, remove high-risk OQ, move to overview/detail/start, or reuse historical `user_quote` / `user_confirmed*` as current-turn approval. Ask exactly one highest-priority `next_question` unless the current user message explicitly requests batch confirmation and covers concrete OQ / decision ids; vague "continue/ok/use recommendation" replies fall back to one question.
 - `status=planning` + `prd.md` only → decide whether the task is lightweight or complex. Lightweight can move to **1.4** review; complex returns to **1.1** to add `design.md` + `implement.md`.
 - `status=planning` + complex artifacts complete + sub-agent jsonl not curated (only the seed `_example` row) → **1.3**
 - `status=planning` + required artifacts complete + required jsonl curated or inline mode → **1.4** (ask for start review; only run `task.py start` after user confirms)

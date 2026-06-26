@@ -111,6 +111,206 @@ BRAINSTORM_NEGATIVE_PREFIXES = (
     "不触发",
 )
 BRAINSTORM_RECOVERY = "load trellis-brainstorm, complete Domain Grill / one-question loop, then update prd.md"
+CONFIRMATION_HINT_RE = re.compile(r"\b(?:user_quote|confirmed_ref)\b\s*[:=：]", re.I)
+CURRENT_TURN_CONFIRMATION_RE = re.compile(r"\bcurrent[-_ ]turn[-_ ]confirmation\b\s*[:=：]", re.I)
+CONFIRMED_STATUS_RE = re.compile(r"(?<!`)\bconfirmation_status\s*[:=：]\s*user_confirmed(?:_with_edits)?\b", re.I)
+EVIDENCE_READY_STATUS_RE = re.compile(r"(?<!`)\bconfirmation_status\s*[:=：]\s*evidence_ready\b", re.I)
+OQ_ID_RE = re.compile(r"\bOQ-\d+\b", re.I)
+DECISION_ID_RE = re.compile(r"\b(?:DEC|REQ|BHV)-\d+\b", re.I)
+NEXT_ACTION_RE = re.compile(r"\b(?:next_question|next_action)\b|下一[个步]|下一问|one-question loop|保持\s*open", re.I)
+
+
+def _logical_blocks(section: str) -> list:
+    blocks = []
+    current = []
+    for raw_line in section.splitlines():
+        line = raw_line.rstrip()
+        if not line.strip():
+            if current:
+                current.append(line)
+            continue
+        starts_item = re.match(r"^\s*(?:[-*+]|\d+[.)])\s+", line)
+        is_nested = re.match(r"^\s{2,}(?:[-*+]|\d+[.)])\s+", line)
+        if starts_item and not is_nested and current:
+            blocks.append("\n".join(current).strip())
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        blocks.append("\n".join(current).strip())
+    return [b for b in blocks if b]
+
+
+def _unfenced_lines(text: str) -> list:
+    lines = []
+    in_fence = False
+    for raw_line in text.splitlines():
+        if re.match(r"^\s*```", raw_line):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            lines.append(raw_line)
+    return lines
+
+
+def _section_between_labels(section: str, label: str) -> str:
+    aliases = []
+    for known_label, known_aliases in BRAINSTORM_EVIDENCE_LABELS:
+        if known_label == label:
+            aliases = list(known_aliases)
+            break
+    if not aliases:
+        aliases = [label.lower()]
+    start = None
+    lines = section.splitlines()
+    for i, raw_line in enumerate(lines):
+        line = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s*", "", raw_line).strip().lower()
+        if any(line.startswith(alias) for alias in aliases):
+            start = i
+            break
+    if start is None:
+        return ""
+    end = len(lines)
+    other_aliases = []
+    for other_label, known_aliases in BRAINSTORM_EVIDENCE_LABELS:
+        if other_label != label:
+            other_aliases.extend(known_aliases)
+    other_aliases.append("question loop log")
+    for j in range(start + 1, len(lines)):
+        candidate = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s*", "", lines[j]).strip().lower()
+        if any(candidate.startswith(alias) for alias in other_aliases):
+            end = j
+            break
+    return "\n".join(lines[start:end]).strip()
+
+
+def _is_negative_evidence_value(value: str) -> bool:
+    normalized = value.strip().lower()
+    return normalized in BRAINSTORM_PLACEHOLDERS or normalized.startswith(BRAINSTORM_NEGATIVE_PREFIXES)
+
+
+def _positive_decision_blocks(product_block: str, value) -> list:
+    if value is None:
+        return []
+    has_child_decision = bool(re.search(r"\bDEC-\d+\b", product_block, re.I) or re.search(r"\bconfirmed\b|确认|拍板|决定", product_block, re.I))
+    if _is_negative_evidence_value(value) and not has_child_decision:
+        return []
+    blocks = _logical_blocks(product_block)
+    decision_blocks = [
+        block for block in blocks
+        if re.search(r"\bDEC-\d+\b", block, re.I) or re.search(r"\bconfirmed\b|确认|拍板|决定", block, re.I)
+    ]
+    if decision_blocks:
+        return decision_blocks
+    return [product_block] if product_block.strip() else [value]
+
+
+def _split_table_cells(line: str) -> list:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _is_table_separator(line: str) -> bool:
+    return bool(re.match(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$", line))
+
+
+def _table_rows_with_status(prd: str, status_re) -> list:
+    rows = []
+    header_cells = []
+    for line in _unfenced_lines(prd):
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            header_cells = []
+            continue
+        if _is_table_separator(stripped):
+            continue
+        cells = _split_table_cells(stripped)
+        if not header_cells:
+            header_cells = cells
+            continue
+        context = "\n".join((" | ".join(header_cells), stripped))
+        if not (
+            status_re.search(stripped) or (
+                re.search(r"\bconfirmation_status\b|\bstatus\b|确认状态", " | ".join(header_cells), re.I)
+                and status_re.search(context)
+            )
+        ):
+            continue
+        evidence = []
+        for index, name in enumerate(header_cells):
+            normalized = name.strip().lower().strip("`")
+            if normalized in {"user_quote", "confirmed_ref"} and index < len(cells) and cells[index].strip():
+                evidence.append(f"{normalized}: {cells[index].strip()}")
+        rows.append("\n".join([context, *evidence]))
+    return rows
+
+
+def _confirmation_blocks(prd: str) -> list:
+    blocks = [
+        block for block in _logical_blocks(prd)
+        if re.match(r"^\s*(?:[-*+]|\d+[.)])\s+", block) and CONFIRMED_STATUS_RE.search(block)
+    ]
+    blocks.extend(_table_rows_with_status(prd, re.compile(r"\buser_confirmed(?:_with_edits)?\b", re.I)))
+    return blocks
+
+
+def _evidence_ready_blocks(prd: str) -> list:
+    blocks = [
+        block for block in _logical_blocks(prd)
+        if re.match(r"^\s*(?:[-*+]|\d+[.)])\s+", block) and EVIDENCE_READY_STATUS_RE.search(block)
+    ]
+    blocks.extend(_table_rows_with_status(prd, re.compile(r"\bevidence_ready\b", re.I)))
+    return blocks
+
+
+def _user_quote_values(block: str) -> set:
+    values = set()
+    for match in re.finditer(r"\buser_quote\b\s*[:=：]\s*([\"“]?)(.+?)\1\s*$", block, re.I | re.M):
+        values.add(match.group(2).strip())
+    return values
+
+
+def _stale_confirmation_upgrade_detected(prd: str) -> bool:
+    evidence_blocks = _evidence_ready_blocks(prd)
+    confirmed_blocks = _confirmation_blocks(prd)
+    if any(CONFIRMED_STATUS_RE.search(block) for block in evidence_blocks):
+        return True
+    evidence_quotes = set()
+    for block in evidence_blocks:
+        evidence_quotes.update(_user_quote_values(block))
+    if not evidence_quotes:
+        return False
+    for block in confirmed_blocks:
+        if _user_quote_values(block) & evidence_quotes:
+            return True
+    return False
+
+
+def _has_batch_confirmation_marker(text: str) -> bool:
+    return bool(re.search(r"批量确认|一次性确认|这几个都按推荐|batch confirmation|covered_oq|covered_decision|covered_refs", text, re.I))
+
+
+def _batch_confirmation_problems(prd: str) -> list:
+    problems = []
+    blocks = _confirmation_blocks(prd)
+    if not _has_batch_confirmation_marker(prd):
+        quote_counts = {}
+        for block in blocks:
+            match = re.search(r"\buser_quote\b\s*[:=：]\s*([\"“]?)(.+?)\1\s*$", block, re.I | re.M)
+            if match:
+                quote = match.group(2).strip()
+                if quote in {"好", "继续", "按推荐", "ok", "OK"} or re.search(r"批量确认|一次性确认", quote):
+                    quote_counts[quote] = quote_counts.get(quote, 0) + 1
+        if not any(count > 1 for count in quote_counts.values()):
+            return problems
+    for block in blocks:
+        if not _has_batch_confirmation_marker(block) and not re.search(r"\buser_quote\b\s*[:=：]\s*[\"“]?(?:好|继续|按推荐|ok|OK|.*批量确认.*|.*一次性确认.*)", block):
+            continue
+        if not (OQ_ID_RE.search(block) or re.search(r"covered_(?:oq|decision|refs)", block, re.I)):
+            problems.append(
+                "Batch confirmation missing covered OQ/decision id on a confirmed decision; "
+                "vague batch acknowledgement must fall back to one `next_question`"
+            )
+    return problems
 
 
 def fail(gate: str, problems: list) -> int:
@@ -171,11 +371,45 @@ def _brainstorm_evidence_problems(prd: str) -> list:
         if value is None:
             problems.append(f"Brainstorm Evidence missing: {label}")
             continue
+        block = _section_between_labels(section, label)
+        has_child_content = bool(re.search(r"(?m)^\s{2,}(?:[-*+]|\d+[.)])\s+\S+", block))
         normalized = value.strip().lower()
-        if normalized in BRAINSTORM_PLACEHOLDERS:
+        if normalized in BRAINSTORM_PLACEHOLDERS and not has_child_content:
             problems.append(f"Brainstorm Evidence pending: {label}")
         elif not _negative_evidence_has_reason(value):
             problems.append(f"Brainstorm Evidence needs reason: {label}")
+
+    product_value = _brainstorm_line_value(section, ("product decisions confirmed",))
+    product_block = _section_between_labels(section, "Product decisions confirmed")
+    for block in _positive_decision_blocks(product_block, product_value):
+        if not CONFIRMATION_HINT_RE.search(block):
+            problems.append(
+                "Brainstorm Evidence Product decisions confirmed needs `user_quote` or "
+                "`confirmed_ref` on the same decision or direct child block"
+            )
+
+    oq_block = _section_between_labels(section, "Open product/scope/risk questions")
+    oq_count = len(set(m.group(0).upper() for m in OQ_ID_RE.finditer(oq_block)))
+    if oq_count >= 2 and not NEXT_ACTION_RE.search(oq_block):
+        problems.append(
+            "Brainstorm Evidence has multiple OQ entries; declare exactly one "
+            "`next_question` / `next_action` and keep the other OQs open"
+        )
+
+    for block in _confirmation_blocks(prd):
+        if not CONFIRMATION_HINT_RE.search(block):
+            problems.append(
+                "`confirmation_status=user_confirmed*` needs `user_quote` or "
+                "`confirmed_ref` in the same decision item or direct child block"
+            )
+
+    if _stale_confirmation_upgrade_detected(prd) and not CURRENT_TURN_CONFIRMATION_RE.search(prd):
+        problems.append(
+            "`confirmation_status=evidence_ready` cannot be silently upgraded to "
+            "`user_confirmed*`; record `current-turn-confirmation` for the specific decision"
+        )
+
+    problems.extend(_batch_confirmation_problems(prd))
     return problems
 
 
