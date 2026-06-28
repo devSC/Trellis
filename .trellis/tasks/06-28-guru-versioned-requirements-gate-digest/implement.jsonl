@@ -1,0 +1,3 @@
+{"file": "guru-template/specs/guru-flutter-client/harness/gate/gate-confirmation-model.md", "reason": "gate digest/confirm/review_runs 模型;requirements digest 取材范围扩展须不破坏此模型"}
+{"file": "guru-template/overlay/agents-skills/requirement-doc-standard/references/requirement-structure-single-source.md", "reason": "§15 manifest canonical_root/canonical_excludes 定义,digest 据此减排除子树"}
+{"file": "guru-template/specs/guru-flutter-client/harness/requirements/versioned-requirements-package.md", "reason": "正式需求包结构与项目侧 gate 关系导读(digest 纳入对象)"}

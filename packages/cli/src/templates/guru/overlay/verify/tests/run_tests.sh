@@ -1109,5 +1109,335 @@ tld_rc() { printf '{"tool_input":{"content":"%s"}}' "$1" | bash "$TLD" >/dev/nul
 [ "$(tld_rc 'https://github.com/x/kernel.cu)')" = 0 ] && { pass=$((pass+1)); echo "PASS  制裁TLD path 段 .cu 文件不误拦（host 锚定，修 #4 回归）"; } || { failn=$((failn+1)); echo "FAIL  path .cu 被误拦"; }
 [ "$(tld_rc 'https://iranian-news.com/')" = 0 ] && { pass=$((pass+1)); echo "PASS  制裁TLD 合法域 iranian-news.com 不误拦"; } || { failn=$((failn+1)); echo "FAIL  iranian-news 误拦"; }
 
+# ===== 档3：requirements digest 纳入正式需求包（requirement_package）=====
+# 共享 digest helper + namespaced key + 稳定排序 + manifest fail-closed + 向后兼容
+
+# 向后兼容：无 requirement_package 任务 requirements digest 必须与历史 basename 公式逐字节一致
+RPC=$(make_gate_case rp-compat)
+RPC_OLD=$(python3 - "$RPC" <<'PY'
+import hashlib, sys
+h = hashlib.sha256(); p = sys.argv[1] + "/prd.md"
+h.update(b"prd.md"); h.update(b"\0")
+h.update(open(p, encoding="utf-8").read().encode("utf-8")); h.update(b"\0")
+print(h.hexdigest())
+PY
+)
+RPC_NEW=$(python3 "$GATE" digest requirements "$RPC")
+if [ "$RPC_OLD" = "$RPC_NEW" ]; then pass=$((pass+1)); echo "PASS  无 requirement_package requirements digest 与历史 basename 公式一致"
+else failn=$((failn+1)); echo "FAIL  无指针 digest 漂移（old=$RPC_OLD new=$RPC_NEW）"; fi
+
+# requirement_package 版本目录：canonical 文件入 digest（namespaced）；snapshots/changes 排除
+mk_req_pkg() { # mk_req_pkg <name> → 输出 task_dir；正式需求包在 <task_dir>-reqpkg
+  d="$TMP/$1"; rp="$TMP/$1-reqpkg"; mkdir -p "$d" "$rp/modules" "$rp/snapshots" "$rp/changes/changes"
+  cp "$G/prd.md" "$d/"
+  printf '{"requirement_package": "%s"}\n' "$rp" > "$d/task.json"
+  echo "# 正式需求包导航" > "$rp/README.md"
+  echo "# 需求主定义 v1" > "$rp/requirement-main.md"
+  echo "# 页面模块需求" > "$rp/modules/requirement-page.md"
+  echo "# 关键节点快照" > "$rp/snapshots/rc.md"
+  echo "# 变更日志" > "$rp/changes/change-log.md"
+  echo "$d"
+}
+
+RP=$(mk_req_pkg rp-digest)
+RP_KEYS=$(python3 - "$GATE" "$RP" <<'PY'
+import importlib.util, sys
+gate, task_dir = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("gg", gate); gg = importlib.util.module_from_spec(spec); spec.loader.exec_module(gg)
+print(" ".join(sorted(a["key"] for a in gg._gate_artifacts(task_dir, "requirements"))))
+PY
+)
+if printf '%s' "$RP_KEYS" | grep -q "task:prd.md" \
+  && printf '%s' "$RP_KEYS" | grep -q "requirements:README.md" \
+  && printf '%s' "$RP_KEYS" | grep -q "requirements:requirement-main.md" \
+  && printf '%s' "$RP_KEYS" | grep -q "requirements:modules/requirement-page.md" \
+  && ! printf '%s' "$RP_KEYS" | grep -q "snapshot" \
+  && ! printf '%s' "$RP_KEYS" | grep -q "changes"; then
+  pass=$((pass+1)); echo "PASS  requirement_package canonical 文件入 digest（namespaced），snapshots/changes 排除"
+else failn=$((failn+1)); echo "FAIL  requirement_package 取材错误：$RP_KEYS"; fi
+
+RP_D0=$(python3 "$GATE" digest requirements "$RP")
+printf '\n新增需求规则。\n' >> "$RP-reqpkg/requirement-main.md"
+RP_D1=$(python3 "$GATE" digest requirements "$RP")
+if [ "$RP_D0" != "$RP_D1" ]; then pass=$((pass+1)); echo "PASS  改正式需求包 canonical 正文 → requirements digest 变（confirm/review 失效）"
+else failn=$((failn+1)); echo "FAIL  canonical 正文改动未改 digest"; fi
+printf '\n快照补充。\n' >> "$RP-reqpkg/snapshots/rc.md"
+printf '\n变更补充。\n' >> "$RP-reqpkg/changes/change-log.md"
+RP_D2=$(python3 "$GATE" digest requirements "$RP")
+if [ "$RP_D1" = "$RP_D2" ]; then pass=$((pass+1)); echo "PASS  改 snapshots/changes 子树 → requirements digest 不变"
+else failn=$((failn+1)); echo "FAIL  excluded 子树改动误改 digest"; fi
+
+# 共享 digest helper：guru_supervise 与 guru_gate 对 requirements digest 同口径（解 codex blocker）
+SUP="$HERE/../guru_supervise.py"
+RP_GATE_DIG=$(python3 "$GATE" digest requirements "$RP")
+RP_SUP_DIG=$(python3 - "$SUP" "$RP" <<'PY'
+import importlib.util, os, sys
+sup, task_dir = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.dirname(os.path.abspath(sup)))
+spec = importlib.util.spec_from_file_location("guru_supervise", sup)
+gs = importlib.util.module_from_spec(spec); sys.modules["guru_supervise"] = gs; spec.loader.exec_module(gs)
+from pathlib import Path
+print(gs._requirements_digest(Path(task_dir)))
+PY
+)
+if [ "$RP_GATE_DIG" = "$RP_SUP_DIG" ]; then pass=$((pass+1)); echo "PASS  guru_supervise._requirements_digest 与 guru_gate digest 同口径（共享 helper，解 blocker）"
+else failn=$((failn+1)); echo "FAIL  supervise/gate digest 分叉（gate=$RP_GATE_DIG sup=$RP_SUP_DIG）"; fi
+
+# namespace 碰撞：正式需求包 README + design_package README 同存不碰撞（overview gate）
+RPN="$TMP/rp-namespace"; RPNRP="$TMP/rp-namespace-reqpkg"; RPNDP="$TMP/rp-namespace-docs"
+mkdir -p "$RPN" "$RPNRP" "$RPNDP/chapters"
+cp "$G/prd.md" "$G/implement.md" "$RPN/"
+printf '{"guru_chain": "full", "design_package": "%s", "requirement_package": "%s"}\n' "$RPNDP" "$RPNRP" > "$RPN/task.json"
+echo "# 正式需求包 README" > "$RPNRP/README.md"
+echo "# 需求主定义" > "$RPNRP/requirement-main.md"
+echo "# 设计包 README" > "$RPNDP/README.md"
+echo "# 概要主定义" > "$RPNDP/design-main.md"
+echo "# 章节" > "$RPNDP/chapters/a.md"
+RPN_OVKEYS=$(python3 - "$GATE" "$RPN" <<'PY'
+import importlib.util, sys
+gate, task_dir = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("gg", gate); gg = importlib.util.module_from_spec(spec); spec.loader.exec_module(gg)
+print(" ".join(sorted(a["key"] for a in gg._gate_artifacts(task_dir, "overview"))))
+PY
+)
+if printf '%s' "$RPN_OVKEYS" | grep -q "design:README.md" \
+  && printf '%s' "$RPN_OVKEYS" | grep -q "requirements:README.md"; then
+  pass=$((pass+1)); echo "PASS  namespace 碰撞解决：design:README.md 与 requirements:README.md 各自独立"
+else failn=$((failn+1)); echo "FAIL  README namespace 碰撞未解决：$RPN_OVKEYS"; fi
+# overview digest 不崩溃且确定
+RPN_OV1=$(python3 "$GATE" digest overview "$RPN"); RPN_OV2=$(python3 "$GATE" digest overview "$RPN")
+if [ -n "$RPN_OV1" ] && [ "$RPN_OV1" = "$RPN_OV2" ]; then pass=$((pass+1)); echo "PASS  含正式需求包+设计包的 overview digest 确定且不崩溃"
+else failn=$((failn+1)); echo "FAIL  overview digest 不确定/崩溃"; fi
+
+# 稳定排序：不同枚举/创建顺序 → 同一 digest
+SORT_A=$(python3 - "$GATE" "$TMP" <<'PY'
+import importlib.util, json, os, sys, tempfile
+gate, root = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("gg", gate); gg = importlib.util.module_from_spec(spec); spec.loader.exec_module(gg)
+def build(order):
+    base = tempfile.mkdtemp(dir=root); d = os.path.join(base, "task"); pkg = os.path.join(base, "pkg")
+    os.makedirs(os.path.join(d)); os.makedirs(os.path.join(pkg, "modules"))
+    open(os.path.join(d, "prd.md"), "w").write("# PRD\n### BHV-001 x\n")
+    json.dump({"requirement_package": pkg}, open(os.path.join(d, "task.json"), "w"))
+    files = [("a.md", "A"), ("z.md", "Z"), ("modules/m.md", "M"), ("modules/b.md", "B")]
+    for rel, body in (files if order == "fwd" else list(reversed(files))):
+        fp = os.path.join(pkg, rel); os.makedirs(os.path.dirname(fp), exist_ok=True); open(fp, "w").write(body)
+    return gg._gate_digest(d, "requirements")
+print("EQUAL" if build("fwd") == build("rev") else "DIFFER")
+PY
+)
+[ "$SORT_A" = "EQUAL" ] && { pass=$((pass+1)); echo "PASS  稳定排序：不同创建顺序 requirements digest 一致"; } || { failn=$((failn+1)); echo "FAIL  排序不稳定（$SORT_A）"; }
+
+# manifest 缺失 → fallback（requirements gate 不阻断）
+RPMF=$(mk_req_pkg rp-manifest-missing)
+expect "manifest 缺失 requirements gate fallback 放行" 0 python3 "$GATE" requirements "$RPMF"
+
+# manifest 自定义 canonical_root + 内联 excludes
+RPMC="$TMP/rp-manifest-custom"; RPMCRP="$TMP/rp-manifest-custom-reqpkg"
+mkdir -p "$RPMC" "$RPMCRP/v/draft" "$RPMCRP/v/snap"
+cp "$G/prd.md" "$RPMC/"
+printf '{"requirement_package": "%s"}\n' "$RPMCRP" > "$RPMC/task.json"
+printf 'canonical_root: v\ncanonical_excludes: [draft, snap]\n' > "$RPMCRP/manifest.yaml"
+echo "# 主" > "$RPMCRP/v/requirement-main.md"
+echo "# 草稿" > "$RPMCRP/v/draft/wip.md"
+echo "# 快照" > "$RPMCRP/v/snap/old.md"
+RPMC_KEYS=$(python3 - "$GATE" "$RPMC" <<'PY'
+import importlib.util, sys
+gate, task_dir = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("gg", gate); gg = importlib.util.module_from_spec(spec); spec.loader.exec_module(gg)
+print(" ".join(sorted(a["key"] for a in gg._gate_artifacts(task_dir, "requirements"))))
+PY
+)
+if printf '%s' "$RPMC_KEYS" | grep -q "requirements:v/requirement-main.md" \
+  && ! printf '%s' "$RPMC_KEYS" | grep -q "draft" \
+  && ! printf '%s' "$RPMC_KEYS" | grep -q "snap"; then
+  pass=$((pass+1)); echo "PASS  manifest 自定义 canonical_root + 内联 excludes 生效"
+else failn=$((failn+1)); echo "FAIL  manifest 自定义 root/excludes 错误：$RPMC_KEYS"; fi
+
+# manifest 非法（excludes 非列表）→ requirements gate fail-closed 阻断 + 修复提示
+RPMB=$(mk_req_pkg rp-manifest-bad)
+printf 'canonical_excludes: notalist\n' > "$RPMB-reqpkg/manifest.yaml"
+expect "manifest 非法 requirements gate 阻断（fail-closed）" 2 python3 "$GATE" requirements "$RPMB"
+expect_grep "manifest 非法报错给修复提示" "manifest 非法" python3 "$GATE" requirements "$RPMB"
+expect_grep "manifest 非法 digest 子命令也阻断" "manifest 非法" python3 "$GATE" digest requirements "$RPMB"
+expect_grep "manifest 非法 status 也阻断" "manifest" python3 "$GATE" status "$RPMB"
+
+# manifest 非法（canonical_root 为列表）→ 阻断
+RPMB2=$(mk_req_pkg rp-manifest-bad-root)
+printf 'canonical_root: [a, b]\n' > "$RPMB2-reqpkg/manifest.yaml"
+expect "manifest canonical_root 列表非法阻断" 2 python3 "$GATE" requirements "$RPMB2"
+
+# requirement_package 端到端：confirm requirements → 改正式需求包 canonical → 确认快照失配
+RPE2E=$(mk_req_pkg rp-e2e)
+write_req_confirm "$RPE2E"
+expect "requirement_package 基线：requirements 确认快照一致（check 报缺 overview 而非快照失配）" 2 python3 "$GATE" check "$RPE2E"
+# check 在 requirements 确认快照一致后应推进到 overview review 缺口，而非需求确认失配
+out=$(python3 "$GATE" check "$RPE2E" 2>&1)
+if printf '%s' "$out" | grep -q "record-review overview" && ! printf '%s' "$out" | grep -q "需求 Gate.*确认快照失配"; then
+  pass=$((pass+1)); echo "PASS  requirement_package 基线 requirements 确认快照一致（推进到 overview）"
+else failn=$((failn+1)); echo "FAIL  requirement_package 基线确认快照异常"; printf '%s\n' "$out" | head -3; fi
+printf '\n正式需求包正文变更：新增验收口径。\n' >> "$RPE2E-reqpkg/requirement-main.md"
+out=$(python3 "$GATE" status "$RPE2E" 2>&1)
+if printf '%s' "$out" | grep -q "确认快照失配"; then
+  pass=$((pass+1)); echo "PASS  改正式需求包正文 → requirements 确认快照失配（confirm 失效）"
+else failn=$((failn+1)); echo "FAIL  正式需求包正文改动未触发 requirements 确认失配"; printf '%s\n' "$out" | head -4; fi
+
+# ===== 档3 返工（codex 代码审查 Needs-rework，逐条回归）=====
+
+# [blocker] cwd≠root + --root + relative requirement_package：supervise 写入 digest 必须 == gate current digest
+# 旧实现 _requirement_package_dir 用 os.getcwd() 当 repo root，supervise --root（cwd≠root）会把
+# docs/... 解析成 <cwd>/docs/...（空包/错包）→ 与 gate 从 repo root 算的 digest 分叉、review 立刻 stale。
+# 此用例不开 GURU_GATE_ALLOW_ABS（走生产围栏），requirement_package 为 repo-root 相对路径。
+BLK_OUT=$(env -u GURU_GATE_ALLOW_ABS python3 - "$GATE" "$SUP" "$TMP" <<'PY'
+import importlib.util, json, os, sys
+from pathlib import Path
+gate, sup, tmp = sys.argv[1], sys.argv[2], sys.argv[3]
+repo = os.path.join(tmp, "blk-repo")
+tdir = os.path.join(repo, ".trellis", "tasks", "t")
+rel = "docs/requirements/versions/v1"
+apkg = os.path.join(repo, rel)
+os.makedirs(tdir); os.makedirs(apkg)
+open(os.path.join(tdir, "prd.md"), "w").write("# PRD\n### BHV-001 x\n")
+open(os.path.join(apkg, "README.md"), "w").write("# req readme\n")
+open(os.path.join(apkg, "requirement-main.md"), "w").write("# req main\n")
+json.dump({"requirement_package": rel}, open(os.path.join(tdir, "task.json"), "w"))
+spec = importlib.util.spec_from_file_location("gg", gate); gg = importlib.util.module_from_spec(spec); spec.loader.exec_module(gg)
+spec2 = importlib.util.spec_from_file_location("guru_supervise", sup)
+gs = importlib.util.module_from_spec(spec2); sys.modules["guru_supervise"] = gs
+sys.path.insert(0, os.path.dirname(os.path.abspath(sup))); spec2.loader.exec_module(gs)
+# gate: cwd == repo root, repo_root=None（relative 解析 vs cwd）
+cwd0 = os.getcwd(); os.chdir(repo)
+gate_dig = gg.requirements_digest(os.path.join(".trellis", "tasks", "t"))
+os.chdir(cwd0)
+# supervise: cwd == cwd0 (绝对不等于 repo)，显式传 repo_root=repo（模拟 --root）
+assert os.path.realpath(os.getcwd()) != os.path.realpath(repo)
+sup_dig = gs._requirements_digest(Path(tdir), Path(repo))
+# buggy 对照：supervise 不传 repo_root（按错 cwd 解析）→ 必须与 gate 分叉（证明 param 是必需的）
+import hashlib
+prd = hashlib.sha256(); prd.update(b"prd.md"); prd.update(b"\0")
+prd.update(open(os.path.join(tdir, "prd.md"), encoding="utf-8").read().encode("utf-8")); prd.update(b"\0")
+includes_pkg = gate_dig != prd.hexdigest()
+print("SAME" if gate_dig == sup_dig else "DIFF", "INCLPKG" if includes_pkg else "PRDONLY")
+PY
+)
+if [ "$BLK_OUT" = "SAME INCLPKG" ]; then pass=$((pass+1)); echo "PASS  [blocker] cwd≠root + --root + relative pkg：supervise digest == gate digest 且纳入正式需求包"
+else failn=$((failn+1)); echo "FAIL  [blocker] cwd≠root supervise/gate 分叉或未纳入包（$BLK_OUT）"; fi
+
+# [major] 向后兼容：无指针 overview/detail digest 与历史 basename 公式逐字节一致（含重复 basename 设计包）
+# 复刻 HEAD _gate_digest（sorted by basename，stable）；重复 basename：chapters/design-main.md + chapters/implement.md。
+BC_OUT=$(python3 - "$GATE" "$TMP" <<'PY'
+import hashlib, importlib.util, json, os, sys
+gate, tmp = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("gg", gate); gg = importlib.util.module_from_spec(spec); spec.loader.exec_module(gg)
+base = os.path.join(tmp, "bc-dup"); task = os.path.join(base, "t"); pkg = os.path.join(base, "pkg")
+os.makedirs(os.path.join(pkg, "chapters")); os.makedirs(task)
+open(os.path.join(task, "prd.md"), "w").write("# PRD\n### BHV-001 x\n")
+open(os.path.join(task, "implement.md"), "w").write("# IMP\nplan UNIT-x\n")
+open(os.path.join(pkg, "README.md"), "w").write("# readme\n")
+open(os.path.join(pkg, "design-main.md"), "w").write("# main\n")
+open(os.path.join(pkg, "chapters", "design-main.md"), "w").write("# CHAP dup design-main\n")
+open(os.path.join(pkg, "chapters", "implement.md"), "w").write("# CHAP dup implement\n")
+open(os.path.join(pkg, "chapters", "a.md"), "w").write("# chap a\n")
+json.dump({"guru_chain": "full", "design_package": pkg}, open(os.path.join(task, "task.json"), "w"))
+def old_arts(gate_name):
+    req = [os.path.join(task, "prd.md")]
+    if gate_name == "requirements": return req
+    ov = req + [os.path.join(pkg, "README.md"), os.path.join(pkg, "design-main.md")]
+    if gate_name == "overview": return ov
+    dt = [os.path.join(pkg, "chapters", n) for n in gg._chapter_files(pkg)]
+    dt.append(os.path.join(task, "implement.md"))
+    seen, out = set(), []
+    for p in ov + dt:
+        if p not in seen: seen.add(p); out.append(p)
+    return out
+def old_digest(gate_name):
+    h = hashlib.sha256()
+    for p in sorted(old_arts(gate_name), key=os.path.basename):
+        h.update(os.path.basename(p).encode()); h.update(b"\0")
+        h.update(gg.read(p).encode()); h.update(b"\0")
+    return h.hexdigest()
+ok = all(gg._gate_digest(task, g) == old_digest(g) for g in ("requirements", "overview", "detail"))
+dup = "design-main.md" in gg._chapter_files(pkg) and "implement.md" in gg._chapter_files(pkg)
+print("EQUAL" if ok and dup else "DIFFER")
+PY
+)
+# GURU_GATE_ALLOW_ABS=1 已全局导出（abs design_package 夹具需要）
+[ "$BC_OUT" = "EQUAL" ] && { pass=$((pass+1)); echo "PASS  [major] 无指针 overview/detail digest 与历史 basename 公式一致（含重复 basename 设计包）"; } || { failn=$((failn+1)); echo "FAIL  [major] 无指针 overview/detail byte-compat 破坏（$BC_OUT）"; }
+
+# [minor] 合同：后补 requirement_package = 需求取材范围变化，必须使下游 cumulative digest stale（预期）
+ST_OUT=$(python3 - "$GATE" "$TMP" <<'PY'
+import importlib.util, json, os, sys
+gate, tmp = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("gg", gate); gg = importlib.util.module_from_spec(spec); spec.loader.exec_module(gg)
+base = os.path.join(tmp, "rp-late"); task = os.path.join(base, "t"); pkg = os.path.join(base, "pkg")
+os.makedirs(task); os.makedirs(pkg)
+open(os.path.join(task, "prd.md"), "w").write("# PRD\n### BHV-001 x\n")
+open(os.path.join(pkg, "requirement-main.md"), "w").write("# req main\n")
+json.dump({}, open(os.path.join(task, "task.json"), "w"))
+before = gg._gate_digest(task, "requirements")
+json.dump({"requirement_package": pkg}, open(os.path.join(task, "task.json"), "w"))
+after = gg._gate_digest(task, "requirements")
+print("STALE" if before != after else "SAME")
+PY
+)
+[ "$ST_OUT" = "STALE" ] && { pass=$((pass+1)); echo "PASS  [minor] 后补 requirement_package → requirements digest 变更（取材范围变化使下游 stale，预期）"; } || { failn=$((failn+1)); echo "FAIL  [minor] 后补 requirement_package 未触发 digest 变更（$ST_OUT）"; }
+
+# [major] 围栏 fail-closed：requirement_package 目录不存在 → requirements gate 阻断（不空枚举）
+RPMISS="$TMP/rp-missing"; mkdir -p "$RPMISS"
+cp "$G/prd.md" "$RPMISS/"
+printf '{"requirement_package": "%s/rp-missing-nope"}\n' "$TMP" > "$RPMISS/task.json"
+expect "[major] requirement_package 目录不存在 fail-closed 阻断" 2 python3 "$GATE" requirements "$RPMISS"
+expect_grep "[major] 目录不存在报错给修复提示" "版本目录不存在" python3 "$GATE" requirements "$RPMISS"
+
+# [major] 围栏 fail-closed：canonical_root 穿越包外 → 阻断
+RPESC=$(mk_req_pkg rp-root-escape)
+printf 'canonical_root: ../../..\n' > "$RPESC-reqpkg/manifest.yaml"
+expect "[major] canonical_root 穿越包外 fail-closed 阻断" 2 python3 "$GATE" requirements "$RPESC"
+expect_grep "[major] canonical_root 越界报错给提示" "canonical_root" python3 "$GATE" requirements "$RPESC"
+
+# [major] 围栏 fail-closed：canonical_root 目录不存在 → 阻断（不空枚举）
+RPCRM=$(mk_req_pkg rp-canonical-missing)
+printf 'canonical_root: v999\n' > "$RPCRM-reqpkg/manifest.yaml"
+expect "[major] canonical_root 目录不存在 fail-closed 阻断" 2 python3 "$GATE" requirements "$RPCRM"
+
+# [major] manifest fail-closed 补全：顶层无法解析的目标键/语法行必须阻断（不静默 fallback）
+RPNC=$(mk_req_pkg rp-manifest-nocolon)
+printf 'canonical_excludes [snapshots, changes]\n' > "$RPNC-reqpkg/manifest.yaml"
+expect "[major] manifest 无冒号目标行 fail-closed 阻断" 2 python3 "$GATE" requirements "$RPNC"
+RPEQ=$(mk_req_pkg rp-manifest-eq)
+printf 'canonical_root = v\n' > "$RPEQ-reqpkg/manifest.yaml"
+expect "[major] manifest equals-assignment fail-closed 阻断" 2 python3 "$GATE" requirements "$RPEQ"
+RPTY=$(mk_req_pkg rp-manifest-typo)
+printf 'canoncal_excludes: [a]\nrandombareword\n' > "$RPTY-reqpkg/manifest.yaml"
+expect "[major] manifest typo bareword 行 fail-closed 阻断" 2 python3 "$GATE" requirements "$RPTY"
+RPUC=$(mk_req_pkg rp-manifest-unclosed)
+printf 'canonical_excludes: [a, b\n' > "$RPUC-reqpkg/manifest.yaml"
+expect "[major] manifest 内联列表未闭合 fail-closed 阻断" 2 python3 "$GATE" requirements "$RPUC"
+RPBD=$(mk_req_pkg rp-manifest-blockbad)
+printf 'canonical_excludes:\n  notadash\n' > "$RPBD-reqpkg/manifest.yaml"
+expect "[major] manifest 块列表非 dash-item fail-closed 阻断" 2 python3 "$GATE" requirements "$RPBD"
+
+# [major] manifest 块列表（合法）+ 非目标键块列表（supersedes）容忍：canonical 取材正确
+RPBL="$TMP/rp-manifest-block"; RPBLRP="$TMP/rp-manifest-block-reqpkg"
+mkdir -p "$RPBL" "$RPBLRP/v1/modules" "$RPBLRP/v1/snapshots"
+cp "$G/prd.md" "$RPBL/"
+printf '{"requirement_package": "%s"}\n' "$RPBLRP" > "$RPBL/task.json"
+printf 'version: v1\nsupersedes:\n  - v0\ncanonical_root: v1\ncanonical_excludes:\n  - snapshots\n  - changes\n' > "$RPBLRP/manifest.yaml"
+echo "# 主" > "$RPBLRP/v1/requirement-main.md"
+echo "# 页面" > "$RPBLRP/v1/modules/requirement-page.md"
+echo "# 快照" > "$RPBLRP/v1/snapshots/rc.md"
+RPBL_KEYS=$(python3 - "$GATE" "$RPBL" <<'PY'
+import importlib.util, sys
+gate, task_dir = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("gg", gate); gg = importlib.util.module_from_spec(spec); spec.loader.exec_module(gg)
+print(" ".join(sorted(a["key"] for a in gg._gate_artifacts(task_dir, "requirements"))))
+PY
+)
+if printf '%s' "$RPBL_KEYS" | grep -q "requirements:v1/requirement-main.md" \
+  && printf '%s' "$RPBL_KEYS" | grep -q "requirements:v1/modules/requirement-page.md" \
+  && ! printf '%s' "$RPBL_KEYS" | grep -q "snapshot"; then
+  pass=$((pass+1)); echo "PASS  [major] manifest 块列表 excludes 生效 + 非目标键块列表(supersedes)容忍"
+else failn=$((failn+1)); echo "FAIL  [major] manifest 块列表取材错误：$RPBL_KEYS"; fi
+
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]

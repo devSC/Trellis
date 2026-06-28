@@ -486,6 +486,242 @@ def _package_dir(task_dir: str):
     return norm
 
 
+def _requirement_package_dir(task_dir: str, repo_root: str = None):
+    """正式需求包版本目录（task.json requirement_package，相对 repo root）。
+
+    指向版本化需求包的版本目录（如 docs/requirements/versions/v1.0.0），是 Guru-owned
+    顶层字段（类比 design_package）。围栏逻辑与 _package_dir 一致：拒绝 `..` 穿越与
+    绝对路径，realpath commonpath 围栏挡符号链接逃逸；测试夹具可设 GURU_GATE_ALLOW_ABS=1
+    放行绝对路径。未声明/非法返回 None（= 现状：requirements digest 只含 prd.md）。
+
+    repo_root（解 codex blocker）：requirement_package 是「相对 repo root」字段。gate 自身命令
+    cwd 即 repo root，故默认 repo_root=os.getcwd()。但 guru_supervise --root <repo> 可在 cwd≠root
+    下运行——它必须显式传 config.root，否则按 cwd 解析会把 docs/... 当成 <cwd>/docs/...（空包/错包），
+    与 gate 从 repo root 算的 digest 分叉、review 立刻 stale。返回**绝对**路径（join repo_root），
+    使后续枚举/读取与 cwd 无关，supervise 与 gate 字节同口径。**仅校验指针合法性，不校验目录存在**
+    （存在性 / canonical_root 围栏是 fail-closed 关注点，见 _requirement_package_problem）。
+    """
+    pkg = _task_json_of(task_dir).get("requirement_package")
+    if not isinstance(pkg, str) or not pkg.strip():
+        return None
+    base = os.path.realpath(repo_root) if repo_root else os.path.realpath(os.getcwd())
+    norm = os.path.normpath(pkg.strip())
+    if os.environ.get("GURU_GATE_ALLOW_ABS") == "1":  # 测试夹具逃生口
+        return norm if os.path.isabs(norm) else os.path.normpath(os.path.join(base, norm))
+    if os.path.isabs(norm):
+        return None
+    if norm == ".." or norm.startswith("..%s" % os.sep) or norm.startswith("../"):
+        return None
+    real = os.path.realpath(os.path.join(base, norm))
+    try:
+        if os.path.commonpath([base, real]) != base:
+            return None
+    except ValueError:
+        return None
+    return os.path.normpath(os.path.join(base, norm))
+
+
+class RequirementManifestError(ValueError):
+    """manifest.yaml 存在但解析失败/字段类型非法（fail-closed，不静默 fallback）。"""
+
+
+_MANIFEST_DEFAULT_ROOT = "."
+_MANIFEST_DEFAULT_EXCLUDES = ("snapshots", "changes")
+
+
+def _parse_inline_list(value: str):
+    """解析 `[a, b, c]` 内联列表（stdlib，无 yaml 依赖）。返回字符串列表或抛错。"""
+    inner = value.strip()[1:-1].strip()
+    if not inner:
+        return []
+    items = []
+    for raw in inner.split(","):
+        token = raw.strip()
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
+            token = token[1:-1]
+        if not token:
+            raise RequirementManifestError("canonical_excludes 含空条目")
+        items.append(token)
+    return items
+
+
+def _consume_block_list(raw_lines, start: int, strict_dash: bool = True):
+    """从 start 起消费缩进块列表 `- item` 行，返回 (items, next_index)。
+
+    strict_dash=True（canonical_excludes）：缩进非 `- ` 行抛错（fail-closed）。
+    strict_dash=False（非目标键）：只为吞掉缩进子项使顶层解析继续，不校验内容、不存储。
+    遇非缩进行 / EOF 停止。
+    """
+    items = []
+    i = start
+    while i < len(raw_lines):
+        sub = raw_lines[i]
+        if not sub.strip() or sub.strip().startswith("#"):
+            i += 1
+            continue
+        if sub[:1] not in (" ", "\t"):
+            break
+        item_m = re.match(r"^\s*-\s*(.*)$", sub)
+        if not item_m:
+            if strict_dash:
+                raise RequirementManifestError(
+                    "canonical_excludes 块列表行必须以 `- ` 开头"
+                )
+            i += 1
+            continue
+        if strict_dash:
+            token = item_m.group(1).strip()
+            if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
+                token = token[1:-1]
+            if not token:
+                raise RequirementManifestError("canonical_excludes 含空条目")
+            items.append(token)
+        i += 1
+    return items, i
+
+
+def _requirement_manifest(pkg: str):
+    """读取版本目录 manifest.yaml 的 canonical_root / canonical_excludes（fail-closed）。
+
+    缺失 → 返回默认 (".", ["snapshots", "changes"])。
+    存在但解析失败 / 字段类型非法 → 抛 RequirementManifestError（由 requirements Gate 阻断）。
+    仅支持 §15.2 需要的两键：canonical_root（标量）与 canonical_excludes（内联或块列表）。
+    无 Python yaml 依赖（仓库无 import yaml）。
+    """
+    manifest_path = os.path.join(pkg, "manifest.yaml")
+    if not os.path.isfile(manifest_path):
+        return _MANIFEST_DEFAULT_ROOT, list(_MANIFEST_DEFAULT_EXCLUDES)
+    try:
+        with open(manifest_path, encoding="utf-8") as f:
+            raw_lines = f.read().splitlines()
+    except OSError as exc:
+        raise RequirementManifestError(f"manifest.yaml 无法读取：{exc}")
+
+    canonical_root = None
+    excludes = None
+    i = 0
+    while i < len(raw_lines):
+        line = raw_lines[i]
+        stripped = line.strip()
+        i += 1
+        if not stripped or stripped.startswith("#"):
+            continue
+        # fail-closed（解 codex major #4）：顶层缩进行只能是块列表子项，应在键的内层循环被消费；
+        # 走到这里说明是孤立缩进行（无属主键 / 块列表已结束后的残留），按非法语法阻断。
+        if line[:1] in (" ", "\t"):
+            raise RequirementManifestError(
+                f"manifest.yaml 含无属主的缩进行（疑似列表项缺失上级键）：{stripped}"
+            )
+        m = re.match(r"^([A-Za-z0-9_]+)\s*:\s*(.*)$", line)
+        if not m:
+            # fail-closed：顶层非空非注释行无法按 `key: value` 解析（无冒号 / `=` / typo bareword）→
+            # 不再静默 fallback，否则配置错误会被默默吞掉走默认 canonical_root/excludes。
+            raise RequirementManifestError(
+                f"manifest.yaml 顶层行无法按 `key: value` 解析（不支持的语法）：{stripped}"
+            )
+        key, value = m.group(1), m.group(2)
+        # 去行尾注释（仅处理 ` #`，不破坏值内 `#`）
+        for marker in (" #", "\t#"):
+            idx = value.find(marker)
+            if idx >= 0:
+                value = value[:idx].rstrip()
+        value = value.strip()
+        if key == "canonical_root":
+            if value == "" or value.startswith("[") or value.startswith("{") or value.startswith("-"):
+                raise RequirementManifestError("canonical_root 必须是非空标量字符串")
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            canonical_root = value
+        elif key == "canonical_excludes":
+            if value.startswith("["):
+                if not value.endswith("]"):
+                    raise RequirementManifestError("canonical_excludes 内联列表未闭合")
+                excludes = _parse_inline_list(value)
+            elif value == "":
+                excludes = _consume_block_list(raw_lines, i)
+                # _consume_block_list 不推进 i 自身——返回 (items, next_i)
+                excludes, i = excludes
+            else:
+                raise RequirementManifestError(
+                    "canonical_excludes 必须是内联列表 [..] 或块列表"
+                )
+        elif value == "":
+            # 非目标键的块列表（如 supersedes:\n  - v0.9.0）：消费其缩进子项使顶层解析不被孤立缩进行
+            # 误判为非法（但不存储，§15.2 只取 canonical_root/canonical_excludes 两键）。
+            _items, i = _consume_block_list(raw_lines, i, strict_dash=False)
+    if canonical_root is None:
+        canonical_root = _MANIFEST_DEFAULT_ROOT
+    if excludes is None:
+        excludes = list(_MANIFEST_DEFAULT_EXCLUDES)
+    if not isinstance(canonical_root, str) or not canonical_root.strip():
+        raise RequirementManifestError("canonical_root 必须是非空字符串")
+    if not all(isinstance(x, str) and x.strip() for x in excludes):
+        raise RequirementManifestError("canonical_excludes 必须是非空字符串列表")
+    return canonical_root.strip(), excludes
+
+
+def _canonical_root_dir(pkg: str) -> str:
+    """解析并围栏 canonical_root（相对 pkg），返回绝对路径或抛 RequirementManifestError。
+
+    canonical_root 默认 '.'（= pkg）。fail-closed（解 codex major #2）：
+    - 拒绝绝对路径与 `..` 穿越（防 `canonical_root: ../../..` 把包外目录纳入 digest）；
+    - realpath commonpath 围栏，确保 canonical root 落在 pkg 内（挡符号链接逃逸）；
+    - canonical root 目录不存在 → 抛错（不空枚举：空 hash 会伪装成「有包但只 prd.md」）。
+    """
+    canonical_rel, _excludes = _requirement_manifest(pkg)
+    rel_norm = os.path.normpath(canonical_rel)
+    if os.path.isabs(rel_norm) or rel_norm == ".." \
+            or rel_norm.startswith("..%s" % os.sep) or rel_norm.startswith("../"):
+        raise RequirementManifestError(
+            f"canonical_root 不得为绝对路径或穿越包外：{canonical_rel}"
+        )
+    canonical_root = os.path.normpath(os.path.join(pkg, rel_norm))
+    pkg_real = os.path.realpath(pkg)
+    root_real = os.path.realpath(canonical_root)
+    try:
+        if os.path.commonpath([pkg_real, root_real]) != pkg_real:
+            raise RequirementManifestError(
+                f"canonical_root 经 realpath 逃逸出版本目录：{canonical_rel}"
+            )
+    except ValueError:
+        raise RequirementManifestError(f"canonical_root 非法：{canonical_rel}")
+    if not os.path.isdir(canonical_root):
+        raise RequirementManifestError(
+            f"canonical_root 目录不存在：{canonical_root}（fail-closed，不空枚举）"
+        )
+    return canonical_root
+
+
+def _requirement_package_files(pkg: str):
+    """枚举版本目录 canonical 文件（os.walk + sort + excludes 剪枝），返回 (relpath, abspath)。
+
+    relpath 相对版本目录根（pkg），用于 namespaced key。excludes 相对 canonical_root，
+    按顶层子目录/文件名剪枝（默认 snapshots/changes）。dirs.sort()/files.sort() 保证
+    同一文件集合不因枚举顺序产生不同 digest。manifest 非法 / canonical_root 越界或缺失
+    时向上抛 RequirementManifestError（fail-closed）。
+    """
+    _canonical_rel, excludes = _requirement_manifest(pkg)
+    canonical_root = _canonical_root_dir(pkg)
+    exclude_set = set(excludes)
+    out = []
+    for dirpath, dirnames, filenames in os.walk(canonical_root):
+        rel_from_canonical = os.path.relpath(dirpath, canonical_root)
+        # 顶层 canonical 子目录按 excludes 剪枝（snapshots/changes 整树不进 digest）
+        if rel_from_canonical == ".":
+            dirnames[:] = [d for d in dirnames if d not in exclude_set]
+        dirnames.sort()
+        filenames.sort()
+        for name in filenames:
+            abspath = os.path.join(dirpath, name)
+            rel_from_canonical_file = os.path.relpath(abspath, canonical_root)
+            top = rel_from_canonical_file.split(os.sep, 1)[0]
+            if top in exclude_set:
+                continue
+            relpath = os.path.relpath(abspath, pkg)
+            out.append((relpath.replace(os.sep, "/"), abspath))
+    return out
+
+
 def _chapter_files(pkg: str) -> list:
     chap_dir = os.path.join(pkg, "chapters")
     if not os.path.isdir(chap_dir):
@@ -647,12 +883,53 @@ def cmd_trace_matrix(task_dir: str, write: bool, strict: bool) -> int:
 # 五阶段 Gate
 # =========================================================================
 
+def _requirement_package_problem(task_dir: str, repo_root: str = None) -> str:
+    """requirement_package fail-closed 检查。返回缺口描述（空=合法或无包）。
+
+    fail-closed 边界（解 codex blocker + major #2）：
+    - 无 requirement_package 字段 → 返回空（= 现状，digest 只含 prd.md）。
+    - 字段存在但指针非法（绝对路径 / `..` 穿越 / realpath 逃逸出 repo root）→ 阻断（不静默忽略）。
+    - 指向的版本目录不存在 → 阻断（不空枚举伪装成「有包但只 prd.md」）。
+    - manifest 解析失败 / 字段类型非法 / canonical_root 越界或缺失 → 阻断 + 修复提示。
+    repo_root：requirement_package 相对 repo root；gate 命令 cwd==root（默认 None→cwd），
+    supervise 显式传 config.root，使两脚本同口径（不因 cwd 分叉给出空包/错包）。
+    """
+    field = _task_json_of(task_dir).get("requirement_package")
+    if not isinstance(field, str) or not field.strip():
+        return ""
+    req_pkg = _requirement_package_dir(task_dir, repo_root)
+    if req_pkg is None:
+        return (
+            f"requirement_package 指针非法：{field.strip()}"
+            "（必须是 repo root 相对路径，不得为绝对路径或 `..` 穿越 / 符号链接逃逸出仓库）"
+        )
+    if not os.path.isdir(req_pkg):
+        return (
+            f"requirement_package 版本目录不存在：{req_pkg}"
+            "（fail-closed：有指针就必须纳入正式需求包；修正路径或移除字段回退 prd.md-only）"
+        )
+    try:
+        _requirement_manifest(req_pkg)
+        _canonical_root_dir(req_pkg)  # 触发 canonical_root 围栏/存在性 fail-closed
+    except RequirementManifestError as exc:
+        return (
+            f"requirement_package manifest 非法（{os.path.join(req_pkg, 'manifest.yaml')}）：{exc}"
+            "（修正 canonical_root/canonical_excludes 字段，或删除 manifest.yaml 回退默认 "
+            f"canonical_root='.'、excludes={list(_MANIFEST_DEFAULT_EXCLUDES)}）"
+        )
+    return ""
+
+
 def check_requirements(task_dir: str) -> int:
     """需求 Gate：行为规格(BHV 编号标题) / P0 P1 / 失败路径 / 验收 / 未决问题。"""
     prd = read(os.path.join(task_dir, "prd.md"))
     problems = []
     if not prd:
         return fail("requirements", ["prd.md 不存在或为空"])
+    manifest_problem = _requirement_package_problem(task_dir)
+    if manifest_problem:
+        # manifest fail-closed：先于 digest 取材阻断，避免非法 manifest 导致 digest 计算抛错
+        return fail("requirements", [manifest_problem])
     if not BHV_DEF.search(prd):
         problems.append("缺行为编号：行为须以 `### BHV-NNN <短名>` 标题定义（编号纪律）")
     if not (re.search(r"\bGiven\b", prd) and re.search(r"\bWhen\b", prd) and re.search(r"\bThen\b", prd)):
@@ -958,50 +1235,118 @@ HIGH_RISK_LEVELS = {"high", "critical", "p0"}
 LOW_RISK_LEVELS = {"low", "minor", "trivial"}
 
 
-def _gate_artifacts(task_dir: str, gate: str) -> list:
-    """各阶段人工确认所覆盖的产物文件（确认快照的取材范围）。
+def _namespaced_key(path: str, source: str, relpath: str, namespace: bool) -> str:
+    """digest key 生成。
+
+    namespace OFF（无 requirement_package 的任务）：纯 basename——与历史 digest 逐字节一致
+    （向后兼容是最高优先级；_gate_digest 旧实现按 basename 入哈希）。
+    namespace ON（有 requirement_package 的任务）：`<source>:<relpath>`——消除正式需求包与
+    design_package 的 README.md 同名碰撞（task: / design: / requirements:）。
+    """
+    if not namespace:
+        return os.path.basename(path)
+    return f"{source}:{relpath}"
+
+
+def _gate_artifacts(task_dir: str, gate: str, repo_root: str = None) -> list:
+    """各阶段确认快照所覆盖的产物，返回结构化条目 [{path, source, key}]。
 
     快照是**累积的**：下游阶段包含上游产物——上游（如 prd）改动后即使只重确认上游，
     下游确认也会失配并要求重新确认（下游评审基于的上游语义已变）。
+
+    结构化条目把来源边界（task/design/requirements）在枚举处一次定死，digest 不再反推；
+    requirement_package realpath 围栏、canonical_root 解析、canonical_excludes 过滤、
+    namespaced key 都集中在此。namespace 仅在该任务声明 requirement_package 时启用，
+    无指针任务保持纯 basename（digest 与改动前一致）。manifest 非法时向上抛
+    RequirementManifestError（由 requirements Gate fail-closed 阻断）。
+
+    repo_root（解 codex blocker）：透传给 _requirement_package_dir，使正式需求包按 repo root
+    （而非进程 cwd）解析；gate 命令默认 None→cwd，supervise 显式传 config.root。
     """
     full = task_chain(task_dir) == "full"
     pkg = _package_dir(task_dir)
-    req_files = [os.path.join(task_dir, "prd.md")]
+    req_pkg = _requirement_package_dir(task_dir, repo_root)
+    namespace = req_pkg is not None
+    entries = []
+
+    def add(path, source, relpath):
+        entries.append({
+            "path": path,
+            "source": source,
+            "key": _namespaced_key(path, source, relpath, namespace),
+        })
+
+    # requirements：prd.md（task）+ 正式需求包 canonical 文件（requirements）
+    add(os.path.join(task_dir, "prd.md"), "task", "prd.md")
+    if req_pkg is not None:
+        for relpath, abspath in _requirement_package_files(req_pkg):
+            add(abspath, "requirements", relpath)
     if gate == "requirements":
-        return req_files
+        return entries
+
+    # overview：累积 + 概要主定义（design）或 design.md（light）
     if full and pkg:
         # README 属包骨架（导航/追踪矩阵入口），同样纳入确认快照
-        ov_files = req_files + [os.path.join(pkg, "README.md"), os.path.join(pkg, "design-main.md")]
+        add(os.path.join(pkg, "README.md"), "design", "README.md")
+        add(os.path.join(pkg, "design-main.md"), "design", "design-main.md")
     else:
-        ov_files = req_files + [os.path.join(task_dir, "design.md")]
+        add(os.path.join(task_dir, "design.md"), "task", "design.md")
     if gate == "overview":
-        return ov_files
-    # detail：全链累积
+        return entries
+
+    # detail：全链累积 + chapters（design）+ implement.md（task）
     if full and pkg:
-        dt_files = [os.path.join(pkg, "chapters", n) for n in _chapter_files(pkg)]
-    else:
-        dt_files = []  # light 链 design.md 已在 ov_files 中
-    dt_files.append(os.path.join(task_dir, "implement.md"))
-    seen, ordered = set(), []
-    for p in ov_files + dt_files:
-        if p not in seen:
-            seen.add(p)
-            ordered.append(p)
-    return ordered
+        for n in _chapter_files(pkg):
+            add(os.path.join(pkg, "chapters", n), "design", f"chapters/{n}")
+    # light 链 design.md 已在 overview 段加入
+    add(os.path.join(task_dir, "implement.md"), "task", "implement.md")
+    return entries
 
 
-def _gate_digest(task_dir: str, gate: str) -> str:
-    """确认快照摘要：按文件名（basename）排序后串接内容做 sha256。
-    只掺入 basename 不掺入完整路径——confirm（用户终端相对路径）与
-    check（before_start 注入绝对路径）的调用形态不同，完整路径会导致假失配。"""
+def _gate_digest(task_dir: str, gate: str, repo_root: str = None) -> str:
+    """确认快照摘要：排序后串接 key+内容做 sha256。
+
+    入哈希的是 key 不是完整路径——confirm（用户终端相对路径）与 check（before_start 注入
+    绝对路径）的调用形态不同，完整路径会导致假失配。
+
+    排序口径（解 codex major #3，向后兼容是最高优先级）：
+    - namespace OFF（无 requirement_package）：key==basename，**只按 basename 排序**。Python
+      sorted 是稳定排序，相同 basename 时保留 _gate_artifacts 的原始 entry 顺序——与历史实现
+      （`key=os.path.basename`）逐字节一致。含重复 basename 的 full 设计包（design-main.md +
+      chapters/design-main.md、implement.md + chapters/implement.md）串接顺序不变，旧确认/
+      review_runs 不失配。
+    - namespace ON（有 requirement_package）：key 已是 `<source>:<relpath>` 全局唯一，按
+      (key, realpath) 全量稳定排序；os.walk 已 dirs.sort()/files.sort()，同一文件集合不因
+      枚举顺序产生不同 digest。
+    """
     import hashlib
     h = hashlib.sha256()
-    for p in sorted(_gate_artifacts(task_dir, gate), key=os.path.basename):
-        h.update(os.path.basename(p).encode("utf-8"))
+    namespace = _requirement_package_dir(task_dir, repo_root) is not None
+    artifacts = _gate_artifacts(task_dir, gate, repo_root)
+    if namespace:
+        entries = sorted(artifacts, key=lambda e: (e["key"], os.path.realpath(e["path"])))
+    else:
+        # 复刻历史排序：仅按 basename（==key），稳定排序保留原始 entry 顺序（向后兼容字节级）
+        entries = sorted(artifacts, key=lambda e: e["key"])
+    for entry in entries:
+        h.update(entry["key"].encode("utf-8"))
         h.update(b"\0")
-        h.update(read(p).encode("utf-8"))
+        h.update(read(entry["path"]).encode("utf-8"))
         h.update(b"\0")
     return h.hexdigest()
+
+
+def requirements_digest(task_dir: str, repo_root: str = None) -> str:
+    """requirements digest 共享单一来源（供 guru_supervise.py import 调用）。
+
+    与 _gate_digest(task_dir, "requirements") 完全同口径——消除 guru_supervise 历史上
+    独立 _requirements_digest 实现导致的两处分叉。无 requirement_package 时只含 prd.md。
+
+    repo_root（解 codex blocker）：requirement_package 相对 repo root。guru_supervise --root
+    <repo> 可在 cwd≠root 下运行，必须传 config.root，否则按 cwd 解析正式需求包会与 gate 分叉、
+    supervise 写入的 review digest 永久 stale。gate 自身命令 cwd==root，默认 None。
+    """
+    return _gate_digest(task_dir, "requirements", repo_root)
 
 
 def _risk_level(task_dir: str) -> str:
@@ -1385,6 +1730,11 @@ def _record_review(task_dir: str, gate: str, options: dict) -> int:
             f"[guru-gate:record-review] 只支持 {', '.join(REVIEW_GATES)}；requirements 只走人工确认，不记录 clean streak\n"
         )
         return BLOCK
+    # overview/detail digest 累积 requirements 产物（含正式需求包）；manifest 非法时 fail-closed
+    manifest_problem = _requirement_package_problem(task_dir)
+    if manifest_problem:
+        sys.stderr.write(f"[guru-gate:record-review] {manifest_problem}\n")
+        return BLOCK
     data = _task_data_for_write(task_dir, "record-review")
     if data is None:
         return BLOCK
@@ -1470,6 +1820,10 @@ def _record_confirm(task_dir: str, gate: str, via: str, user_quote=None) -> int:
 
 def _record_grill(task_dir: str, gate: str, status: str, via: str, user_quote=None) -> int:
     """写入 design-grill 完成/跳过记录（严格 JSON 守卫 + 原子写）。via ∈ tty|agent。"""
+    manifest_problem = _requirement_package_problem(task_dir)
+    if manifest_problem:
+        sys.stderr.write(f"[guru-gate:grill-{status}] {manifest_problem}\n")
+        return BLOCK
     policy = _grill_policy(task_dir, gate)
     data = _task_data_for_write(task_dir, f"grill-{status}")
     if data is None:
@@ -1624,6 +1978,11 @@ def cmd_confirm(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None
     if not task_dir:
         sys.stderr.write("[guru-gate:confirm] 无法定位任务目录，请显式传 task_dir\n")
         return BLOCK
+    # manifest fail-closed：确认快照 digest 累积 requirements 产物（含正式需求包），非法 manifest 先拦
+    manifest_problem = _requirement_package_problem(task_dir)
+    if manifest_problem:
+        sys.stderr.write(f"[guru-gate:confirm] {manifest_problem}\n")
+        return BLOCK
     allowed, interactive, mode = _authorize_gate_write("confirm", via_agent, user_quote)
     if not allowed:
         return BLOCK
@@ -1772,6 +2131,13 @@ def cmd_status(task_dir_arg) -> int:
     task_dir = resolve_task_dir(task_dir_arg)
     if not task_dir:
         sys.stderr.write("[guru-gate:status] 无法定位任务目录，请显式传 task_dir\n")
+        return BLOCK
+    manifest_problem = _requirement_package_problem(task_dir)
+    if manifest_problem:
+        # manifest fail-closed：digest 取材会抛错，status 先报缺口再退出（与 requirements Gate 同口径）
+        print(f"任务：{task_dir}")
+        print(f"  ⚠️ requirement_package manifest — {manifest_problem}")
+        print("下一步：修正 manifest.yaml 后重跑 guru_gate.py requirements / status。")
         return BLOCK
     states = _gate_states(task_dir)
     print(f"任务：{task_dir}")
@@ -2040,6 +2406,10 @@ def main() -> int:
         task_dir = resolve_task_dir(rest[1] if len(rest) > 1 else None)
         if not task_dir:
             sys.stderr.write("[guru-gate:digest] 无法定位任务目录\n")
+            return BLOCK
+        manifest_problem = _requirement_package_problem(task_dir)
+        if manifest_problem:
+            sys.stderr.write(f"[guru-gate:digest] {manifest_problem}\n")
             return BLOCK
         print(_gate_digest(task_dir, rest[0]))
         return PASS

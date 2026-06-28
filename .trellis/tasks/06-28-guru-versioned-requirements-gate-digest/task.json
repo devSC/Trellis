@@ -1,0 +1,32 @@
+{
+  "id": "guru-versioned-requirements-gate-digest",
+  "name": "guru-versioned-requirements-gate-digest",
+  "title": "Extend requirements gate digest to track versioned requirement package",
+  "description": "Extend guru_gate.py requirements digest to include the versioned requirement package (manifest.canonical_root minus canonical_excludes) via a task.json requirement_package pointer, so editing the formal requirement package invalidates confirm/review. Backward compatible (no pointer = prd.md only). Out: REQ-UC<->BHV bridge (separate task), project migration.",
+  "status": "in_progress",
+  "dev_type": "feat/backend",
+  "scope": "guru-gate-digest",
+  "package": "guru-template",
+  "priority": "P2",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-06-28",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/guru-0.6.0-ga-worktree",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "guru-template/overlay/verify/guru_gate.py",
+    "guru-template/overlay/verify/guru_supervise.py",
+    "guru-template/specs/guru-flutter-client/harness/gate/gate-confirmation-model.md",
+    "guru-template/overlay/agents-skills/requirement-doc-standard/references/requirement-structure-single-source.md",
+    "guru-template/specs/guru-flutter-client/harness/requirements/versioned-requirements-package.md"
+  ],
+  "notes": "",
+  "meta": {}
+}

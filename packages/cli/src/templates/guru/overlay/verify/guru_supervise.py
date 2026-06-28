@@ -15,7 +15,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -27,6 +26,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 from urllib.parse import unquote, urlparse
+
+# requirements digest 共享单一来源：guru_gate.py 与本脚本同在 overlay/verify（安装后同在
+# .trellis/scripts/guru/）。脚本运行时其目录已是 sys.path[0]，此处显式补一遍兜底奇怪调用形态，
+# 保证 _requirements_digest 复用 guru_gate 实现而非维护第二份（消除 digest 分叉 / 永久 stale）。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from guru_gate import requirements_digest as _guru_gate_requirements_digest  # noqa: E402
 
 
 VALID_ACTIONS = {"requirements", "overview", "detail", "implement", "check", "implement-check"}
@@ -752,17 +757,22 @@ def _record_adversarial_skip(plan: RunPlan, config: SupervisionConfig, reason: s
         sys.stderr.write(f"[guru-supervise] failed to record adversarial skip: {exc}\n")
 
 
-def _requirements_digest(task_dir: Path) -> str:
-    digest = hashlib.sha256()
-    prd_path = task_dir / "prd.md"
-    digest.update(prd_path.name.encode("utf-8"))
-    digest.update(b"\0")
-    try:
-        digest.update(prd_path.read_text(encoding="utf-8").encode("utf-8"))
-    except OSError:
-        pass
-    digest.update(b"\0")
-    return digest.hexdigest()
+def _requirements_digest(task_dir: Path, repo_root: Path | None = None) -> str:
+    """requirements digest 单一来源：委托 guru_gate.requirements_digest（同 overlay/verify 目录）。
+
+    历史上本函数是独立实现（只哈希 prd.md，不 import guru_gate），与 guru_gate._gate_digest
+    并存——两者碰巧一致但只要 guru_gate 把正式需求包纳入 requirements digest 就会分叉、
+    supervise 写入的 review digest 与 gate 判断的 current digest 永久 stale。现统一调用共享
+    helper，保证两脚本对 requirements digest 字节一致；无 requirement_package 时仍只含 prd.md。
+
+    repo_root（解 codex blocker）：requirement_package 是「相对 repo root」字段。本脚本支持
+    `--root <repo>` 并可在 cwd≠root 下运行（gate 自身命令则 cwd==root）。必须把 config.root
+    透传给共享 helper，否则正式需求包会按进程 cwd 解析成 <cwd>/docs/...（空包/错包），与 gate
+    从 repo root 算的 digest 分叉、review 立刻 stale。
+    """
+    return _guru_gate_requirements_digest(
+        str(task_dir), str(repo_root) if repo_root is not None else None
+    )
 
 
 def _requirements_review_verdict(messages: str) -> tuple[str, str]:
@@ -798,7 +808,7 @@ def _record_requirements_review(
             "current_provider": config.current_provider,
             "adversarial": True,
             "status": status,
-            "artifact_digest": _requirements_digest(plan.task_dir),
+            "artifact_digest": _requirements_digest(plan.task_dir, config.root),
             "run_id": plan.run_id,
             "channel": plan.channel,
             "worker": plan.worker,

@@ -3,6 +3,7 @@
  * retry, env-configurable timeouts, and defaults-style settings merge.
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -1980,6 +1981,346 @@ fi
     expect(output).toContain(
       "--channel guru-task-delta-implement-r4 --worker implement-codex-r4",
     );
+  });
+});
+
+// 档 3：requirements gate digest 纳入正式需求包（requirement_package）。
+// 这些用例直接驱动 SOURCE overlay 脚本（guru-template/overlay/verify），验证本任务实际改动；
+// bundled 同步由主会话负责，独立的 in-sync 断言（line 676）单独守门。
+describe("guru requirements digest versioned package (source overlay)", () => {
+  let tmpDir: string;
+  const python = process.env.PYTHON ?? "python3";
+  const sourceSupervise = path.join(
+    GURU_SOURCE_OVERLAY_ROOT,
+    "verify",
+    "guru_supervise.py",
+  );
+  const sourceGate = path.join(
+    GURU_SOURCE_OVERLAY_ROOT,
+    "verify",
+    "guru_gate.py",
+  );
+
+  beforeEach(() => {
+    tmpDir = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "guru-req-digest-")),
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeConfig(): void {
+    const configPath = path.join(tmpDir, ".trellis", "config.yaml");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, "guru:\n  platform: go\n", "utf8");
+  }
+
+  function writeTask(name: string): string {
+    const taskDir = path.join(tmpDir, ".trellis", "tasks", name);
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.writeFileSync(path.join(taskDir, "prd.md"), "# PRD\n### BHV-001 x\n", "utf8");
+    return taskDir;
+  }
+
+  function writeRequirementPackage(taskDir: string, relPkg: string): string {
+    const pkg = path.join(tmpDir, relPkg);
+    fs.mkdirSync(path.join(pkg, "modules"), { recursive: true });
+    fs.mkdirSync(path.join(pkg, "snapshots"), { recursive: true });
+    fs.mkdirSync(path.join(pkg, "changes"), { recursive: true });
+    fs.writeFileSync(path.join(pkg, "README.md"), "# req nav\n", "utf8");
+    fs.writeFileSync(
+      path.join(pkg, "requirement-main.md"),
+      "# requirement main v1\n",
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(pkg, "modules", "requirement-page.md"),
+      "# page module\n",
+      "utf8",
+    );
+    fs.writeFileSync(path.join(pkg, "snapshots", "rc.md"), "# snapshot\n", "utf8");
+    fs.writeFileSync(
+      path.join(pkg, "changes", "change-log.md"),
+      "# changelog\n",
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(taskDir, "task.json"),
+      JSON.stringify({ requirement_package: relPkg }, null, 2),
+      "utf8",
+    );
+    return pkg;
+  }
+
+  function writeCleanRequirementsTrellis(): string {
+    const fake = path.join(tmpDir, "fake-req-clean.sh");
+    const verdict = JSON.stringify(
+      JSON.stringify({
+        kind: "message",
+        by: "requirements-claude-fixture",
+        text: "review_result=clean/requirements-ready route_class=none",
+      }),
+    );
+    fs.writeFileSync(
+      fake,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "channel" ] && [ "$2" = "create" ]; then
+  exit 0
+elif [ "$1" = "channel" ] && [ "$2" = "spawn" ]; then
+  exit 0
+elif [ "$1" = "channel" ] && [ "$2" = "send" ]; then
+  cat >/dev/null
+elif [ "$1" = "channel" ] && [ "$2" = "wait" ]; then
+  echo '{"kind":"done","by":"requirements-claude-fixture"}'
+elif [ "$1" = "channel" ] && [ "$2" = "messages" ]; then
+  echo ${verdict}
+else
+  echo "unexpected fake trellis args: $*" >&2
+  exit 2
+fi
+`,
+      "utf8",
+    );
+    fs.chmodSync(fake, 0o755);
+    return fake;
+  }
+
+  function gateDigest(taskDir: string): string {
+    return execFileSync(
+      python,
+      [sourceGate, "digest", "requirements", taskDir],
+      { cwd: tmpDir, encoding: "utf8", env: PYTHON_NO_BYTECODE_ENV },
+    ).trim();
+  }
+
+  function recordedReviewDigest(taskDir: string): string {
+    const task = JSON.parse(
+      fs.readFileSync(path.join(taskDir, "task.json"), "utf8"),
+    ) as {
+      guru_gates?: { requirements_review?: { artifact_digest?: string } };
+    };
+    return task.guru_gates?.requirements_review?.artifact_digest ?? "";
+  }
+
+  it("records a supervise digest that matches the gate current digest, and invalidates on canonical change", () => {
+    writeConfig();
+    fs.mkdirSync(
+      path.join(tmpDir, ".agents", "skills", "requirement-review"),
+      { recursive: true },
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, ".agents", "skills", "requirement-review", "SKILL.md"),
+      "# skill\n",
+      "utf8",
+    );
+    const taskDir = writeTask("task-req-digest");
+    const pkg = writeRequirementPackage(
+      taskDir,
+      "docs/requirements/versions/v1.0.0",
+    );
+    const fake = writeCleanRequirementsTrellis();
+
+    execFileSync(
+      python,
+      [
+        sourceSupervise,
+        "--root",
+        tmpDir,
+        "--trellis-bin",
+        fake,
+        "--provider",
+        "codex",
+        "--adversarial",
+        "requirements",
+        taskDir,
+        "--run-id",
+        "rqd1",
+      ],
+      { cwd: tmpDir, encoding: "utf8", env: PYTHON_NO_BYTECODE_ENV },
+    );
+
+    // supervise 写入的 review digest 与 gate 当前 digest 必须字节一致（共享 helper，不假 stale）
+    const recorded = recordedReviewDigest(taskDir);
+    expect(recorded).toMatch(/^[a-f0-9]{64}$/);
+    expect(recorded).toBe(gateDigest(taskDir));
+
+    // 改 canonical 正文 → gate digest 变 → 与 supervise 记录的旧 digest 不再一致（review 须重跑）
+    fs.appendFileSync(
+      path.join(pkg, "requirement-main.md"),
+      "\nnew acceptance rule\n",
+      "utf8",
+    );
+    const afterBody = gateDigest(taskDir);
+    expect(afterBody).not.toBe(recorded);
+
+    // 改 excludes 子树（snapshots/changes）→ gate digest 不变（仍等于 canonical 改动后的值）
+    fs.appendFileSync(
+      path.join(pkg, "snapshots", "rc.md"),
+      "\nmore snapshot\n",
+      "utf8",
+    );
+    fs.appendFileSync(
+      path.join(pkg, "changes", "change-log.md"),
+      "\nmore changes\n",
+      "utf8",
+    );
+    expect(gateDigest(taskDir)).toBe(afterBody);
+  });
+
+  it("keeps no-pointer requirements digest on the legacy basename formula (backward compatible)", () => {
+    writeConfig();
+    const taskDir = writeTask("task-no-pointer");
+    fs.writeFileSync(
+      path.join(taskDir, "task.json"),
+      JSON.stringify({}, null, 2),
+      "utf8",
+    );
+
+    const prd = fs.readFileSync(path.join(taskDir, "prd.md"), "utf8");
+    const legacy = createHash("sha256")
+      .update("prd.md")
+      .update(Buffer.from([0]))
+      .update(prd)
+      .update(Buffer.from([0]))
+      .digest("hex");
+    expect(gateDigest(taskDir)).toBe(legacy);
+  });
+
+  it("fails closed when the requirement package manifest is illegal", () => {
+    writeConfig();
+    const taskDir = writeTask("task-bad-manifest");
+    const pkg = writeRequirementPackage(taskDir, "docs/requirements/v1");
+    fs.writeFileSync(
+      path.join(pkg, "manifest.yaml"),
+      "canonical_excludes: notalist\n",
+      "utf8",
+    );
+
+    const result = spawnSync(
+      python,
+      [sourceGate, "requirements", taskDir],
+      { cwd: tmpDir, encoding: "utf8", env: PYTHON_NO_BYTECODE_ENV },
+    );
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("manifest 非法");
+  });
+
+  // [blocker 回归] codex：supervise --root <repo> 在 cwd≠root 下运行时，旧实现用 os.getcwd() 当
+  // repo root 把 docs/... 解析成 <cwd>/docs/...（空包/错包），与 gate 从 repo root 算的 digest 分叉、
+  // review 立刻 stale。此用例显式让 supervise 的 cwd ≠ --root，断言写入 digest 仍 == gate current digest。
+  it("matches the gate digest when supervise runs with cwd different from --root (blocker regression)", () => {
+    writeConfig();
+    fs.mkdirSync(
+      path.join(tmpDir, ".agents", "skills", "requirement-review"),
+      { recursive: true },
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, ".agents", "skills", "requirement-review", "SKILL.md"),
+      "# skill\n",
+      "utf8",
+    );
+    const taskDir = writeTask("task-cwd-not-root");
+    const pkg = writeRequirementPackage(
+      taskDir,
+      "docs/requirements/versions/v1.0.0",
+    );
+    const fake = writeCleanRequirementsTrellis();
+
+    // 独立 cwd（绝对不等于 --root=tmpDir），模拟 `cd /somewhere-else && guru_supervise --root <repo>`
+    const elsewhere = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "guru-elsewhere-")),
+    );
+    expect(path.resolve(elsewhere)).not.toBe(path.resolve(tmpDir));
+    try {
+      execFileSync(
+        python,
+        [
+          sourceSupervise,
+          "--root",
+          tmpDir,
+          "--trellis-bin",
+          fake,
+          "--provider",
+          "codex",
+          "--adversarial",
+          "requirements",
+          taskDir,
+          "--run-id",
+          "rqd-cwd",
+        ],
+        { cwd: elsewhere, encoding: "utf8", env: PYTHON_NO_BYTECODE_ENV },
+      );
+
+      const recorded = recordedReviewDigest(taskDir);
+      expect(recorded).toMatch(/^[a-f0-9]{64}$/);
+      // gate 从 repo root 算（cwd: tmpDir）；两者必须字节一致，否则 review 永久 stale
+      expect(recorded).toBe(gateDigest(taskDir));
+      // 且该 digest 真的纳入了正式需求包，不是退化成 prd.md-only（空包）
+      const prd = fs.readFileSync(path.join(taskDir, "prd.md"), "utf8");
+      const prdOnly = createHash("sha256")
+        .update("prd.md")
+        .update(Buffer.from([0]))
+        .update(prd)
+        .update(Buffer.from([0]))
+        .digest("hex");
+      expect(recorded).not.toBe(prdOnly);
+      // 改 canonical 正文 → gate digest 变 → 与旧记录不再一致
+      fs.appendFileSync(
+        path.join(pkg, "requirement-main.md"),
+        "\nnew rule\n",
+        "utf8",
+      );
+      expect(gateDigest(taskDir)).not.toBe(recorded);
+    } finally {
+      fs.rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  // [major 回归] codex：requirement_package 存在但目录不存在 → 必须 fail-closed 阻断（不空枚举伪装成 prd.md-only）。
+  it("fails closed when the requirement package directory is missing", () => {
+    writeConfig();
+    const taskDir = writeTask("task-missing-pkg");
+    fs.writeFileSync(
+      path.join(taskDir, "task.json"),
+      JSON.stringify(
+        { requirement_package: "docs/requirements/versions/none" },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    const result = spawnSync(python, [sourceGate, "requirements", taskDir], {
+      cwd: tmpDir,
+      encoding: "utf8",
+      env: PYTHON_NO_BYTECODE_ENV,
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("版本目录不存在");
+  });
+
+  // [major 回归] codex：canonical_root 穿越包外（../../..）→ 必须 fail-closed 阻断（不把包外目录纳入 digest）。
+  it("fails closed when manifest canonical_root escapes the package directory", () => {
+    writeConfig();
+    const taskDir = writeTask("task-root-escape");
+    const pkg = writeRequirementPackage(
+      taskDir,
+      "docs/requirements/versions/v1.0.0",
+    );
+    fs.writeFileSync(
+      path.join(pkg, "manifest.yaml"),
+      "canonical_root: ../../..\n",
+      "utf8",
+    );
+    const result = spawnSync(python, [sourceGate, "requirements", taskDir], {
+      cwd: tmpDir,
+      encoding: "utf8",
+      env: PYTHON_NO_BYTECODE_ENV,
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("canonical_root");
   });
 });
 

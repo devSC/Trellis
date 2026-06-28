@@ -1,0 +1,3 @@
+{"file": "guru-template/specs/guru-flutter-client/harness/gate/gate-confirmation-model.md", "reason": "核查 digest 扩展未破坏 confirm/review_runs/失配恢复模型,向后兼容"}
+{"file": "guru-template/overlay/agents-skills/requirement-doc-standard/references/requirement-structure-single-source.md", "reason": "核查 canonical_root/canonical_excludes 解析与 §15 一致,排除 snapshots/changes"}
+{"file": "guru-template/specs/guru-flutter-client/harness/requirements/versioned-requirements-package.md", "reason": "核查 digest 纳入对象与正式需求包结构一致"}
