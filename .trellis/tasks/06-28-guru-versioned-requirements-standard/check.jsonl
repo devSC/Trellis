@@ -1,0 +1,5 @@
+{"file": "guru-template/overlay/agents-skills/requirement-writing/references/document-organization.md", "reason": "核查版本化规则收敛完整、与档1 spec 口径一致、现有版本管理节已合并不留双主定义"}
+{"file": "guru-template/overlay/agents-skills/requirement-doc-standard/references/requirement-structure-single-source.md", "reason": "核查仅 §4 加指针,§5.2 核心能力/§6 编号/§13 收敛等核心节字面未改"}
+{"file": "guru-template/specs/guru-flutter-client/harness/requirements/versioned-requirements-package.md", "reason": "核查 harness 去重改引用、链接可达、无重复主定义"}
+{"file": "guru-template/overlay/agents-skills/requirement-review/references/review-baseline.md", "reason": "核查扁平结构(无 versions/)审核判定不变,向后兼容"}
+{"file": "guru-template/overlay/agents-skills/requirement-writing/SKILL.md", "reason": "核查 writing 经标准包硬前置链路获得版本化规则,SKILL 正文未改"}

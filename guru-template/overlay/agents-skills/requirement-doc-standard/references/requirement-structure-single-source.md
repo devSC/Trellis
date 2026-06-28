@@ -44,6 +44,7 @@ requirements/
 - `requirement-cli-command.md`：CLI Command 契约主定义（仅在 CLI 适用时创建）。
 - `requirement-non-functional.md`：非功能主定义。
 - `changes/*`：版本变更记录，不承载业务规则主定义。
+- 版本化场景下，版本级治理文件（`manifest.yaml` / `traceability.md` / `decisions.md` / `snapshots/`）的职责见 §15「版本化需求包」。
 
 ## 5. 章节承载与可执行规则边界
 
@@ -354,3 +355,87 @@ API 必要步骤判定（适用于 `requirement-api.md` 主定义）：
 
 - 最小示例目录：`references/examples/unique-structure-minimal/`（从本标准包目录解析）
 - 用于演示语义 SSOT 与推荐目录形态，不作为业务模板强约束。
+
+## 15. 版本化需求包（可选，版本隔离外层）
+
+适用于需要按软件版本隔离正式需求的场景。`versions/` 为**可选**：无版本化需求时，扁平 `requirements/`（§2）仍是默认合法形态。版本目录**内部**的文档体系、章节承载、编号契约、核心能力定义与完成收敛口径**完全沿用**本标准前述各节（§2-§13）；本节只定义版本隔离外层与治理层，不复写核心合同。写作技能与审核技能均以本节为版本化需求包的单一来源。
+
+### 15.1 目录结构
+
+`[既有]` = 沿用 §2 扁平结构；`[新增]` = 版本化治理层。
+
+```text
+docs/requirements/
+  README.md                          # [既有职责] 全局版本入口/版本矩阵（§4）
+  versions/
+    v1.0.0/
+      README.md                      # [既有] 本版本导航/索引/追踪矩阵/版本入口（§4）
+      manifest.yaml                  # [新增] README 版本入口的机器镜像（§15.2）
+      requirement-main.md            # [既有] 第一/二章 + 核心能力定义（§5.2）
+      requirement-api.md             # [既有] API 适用时（§5.1）
+      requirement-cli-command.md     # [既有] CLI 适用时（§5.1）
+      requirement-non-functional.md  # [既有] 非功能主定义
+      modules/                       # [既有] 第三章起详细（§11）
+      changes/                       # [既有] change-log.md + changes/
+        change-log.md
+        changes/
+      traceability.md                # [新增] 版本级手维护审计参考（§15.4）
+      decisions.md                   # [新增] 产品/范围级长期决策（§15.5）
+      snapshots/                     # [新增] 关键节点快照（§15.6）
+```
+
+把既有扁平结构整体下沉到 `versions/<version>/`，文件清单与职责不变。不得为版本化另造并行章节体系，不得裁剪既有必备文档（尤其 `requirement-cli-command.md` 按 §5.1 判定、`requirement-main.md` 核心能力定义 §5.2）。
+
+### 15.2 `manifest.yaml`（机器入口）
+
+README 版本入口的机器镜像；版本事实以 README + 本标准为准，manifest 是机器可读派生，不一致以 README/标准为准。
+
+```yaml
+version: v1.0.0            # 目录标识（带 v）
+app_version: 1.0.0        # 应用版本 X.Y.Z（不带 v），与 version 的 X.Y.Z 一致且可机校验
+status: candidate         # draft/candidate/approved/released/superseded
+inherits_from: v0.9.0     # 上一版本目录（首版 null）；配合演进策略
+supersedes: []            # 本版本取代/废弃的旧版本目录
+canonical_root: .
+canonical_excludes: [snapshots, changes]   # 不进 canonical digest 的子树
+current_requirement_entry: README.md
+traceability: traceability.md
+change_log: changes/change-log.md
+decisions: decisions.md
+snapshots: snapshots
+```
+
+`build_number` 不进 manifest 主体、不参与任何 digest，仅在 `snapshots/` 或 release evidence 按节点记录。
+
+### 15.3 变更：沿用 `changes/`，禁日期子目录
+
+- 沿用 `changes/change-log.md`（汇总）+ `changes/changes/`（语义化详细），**不另造** `changelog.md`。
+- `change-log.md` 记：日期、变更标题、来源任务/issue、改动需求 ID（`REQ-UC-XXX`）、影响正文文件、验证状态；每轮「完成收敛」作为独立变更记录。
+- 默认**禁止**退化为日期子目录（`changes/YYYY-MM-DD/`、`versions/<version>/YYYY-MM-DD/`）：日期非业务语义、同日多任务混淆、跨日任务被拆、易被误读为需求入口。
+- 外部审计独立变更包用语义化 `changes/changes/0001-<slug>.md`，声明为变更包、非需求正文、不进 canonical digest。
+
+### 15.4 `traceability.md`（手维护审计参考）
+
+- 版本级审计参考，**不是新的追溯主定义，不作硬 Gate**。
+- `Requirement ID` 列用 §6 稳定编号 `REQ-UC-XXX`（及 `API-INTENT-XXX`/`CLI-INTENT-XXX`），手维护回填（已知 drift 风险），靠审核与完成收敛兜底，而非脚本保鲜。
+- 最小字段：`REQ-UC-ID | Source Task | Design Unit | Code Entry | Test Evidence | Status`；状态 `covered/partial/missing/orphan_behavior/untested/blocked`，不得仅凭测试或结构校验通过即宣称对齐。
+
+### 15.5 `decisions.md`
+
+只承载「产品/范围级、非架构 ADR、非单条需求确认（走 §5.2 `confirmation_status`）、又需跨任务跨版本解释」的决策；引用上述位置，不重写。每条至少：Decision ID、状态、日期、来源任务、决策正文、原因、影响的 `REQ-UC-XXX`。
+
+### 15.6 `snapshots/`
+
+关键节点完整快照（需求评审/RC/发布/外部审计），命名含日期与原因。**不**作 canonical root、**不**参与 §13 完成收敛、**不**进 §6 编号差集、**不**进默认审核入口。不每日自动生成。
+
+### 15.7 版本演进（默认 full-copy + diff）
+
+- **版本号语义/来源**：`<version>` 用 semver `vX.Y.Z`，来源应用版本号（如 `pubspec.yaml` 的 `version: X.Y.Z+N`，`+N` 不进目录名），与 `manifest.app_version` 一致。
+- **开新版本目录的触发/时机**：由 `README` 的 current-development 指针决定，与应用版本 bump **解耦**（可先建 `draft` 版本目录写需求）。
+- **继承**：新版本目录从上一版**整体复制**、自包含完整正文，`change-log.md` 记相对上版 diff，`manifest.inherits_from` 指上一版；接受「稳定 `REQ-UC` 跨版本重复正文」为已知代价（换单版本自包含可读）。**不采用** baseline+delta（单版本读不到完整需求）；如确需，须在 README/manifest 写清解析顺序。
+- **偏离基线**：偏离判断锚定 `README` current-development 指针指向的版本目录；released 目录冻结只读（改动走新版本或 hotfix 版本号）。
+- **pre-release/channel 后缀归一**：`1.0.0-rc.1` 等归一到 `vX.Y.Z` 目录，rc/channel 信息进 `manifest.status` 与 `snapshots/`，不另开目录。
+
+### 15.8 完成收敛附加项（版本化时）
+
+版本化需求包过 §13 完成收敛时，额外确认：canonical root 唯一（版本目录根，非 snapshot/changes）、`manifest` 与 README 版本入口一致、`changes/` 无日期子目录、`traceability` 的 `REQ-UC` 列可回指 §6 编号。是否需重新审核由 §10 写作与复核协同规则及消费方门禁判定，不归 §12/§13。

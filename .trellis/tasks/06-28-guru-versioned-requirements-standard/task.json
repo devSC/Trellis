@@ -1,0 +1,32 @@
+{
+  "id": "guru-versioned-requirements-standard",
+  "name": "guru-versioned-requirements-standard",
+  "title": "Promote versioned requirements rules into requirement-doc-standard",
+  "description": "Promote versioned requirements rules from the 06-26 task spec into requirement-doc-standard (document-organization detail + minimal single-source §2/§4) so requirement-writing/review enforce versions/ via the standard-package hard prerequisite; sync bundled with contagion handling. Out of scope: gate digest (tier 3), project migration (tier 4).",
+  "status": "in_progress",
+  "dev_type": "docs/spec",
+  "scope": "guru-requirements-standard",
+  "package": "guru-template",
+  "priority": "P2",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-06-28",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/guru-0.6.0-ga-worktree",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "guru-template/overlay/agents-skills/requirement-writing/references/document-organization.md",
+    "guru-template/overlay/agents-skills/requirement-doc-standard/references/requirement-structure-single-source.md",
+    "guru-template/specs/guru-flutter-client/harness/requirements/versioned-requirements-package.md",
+    "guru-template/overlay/agents-skills/requirement-review/references/review-baseline.md",
+    "guru-template/overlay/agents-skills/requirement-writing/SKILL.md"
+  ],
+  "notes": "",
+  "meta": {}
+}

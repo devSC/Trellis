@@ -1,0 +1,5 @@
+{"file": "guru-template/overlay/agents-skills/requirement-writing/references/document-organization.md", "reason": "档2主改目标:把版本化规则收敛进此文件的「版本与变更管理」节(writing/review 硬前置主定义)"}
+{"file": "guru-template/overlay/agents-skills/requirement-doc-standard/references/requirement-structure-single-source.md", "reason": "最小侵入改 §4 加版本化指针;核心合同节 §5/§6/§12/§13 不动"}
+{"file": "guru-template/specs/guru-flutter-client/harness/requirements/versioned-requirements-package.md", "reason": "档1规则来源;档2去重为项目侧导读、引用 doc-org"}
+{"file": "guru-template/overlay/agents-skills/requirement-review/references/review-baseline.md", "reason": "审核侧消费标准包;验证扁平结构向后兼容、版本化不破坏既有判定"}
+{"file": "guru-template/overlay/agents-skills/requirement-writing/SKILL.md", "reason": "硬前置链路:执行规则1-2只读标准包;确认规则进 doc-org 即被 writing 强制"}
