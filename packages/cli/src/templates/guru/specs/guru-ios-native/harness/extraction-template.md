@@ -87,7 +87,7 @@ kebab-case 方法名，体现"一类 iOS 任务"而非组件名。动词或动�
 人或脚本如何判断达标，逐条对应 Gate / `guru_gate.py` 可检查点或可执行命令：
 
 - **机器可查（命令）**：`xcodebuild build`（或 Fastlane 槽位脚本）通过；目标测试命令（按测试框架槽位 XCTest / Quick·Nimble）逐测试名通过；`Domain` target 不链接 UI 框架。
-- **机器可查（结构 Gate）**：`guru_gate.py trace-matrix <task_dir> --write` 生成的 行为×归属×单元×测试×切片 矩阵无断链；`BHV-NNN` / `UNIT-<slug>` 引用不存在幽灵编号；承接索引↔章节文件双向闭合（full 链）；`detail_doc_type` 仅取七类名。
+- **机器可查（结构 Gate）**：`guru_gate.py trace-matrix <task_dir> --write` 生成的 行为×需求场景（REQ-UC）×归属×单元×测试×切片 矩阵无断链；`BHV-NNN` / `UNIT-<slug>` 引用不存在幽灵编号；承接索引↔章节文件双向闭合（full 链）；`detail_doc_type` 仅取七类名。
 - **分层可查**：import 方向 `Domain → App → Infrastructure → UI` 单向无环；`Domain` 文件无 `import SwiftUI`/`import RxSwift`/`import WCDBSwift`/任何上层 import（零依赖）；无 View 间直接导航（跳转引用集中在 `coordinator`）；无 View 直接引用 `DatabaseManager` / WCDBSwift（数据访问经 `repository`）。
 - **DI 可查**：依赖通过 `@Injected` 取得，无业务对象手动 `init` 拼装（搜不到绕过 `Container` 的实例化）。
 - **错误链可查**：对外失败路径命中分层 `enum Error` 的具体 case，且上层（usecase → viewmodel → view）有显式映射，不靠字符串匹配。

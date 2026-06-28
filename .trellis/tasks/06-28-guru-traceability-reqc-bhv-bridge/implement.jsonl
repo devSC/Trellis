@@ -1,0 +1,4 @@
+{"file": "guru-template/overlay/agents-skills/requirement-doc-standard/references/requirement-structure-single-source.md", "reason": "§6 编号契约(新增 BHV 承接 REQ-UC)+ §15.4 traceability 定位(生成区 vs 手维护区调和)"}
+{"file": "guru-template/specs/guru-flutter-client/harness/requirements/versioned-requirements-package.md", "reason": "档1 traceability 手维护定位 + 项目侧 gate 关系;聚合写版本目录 traceability 的边界"}
+{"file": "guru-template/workflows/guru-client-workflow.md", "reason": "BHV 编号承接需求包场景的规范来源(:195);编号契约改动须同步"}
+{"file": "guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md", "reason": "trace-matrix BHV/UNIT 断链合同;REQ-UC 列增量不得改既有断链口径"}

@@ -29,15 +29,16 @@ docs/requirements/
 
 - 版本目录内部沿用 single-source §2-§6(含 CLI §5.1、核心能力定义 §5.2、编号 §6);不另造并行体系,不裁剪既有必备文档。
 - 变更沿用 `changes/change-log.md`,禁日期子目录,不另造 `changelog.md`(§15.3)。
-- `traceability.md` 手维护审计参考,与 harness `trace-matrix` 不自动连通(§15.4 + 下文)。
+- `traceability.md` 半生成 + 手维护审计参考:派生四列(`REQ-UC | Source Task | Design Unit | BHV`)可由 `guru_gate.py trace-aggregate <version-dir>` 反查聚合,手维护三列(`Code Entry | Test Evidence | Status`)按 `(REQ-UC, Design Unit)` key 回填保留(§15.4 + 下文)。
 - 版本演进默认 full-copy + diff(§15.7)。
-- `manifest`/`snapshots`/`changes` 不进 canonical digest(§15.2 `canonical_excludes`)。
+- `manifest`/`snapshots`/`changes`/`traceability` 不进 canonical digest(§15.2 `canonical_excludes`;`traceability` 须显式列入,否则聚合工具 fail-closed 拒写)。
 
 ## 与本项目 Guru Gate 的关系（项目侧,§15 不承载）
 
 本节是 §15 在 guru-flutter-client 的项目侧补充(中立标准包不绑特定 Gate,故留在本导读)。
 
 - `requirements` adversarial review **会读取**正式需求包作为复核证据;但 `requirements` digest **只哈希 `prd.md`**(见 [../gate/gate-confirmation-model.md](../gate/gate-confirmation-model.md))。故「改正式需求包」**不会**自动改变 digest、不会自动使 `confirm requirements` 失效。
-- harness `trace-matrix`(`overlay/verify/guru_gate.py`)是 **task 级**、矩阵列为「BHV × owner × UNIT × 测试 × 切片」、**不含 `REQ-UC`、无多任务聚合入口**;因此版本级 `traceability.md` **无法**由它直接派生,默认手维护审计参考(对接 §15.4)。
-- `change-log.md` / `traceability.md` **不得**写「digest 已失效 / review 已重跑」这类人工结论(违背 gate「不信任手写结论」),只声明按 §12/§13 与门禁应触发的复核。
+- harness `trace-matrix`(`overlay/verify/guru_gate.py`)是 **task 级**,矩阵列为「BHV × REQ-UC × owner × UNIT × 测试 × 切片」:BHV 标题以 `[REQ-UC-XXX]`(多对多)承接需求源场景,矩阵增 `需求场景(REQ-UC)` 列(行展开);`--require-req-uc`(或 task.json `require_req_uc:true`)强制 BHV 须带 REQ-UC。版本级聚合走新子命令 `trace-aggregate <version-dir> [--include-completed]`:反查 `requirement_package` 指向本版本目录的 task(默认 `.trellis/tasks/<task>`,`--include-completed` 加扫 `archive/<YYYY-MM>/<task>`),行展开写 `traceability.md` 派生四列。故版本级 `traceability.md` 的派生部分**可由 `trace-aggregate` 生成**,不再纯手维护(手维护三列仍按 key 回填保留,§15.4)。
+- `trace-aggregate` 写 `traceability.md` 前 **fail-closed** 检查本版本目录 `manifest.canonical_excludes` 含 `traceability`(`_MANIFEST_DEFAULT_EXCLUDES` 仅 `snapshots, changes`、不含 traceability,manifest 缺失/缺字段回退此默认),不含则拒写并提示更新 manifest——故聚合写 `traceability.md` **不触发** requirements digest(digest 仍只哈希 `prd.md`)。
+- `change-log.md` / `traceability.md` **不得**写「digest 已失效 / review 已重跑」这类人工结论(违背 gate「不信任手写结论」),只声明按 §12/§13 与门禁应触发的复核;聚合工具生成的 `Status`(missing/orphan/stale 等)同属审计参考,**不阻断** requirements/detail/implement gate。
 - 让 review 经 `manifest.canonical_root` 定位正式需求包、或让「改正式需求包」自动触发 requirements digest 失效,均为**显式实现前置**(扩展 review 入口解析 / `guru_gate.py` requirements digest 路径集合),非默认。

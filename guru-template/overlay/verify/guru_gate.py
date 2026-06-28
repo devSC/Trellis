@@ -9,9 +9,15 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
   python3 guru_gate.py overview <task_dir>        # 概要 Gate：light=design.md §概要；full=设计包 design-main.md（结构+归属+索引）
   python3 guru_gate.py detail <task_dir>          # 详细 Gate：light=design.md §详细；full=chapters/*.md（章节闭合+pending L2 拦截）+ implement.md
   python3 guru_gate.py implement <task_dir>       # 实现 Gate：implement.md trace 四节（切片挂 UNIT）
-  python3 guru_gate.py trace-matrix <task_dir> [--write] [--strict]
-                                                  # 追溯矩阵：BHV × owner × UNIT × 测试 × 切片 + 孤儿清单
+  python3 guru_gate.py trace-matrix <task_dir> [--write] [--strict] [--require-req-uc]
+                                                  # 追溯矩阵：BHV × REQ-UC × owner × UNIT × 测试 × 切片 + 孤儿清单
                                                   # --write 写入 <task_dir>/trace-matrix.md；--strict 有断链时 exit 2
+                                                  # --require-req-uc 强制 BHV 标题须带 [REQ-UC-XXX]（亦读 task.json require_req_uc）
+  python3 guru_gate.py trace-aggregate <version_dir> [--include-completed]
+                                                  # 版本级聚合：反查指向该需求包版本目录的 task → 行展开
+                                                  # 写 <version_dir>/traceability.md 生成区（§15.4 单表，回填手维护列）
+                                                  # 默认仅扫 .trellis/tasks/<task>；--include-completed 加扫 archive/<YYYY-MM>/<task>
+                                                  # fail-closed：traceability 不在 manifest canonical_excludes 时拒写（避免触发 requirements digest）
   python3 guru_gate.py confirm [requirements|detail] [task_dir] [--via-agent]
                                                   # 人工确认 Gate（需求确认 + 详细设计 review 双 clean 后确认）
                                                   # strict 模式（默认）：仅限用户本人在交互式终端运行，agent 代跑被拒
@@ -54,6 +60,8 @@ BHV_DEF = re.compile(r"^#{2,5}\s+(BHV-\d+)[^\n]*$", re.M)
 UNIT_DEF = re.compile(r"^#{2,5}\s+(UNIT-[a-z][a-z0-9-]*)[^\n]*$", re.M)
 BHV_REF = re.compile(r"(BHV-\d+)")
 UNIT_REF = re.compile(r"(UNIT-[a-z][a-z0-9-]*)")
+# 需求场景承接（REQ-UC = 需求源 use case；与 overview 的 UC-<序号> 是两套独立编号，命名消歧）
+REQ_UC_REF = re.compile(r"(REQ-UC-\d+)")
 
 # 双轨制（完整五阶段链=目录级设计包；轻量链=单文件 design.md）
 # doc_type 分类【运行时】从已装的 detail-structure-single-source.md §2 表解析（见 _doc_type_taxonomy），
@@ -797,9 +805,17 @@ def build_trace(task_dir: str) -> dict:
     prd, overview, detail, imp = src["prd"], src["overview"], src["detail"], src["imp"]
 
     behaviors = {}
+    req_ucs = {}  # {bhv: [REQ-UC-XXX, ...]}：BHV 标题 [..] 承接的需求场景（多对多）
     for m in BHV_DEF.finditer(prd):
         line = m.group(0)
-        behaviors[m.group(1)] = re.sub(r"^#{2,5}\s+BHV-\d+\s*", "", line).strip() or "(未命名)"
+        bhv = m.group(1)
+        # BHV 标题形如 `### BHV-001 [REQ-UC-005, REQ-UC-007] <描述>`：先抽 [..] 内的 REQ-UC
+        bracket = re.search(r"\[([^\]]*REQ-UC[^\]]*)\]", line)
+        req_ucs[bhv] = REQ_UC_REF.findall(bracket.group(1)) if bracket else []
+        # 短名：去掉 `#### BHV-001 ` 前缀，再去掉紧随的 `[REQ-UC..]` 承接段
+        name = re.sub(r"^#{2,5}\s+BHV-\d+\s*", "", line)
+        name = re.sub(r"^\[[^\]]*REQ-UC[^\]]*\]\s*", "", name).strip()
+        behaviors[bhv] = name or "(未命名)"
 
     # §1 归属：含 BHV 引用的行视为归属行
     owners = {}
@@ -831,13 +847,13 @@ def build_trace(task_dir: str) -> dict:
         "unit_no_slice": sorted(set(units) - set(slices)) if imp else [],
         "slice_ghost_unit": sorted(set(slices) - set(units)),
     }
-    return {"behaviors": behaviors, "owners": owners, "units": units, "slices": slices, "orphans": orphans}
+    return {"behaviors": behaviors, "req_ucs": req_ucs, "owners": owners, "units": units, "slices": slices, "orphans": orphans}
 
 
 def render_matrix(t: dict) -> str:
     lines = ["# 追溯矩阵（机器生成，勿手编）", "",
-             "| 行为 | 名称 | 归属（§1） | 承接单元（§2） | 测试映射 | 实现切片 |",
-             "|------|------|-----------|---------------|---------|---------|"]
+             "| 行为 | 名称 | 需求场景（REQ-UC） | 归属（§1） | 承接单元（§2） | 测试映射 | 实现切片 |",
+             "|------|------|------|-----------|---------------|---------|---------|"]
     unit_by_bhv = {}
     for u, d in t["units"].items():
         for b in d["behaviors"]:
@@ -846,7 +862,15 @@ def render_matrix(t: dict) -> str:
         us = unit_by_bhv.get(b, [])
         tests = "✅" if us and all(t["units"][u]["tests"] for u in us) else ("⚠️" if us else "—")
         sl = "✅" if us and all(u in t["slices"] for u in us) else ("⚠️" if us else "—")
-        lines.append(f"| {b} | {name} | {'✅' if b in t['owners'] else '❌'} | {', '.join(us) or '❌ 无承接'} | {tests} | {sl} |")
+        owner = '✅' if b in t['owners'] else '❌'
+        unit_cell = ', '.join(us) or '❌ 无承接'
+        # 多对多行展开：一 BHV 多 REQ-UC → 每 REQ-UC 一行；无承接 → 一行 REQ-UC 空（旧 prd 不断链）
+        ucs = t.get("req_ucs", {}).get(b, [])
+        if ucs:
+            for uc in ucs:
+                lines.append(f"| {b} | {name} | {uc} | {owner} | {unit_cell} | {tests} | {sl} |")
+        else:
+            lines.append(f"| {b} | {name} | — | {owner} | {unit_cell} | {tests} | {sl} |")
     o = t["orphans"]
     lines += ["", "## 孤儿/断链清单"]
     label = [("bhv_no_unit", "行为无设计单元承接"), ("unit_ghost_bhv", "单元引用了不存在的行为（幽灵 BHV）"),
@@ -862,7 +886,7 @@ def render_matrix(t: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def cmd_trace_matrix(task_dir: str, write: bool, strict: bool) -> int:
+def cmd_trace_matrix(task_dir: str, write: bool, strict: bool, require_req_uc: bool = False) -> int:
     t = build_trace(task_dir)
     if not t["behaviors"] and not t["units"]:
         print("[guru-gate:trace-matrix] 未发现 BHV/UNIT 编号（产物尚未按编号纪律撰写）")
@@ -876,6 +900,335 @@ def cmd_trace_matrix(task_dir: str, write: bool, strict: bool) -> int:
     broken = t["orphans"]["bhv_no_unit"] or t["orphans"]["unit_ghost_bhv"] or t["orphans"]["slice_ghost_unit"]
     if strict and broken:
         return fail("trace-matrix", ["存在断链（见上方孤儿清单）"])
+    # --require-req-uc（finding 3，不复用 --strict 的断链判定）：强制态下 BHV 缺 REQ-UC 承接即 BLOCK。
+    # 触发合同见 main() 的 trace-matrix 分支：① CLI --require-req-uc 显式强制（即使旧 task）；
+    # ② task.json require_req_uc==true；③ 无则旧 task 默认 false。
+    if require_req_uc:
+        missing = sorted(b for b in t["behaviors"] if not t.get("req_ucs", {}).get(b))
+        if missing:
+            return fail("trace-matrix", [
+                "--require-req-uc：以下 BHV 缺 [REQ-UC-XXX] 需求场景承接（标题须形如 "
+                f"`### BHV-001 [REQ-UC-005] <描述>`）：{', '.join(missing)}"
+            ])
+    return PASS
+
+
+# =========================================================================
+# 版本级追溯聚合（trace-aggregate）：跨 task 反查 → 单表回填 → fail-closed
+# =========================================================================
+
+# 版本级 traceability 生成区标记（HTML 注释，对 --aggregate 幂等；包裹整个生成表）。
+_TRACE_GEN_START = "<!-- trace-matrix:generated:start -->"
+_TRACE_GEN_END = "<!-- trace-matrix:generated:end -->"
+# §15.4 单表表头（REQ-UC | Source Task | Design Unit | BHV | Code Entry | Test Evidence | Status）
+_TRACE_AGG_HEADER = (
+    "| REQ-UC | Source Task | Design Unit | BHV | Code Entry | Test Evidence | Status |"
+)
+_TRACE_AGG_SEP = "|--------|-------------|-------------|-----|-----------|---------------|--------|"
+# 回填 key = (REQ-UC, UNIT)；这三列由人维护，aggregate 不覆盖、只按 key 搬运。
+_TRACE_MANUAL_COLS = ("code_entry", "test_evidence", "status")
+
+
+def _aggregate_rows_for_task(task_dir: str, source_task: str) -> list:
+    """单 task 的行展开：(REQ-UC, BHV, UNIT, Source Task)。
+
+    复用 build_trace：req_ucs={bhv:[REQ-UC...]}、units[u]["behaviors"]=该单元承接的 BHV。
+    一个 BHV 可对多 REQ-UC（行展开），可被多 UNIT 承接（每 UNIT 一行）；
+    BHV 无 REQ-UC → REQ-UC 列空（"—"）；BHV 无 UNIT 承接 → UNIT 列空（"—"，标 orphan 由状态列体现）。
+    """
+    t = build_trace(task_dir)
+    unit_by_bhv = {}
+    for u, d in t["units"].items():
+        for b in d["behaviors"]:
+            unit_by_bhv.setdefault(b, []).append(u)
+    rows = []
+    for bhv in sorted(t["behaviors"]):
+        ucs = t.get("req_ucs", {}).get(bhv) or [""]  # "" = 无 REQ-UC 承接
+        units = sorted(unit_by_bhv.get(bhv, [])) or [""]  # "" = 无 UNIT 承接
+        for uc in ucs:
+            for unit in units:
+                rows.append({
+                    "req_uc": uc,
+                    "source_task": source_task,
+                    "unit": unit,
+                    "bhv": bhv,
+                })
+    return rows
+
+
+def _split_md_row(line: str):
+    """拆 markdown 表行 `| a | b | ... |` → [a, b, ...]（去首尾空 cell 与两端空白）。"""
+    cells = line.strip().strip("|").split("|")
+    return [c.strip() for c in cells]
+
+
+def _parse_existing_manual(text: str) -> dict:
+    """从既有 traceability.md 生成区解析人维护列，返回 {(REQ-UC, UNIT): {code_entry,test_evidence,status}}。
+
+    只读生成区内、表头之后的数据行；按列名定位 Code Entry/Test Evidence/Status（容忍列序微调）。
+    key 用 (REQ-UC, UNIT)：UNIT 改名/删除时该 key 不再出现 → 调用方标 orphan/stale 保留旧证据。
+    解析失败/无生成区/无表 → 返回 {}（首次 aggregate 无可回填）。
+    """
+    if not text:
+        return {}
+    start = text.find(_TRACE_GEN_START)
+    end = text.find(_TRACE_GEN_END)
+    if start < 0 or end < 0 or end < start:
+        return {}
+    block = text[start + len(_TRACE_GEN_START): end]
+    lines = [ln for ln in block.splitlines() if ln.strip().startswith("|")]
+    if len(lines) < 2:
+        return {}
+    header = [h.lower() for h in _split_md_row(lines[0])]
+
+    def col_idx(*names):
+        for n in names:
+            if n in header:
+                return header.index(n)
+        return None
+    i_uc = col_idx("req-uc", "req_uc")
+    i_unit = col_idx("design unit", "design_unit", "unit")
+    i_code = col_idx("code entry", "code_entry")
+    i_test = col_idx("test evidence", "test_evidence")
+    i_status = col_idx("status")
+    if i_uc is None or i_unit is None:
+        return {}
+
+    # 解析必须是 _render_aggregate_table 的逆：render 把空值 cell 渲染成占位符 "—"，故读回时
+    # 须把 "—" 归一回空串。否则 (a) 空 REQ-UC 行的 parsed key 变 ("—", unit) 与 live key ("", unit)
+    # 失配，活跃单元被误判 orphan；(b) 空 code/test 读成 "—"（truthy）使 orphan 空证据过滤失效，
+    # 给当前单元造出假「已移除」孤儿行（破坏幂等 + 误导审计）。
+    def uncell(v):
+        return "" if v == "—" else v
+
+    manual = {}
+    for ln in lines[2:]:  # 跳表头 + 分隔行
+        cells = _split_md_row(ln)
+        if len(cells) <= max(i for i in (i_uc, i_unit, i_code, i_test, i_status) if i is not None):
+            continue
+        uc = uncell(cells[i_uc])
+        unit = uncell(cells[i_unit])
+        manual[(uc, unit)] = {
+            "code_entry": uncell(cells[i_code]) if i_code is not None else "",
+            "test_evidence": uncell(cells[i_test]) if i_test is not None else "",
+            "status": uncell(cells[i_status]) if i_status is not None else "",
+        }
+    return manual
+
+
+def _render_aggregate_table(rows: list, existing_manual: dict) -> str:
+    """渲染版本级 traceability 单表（生成区内容，不含标记本身）。
+
+    人维护三列按 (REQ-UC, UNIT) key 从 existing_manual 回填；不再出现的旧 key 末尾追加为 orphan 行
+    （UNIT 列原值 + status 标 `stale (UNIT 已移除)`），保证手维护证据不丢。幂等：相同 rows + 相同
+    existing_manual 二次渲染逐字节一致（rows 排序确定 + orphan 按 key 排序）。
+    """
+    # 规格化空值占位
+    def cell(v):
+        return v if v else "—"
+    live_keys = set()
+    body = []
+    # rows 已由 _aggregate_rows_for_task 内部 sorted，跨 task 合并后再统一排序确保确定性
+    for r in sorted(rows, key=lambda x: (x["req_uc"], x["source_task"], x["unit"], x["bhv"])):
+        key = (r["req_uc"], r["unit"])
+        live_keys.add(key)
+        m = existing_manual.get(key, {})
+        code = m.get("code_entry", "")
+        test = m.get("test_evidence", "")
+        status = m.get("status", "") or "missing"  # 派生行默认 missing（待人补证据）
+        body.append(
+            f"| {cell(r['req_uc'])} | {cell(r['source_task'])} | {cell(r['unit'])} | "
+            f"{cell(r['bhv'])} | {cell(code)} | {cell(test)} | {status} |"
+        )
+    # 不再出现的旧 (REQ-UC, UNIT)：保留人维护证据，标 orphan/stale（不丢）
+    orphan_keys = sorted(set(existing_manual) - live_keys)
+    for uc, unit in orphan_keys:
+        m = existing_manual[(uc, unit)]
+        # 仅保留确曾有人维护证据的 orphan（全空的派生残留无须保留）
+        if not (m.get("code_entry") or m.get("test_evidence")
+                or (m.get("status") and m["status"] not in ("missing", "—", ""))):
+            continue
+        prev = m.get("status", "")
+        marker = "orphan" if "orphan" not in prev.lower() else prev
+        status = f"{marker} (BHV/UNIT 已移除，保留旧证据)" if "已移除" not in prev else prev
+        body.append(
+            f"| {cell(uc)} | — | {cell(unit)} | — | "
+            f"{cell(m.get('code_entry', ''))} | {cell(m.get('test_evidence', ''))} | {status} |"
+        )
+    return "\n".join([_TRACE_AGG_HEADER, _TRACE_AGG_SEP, *body])
+
+
+def _write_traceability(version_dir: str, table: str) -> str:
+    """把生成表写入 <version_dir>/traceability.md 的生成区（其余手写正文保留）。
+
+    既有文件有生成区标记 → 只替换标记之间内容（保留区外手写导语/说明）。
+    无标记 / 文件不存在 → 创建/追加：文件首部保留既有手写内容，末尾插入带标记的生成区。
+    返回写入路径。
+    """
+    path = os.path.join(version_dir, "traceability.md")
+    block = f"{_TRACE_GEN_START}\n{table}\n{_TRACE_GEN_END}\n"
+    old = read(path)
+    if old and _TRACE_GEN_START in old and _TRACE_GEN_END in old:
+        s = old.find(_TRACE_GEN_START)
+        e = old.find(_TRACE_GEN_END) + len(_TRACE_GEN_END)
+        # 保留生成区尾随换行风格：替换 [start, end] 区段
+        new = old[:s] + block.rstrip("\n") + old[e:]
+        # 确保文件以单换行结尾
+        if not new.endswith("\n"):
+            new += "\n"
+    elif old:
+        sep = "" if old.endswith("\n") else "\n"
+        new = old + sep + "\n" + block
+    else:
+        header = (
+            "# Traceability（版本级审计参考，single-source §15.4）\n\n"
+            "> `REQ-UC | Source Task | UNIT | BHV` 派生列由 `guru_gate.py trace-aggregate` 生成；\n"
+            "> `Code Entry | Test Evidence | Status` 人维护（aggregate 按 (REQ-UC, UNIT) key 回填保留）。\n\n"
+        )
+        new = header + block
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(new)
+    return path
+
+
+def _excludes_has_traceability(version_dir: str) -> bool:
+    """目标 version_dir 的 effective canonical_excludes 是否含顶层 `traceability`。
+
+    复用 _requirement_manifest（manifest 缺失/字段缺失回退 _MANIFEST_DEFAULT_EXCLUDES=
+    (snapshots, changes)，**不含 traceability**）。manifest 解析失败抛 RequirementManifestError
+    由调用方转 fail-closed 拒写。
+    """
+    _root, excludes = _requirement_manifest(version_dir)
+    return "traceability" in excludes
+
+
+def _collect_aggregate_candidates(repo_root: str, include_completed: bool):
+    """枚举候选 task.json 路径。返回 [(task_dir, source_task, is_archived), ...]。
+
+    默认仅 `.trellis/tasks/<task>/task.json`（排除 archive/）；include_completed 加扫
+    `.trellis/tasks/archive/<YYYY-MM>/<task>/task.json`（归档是月份分层，非一层 glob）。
+    source_task = task 目录名（archive 项保留月份前缀消歧，如 `archive/2026-06/<task>`）。
+    """
+    import glob
+    candidates = []
+    tasks_root = os.path.join(repo_root, ".trellis", "tasks")
+    for tjp in sorted(glob.glob(os.path.join(tasks_root, "*", "task.json"))):
+        task_dir = os.path.dirname(tjp)
+        name = os.path.basename(task_dir)
+        if name == "archive":  # archive 是目录，*/task.json 不会命中它，但稳妥起见跳过
+            continue
+        candidates.append((task_dir, name, False))
+    if include_completed:
+        for tjp in sorted(glob.glob(os.path.join(tasks_root, "archive", "*", "*", "task.json"))):
+            task_dir = os.path.dirname(tjp)
+            month = os.path.basename(os.path.dirname(task_dir))
+            name = os.path.basename(task_dir)
+            candidates.append((task_dir, f"archive/{month}/{name}", True))
+    return candidates
+
+
+def cmd_trace_aggregate(version_dir: str, include_completed: bool, repo_root: str = None) -> int:
+    """版本级聚合：反查指向 version_dir 的 task → 行展开 → 单表回填写 traceability.md。
+
+    finding 5/8（反查 + 独立子命令）+ 决策 1（fail-closed，不触发 digest）。
+    流程：① fail-closed 前置（effective excludes 须含 traceability，否则拒写）；
+    ② 反查候选 task.json（默认非 archive；--include-completed 加扫月份归档树）；
+    ③ realpath 比对 _requirement_package_dir == version_dir；④ build_trace 行展开聚合；
+    ⑤ 解析既有手维护列回填 → 写生成区。
+    """
+    base = os.path.realpath(repo_root) if repo_root else os.path.realpath(os.getcwd())
+    version_real = os.path.realpath(version_dir)
+    if not os.path.isdir(version_dir):
+        sys.stderr.write(f"[guru-gate:trace-aggregate] version 目录不存在：{version_dir}\n")
+        return BLOCK
+
+    # ① fail-closed 前置（决策 1，codex blocker）：写 traceability 前必须确认它在 canonical_excludes，
+    # 否则写入会进 requirements digest → review stale。_MANIFEST_DEFAULT_EXCLUDES 不含 traceability，
+    # 故 manifest 缺失/未配置时此处拒写（不静默触发 digest，不改代码默认）。
+    try:
+        if not _excludes_has_traceability(version_dir):
+            sys.stderr.write(
+                "[guru-gate:trace-aggregate] 拒写（fail-closed）：traceability.md 不在 "
+                "canonical_excludes，写它会进 requirements digest 并使 review stale。\n"
+                f"  请先在 {os.path.join(version_dir, 'manifest.yaml')} 的 canonical_excludes "
+                "加 `traceability`（如 `canonical_excludes: [snapshots, changes, traceability]`），再重跑。\n"
+            )
+            return BLOCK
+    except RequirementManifestError as exc:
+        sys.stderr.write(
+            f"[guru-gate:trace-aggregate] manifest.yaml 非法（{os.path.join(version_dir, 'manifest.yaml')}）：{exc}\n"
+        )
+        return BLOCK
+
+    # ② + ③ 反查：候选 task.json，realpath 比对 requirement_package == version_dir
+    matched = []  # [(task_dir, source_task)]
+    skipped = {
+        "no_requirement_package": [],  # 无 requirement_package 字段
+        "other_version": [],           # 指向别的版本目录
+        "illegal_pointer": [],         # 指针非法（候选匹配范围内才记，见下）
+        "archived_not_included": [],   # 归档但未 --include-completed（仅在默认扫到提示时用）
+        "history_schema": [],          # 历史 schema 缺字段（task.json 解析为空/无 requirement_package 视为此类的子集）
+    }
+    for task_dir, source_task, _is_archived in _collect_aggregate_candidates(base, include_completed):
+        data = _task_json_of(task_dir)
+        if not data:
+            skipped["history_schema"].append(source_task)
+            continue
+        field = data.get("requirement_package")
+        if not isinstance(field, str) or not field.strip():
+            skipped["no_requirement_package"].append(source_task)
+            continue
+        pkg = _requirement_package_dir(task_dir, base)
+        if pkg is None:
+            # 指针非法：只在它本可能指向本 version 时才算 fail 相关，否则记 skipped（design §2.3：
+            # 非法指针只在候选匹配该 version 时 fail，其余 skipped）。这里无法 realpath 比对（已 None），
+            # 统一记 illegal_pointer skipped，不中断聚合。
+            skipped["illegal_pointer"].append(f"{source_task}（{field.strip()}）")
+            continue
+        if os.path.realpath(pkg) == version_real:
+            matched.append((task_dir, source_task))
+        else:
+            skipped["other_version"].append(source_task)
+
+    # 默认模式下提示「归档里还有匹配本版本的 task，--include-completed 可纳入」（design §2.3 分类）：
+    # 只 realpath 比对计数，不读产物、不入表，避免误以为聚合已覆盖归档历史。
+    if not include_completed:
+        for task_dir, source_task, _is_archived in _collect_aggregate_candidates(base, True):
+            if not _is_archived:
+                continue
+            data = _task_json_of(task_dir)
+            field = data.get("requirement_package") if data else None
+            if not isinstance(field, str) or not field.strip():
+                continue
+            pkg = _requirement_package_dir(task_dir, base)
+            if pkg is not None and os.path.realpath(pkg) == version_real:
+                skipped["archived_not_included"].append(source_task)
+
+    # ④ 行展开聚合
+    all_rows = []
+    for task_dir, source_task in matched:
+        all_rows.extend(_aggregate_rows_for_task(task_dir, source_task))
+
+    # ⑤ 回填 + 写生成区
+    path = os.path.join(version_dir, "traceability.md")
+    existing_manual = _parse_existing_manual(read(path))
+    table = _render_aggregate_table(all_rows, existing_manual)
+    written = _write_traceability(version_dir, table)
+
+    print(f"[guru-gate:trace-aggregate] 已写入 {written}")
+    print(f"  匹配 task：{len(matched)}（{', '.join(s for _, s in matched) or '无'}）")
+    print(f"  行展开：{len(all_rows)} 行")
+    print("  跳过分类：")
+    for k, label in (
+        ("no_requirement_package", "无 requirement_package 字段"),
+        ("other_version", "指向别版本"),
+        ("illegal_pointer", "指针非法"),
+        ("archived_not_included", "归档未 --include-completed"),
+        ("history_schema", "历史 schema 缺字段"),
+    ):
+        items = skipped[k]
+        if items:
+            print(f"    - {label}：{len(items)}（{', '.join(items)}）")
     return PASS
 
 
@@ -2421,7 +2774,18 @@ def main() -> int:
         if not arg or not os.path.isdir(arg):
             sys.stderr.write("[guru-gate:trace-matrix] 需要有效 task_dir 参数\n")
             return BLOCK
-        return cmd_trace_matrix(arg, "--write" in flags, "--strict" in flags)
+        # --require-req-uc 触发合同（finding 3）：① CLI 显式 --require-req-uc 强制（即使旧 task）；
+        # ② 无 CLI flag 时读 task.json require_req_uc==true；③ 都无则旧 task 默认 false → 不拦。
+        require_req_uc = "--require-req-uc" in flags
+        if not require_req_uc:
+            require_req_uc = _task_json_of(arg).get("require_req_uc") is True
+        return cmd_trace_matrix(arg, "--write" in flags, "--strict" in flags, require_req_uc)
+    if cmd == "trace-aggregate":
+        # trace-aggregate <version-dir> [--include-completed]：不复用 trace-matrix 的 task_dir 解析
+        if not arg or not os.path.isdir(arg):
+            sys.stderr.write("[guru-gate:trace-aggregate] 需要有效 version 目录参数\n")
+            return BLOCK
+        return cmd_trace_aggregate(arg, "--include-completed" in flags)
     if cmd in table:
         if not arg or not os.path.isdir(arg):
             sys.stderr.write(f"[guru-gate:{cmd}] 需要有效 task_dir 参数\n")

@@ -111,7 +111,7 @@ iOS 平台项目约定共 **16 个槽位**（SLOT-01~SLOT-16），均在 `projec
 - **行为**：`### BHV-NNN <短名>`（prd 标题），NNN 数字，创建后不复用不重排，删除留洞。
 - **设计单元**：`### UNIT-<slug>`（详细设计标题，语义 kebab-case）。
 - **下游引用裸 token**：归属表、详细合同、测试映射、实现切片对行为/单元的引用一律写裸 `BHV-NNN` / `UNIT-<slug>` 编号 token。
-- `guru_gate.py trace-matrix <task_dir> --write` 据此生成「行为×归属×单元×测试×切片」矩阵；**断链（幽灵引用 / 无承接行为 / 孤儿单元）被 Gate 拦截，进不了详细/实现 Gate**。
+- `guru_gate.py trace-matrix <task_dir> --write` 据此生成「行为×需求场景（REQ-UC）×归属×单元×测试×切片」矩阵；**断链（幽灵引用 / 无承接行为 / 孤儿单元）被 Gate 拦截，进不了详细/实现 Gate**。
 
 ---
 

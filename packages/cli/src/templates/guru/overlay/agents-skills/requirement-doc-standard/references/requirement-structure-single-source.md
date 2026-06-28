@@ -220,6 +220,9 @@ API 必要步骤判定（适用于 `requirement-api.md` 主定义）：
 6. `UC-接口映射豁免` 仅用于“按当前范围本应映射 API/CLI 意图，但本次明确不新增或不改变接口/命令契约”的例外场景。
 7. 真正使用 `UC-接口映射豁免` 时，声明主体必须是对应 `REQ-UC-XXX`，并在主定义处记录豁免原因与必要影响说明；不得在 `API-INTENT-XXX` 或 `CLI-INTENT-XXX` 条目上声明“无来源豁免”。
 8. 完成收敛与全稿复核时必须输出“编号差集检查结果”，并区分正常不映射、真实豁免与缺失映射。
+9. 下游实现侧行为编号（消费方项目把需求场景抽取为任务级行为规格时使用的 `BHV-NNN` 等编号）若回指需求源场景，应在行为标题以 `[REQ-UC-XXX]`（可多个，多对多）显式承接，使版本级追溯可由工具聚合而非纯手维护；`BHV-NNN` 编号契约与聚合工具属消费方治理层，本标准不承载其正文，仅约束 `REQ-UC-XXX` 作为被回指的需求源单一来源。
+
+命名消歧（强制）：`REQ-UC-XXX` 是**需求源场景**（Use Case Source ID，本节主定义）；概要设计中的 `UC-<序号>`（架构核心用例，主定义在 overview 结构标准）是**另一套独立编号**。两者不混用同一字段：行为编号承接 `REQ-UC-XXX` 回指需求源；概要设计内的 `BHV ↔ UC-<序号>` 人审映射继续在 overview 侧维护，不因本规则改写。
 
 ### 6.1 入口分支追踪规则（强制，单一来源）
 
@@ -397,7 +400,7 @@ status: candidate         # draft/candidate/approved/released/superseded
 inherits_from: v0.9.0     # 上一版本目录（首版 null）；配合演进策略
 supersedes: []            # 本版本取代/废弃的旧版本目录
 canonical_root: .
-canonical_excludes: [snapshots, changes]   # 不进 canonical digest 的子树
+canonical_excludes: [snapshots, changes, traceability]   # 不进 canonical digest 的子树
 current_requirement_entry: README.md
 traceability: traceability.md
 change_log: changes/change-log.md
@@ -407,6 +410,8 @@ snapshots: snapshots
 
 `build_number` 不进 manifest 主体、不参与任何 digest，仅在 `snapshots/` 或 release evidence 按节点记录。
 
+`canonical_excludes` 列入 `traceability`（§15.4）：`traceability.md` 是手维护审计参考且可由聚合工具回写，若进 canonical digest 会使其每次更新都改变需求 digest、令已通过的 review 失效，与“永不硬 Gate 的审计参考”定位冲突。**注意工具默认口径**：未配置 `canonical_excludes` 或缺失该字段时，消费方实现可能回退到不含 `traceability` 的内置默认（如仅 `snapshots, changes`）；此时聚合工具应 fail-closed 拒写 `traceability.md` 而非静默改 digest，写者必须先在本字段显式加入 `traceability`。
+
 ### 15.3 变更：沿用 `changes/`，禁日期子目录
 
 - 沿用 `changes/change-log.md`（汇总）+ `changes/changes/`（语义化详细），**不另造** `changelog.md`。
@@ -414,11 +419,15 @@ snapshots: snapshots
 - 默认**禁止**退化为日期子目录（`changes/YYYY-MM-DD/`、`versions/<version>/YYYY-MM-DD/`）：日期非业务语义、同日多任务混淆、跨日任务被拆、易被误读为需求入口。
 - 外部审计独立变更包用语义化 `changes/changes/0001-<slug>.md`，声明为变更包、非需求正文、不进 canonical digest。
 
-### 15.4 `traceability.md`（手维护审计参考）
+### 15.4 `traceability.md`（半生成 + 手维护审计参考）
 
 - 版本级审计参考，**不是新的追溯主定义，不作硬 Gate**。
-- `Requirement ID` 列用 §6 稳定编号 `REQ-UC-XXX`（及 `API-INTENT-XXX`/`CLI-INTENT-XXX`），手维护回填（已知 drift 风险），靠审核与完成收敛兜底，而非脚本保鲜。
-- 最小字段：`REQ-UC-ID | Source Task | Design Unit | Code Entry | Test Evidence | Status`；状态 `covered/partial/missing/orphan_behavior/untested/blocked`，不得仅凭测试或结构校验通过即宣称对齐。
+- `Requirement ID` 列用 §6 稳定编号 `REQ-UC-XXX`（及 `API-INTENT-XXX`/`CLI-INTENT-XXX`）。
+- 单表字段：`REQ-UC | Source Task | Design Unit | BHV | Code Entry | Test Evidence | Status`；状态 `covered/partial/missing/orphan_behavior/untested/blocked`，不得仅凭测试或结构校验通过即宣称对齐。新增 `BHV` 列承接消费方行为编号（§6 第 9 条），用于把需求源场景与实现侧行为打通。
+- **派生 vs 手维护边界**：`REQ-UC | Source Task | Design Unit | BHV` 四列可由消费方聚合工具（按行为标题 `[REQ-UC-XXX]` 回指反查指向本版本目录的 task，行展开聚合）生成；`Code Entry | Test Evidence | Status` 三列**手维护**，聚合工具按 `(REQ-UC, Design Unit)` 稳定 key 回填保留，绝不覆盖人工证据。行为/单元增删导致旧 key 失活时，旧证据标 `orphan`/`stale` 保留而非丢弃；同输入重跑生成区幂等。
+- 生成区用工具约定的标记（如 HTML 注释）包裹整表，区外手写导语/说明保留。无聚合工具时退化为纯手维护单表，字段口径不变。
+- **fail-closed 前置**：聚合工具写 `traceability.md` 前必须确认本版本目录 manifest 的 effective `canonical_excludes` 含 `traceability`（§15.2），否则拒写并提示先更新 manifest——避免写入触发需求 digest 变化、令已通过 review 失效。
+- 手维护回填仍有已知 drift 风险（聚合只搬运派生四列），靠审核与完成收敛兜底，而非脚本保鲜证据列。
 
 ### 15.5 `decisions.md`
 
@@ -438,4 +447,4 @@ snapshots: snapshots
 
 ### 15.8 完成收敛附加项（版本化时）
 
-版本化需求包过 §13 完成收敛时，额外确认：canonical root 唯一（版本目录根，非 snapshot/changes）、`manifest` 与 README 版本入口一致、`changes/` 无日期子目录、`traceability` 的 `REQ-UC` 列可回指 §6 编号。是否需重新审核由 §10 写作与复核协同规则及消费方门禁判定，不归 §12/§13。
+版本化需求包过 §13 完成收敛时，额外确认：canonical root 唯一（版本目录根，非 snapshot/changes）、`manifest` 与 README 版本入口一致、`manifest.canonical_excludes` 含 `traceability`（§15.2/§15.4 fail-closed 前提）、`changes/` 无日期子目录、`traceability` 的 `REQ-UC` 列可回指 §6 编号且派生四列（`REQ-UC | Source Task | Design Unit | BHV`）与手维护三列（`Code Entry | Test Evidence | Status`）边界清晰（§15.4）。是否需重新审核由 §10 写作与复核协同规则及消费方门禁判定，不归 §12/§13。

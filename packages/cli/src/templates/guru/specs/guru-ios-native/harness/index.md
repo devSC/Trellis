@@ -75,7 +75,8 @@ Guru Gate、review_runs 证据、confirm 快照、累积 digest 与失配恢复�
 
 - **行为**：`### BHV-NNN <短名>`（prd 标题，`guru_gate.py` 正则 `^#{2,5}\s+BHV-\d+`）。创建后不复用、不重排，删除留洞。
 - **设计单元**：`### UNIT-<slug>`（详细章节标题，语义 kebab-case，正则 `^#{2,5}\s+UNIT-[a-z0-9][a-z0-9-]*`）。
-- **下游引用一律写裸 token**（`BHV-001`、`UNIT-home-viewmodel`）——归属表、详细单元、测试映射、实现切片对行为/单元的引用全部用编号；`guru_gate.py trace-matrix` 据此生成 行为×归属×单元×测试×切片 矩阵，断链被 Gate 拦截。
+- **下游引用一律写裸 token**（`BHV-001`、`UNIT-home-viewmodel`）——归属表、详细单元、测试映射、实现切片对行为/单元的引用全部用编号；`guru_gate.py trace-matrix` 据此生成 行为×需求场景×归属×单元×测试×切片 矩阵，断链被 Gate 拦截。
+- **需求源回指（full 链，REQ-UC ↔ BHV）**：BHV 标题可在短名前以 `[REQ-UC-XXX]`（多对多）承接需求源场景（`### BHV-001 [REQ-UC-005] <短名>`）；`trace-matrix` 增 REQ-UC 列（行展开），`trace-aggregate <version-dir>` 聚合多 task 进版本级 `traceability.md`；`--require-req-uc`（或 task.json `require_req_uc:true`）强制 BHV 须带 REQ-UC，旧 prd 默认不拦、列空、不断链。**命名消歧**：`REQ-UC-XXX`（需求源场景）≠ overview `UC-<序号>`（架构核心用例），两套独立编号（详见 overview-structure §3.4）。
 - slug 建议带 doc_type 后缀以自证归属：`UNIT-<feature>-viewmodel` / `-usecase` / `-repository` / `-model` / `-view` / `-coordinator` / `-external`。
 
 ### 4.2 概要：归属判定（按 iOS 七类 owner 层）

@@ -33,7 +33,7 @@ README 只做导航，不承载事实正文：
 | [design-main.md](./design-main.md) | 概要主定义（行为 / 四层归属 / 架构总览 / 承接索引） |
 | [chapters/](./chapters/) | 详细设计逐章（见 design-main 第 6 节承接索引；文件本体详细阶段产出） |
 
-追踪：BHV 来源 = ../../.trellis/tasks/<task>/prd.md；trace-matrix 机器生成（行为 × 归属 × 单元 × 测试 × 切片）。
+追踪：BHV 来源 = ../../.trellis/tasks/<task>/prd.md；trace-matrix 机器生成（行为 × 需求场景（REQ-UC）× 归属 × 单元 × 测试 × 切片）。
 ```
 
 任务内 design.md 指针模板：

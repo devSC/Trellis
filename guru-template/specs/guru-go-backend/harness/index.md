@@ -49,7 +49,7 @@ Guru Gate、review_runs 证据、confirm 快照、累积 digest 与失配恢复�
 
 ## 编号纪律（BHV / UNIT）
 
-机器追溯（`guru_gate.py trace-matrix`）按编号 token 闭合 行为 × 归属 × 单元 × 测试 × 切片。编号规则为硬约束：
+机器追溯（`guru_gate.py trace-matrix`）按编号 token 闭合 行为 × 需求场景（REQ-UC）× 归属 × 单元 × 测试 × 切片。编号规则为硬约束：
 
 - **行为：`BHV-NNN`**。需求阶段 `prd.md` 中以 `### BHV-NNN <短名>` 标题定义（NNN 为数字；创建后不复用、不重排，删除留洞）。Go 后端行为以「协议端点 / 编排步骤 / 数据访问 / 失败收口」为枚举单位，例：
   - ✅ `### BHV-012 创建代理用户` — Given 管理员已登录会话有效 When `POST /api/users` 携带 `display_name`/`proxy_username` Then service 校验入参→repository 落库→触发 config 同步→返回 201 与用户实体；校验失败返回 400 并携带 `ErrValidation` 文案。
@@ -57,6 +57,7 @@ Guru Gate、review_runs 证据、confirm 快照、累积 digest 与失配恢复�
 - **设计单元：`UNIT-<slug>`**。详细设计阶段以 `### UNIT-<slug>` 标题定义（slug 为语义 kebab-case，体现服务+层角色），例：`UNIT-user-service`、`UNIT-user-repository`、`UNIT-users-handler`、`UNIT-session-manager`。
 - **下游引用一律写裸编号 token**：归属判定表逐行以 `BHV-NNN` 开头；详细设计单元的「承接哪些行为」逐条写 `BHV-NNN`；`implement.md` 的实现切片逐条挂 `UNIT-<slug>`。
 - **断链即拦截**：单元引用了 prd 不存在的 `BHV-NNN`（幽灵行为）、行为无任何单元承接、切片引用了不存在的 `UNIT-<slug>`（幽灵单元）——均被 Gate 拦截，进不了下一阶段。`guru_gate.py trace-matrix <task_dir> --write` 生成追溯矩阵并落盘 `<task_dir>/trace-matrix.md`；`--strict` 在有断链时 exit 2。
+- **需求源回指（full 链，REQ-UC ↔ BHV）**：BHV 标题可在短名前以 `[REQ-UC-XXX]`（多对多）承接需求源场景（`### BHV-001 [REQ-UC-005] <短名>`）；`trace-matrix` 增「需求场景（REQ-UC）」列（行展开），`trace-aggregate <version-dir> [--include-completed]` 反查指向某需求包版本目录的 task 聚合进版本级 `traceability.md`（fail-closed：manifest `canonical_excludes` 须含 `traceability`，否则拒写）。`--require-req-uc`（或 task.json `require_req_uc:true`）强制 BHV 须带 REQ-UC，旧 prd 默认不拦、列空、不断链。**命名消歧**：`REQ-UC-XXX`（需求源场景）≠ overview `UC-<序号>`（架构核心用例），两套独立编号（详见 overview-structure §3.4）。
 
 ## Quality Check（五道 Gate，对齐 guru_gate.py）
 

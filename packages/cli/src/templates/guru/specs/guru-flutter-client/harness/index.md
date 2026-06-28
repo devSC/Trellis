@@ -32,6 +32,7 @@ Guru Gate、review_runs 证据、confirm 快照、累积 digest 与失配恢复�
 - 实现 Gate：analyze/test/lints/compliance 任一无证据、trace 四节不全 → 不进 commit。
 - 审核：存量豁免判定（SLOT-15 内记债不阻塞；清单外新增违例阻塞）。
 
-- 编号与追溯：行为以 `BHV-NNN`、单元以 `UNIT-<slug>` 标题定义，引用写编号 token；`guru_gate.py trace-matrix <task_dir> --write` 生成追溯矩阵，断链进不了详细/实现 Gate。
+- 编号与追溯：行为以 `BHV-NNN`、单元以 `UNIT-<slug>` 标题定义，引用写编号 token；`guru_gate.py trace-matrix <task_dir> --write` 生成追溯矩阵（含「需求场景（REQ-UC）」列），断链进不了详细/实现 Gate。
+- 需求源回指（full 链）：BHV 标题可在短名前以 `[REQ-UC-XXX]`（多对多）承接需求源场景（`### BHV-001 [REQ-UC-005] <短名>`），`trace-matrix` 生成 REQ-UC 列、`trace-aggregate <version-dir>` 聚合多 task 进版本级 `traceability.md`；`--require-req-uc`（或 task.json `require_req_uc:true`）强制 BHV 须带 REQ-UC，旧 prd 默认不拦不断链。**命名消歧**：`REQ-UC-XXX`（需求源场景）≠ overview `UC-<序号>`（架构核心用例），两套独立编号（详见 overview-structure §3.4）。
 
 缺陷只能回上游修：审核发现结构性缺陷（归属错、合同越界）回到拥有该决策的阶段修订，禁止下游补造。

@@ -113,7 +113,7 @@ guru-client workflow 的每个阶段从本库装载规则（装载路径=安装�
 - **full 链**（核心玩法/付费/广告/存档/权限/数据采集等高风险）：目录级设计包 `docs/design/<feature>/{README.md, design-main.md, chapters/<slug>.md}`，写入 task.json `design_package`；承接索引每条落到章节文件，Gate 查索引↔文件双向闭合。
 - **light 链**（`client-small-iteration-dev` 分流且获用户同意后显式降级）：任务内单文件 `design.md` §概要/§详细。
 
-`guru_gate.py` 按链型自动切换检查口径；`trace-matrix <task_dir> --write` 据 `BHV-NNN` / `UNIT-<slug>` 裸 token 生成「行为×归属×单元×测试×切片」矩阵，**断链（幽灵引用 / 无承接行为 / 孤儿单元）被 Gate 拦截**。
+`guru_gate.py` 按链型自动切换检查口径；`trace-matrix <task_dir> --write` 据 `BHV-NNN` / `UNIT-<slug>` 裸 token 生成「行为×需求场景（REQ-UC）×归属×单元×测试×切片」矩阵，**断链（幽灵引用 / 无承接行为 / 孤儿单元）被 Gate 拦截**。
 
 **写作顺序（自底向上，与分层依赖律一致）**：
 

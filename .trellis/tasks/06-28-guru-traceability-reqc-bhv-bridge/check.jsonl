@@ -1,0 +1,4 @@
+{"file": "guru-template/overlay/agents-skills/requirement-doc-standard/references/requirement-structure-single-source.md", "reason": "核查 §6 BHV 承接 REQ-UC 编号契约 + §15.4 生成区/手维护区调和无矛盾"}
+{"file": "guru-template/specs/guru-flutter-client/harness/requirements/versioned-requirements-package.md", "reason": "核查聚合写 traceability 与档1 手维护定位、档3 gate digest(canonical_excludes)边界一致"}
+{"file": "guru-template/workflows/guru-client-workflow.md", "reason": "核查 BHV 编号契约改动已同步,向后兼容(旧 prd 不断链)"}
+{"file": "guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md", "reason": "核查 trace-matrix REQ-UC 列增量未破坏既有 BHV/UNIT 断链拦截口径"}

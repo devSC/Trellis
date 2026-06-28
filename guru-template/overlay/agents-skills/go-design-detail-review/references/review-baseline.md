@@ -17,7 +17,7 @@
    - 五字段执行基线 `stack_profile_ref`/`project_profile_ref` 等（EX-5 用）。
 3. 机器 Gate 先行（人工不重复机检，结构 findings 直接并入）：
    - `python3 .trellis/scripts/guru/guru_gate.py detail <task_dir>`（合同八问四标记、章节闭合、pending L2 拦截）；
-   - `python3 .trellis/scripts/guru/guru_gate.py trace-matrix <task_dir> --strict`（行为×归属×单元×测试×切片，编号断链）。
+   - `python3 .trellis/scripts/guru/guru_gate.py trace-matrix <task_dir> --strict`（行为×需求场景（REQ-UC）×归属×单元×测试×切片，编号断链）。
 4. 跨层下游合同取证（D3/D4 用）：被审单元八问 4 声明的 `direct_dependencies[]` 逐条到对应章节文件，核对被调用接口/方法签名确实存在。
 
 ## 2. 通用检查矩阵（七类 doc_type 共用，对应 D1~D9）

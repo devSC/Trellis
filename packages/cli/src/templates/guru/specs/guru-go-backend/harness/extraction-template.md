@@ -82,7 +82,7 @@ kebab-case 方法名，体现"一类后端任务"而非组件名。动词或动�
 人或脚本如何判断达标，逐条对应 Gate / `guru_gate.py` 可检查点或可执行命令：
 
 - **机器可查（命令）**：`go build ./...` 通过；`go vet ./...` 无 warning；`golangci-lint run` 通过（按 lint 槽位）；目标测试命令（按测试框架槽位）逐测试名通过。
-- **机器可查（结构 Gate）**：`guru_gate.py trace-matrix <task_dir> --write` 生成的 行为×归属×单元×测试×切片 矩阵无断链；`BHV-NNN` / `UNIT-<slug>` 引用不存在幽灵编号；承接索引↔章节文件双向闭合（full 链）。
+- **机器可查（结构 Gate）**：`guru_gate.py trace-matrix <task_dir> --write` 生成的 行为×需求场景（REQ-UC）×归属×单元×测试×切片 矩阵无断链；`BHV-NNN` / `UNIT-<slug>` 引用不存在幽灵编号；承接索引↔章节文件双向闭合（full 链）。
 - **分层可查**：import 方向 `transport → service → repository → domain` 单向无环；除 domain 外无跨 `internal/` 包导入；无 gin/echo 引入。
 - **错误链可查**：对外暴露的失败路径能被 `errors.Is(err, ErrXxx)` 命中（sentinel + `%w` 链未断）。
 - 每个信号必须可由人复核或脚本判定，不能写"代码质量好"这类不可验证表述。

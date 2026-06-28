@@ -148,7 +148,8 @@ domain-type → data-access → server-action → server-component → client-co
 
 - **行为**：概要阶段以 `### BHV-NNN <短名>` 标题定义（NNN 数字；创建后不复用、不重排，删除留洞）。归属表、详细设计、测试与实现切片对行为的引用一律写裸 `BHV-NNN` token。
 - **设计单元**：详细阶段每个设计单元以 `### UNIT-<slug>` 标题定义（语义 kebab-case，如 `UNIT-post-list-server-component`）；下游测试与实现切片对单元的引用一律写裸 `UNIT-<slug>` token。
-- **追溯**：`guru_gate.py trace-matrix <task_dir> --write` 据此生成 行为 × 归属 × 单元 × 测试 × 切片 矩阵；幽灵引用（指向不存在的 BHV/UNIT）与断链均被 Gate 拦截，进不了详细 / 实现 Gate。
+- **追溯**：`guru_gate.py trace-matrix <task_dir> --write` 据此生成 行为 × 需求场景（REQ-UC）× 归属 × 单元 × 测试 × 切片 矩阵；幽灵引用（指向不存在的 BHV/UNIT）与断链均被 Gate 拦截，进不了详细 / 实现 Gate。
+- **需求源回指（full 链，REQ-UC ↔ BHV）**：BHV 标题可在短名前以 `[REQ-UC-XXX]`（多对多）承接需求源场景（`### BHV-001 [REQ-UC-005] <短名>`）；`trace-matrix` 增 REQ-UC 列（行展开），`trace-aggregate <version-dir>` 聚合多 task 进版本级 `traceability.md`；`--require-req-uc`（或 task.json `require_req_uc:true`）强制 BHV 须带 REQ-UC，旧 prd 默认不拦、列空、不断链。**命名消歧**：`REQ-UC-XXX`（需求源场景）≠ overview `UC-<序号>`（架构核心用例），两套独立编号（详见 overview-structure §3.4）。
 - **缺陷只能回上游修**：审核发现结构性缺陷（归属错、合同越界、doc_type 用错七类之外的名）回到拥有该决策的阶段修订，禁止下游补造。
 
 ---

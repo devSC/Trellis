@@ -125,7 +125,7 @@
 
 **详细合同八问（七类通用骨架，缺一不可）**：① 承接哪些行为（裸 `BHV-NNN`）；② 输入/输出/错误结果（TS 类型/取值域/错误枚举）；③ 读写哪些状态（读写分离，client 列交互态表，server 多为 N/A）；④ 调用/不调用哪些依赖（正反两面防越层）；⑤ 失败如何收口（error.tsx/Suspense/重试/上抛/提示，server 不泄漏内部细节）；⑥ 产生哪些事件/后置（导航/`revalidatePath`·`revalidateTag`/埋点/副作用）；⑦ 哪些测试验证它（Vitest/RTL/Playwright/manual，成功 + 全部失败路径）；⑧ 哪些内容不得在此补造（显式列出本单元不拥有的决策）。
 
-**编号纪律（下游引用裸 token）**：行为 `### BHV-NNN <短名>`（数字，创建后不复用不重排，删除留洞）；设计单元 `### UNIT-<slug>`（语义 kebab-case，如 `UNIT-post-detail-server-component`）。`guru_gate.py trace-matrix <task_dir> --write` 据此生成 行为×归属×单元×测试×切片 矩阵；幽灵引用与断链被 Gate 拦截。缺陷只能回上游修，禁止下游补造。
+**编号纪律（下游引用裸 token）**：行为 `### BHV-NNN <短名>`（数字，创建后不复用不重排，删除留洞）；设计单元 `### UNIT-<slug>`（语义 kebab-case，如 `UNIT-post-detail-server-component`）。`guru_gate.py trace-matrix <task_dir> --write` 据此生成 行为×需求场景（REQ-UC）×归属×单元×测试×切片 矩阵；幽灵引用与断链被 Gate 拦截。缺陷只能回上游修，禁止下游补造。
 
 ---
 

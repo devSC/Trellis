@@ -143,7 +143,13 @@
 
 ### 3.3 编号纪律
 
-每条行为以 `### BHV-NNN <短名>` 标题定义（NNN 数字；创建后不复用、不重排，删除留洞）。归属表、详细设计、测试与实现切片对行为的引用一律写 `BHV-NNN` 编号 token——这是机器追溯的依据（`guru_gate.py trace-matrix` 据此生成 行为×归属×单元×测试×切片 矩阵，断链被 Gate 拦截）。归属判定表逐行以 BHV 编号开头。
+每条行为以 `### BHV-NNN <短名>` 标题定义（NNN 数字；创建后不复用、不重排，删除留洞）。归属表、详细设计、测试与实现切片对行为的引用一律写 `BHV-NNN` 编号 token——这是机器追溯的依据（`guru_gate.py trace-matrix` 据此生成 行为×需求场景×归属×单元×测试×切片 矩阵，断链被 Gate 拦截）。归属判定表逐行以 BHV 编号开头。
+
+### 3.4 行为 ↔ REQ-UC 承接（需求源回指 + 命名消歧）
+
+full 链存在正式需求包（版本化组织见 `../requirements/versioned-requirements-package.md`）时，BHV 标题可在短名前以 `[REQ-UC-XXX]`（可多个，多对多）显式承接需求源场景，形如 `### BHV-001 [REQ-UC-005, REQ-UC-007] 提交登录表单`。`trace-matrix` 解析该承接生成「需求场景（REQ-UC）」列（行展开），版本级 `trace-aggregate` 据此把多 task 聚合进 `traceability.md`。需求包标准 `--require-req-uc`（或 task.json `require_req_uc:true`）可强制 BHV 必须带 REQ-UC；旧 prd（BHV 无 REQ-UC）默认不拦、列空、不断链。
+
+**命名消歧（强制）**：`REQ-UC-XXX` 是**需求源场景**（requirement source use case，主定义在需求包标准 single-source §6），与本文 §2.5/§3.2 的 `UC-<序号>`（概要设计**架构核心用例**，`uc_id`）是**两套独立编号**，不混用同一字段。`source_refs`/`bhv_refs` 仍指 overview 内的 `UC-<序号>` 与 BHV；BHV 标题的 `[REQ-UC-XXX]` 指需求源。§3.2 的 `BHV ↔ UC-<序号>` 人审映射不因本规则改写。
 
 ## 4. 归属判定方法（核心规则）
 

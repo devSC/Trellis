@@ -1,0 +1,31 @@
+{
+  "id": "guru-traceability-reqc-bhv-bridge",
+  "name": "guru-traceability-reqc-bhv-bridge",
+  "title": "Bridge REQ-UC and BHV for versioned traceability auto-linking",
+  "description": "Bridge prd BHV to requirement-package REQ-UC so trace-matrix can carry REQ-UC and aggregate multiple tasks into version-level traceability.md (auto-link instead of hand-maintained). Changes guru_gate.py trace-matrix + BHV numbering contract. Backward compatible (BHV without REQ-UC still works). Out: requirement package structure (tier1/2), gate digest (tier3), project migration (tier4).",
+  "status": "in_progress",
+  "dev_type": "feat/backend",
+  "scope": "guru-traceability-bridge",
+  "package": "guru-template",
+  "priority": "P2",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-06-28",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/guru-0.6.0-ga-worktree",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "guru-template/overlay/verify/guru_gate.py",
+    "guru-template/overlay/agents-skills/requirement-doc-standard/references/requirement-structure-single-source.md",
+    "guru-template/workflows/guru-client-workflow.md",
+    "guru-template/specs/guru-flutter-client/harness/requirements/versioned-requirements-package.md"
+  ],
+  "notes": "",
+  "meta": {}
+}
