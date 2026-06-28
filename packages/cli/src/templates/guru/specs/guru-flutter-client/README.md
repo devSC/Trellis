@@ -7,7 +7,7 @@
 
 | 域 | 内容 | 何时读 |
 |----|------|--------|
-| `harness/` | 五阶段方法 SSOT：概要设计（行为→owner→承接索引）、详细设计（九类合同八问 + L2×3）、实现（trace 合同）、萃取模板 | 进入对应阶段前**必读**（经 implement.jsonl/check.jsonl 注入） |
+| `harness/` | 五阶段方法 SSOT：正式需求包版本化（`requirements/versioned-requirements-package.md`，`versions/` 外层）、概要设计（行为→owner→承接索引）、详细设计（九类合同八问 + L2×3）、实现（trace 合同）、萃取模板 | 进入对应阶段前**必读**（经 implement.jsonl/check.jsonl 注入） |
 | `guides/golden-path.md` | 通用方法 SSOT：分层依赖律、各层迷你路径、DI canonical、禁止清单、门禁映射 | 写任何代码前 |
 | `conventions/` | 项目约定槽位：模板 + seek/calorie 取值。**本项目取值文件**：`conventions/project-conventions.md`（init 后由模板填写） | 所有阶段硬前置 |
 | `flutter/` | by-layer 项目 spec — UI 表现层（widget/状态/路由/序列化）的项目实际模式（bootstrap 从真实项目填实） | 写/审 UI 表现层代码前，匹配本项目风格 |

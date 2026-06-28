@@ -1,0 +1,7 @@
+{"file": "guru-template/overlay/agents-skills/requirement-doc-standard/references/requirement-structure-single-source.md", "reason": "需求文档语义 SSOT 中立主定义;版本目录内部章节承载/核心能力定义(§5.2)/编号契约(§6)/完成收敛(§13)须沿用,本任务为其版本化外层补充"}
+{"file": "guru-template/overlay/agents-skills/requirement-writing/references/document-organization.md", "reason": "既有已定义 versions/ 版本化与 changes/change-log.md 变更管理;本任务细化而非发明,须对齐其口径,不另造 changelog.md/日期目录"}
+{"file": "guru-template/workflows/guru-client-workflow.md", "reason": "Guru client five-phase workflow; source for requirements package and gate sequencing"}
+{"file": "guru-template/specs/guru-flutter-client/harness/index.md", "reason": "Guru harness entry; trace-matrix(BHV-NNN/UNIT-slug,task 级)与 full/light 链 artifacts、质量 Gate"}
+{"file": "guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md", "reason": "traceability 断链 Gate 口径来源;版本级 traceability.md 须作为其派生聚合并与之映射,不另造追溯主定义"}
+{"file": "guru-template/specs/guru-flutter-client/harness/gate/gate-confirmation-model.md", "reason": "gate digest 与 review evidence 模型;requirements review 读取正式需求包但 digest 仅哈希 prd.md,canonical/snapshot 边界依据"}
+{"file": "guru-template/specs/guru-flutter-client/guides/golden-path.md", "reason": "Guru golden path;实现与 trace 规则须与版本化 SSOT 原则对齐"}

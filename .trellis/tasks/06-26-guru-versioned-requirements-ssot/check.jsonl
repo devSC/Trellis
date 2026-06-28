@@ -1,0 +1,7 @@
+{"file": "guru-template/overlay/agents-skills/requirement-doc-standard/references/requirement-structure-single-source.md", "reason": "核查版本目录内部是否沿用既有章节承载/核心能力定义/REQ-UC 编号,未另立并行体系,未丢 requirement-cli-command.md"}
+{"file": "guru-template/overlay/agents-skills/requirement-writing/references/document-organization.md", "reason": "核查 versions/ 与 changes/ 口径是否与既有一致,是否误造日期目录或顶层 changelog.md"}
+{"file": "guru-template/workflows/guru-client-workflow.md", "reason": "Check that workflow guidance remains consistent with versioned requirements SSOT"}
+{"file": "guru-template/specs/guru-flutter-client/harness/index.md", "reason": "Check phase gate wording and trace-matrix mapping after requirements SSOT changes"}
+{"file": "guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md", "reason": "核查 traceability.md 是否作为 trace-matrix 的派生聚合而非新主定义,断链口径一致"}
+{"file": "guru-template/specs/guru-flutter-client/harness/gate/gate-confirmation-model.md", "reason": "Verify gate/digest wording does not treat snapshots or changes as canonical by default;区分 review 读取 vs digest 哈希"}
+{"file": "guru-template/specs/guru-flutter-client/guides/golden-path.md", "reason": "Check new requirements structure remains compatible with golden-path SSOT and trace discipline"}
