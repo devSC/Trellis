@@ -21,7 +21,7 @@ import re
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -36,6 +36,7 @@ from guru_gate import (  # noqa: E402
     collect_gate_artifacts as _guru_gate_collect_artifacts,
     GateArtifactError as _GateArtifactError,
 )
+import guru_risk  # noqa: E402  共享风险 helper（③ 独立 check 触发判定）
 
 
 VALID_ACTIONS = {"requirements", "overview", "detail", "implement", "check", "implement-check"}
@@ -1000,6 +1001,24 @@ def run_implement_check(args: argparse.Namespace) -> int:
     )
     base_run_id = args.run_id or _default_run_id()
 
+    # ③ P0：高风险 / unknown / 跨层信号的 flutter implement-check 须用**独立(对立 provider)check**——
+    # 实现者≠审查者。provider 隔离 + adversarial 保持 False → 天然不走 _skip_adversarial 的 advisory rc0，
+    # check 失败即 rc≠0 阻断；且不受 adversarial_enabled 开关影响（fail-closed：缺 risk 元数据 / 裸 low /
+    # git 扫描失败均不绕过，见 guru_risk.implement_check_independent_required）。
+    independent_required, independent_reason = guru_risk.implement_check_independent_required(
+        str(task_dir), config.platform, str(root)
+    )
+    check_config = (
+        replace(config, current_provider=config.provider, provider=_opposite_provider(config.provider))
+        if independent_required
+        else config
+    )
+    if independent_required:
+        sys.stderr.write(
+            f"[guru-supervise] 独立实现期 review ON（{independent_reason}）："
+            f"implement provider={config.provider} ≠ check provider={check_config.provider}\n"
+        )
+
     if args.dry_run:
         implement_plan = build_run_plan(
             "implement",
@@ -1011,7 +1030,7 @@ def run_implement_check(args: argparse.Namespace) -> int:
         check_plan = build_run_plan(
             "check",
             task_dir,
-            config,
+            check_config,
             f"{base_run_id}-check-1",
             "Implement-check loop step 2/2: emit review_result=clean/final-verification-ready with route_class=none, or route_class=<defect>.",
         )
@@ -1054,11 +1073,11 @@ def run_implement_check(args: argparse.Namespace) -> int:
         check_plan = build_run_plan(
             "check",
             task_dir,
-            config,
+            check_config,
             f"{base_run_id}-check-{iteration}",
             "Emit exactly one route_class and review_result for implement-check routing.",
         )
-        rc, _terminal, messages = _execute_plan(check_plan, config)
+        rc, _terminal, messages = _execute_plan(check_plan, check_config)
         if rc != 0:
             return rc
 
