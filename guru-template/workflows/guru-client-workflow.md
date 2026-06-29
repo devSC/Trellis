@@ -244,11 +244,11 @@ prd 草稿成形后执行 Domain Grill：对照 golden-path/项目约定/既有 
 
 #### 2.1 实现 `[required · repeatable]`
 
-channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.py implement-check <task-dir>`；必要时可拆分 `implement` 与 `check`。worker 注入存在的 jsonl、任务产物和平台 implementation writing/review skill，等待 `done/error/killed`。编码按平台 Guru implementation writing/review 口径：组合需求真正触达的迷你路径，逐片实现并持续更新 `implement.md` 的执行/证据/阻塞偏差；发现 `DETAIL_DEFECT` / `OVERVIEW_DEFECT` / `REQ_BLOCKER` 按 Phase 1 回退。
+channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.py implement-check <task-dir>`；必要时可拆分 `implement` 与 `check`。worker 注入存在的 jsonl、任务产物和平台 implementation writing/review skill，等待 `done/error/killed`。**P1 high-risk slice（packet 机制）**：`--slice <unit_id>`（多 packet 必填，单 packet 自动选）；supervisor 进修复循环前做 packet preflight + scope preflight（packet 缺失/非法/多义 → `PACKET_*`、dirty 越界 packet `target_paths`/`dirty_state.unrelated` → `SCOPE_INVALID`，均硬停 exit2、不启 worker、不进 repairable loop）；每轮 implement 成功后 supervisor 独立执行 packet `deterministic_checks`（绑定本轮 diff，hard Gate）。编码按平台 Guru implementation writing/review 口径：组合需求真正触达的迷你路径，逐片实现并持续更新 `implement.md` 的执行/证据/阻塞偏差；发现 `DETAIL_DEFECT` / `OVERVIEW_DEFECT` / `REQ_BLOCKER` 按 Phase 1 回退。
 
 #### 2.2 质检 `[required · repeatable]`
 
-check 可作为 `implement-check` 的拆分子命令运行：`python3 .trellis/scripts/guru/guru_supervise.py check <task-dir>`。审核按平台 Guru review 口径覆盖需求/设计/实现合同一致性、分层依赖律、合规红线与验证证据；无 analyze/test/lints/compliance 证据不得进入 commit。
+check 可作为 `implement-check` 的拆分子命令运行：`python3 .trellis/scripts/guru/guru_supervise.py check <task-dir>`。审核按平台 Guru review 口径覆盖需求/设计/实现合同一致性、分层依赖律、合规红线与验证证据；无 analyze/test/lints/compliance 证据不得进入 commit。**P1 完成条件（有 packet）**：check worker 置顶输出 7 字段 verdict + 逐条 `invariant_status.*`；clean 须同时满足 **deterministic passed（supervisor 执行 + worker 自报双过）+ invariant_coverage all_passed（supervisor 从 packet invariants 聚合重算）+ dirty_scope clean/isolated + review_provider 满足 packet `semantic_review_provider` + 无 blocker/should-fix**；缺字段或取非通过值却声明 clean → `MALFORMED_REVIEW_OUTPUT` 硬停。**OCR 仅 optional bounded provider**（用户显式触发/高风险抽检），不作默认完成条件；`No comments generated` 不作退出目标。每轮 review 记录由单一 writer 追加 `review-records/implementation-reviews.jsonl`（可审计回放）。
 
 #### 2.3 回退 `[on demand]`
 
