@@ -467,11 +467,17 @@ def task_chain(task_dir: str) -> str:
     return "full" if data.get("design_package") else "light"
 
 
-def _package_dir(task_dir: str):
+def _package_dir(task_dir: str, repo_root: str = None):
     """full 链设计包路径（task.json design_package，相对 repo root）。
 
     拒绝 `..` 穿越与绝对路径（防止 gate 误读仓库外文件给出误导结论）；
     测试夹具可设 GURU_GATE_ALLOW_ABS=1 放行绝对路径。未声明/非法返回 None。
+
+    repo_root（解 cwd≠repo-root 注入 bug，对齐 _requirement_package_dir）：design_package 是
+    「相对 repo root」字段。gate 命令 cwd==repo_root，故 **repo_root=None 时按 cwd 解析、返相对**
+    （历史行为逐字节不变，8 个 gate 调用方零影响）；`guru_supervise --root` 可在 cwd≠root 下运行，
+    必须显式传 repo_root，否则 design 包会按进程 cwd 解析成空包/错包。**传 repo_root 时围栏与返回都
+    锚定它、返回绝对路径**，使后续 join/读取与 cwd 无关（digest 只哈希 key+内容，不哈希该路径串）。
     """
     pkg = _task_json_of(task_dir).get("design_package")
     if not isinstance(pkg, str) or not pkg.strip():
@@ -484,14 +490,14 @@ def _package_dir(task_dir: str):
     if norm == ".." or norm.startswith("..%s" % os.sep) or norm.startswith("../"):
         return None
     # realpath 围栏：词法合法但经符号链接逃逸出仓库的路径同样拒绝
-    repo_root = os.path.realpath(os.getcwd())
-    real = os.path.realpath(norm)
+    root = os.path.realpath(repo_root) if repo_root else os.path.realpath(os.getcwd())
+    real = os.path.realpath(os.path.join(root, norm)) if repo_root else os.path.realpath(norm)
     try:
-        if os.path.commonpath([repo_root, real]) != repo_root:
+        if os.path.commonpath([root, real]) != root:
             return None
     except ValueError:
         return None
-    return norm
+    return os.path.join(root, norm) if repo_root else norm
 
 
 def _requirement_package_dir(task_dir: str, repo_root: str = None):
@@ -1617,7 +1623,7 @@ def _gate_artifacts(task_dir: str, gate: str, repo_root: str = None) -> list:
     （而非进程 cwd）解析；gate 命令默认 None→cwd，supervise 显式传 config.root。
     """
     full = task_chain(task_dir) == "full"
-    pkg = _package_dir(task_dir)
+    pkg = _package_dir(task_dir, repo_root)
     req_pkg = _requirement_package_dir(task_dir, repo_root)
     namespace = req_pkg is not None
     entries = []
@@ -1654,6 +1660,42 @@ def _gate_artifacts(task_dir: str, gate: str, repo_root: str = None) -> list:
     # light 链 design.md 已在 overview 段加入
     add(os.path.join(task_dir, "implement.md"), "task", "implement.md")
     return entries
+
+
+class GateArtifactError(Exception):
+    """gate-local fail-closed 错误：供 guru_supervise 注入 review SSOT 时，正式包声明却非法/缺失
+    或 manifest 非法时抛出。定义在 guru_gate.py、由 supervise 捕获并包装为 GuruSupervisionError——
+    guru_gate **不得**反向 import guru_supervise 的异常（防循环 import；supervise 已 module-load
+    import guru_gate）。"""
+
+
+def collect_gate_artifacts(task_dir: str, gate: str, repo_root: str = None) -> list:
+    """guru_supervise 注入 review SSOT 的安全枚举器：复用 _gate_artifacts 的 repo-root 围栏 /
+    canonical_excludes / namespacing / digest 取材边界，但对**声明却非法/缺失的正式包 fail-closed**
+    （抛 GateArtifactError），不像 _gate_artifacts 那样静默回落 task-local docs。
+
+    - requirement_package 声明却有问题（复用 _requirement_package_problem，repo_root-aware）→ 抛。
+    - full 链且 design_package 声明却非法（_package_dir 返 None）或目录不存在 → 抛。
+    - manifest 非法（_gate_artifacts 抛 RequirementManifestError）→ 包装为 GateArtifactError。
+    light 链 / 未声明正式包 → 正常返回（含 task-local 回落，属设计内）。
+    """
+    prob = _requirement_package_problem(task_dir, repo_root)
+    if prob:
+        raise GateArtifactError(f"requirement_package fail-closed：{prob}")
+    design = _task_json_of(task_dir).get("design_package")
+    if task_chain(task_dir) == "full" and isinstance(design, str) and design.strip():
+        pkg = _package_dir(task_dir, repo_root)
+        if pkg is None:
+            raise GateArtifactError(
+                f"design_package 指针非法：{design.strip()}"
+                "（必须是 repo root 相对路径，不得绝对 / `..` 穿越 / 符号链接逃逸）"
+            )
+        if not os.path.isdir(pkg):
+            raise GateArtifactError(f"design_package 目录不存在：{pkg}")
+    try:
+        return _gate_artifacts(task_dir, gate, repo_root)
+    except RequirementManifestError as exc:
+        raise GateArtifactError(f"requirement manifest 非法：{exc}") from exc
 
 
 def _gate_digest(task_dir: str, gate: str, repo_root: str = None) -> str:

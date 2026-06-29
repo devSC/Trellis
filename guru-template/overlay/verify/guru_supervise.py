@@ -31,7 +31,11 @@ from urllib.parse import unquote, urlparse
 # .trellis/scripts/guru/）。脚本运行时其目录已是 sys.path[0]，此处显式补一遍兜底奇怪调用形态，
 # 保证 _requirements_digest 复用 guru_gate 实现而非维护第二份（消除 digest 分叉 / 永久 stale）。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from guru_gate import requirements_digest as _guru_gate_requirements_digest  # noqa: E402
+from guru_gate import (  # noqa: E402
+    requirements_digest as _guru_gate_requirements_digest,
+    collect_gate_artifacts as _guru_gate_collect_artifacts,
+    GateArtifactError as _GateArtifactError,
+)
 
 
 VALID_ACTIONS = {"requirements", "overview", "detail", "implement", "check", "implement-check"}
@@ -444,6 +448,21 @@ def _load_config(
     )
 
 
+def collect_review_artifacts(task_dir: Path, gate: str, repo_root: Path) -> list[Path]:
+    """为 flutter implement/check review worker 注入正式 requirement/design 包文件（SSOT 否决基线）。
+
+    复用 guru_gate.collect_gate_artifacts（repo-root 安全枚举 + 声明却非法的包 fail-closed），把
+    gate-local GateArtifactError 包装为 GuruSupervisionError（spawn 前硬停，不静默回落 task-local
+    docs）。只返回 design/requirements 源文件——task-local prd/design/implement 已由 build_run_plan
+    单独注入，避免重复。
+    """
+    try:
+        entries = _guru_gate_collect_artifacts(str(task_dir), gate, str(repo_root))
+    except _GateArtifactError as exc:
+        raise GuruSupervisionError(f"SSOT 正式包 fail-closed：{exc}") from exc
+    return [Path(e["path"]) for e in entries if e.get("source") in ("design", "requirements")]
+
+
 def build_run_plan(
     action: str,
     task_dir: Path,
@@ -478,6 +497,10 @@ def build_run_plan(
                 *_requirements_reference_files(config.root, task_dir),
             ]
         )
+    if config.platform == "flutter" and action in {"implement", "check", "implement-check"}:
+        # ② 为 flutter 实现期 review 注入正式 requirement/design 包(SSOT 否决基线);
+        # 声明却非法/缺失的包由 collect_review_artifacts → GuruSupervisionError 在 spawn 前 fail-closed
+        artifact_candidates.extend(collect_review_artifacts(task_dir, "detail", config.root))
     artifact_files = _dedupe_paths(_existing_paths(artifact_candidates))
     jsonl_names = [f"{action}.jsonl"]
     if action == "implement-check":
