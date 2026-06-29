@@ -51,6 +51,12 @@ import os
 import re
 import sys
 
+# 共享风险 helper（单一来源，防两份风险逻辑漂移）：guru_gate 作脚本运行时其目录已在 sys.path[0]，
+# 被 guru_supervise import 时其目录也已加入——此处显式补一遍兜底奇怪调用形态。guru_risk **不 import
+# guru_gate**（防循环）。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import guru_risk  # noqa: E402
+
 PASS, BLOCK = 0, 2
 
 # 不用 \b 词边界：Python 的 \b 把 CJK 视作 word 字符，"执行BHV-001"/"UNIT-x执行" 等
@@ -1590,8 +1596,7 @@ FINDING_CLASSES = {
     "IMPLEMENT_DEFECT",
     "PROCESS_DEFECT",
 }
-HIGH_RISK_LEVELS = {"high", "critical", "p0"}
-LOW_RISK_LEVELS = {"low", "minor", "trivial"}
+from guru_risk import HIGH_RISK_LEVELS, LOW_RISK_LEVELS  # noqa: F401  单一来源（guru_risk）
 
 
 def _namespaced_key(path: str, source: str, relpath: str, namespace: bool) -> str:
@@ -1745,31 +1750,11 @@ def requirements_digest(task_dir: str, repo_root: str = None) -> str:
 
 
 def _risk_level(task_dir: str) -> str:
-    """读取任务风险等级。缺失/不可判定按 unknown 处理，避免 light 链自动获得 skip 权限。"""
-    data = _task_json_of(task_dir)
-    candidates = [
-        data.get("risk_level"),
-        data.get("guru_risk_level"),
-    ]
-    for key in ("guru_risk", "risk"):
-        risk_obj = data.get(key)
-        if isinstance(risk_obj, dict):
-            if risk_obj.get("high_risk") is True:
-                return "high"
-            if risk_obj.get("low_risk") is True:
-                return "low"
-            candidates.extend([risk_obj.get("risk_level"), risk_obj.get("level")])
-        elif isinstance(risk_obj, str):
-            candidates.append(risk_obj)
-    for value in candidates:
-        if not isinstance(value, str):
-            continue
-        level = value.strip().lower().replace("_", "-")
-        if level in HIGH_RISK_LEVELS:
-            return "high"
-        if level in LOW_RISK_LEVELS:
-            return "low"
-    return "unknown"
+    """读取任务风险等级。缺失/不可判定按 unknown 处理，避免 light 链自动获得 skip 权限。
+
+    实现委托 `guru_risk.task_risk_level`（单一来源；guru_supervise 也用同一 helper，防两份风险逻辑漂移）。
+    """
+    return guru_risk.task_risk_level(task_dir)
 
 
 def _grill_policy(task_dir: str, gate: str) -> dict:

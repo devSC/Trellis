@@ -35,6 +35,7 @@ bash guru-template/overlay/apply.sh "$tmp" && echo APPLY_OK   # 先断言 apply.
 - verify:run_tests.sh 新增"注入正式包"+ cwd≠repo-root 用例;**fail-closed 用例:full 链缺 design_package / 非法 `..` / symlink 逃逸 / 不存在的包 / 声明却缺的 requirement_package → 均返回非零不 spawn**;确认越界/未覆盖文件不会被注入。
 
 ### 步骤 3 — ③ 独立对抗 check
+- [部分✅] guru_risk.py 已建(task_risk_level/git porcelain 跨层/approved-low schema/implement_check_independent_required,**单测通过、修了 repositor 复数 bug**)+ guru_gate._risk_level 改代理(单一来源)+ 循环 import 冒烟通过 + run_tests 189/0;**待:run_implement_check 接线用它**。原契约↓
 - [ ] **触发契约(P0,与 design.md 一致,无 packet 依赖)**:新增/导出共享 `guru_risk.py`;P0 信号 = task.json risk + supervise 用 **`git status --porcelain=v1 -z`**(含 untracked,`git diff` 会漏新建文件)收集路径做跨层/storage 检测,**确定性跨层信号 override task low**;**true-low 须 task.json 合法 approval schema(`guru_risk:{level,reviewer_approved,approved_by,approved_at,evidence}`)+ 路径无跨层信号,裸 `risk_level=low` 不算**。`flutter && (high | unknown | 跨层信号)` → 启用独立阻断 check;true-low / 非 flutter → 旧行为。
 - [ ] **(P1 defer,非 P0)** packet 基的更精风险(`slice_packet.risk`>task、`target_paths` 来自 implement.md、`implement-check --slice <unit>` 选择、单 packet auto-select / 多 packet 无 `--slice` 硬停)依赖 packet 生产者(writing-skill/trace),随 P1 ④ 落地;契约精确点见 `../06-28-guru-review-governance-report/problem-report-and-solution.md` §4.2/§4.5.2/§4.6.1,勿重发明。
 - [ ] **`apply.sh` 收编 `guru_risk.py`(新 sibling 模块)**:拷贝清单(`:223-229`)+ 状态 echo(`:230`)+ `ast.parse` 自检清单(`:664-669`)三处都加;temp-install smoke 改 `import guru_risk, guru_gate, guru_supervise`;断言 `guru_risk.py` 已拷入 `$tmp/.trellis/scripts/guru`。
