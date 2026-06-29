@@ -1688,7 +1688,16 @@ def collect_gate_artifacts(task_dir: str, gate: str, repo_root: str = None) -> l
     if prob:
         raise GateArtifactError(f"requirement_package fail-closed：{prob}")
     design = _task_json_of(task_dir).get("design_package")
-    if task_chain(task_dir) == "full" and isinstance(design, str) and design.strip():
+    if task_chain(task_dir) == "full":
+        # full 链声明即隐含须有正式 design 包：合法流程到 implement/check 时（collect 的唯一调用点）
+        # 必已过 overview/detail gate（二者都拦 full+无 design_package），故缺失即错误态——
+        # supervise 注入 SSOT 时 fail-closed，不静默回落 task-local design.md（不像 _gate_artifacts
+        # 那样为 gate auto 渐进保留历史兼容）。
+        if not (isinstance(design, str) and design.strip()):
+            raise GateArtifactError(
+                "full 链缺 design_package：正式设计包是 review SSOT 行级基线，"
+                "不得回落 task-local design.md（声明 full 即须提供正式包）"
+            )
         pkg = _package_dir(task_dir, repo_root)
         if pkg is None:
             raise GateArtifactError(

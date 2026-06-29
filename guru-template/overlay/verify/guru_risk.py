@@ -14,10 +14,11 @@ import subprocess
 HIGH_RISK_LEVELS = {"high", "critical", "p0"}
 LOW_RISK_LEVELS = {"low", "minor", "trivial"}
 
-# P0 ③ 无 packet 触发信号：storage 关键词（路径子串，小写匹配）。
+# P0 ③ 无 packet 触发信号：storage 关键词（路径子串，小写匹配）。裸短词（db/bloc）用边界形式
+# 避免子串误报（裸 "db" 会命中 "feedback"，裸 "bloc" 会命中 "block"）。
 STORAGE_KEYWORDS = (
-    "datasource", "data_source", "dao", "database", "db",
-    "cache", "storage", "local_data_source",
+    "datasource", "data_source", "dao", "database",
+    "/db/", "_db.", "db_", "cache", "storage", "local_data_source",
 )
 # 路径 → layer group（命中 ≥2 组视为跨层）。
 LAYER_GROUPS = {
@@ -26,9 +27,15 @@ LAYER_GROUPS = {
     "repository": ("repositor", "/repo/"),  # repositor 覆盖 repository/repositories/..._impl
     "datasource": ("datasource", "data_source", "/dao", "database", "/db/", "cache", "storage"),
     "domain": ("usecase", "use_case", "/domain/"),
-    "controller": ("controller", "/state/", "bloc", "/provider", "viewmodel", "view_model"),
+    # bloc 用边界（/bloc、_bloc、bloc/）避免误命中 "block"。
+    "controller": ("controller", "/state/", "/bloc", "_bloc", "bloc/", "/provider", "viewmodel", "view_model"),
     "ui": ("/widget", "/page", "/screen", "/ui/", "/view/"),
 }
+
+# 跨层/storage 判定只看**代码改动**：排除 .trellis 任务元数据、文档、纯配置/锁文件，避免任务名或
+# 文档路径（如 .trellis/tasks/cache-fix/、docs/storage.md）被误判为 storage/跨层信号而误触独立 check。
+_SCAN_SKIP_PREFIXES = (".trellis/", ".git/", "docs/", "doc/")
+_SCAN_SKIP_EXTS = (".md", ".txt", ".json", ".yaml", ".yml", ".lock", ".log")
 
 
 class RiskScanError(Exception):
@@ -100,6 +107,14 @@ def scan_paths(repo_root: str) -> set:
     return paths
 
 
+def _is_scannable(path: str) -> bool:
+    """只让代码改动参与跨层/storage 判定（排除 .trellis 元数据、文档、纯配置/锁文件）。"""
+    pl = path.lower().lstrip("./")
+    if any(pl.startswith(pre) or ("/" + pre) in pl for pre in _SCAN_SKIP_PREFIXES):
+        return False
+    return os.path.splitext(pl)[1] not in _SCAN_SKIP_EXTS
+
+
 def _layer_of(path: str):
     pl = path.lower()
     for layer, kws in LAYER_GROUPS.items():
@@ -109,12 +124,13 @@ def _layer_of(path: str):
 
 
 def has_cross_layer_or_storage(paths) -> bool:
-    """命中 storage 关键词，或路径跨 ≥2 个 layer group → True。"""
-    for p in paths:
+    """命中 storage 关键词，或路径跨 ≥2 个 layer group → True（仅对可扫描代码路径判定）。"""
+    scannable = [p for p in paths if _is_scannable(p)]
+    for p in scannable:
         pl = p.lower()
         if any(k in pl for k in STORAGE_KEYWORDS):
             return True
-    layers = {layer for p in paths if (layer := _layer_of(p))}
+    layers = {layer for p in scannable if (layer := _layer_of(p))}
     return len(layers) >= 2
 
 

@@ -1599,6 +1599,50 @@ try:
 finally:
     os.chdir(prev)
 
+# ---- ③ finding1: implement-check 强制 non-advisory（外部 --adversarial 不得降级 check 失败为 rc0）----
+captured = []
+real_execute = gs._execute_plan
+def fake_execute(plan, cfg):
+    captured.append((plan.action, cfg.adversarial))
+    # implement 成功、check 失败：实现期独立 check 失败必须阻断（不得走 _skip_adversarial 的 rc0）
+    return (1, "error", "") if plan.action == "check" else (0, "done", "")
+gs._execute_plan = fake_execute
+try:
+    root, tdir = mk(risk="high", files=["lib/main.dart"])
+    args = argparse.Namespace(task_dir=tdir, root=root, platform="flutter", provider="codex",
+                              adversarial=True, trellis_bin="trellis", run_id="RID", dry_run=False)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        rc = gs.run_implement_check(args)
+    adv_flags = [a for (_, a) in captured]
+    ok("③f1 implement-check 内部强制 non-advisory（即便外部传 --adversarial=True）",
+       len(adv_flags) >= 1 and all(a is False for a in adv_flags))
+    ok("③f1 独立 check 失败 → run_implement_check rc≠0 阻断（非 advisory rc0）", rc != 0)
+finally:
+    gs._execute_plan = real_execute
+
+# ---- ② finding2: full 链缺 design_package 字段 → collect_gate_artifacts fail-closed ----
+root, tdir = mk(guru_chain="full", prd=True)  # guru_chain=full 但完全无 design_package 字段
+try:
+    G.collect_gate_artifacts(tdir, "detail", repo_root=root)
+    ok("②fc full 链缺 design_package 字段 → 抛 GateArtifactError", False)
+except G.GateArtifactError:
+    ok("②fc full 链缺 design_package 字段 → 抛 GateArtifactError", True)
+
+# ---- ③ finding3: 路径匹配精化（消除子串误报、保留真命中）----
+root, tdir = mk(risk="low", guru_risk=APPROVED, files=["lib/feedback/feedback_helper.dart"])
+req, why = R.implement_check_independent_required(tdir, "flutter", root)
+ok("③f3 lib/feedback(含子串 db) approved-low → 不误判 storage、不要求", req is False)
+
+root, tdir = mk(risk="low", guru_risk=APPROVED, files=["lib/utils/block_parser.dart"])
+req, why = R.implement_check_independent_required(tdir, "flutter", root)
+ok("③f3 block_parser(含子串 bloc) approved-low → 不误判 controller 跨层、不要求", req is False)
+
+root, tdir = mk(risk="low", guru_risk=APPROVED,
+                files=["lib/data/order_database_helper.dart", "lib/page/order_page.dart"])
+req, why = R.implement_check_independent_required(tdir, "flutter", root)
+ok("③f3 真 database+ui 跨层(精化后仍检出) → 要求", req is True and "cross-layer" in why)
+
 print(f"COUNT {np} {nf}")
 sys.exit(0 if nf == 0 else 1)
 PY
