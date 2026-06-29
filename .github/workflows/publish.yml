@@ -49,6 +49,9 @@ jobs:
       - name: Typecheck (core + cli)
         run: pnpm typecheck
 
+      - name: Guru bundled mirror drift check
+        run: pnpm -C packages/cli sync:guru:check
+
       - name: Test (core + cli)
         run: pnpm test
 

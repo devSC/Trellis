@@ -6,6 +6,7 @@ on:
     paths:
       - 'packages/cli/**'
       - 'packages/core/**'
+      - 'guru-template/**'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - 'package.json'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'packages/cli/**'
       - 'packages/core/**'
+      - 'guru-template/**'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - 'package.json'
@@ -47,6 +49,9 @@ jobs:
 
       - name: Lint (core + cli)
         run: pnpm lint
+
+      - name: Guru bundled mirror drift check
+        run: pnpm -C packages/cli sync:guru:check
 
       - name: Test (core + cli)
         run: pnpm test
