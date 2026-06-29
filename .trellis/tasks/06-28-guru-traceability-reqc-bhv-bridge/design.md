@@ -99,3 +99,10 @@ BHV 标题带 `[REQ-UC-XXX]`(多对多承接);新子命令 `trace-aggregate <ver
 - 生成区标记机制对 `--aggregate` 幂等(HTML 注释 vs front-matter)。
 - 单表回填的 orphan/stale 标记格式。
 - ~~`--require-req-uc` 触发~~ → 已拍死(§2.5:CLI 显式强制 + task.json `require_req_uc` flag + 旧默认 false)。
+
+## 9. 交付状态(2026-06-29)
+
+- 实现完成并提交 `4c442d15`。Slice 1-2(主代理)+ Slice 3-7(trellis-implement)。
+- **验证**:49 bridge + 10 e2e + 189 主套件 + fail-closed 独立对抗 4 + Slice1-2 验证 4,全绿。trellis-check(独立 fresh 视角)Go,并抓修 `_parse_existing_manual` 占位符往返不对称 bug(uncell fix);见 memory `test-self-confirmation-trap`。
+- **codex opposite-provider 代码终审:待补**。gateway 连续 7 次阻塞(6×503 `GW_ALL_PROVIDERS_UNAVAILABLE` + 1×网络断流),此环境/时段无法完成。终审命令 + prompt 已存 `codex-final-review.md`,日后稳定网络一条命令补;若发现问题再 amend/追加 commit。
+- task 标 **completed**:实现已充分验证;codex 为额外跨 provider 保险,环境阻塞不无限卡 task。
