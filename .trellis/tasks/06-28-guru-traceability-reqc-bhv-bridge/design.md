@@ -104,5 +104,5 @@ BHV 标题带 `[REQ-UC-XXX]`(多对多承接);新子命令 `trace-aggregate <ver
 
 - 实现完成并提交 `4c442d15`。Slice 1-2(主代理)+ Slice 3-7(trellis-implement)。
 - **验证**:49 bridge + 10 e2e + 189 主套件 + fail-closed 独立对抗 4 + Slice1-2 验证 4,全绿。trellis-check(独立 fresh 视角)Go,并抓修 `_parse_existing_manual` 占位符往返不对称 bug(uncell fix);见 memory `test-self-confirmation-trap`。
-- **codex opposite-provider 代码终审:待补**。gateway 连续 7 次阻塞(6×503 `GW_ALL_PROVIDERS_UNAVAILABLE` + 1×网络断流),此环境/时段无法完成。终审命令 + prompt 已存 `codex-final-review.md`,日后稳定网络一条命令补;若发现问题再 amend/追加 commit。
+- **codex opposite-provider 代码终审:已完成 → Go(2026-06-29)**。gateway 前 7 次阻塞(6×503 + 1×断流),第 8 次以 effort=low + 精简 prompt 赶在 cooldown 前完成。两项核对均 Go:① fail-closed 决策1(写前必经 `_excludes_has_traceability`、回退默认拒写、无绕过、`_MANIFEST_DEFAULT_EXCLUDES` 未改);② uncell 回填幂等(所有 parse cell 均过 uncell、无漏网)。**桥任务彻底闭环。**
 - task 标 **completed**:实现已充分验证;codex 为额外跨 provider 保险,环境阻塞不无限卡 task。

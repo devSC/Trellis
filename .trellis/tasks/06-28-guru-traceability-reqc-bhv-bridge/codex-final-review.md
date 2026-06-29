@@ -1,9 +1,11 @@
-# codex opposite-provider 代码终审 — 待补(gateway 阻塞)
+# codex opposite-provider 代码终审 — ✅ 已完成:Go(2026-06-29)
 
-实现已提交 `4c442d15`,经 trellis-check 独立 Go + 抓修 1 bug + 65+ 测试。
-codex opposite-provider 跨视角终审因 gateway 连续 7 次阻塞(6×503 `GW_ALL_PROVIDERS_UNAVAILABLE` + 1×网络断流)未完成。
+实现 `4c442d15`,经 trellis-check 独立 Go + 抓修 1 bug + 65+ 测试。
+codex opposite-provider 跨视角终审前 7 次被 gateway 阻塞,第 8 次以 effort=low + 精简 prompt 完成 → **结论 Go**:
+- **fail-closed 决策1 Go**:写前必经 `_excludes_has_traceability`;manifest 缺失/字段缺失回退默认拒写;无绕过(`_write_traceability` 仅在 fail-closed 后调用,异常 BLOCK 不吞);`_MANIFEST_DEFAULT_EXCLUDES` 未改。
+- **uncell 回填幂等 Go**:`_parse_existing_manual` 所有 parse cell(REQ-UC/UNIT/Code/Test/Status)均过 uncell,无漏网,空 `—` 不致误判 orphan/不幂等。
 
-**日后网络稳定时,在 repo 根目录一条命令补做:**
+**桥任务彻底闭环。** 下方为当时备用的补做命令(已无需,留档):
 
 ```bash
 codex exec -c sandbox_mode="read-only" -c approval_policy="never" -c model_reasoning_effort="medium" -c model_reasoning_summary="auto" - <<'PROMPT'
