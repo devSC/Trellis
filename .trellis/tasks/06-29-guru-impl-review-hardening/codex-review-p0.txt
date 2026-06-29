@@ -1,0 +1,159 @@
+# codex 实现期对抗审查 — P0（输出留痕）
+
+## Round 1 (verdict + findings)
+```
+verdict=REQUEST_CHANGES
+blockers=2 should_fix=2 nice_to_have=0
+
+1. severity(blocker) | /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_supervise.py:1011 和 /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_supervise.py:873 | 独立 check 没有强制 `adversarial=False`，`implement-check --adversarial` 会把 check 失败降级成 advisory rc0。`run_implement_check` 里 `check_config = replace(config, current_provider=config.provider, provider=_opposite_provider(config.provider))` 只换 provider，不清掉 `config.adversarial`。全局 parser 允许 `--adversarial` 用在 `implement-check`，此时 `_execute_plan` 在 create/spawn/send/wait/messages 失败或 terminal 非 done 时会走 `_skip_adversarial(...)`，返回 `0, "skipped"`。这直接违反硬约束 3：provider 隔离的 check 失败必须 rc≠0 阻断。| 具体修复：`implement-check` 要么显式拒绝 `args.adversarial` 并返回非零，要么在 `run_implement_check` 内构造专用 non-advisory config，例如 `base_config = replace(config, adversarial=False, adversarial_model=None, adversarial_reasoning_effort=None)`，implement/check 都基于这个 config；独立 check 再只替换 `provider`。补测试：`args.adversarial=True` + independent required + mock/fake check 失败时，断言 rc 非 0 且不写 `adversarial_skips`。
+
+2. severity(blocker) | /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_gate.py:1691 和 /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_gate.py:1652 | `collect_gate_artifacts` 对 full 链缺失 `design_package` 仍会静默回落到 task-local `design.md`，没有对“full 链正式 design 包缺失” fail-closed。当前逻辑只在 `task_chain(task_dir) == "full"` 且 `design_package` 是非空字符串时校验 `_package_dir` 和目录存在；如果 `task.json` 是 `{"guru_chain":"full"}` 但完全没有 `design_package`，会跳过异常，进入 `_gate_artifacts`，`pkg=None` 后走 `else: add(task_dir/design.md, "task", "design.md")`。这会让 `guru_supervise` 在 flutter implement/check 注入 SSOT 时不硬停，review worker 可能在没有正式 design 包基线的情况下运行。| 具体修复：在 `collect_gate_artifacts` 中先固化 `chain = task_chain(task_dir)`，当 `chain == "full"` 且 `design_package` 缺失、非字符串或空字符串时直接 `raise GateArtifactError("full 链缺 design_package ...")`；然后再校验非法路径和目录缺失。保留 `_gate_artifacts` 的历史兼容行为即可，但 supervise 使用的 fail-closed 枚举器必须更严格。补测试：`task.json={"guru_chain":"full"}` 无 `design_package` 调 `collect_gate_artifacts(..., "detail", repo_root=...)` 必须抛 `GateArtifactError`。
+
+3. severity(should_fix) | /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_risk.py:18 和 /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_risk.py:111 | `has_cross_layer_or_storage` 的路径语义匹配过宽，会把无关路径误判为 storage/跨层信号。`STORAGE_KEYWORDS` 里有裸 `"db"`，并且实现是 `any(k in pl for k in STORAGE_KEYWORDS)`；类似 `lib/feedback/...` 这种路径包含连续 `db` 就会触发 storage。`LAYER_GROUPS` 也有裸 `"bloc"`，会命中 `block...` 类路径。`.trellis/tasks/<task-name>/...` 如果任务名含 cache/storage/database，也会被当作 storage 信号。虽然这是 fail-closed 方向，不会绕过独立 check，但会让合法 approved-low 的低风险改动被噪声强制切到 opposite-provider check，增加误阻断和成本。| 具体修复：把风险扫描改为 path segment/stem 级匹配，而不是任意子串；移除裸 `"db"`，改成 `/db/`、`db_`、`_db`、`db.dart` 等边界规则；对 `.trellis/tasks/`、文档、纯元数据路径默认不参与跨层/storage 判定，除非显式位于代码目录白名单如 `lib/`、`test/`、`integration_test/`、`packages/*/lib/`。补测试：`lib/feedback/widget.dart` 不触发 storage，`lib/data/order_datasource.dart` 必须触发；`.trellis/tasks/cache-fix/task.json` 不应单独触发。
+
+4. severity(should_fix) | /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/tests/run_tests.sh:1524 和 /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/tests/run_tests.sh:1565 | 新增 P0 控制流测试有覆盖缺口，无法抓住上面两个 blocker。provider 隔离只测 dry-run 的 worker 名称，且固定 `adversarial=False`，没有模拟真实 `_execute_plan` 失败路径，所以 `--adversarial` 导致 `_skip_adversarial` rc0 的回归不会失败。`collect_gate_artifacts` 只测了 requirement_package 缺目录、`..` 穿越、full design_package 目录不存在，没有测 full 链 `design_package` 字段完全缺失的情况。| 具体修复：新增两个负向测试。第一，用 fake `trellis` 或 monkeypatch `_execute_plan` 让 check 阶段失败，传 `args.adversarial=True` 和 flutter high-risk，断言 `run_implement_check` 返回非 0 且未记录 advisory skip。第二，构造 `{"guru_chain":"full"}` 且无 `design_package` 的 task，断言 `collect_gate_artifacts(..., "detail", repo_root=...)` 抛 `GateArtifactError`。
+
+未计入 finding：我没有发现 OCR/open-code-review 被引入为必选依赖或完成闸；当前 OCR 只出现在 Flutter review skill 的“SSOT 冲突时否决外部建议”说明里，不是执行依赖。`scan_paths` 的 `-z -uall` 基本解析方向正确，能覆盖未跟踪目录展开、rename/copy 的 from-path token、删除项和含空格路径；问题主要是后续关键词匹配过宽。`sync-guru-template.js --check` 用临时目录生成 fresh mirror，再只 diff `specs/workflows/overlay` 三个 managed 子树，未见会触碰工作树；但它本身不验证手写 `index.ts` 注册表与新增 workflow/spec 的语义一致性，这属于当前 P0 drift gate 之外的单独 invariant。
+tokens used
+149,013
+verdict=REQUEST_CHANGES
+blockers=2 should_fix=2 nice_to_have=0
+
+1. severity(blocker) | /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_supervise.py:1011 和 /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_supervise.py:873 | 独立 check 没有强制 `adversarial=False`，`implement-check --adversarial` 会把 check 失败降级成 advisory rc0。`run_implement_check` 里 `check_config = replace(config, current_provider=config.provider, provider=_opposite_provider(config.provider))` 只换 provider，不清掉 `config.adversarial`。全局 parser 允许 `--adversarial` 用在 `implement-check`，此时 `_execute_plan` 在 create/spawn/send/wait/messages 失败或 terminal 非 done 时会走 `_skip_adversarial(...)`，返回 `0, "skipped"`。这直接违反硬约束 3：provider 隔离的 check 失败必须 rc≠0 阻断。| 具体修复：`implement-check` 要么显式拒绝 `args.adversarial` 并返回非零，要么在 `run_implement_check` 内构造专用 non-advisory config，例如 `base_config = replace(config, adversarial=False, adversarial_model=None, adversarial_reasoning_effort=None)`，implement/check 都基于这个 config；独立 check 再只替换 `provider`。补测试：`args.adversarial=True` + independent required + mock/fake check 失败时，断言 rc 非 0 且不写 `adversarial_skips`。
+
+2. severity(blocker) | /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_gate.py:1691 和 /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_gate.py:1652 | `collect_gate_artifacts` 对 full 链缺失 `design_package` 仍会静默回落到 task-local `design.md`，没有对“full 链正式 design 包缺失” fail-closed。当前逻辑只在 `task_chain(task_dir) == "full"` 且 `design_package` 是非空字符串时校验 `_package_dir` 和目录存在；如果 `task.json` 是 `{"guru_chain":"full"}` 但完全没有 `design_package`，会跳过异常，进入 `_gate_artifacts`，`pkg=None` 后走 `else: add(task_dir/design.md, "task", "design.md")`。这会让 `guru_supervise` 在 flutter implement/check 注入 SSOT 时不硬停，review worker 可能在没有正式 design 包基线的情况下运行。| 具体修复：在 `collect_gate_artifacts` 中先固化 `chain = task_chain(task_dir)`，当 `chain == "full"` 且 `design_package` 缺失、非字符串或空字符串时直接 `raise GateArtifactError("full 链缺 design_package ...")`；然后再校验非法路径和目录缺失。保留 `_gate_artifacts` 的历史兼容行为即可，但 supervise 使用的 fail-closed 枚举器必须更严格。补测试：`task.json={"guru_chain":"full"}` 无 `design_package` 调 `collect_gate_artifacts(..., "detail", repo_root=...)` 必须抛 `GateArtifactError`。
+
+3. severity(should_fix) | /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_risk.py:18 和 /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_risk.py:111 | `has_cross_layer_or_storage` 的路径语义匹配过宽，会把无关路径误判为 storage/跨层信号。`STORAGE_KEYWORDS` 里有裸 `"db"`，并且实现是 `any(k in pl for k in STORAGE_KEYWORDS)`；类似 `lib/feedback/...` 这种路径包含连续 `db` 就会触发 storage。`LAYER_GROUPS` 也有裸 `"bloc"`，会命中 `block...` 类路径。`.trellis/tasks/<task-name>/...` 如果任务名含 cache/storage/database，也会被当作 storage 信号。虽然这是 fail-closed 方向，不会绕过独立 check，但会让合法 approved-low 的低风险改动被噪声强制切到 opposite-provider check，增加误阻断和成本。| 具体修复：把风险扫描改为 path segment/stem 级匹配，而不是任意子串；移除裸 `"db"`，改成 `/db/`、`db_`、`_db`、`db.dart` 等边界规则；对 `.trellis/tasks/`、文档、纯元数据路径默认不参与跨层/storage 判定，除非显式位于代码目录白名单如 `lib/`、`test/`、`integration_test/`、`packages/*/lib/`。补测试：`lib/feedback/widget.dart` 不触发 storage，`lib/data/order_datasource.dart` 必须触发；`.trellis/tasks/cache-fix/task.json` 不应单独触发。
+
+4. severity(should_fix) | /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/tests/run_tests.sh:1524 和 /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/tests/run_tests.sh:1565 | 新增 P0 控制流测试有覆盖缺口，无法抓住上面两个 blocker。provider 隔离只测 dry-run 的 worker 名称，且固定 `adversarial=False`，没有模拟真实 `_execute_plan` 失败路径，所以 `--adversarial` 导致 `_skip_adversarial` rc0 的回归不会失败。`collect_gate_artifacts` 只测了 requirement_package 缺目录、`..` 穿越、full design_package 目录不存在，没有测 full 链 `design_package` 字段完全缺失的情况。| 具体修复：新增两个负向测试。第一，用 fake `trellis` 或 monkeypatch `_execute_plan` 让 check 阶段失败，传 `args.adversarial=True` 和 flutter high-risk，断言 `run_implement_check` 返回非 0 且未记录 advisory skip。第二，构造 `{"guru_chain":"full"}` 且无 `design_package` 的 task，断言 `collect_gate_artifacts(..., "detail", repo_root=...)` 抛 `GateArtifactError`。
+
+未计入 finding：我没有发现 OCR/open-code-review 被引入为必选依赖或完成闸；当前 OCR 只出现在 Flutter review skill 的“SSOT 冲突时否决外部建议”说明里，不是执行依赖。`scan_paths` 的 `-z -uall` 基本解析方向正确，能覆盖未跟踪目录展开、rename/copy 的 from-path token、删除项和含空格路径；问题主要是后续关键词匹配过宽。`sync-guru-template.js --check` 用临时目录生成 fresh mirror，再只 diff `specs/workflows/overlay` 三个 managed 子树，未见会触碰工作树；但它本身不验证手写 `index.ts` 注册表与新增 workflow/spec 的语义一致性，这属于当前 P0 drift gate 之外的单独 invariant。
+```
+
+## Round 2 (verdict + findings)
+```
+verdict=REQUEST_CHANGES  
+blockers=1 should_fix=2 nice_to_have=0
+
+1. blocker | `/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_risk.py:57` / `task_risk_level` | 高风险元数据可被同一个 `guru_risk.low_risk=true` 抢先降成 low，进而绕过独立 check。  
+具体问题：`task_risk_level()` 先把 top-level `risk_level` / `guru_risk_level` 放进 `candidates`，但随后遍历 `guru_risk` 时只要看到 `low_risk is True` 就在第 64-65 行直接 `return "low"`，还没处理前面候选里的 `"high"`。因此这种 task.json 会被判 low：  
+```json
+{
+  "risk_level": "high",
+  "guru_risk": {
+    "low_risk": true,
+    "level": "low",
+    "reviewer_approved": true,
+    "approved_by": "r",
+    "approved_at": "2026-06-29",
+    "evidence": "e"
+  }
+}
+```  
+随后 `implement_check_independent_required()` 在第 162-176 行会扫描路径；若无跨层/storage，`has_valid_approved_low()` 为 true，最终返回 `(False, "reviewer-approved true-low")`。这违反“high 必须独立 check / fail-closed”的 P0 语义。  
+具体可落地修复：不要在解析过程中遇到 nested `low_risk` 就提前返回。改成收集所有 high/low 信号后统一裁决，规则应是：任意 high 信号优先于 low；冲突时按 high 或 unknown fail-closed。最小改法是先检查 top-level candidates 和所有 nested 字段是否存在 high，再允许 low。补回归用例：`risk_level=high + guru_risk approved low + 无跨层` 必须 `required=True` 且 reason 为 high/conflict fail-closed。
+
+2. should_fix | `/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_supervise.py:995` / `run_implement_check` | `implement-check --adversarial` 仍会把实现 provider 反向，虽然不再 advisory，但 provider/current_provider 语义是错的。  
+具体问题：`_load_config(... adversarial=True)` 会在第 417-423 行先把 `provider` 设成 `_opposite_provider(current_provider)`。`run_implement_check()` 第 1009 行只做 `replace(config, adversarial=False)`，没有把 `provider` 还原为 `current_provider`。所以 `implement-check --adversarial --provider codex` 的实际行为会变成：implement 用 `claude`，check 再换回 `codex`。这与注释“implement 与 check 都基于 non-advisory config（check 再仅替换 provider）”不一致，也让第 1025-1026 行审计输出误导。  
+具体可落地修复：在 implement-check 内部禁用 advisory 时同时还原 provider：  
+```python
+config = replace(
+    config,
+    provider=config.current_provider,
+    adversarial=False,
+    adversarial_model=None,
+    adversarial_reasoning_effort=None,
+)
+```  
+或者更干净：`run_implement_check()` 调 `_load_config(... adversarial=False)`，显式忽略外部 `--adversarial` 的 provider 翻转，只保留后续独立 check 自己做 provider 隔离。补测试：`adversarial=True, provider=codex` dry-run 必须显示 implement worker 为 `codex`、check worker 为 `claude`，且 `_execute_plan` 收到的两个 config 都是 `adversarial=False`。
+
+3. should_fix | `/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_gate.py:1677` + `/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_supervise.py:505` | full 链 `design_package` 目录存在但核心 SSOT 文件缺失时，supervise 会静默少注入正式设计基线。  
+具体问题：`collect_gate_artifacts()` 目前只在第 1696-1708 行检查 `design_package` 字段合法与目录存在；但 full 包内 `README.md` / `design-main.md` 是否存在没有在这里 fail-closed。`_gate_artifacts()` 第 1654-1655 行会把这两个路径加入 entries，即使文件不存在；随后 `build_run_plan()` 第 505 行调用 `_existing_paths()`，第 270-271 行会直接过滤不存在的路径。结果是实现期 review 可以继续启动，但正式 design SSOT 被悄悄少注入，和“注入的正式 requirement/design 包是行级权威基线”不一致。  
+具体可落地修复：在 `collect_gate_artifacts()` 对 full 链加入 repo-root aware 的包骨架校验，至少硬检查 `README.md`、`design-main.md`，以及 `chapters/` 目录在 detail 阶段的存在性；缺失时抛 `GateArtifactError`，不要依赖 supervise 的 `_existing_paths()` 静默过滤。补测试：构造 `guru_chain=full`、`design_package` 目录存在但缺 `design-main.md`，`collect_gate_artifacts(..., "detail", repo_root=...)` 必须抛错；`run_implement_check --dry-run` 也应在 spawn 前失败。
+
+补充核实结果：未发现 OCR 被作为必选依赖或完成闸；skill 文案里 OCR 只作为外部建议，且被 SSOT 否决闸约束。`scan_paths()` 的 `-z -uall` 基本解析路径、未跟踪目录展开、rename/copy from-token、删除项、含空格/非 ASCII 路径的方向是合理的。`run_tests.sh` 我尝试执行过，但当前环境禁止创建临时目录，`mktemp` 报 `Operation not permitted`，所以无法在本只读沙箱里得到有效测试结果；上述结论来自真实源码逐行核查。
+tokens used
+194,020
+verdict=REQUEST_CHANGES  
+blockers=1 should_fix=2 nice_to_have=0
+
+1. blocker | `/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_risk.py:57` / `task_risk_level` | 高风险元数据可被同一个 `guru_risk.low_risk=true` 抢先降成 low，进而绕过独立 check。  
+具体问题：`task_risk_level()` 先把 top-level `risk_level` / `guru_risk_level` 放进 `candidates`，但随后遍历 `guru_risk` 时只要看到 `low_risk is True` 就在第 64-65 行直接 `return "low"`，还没处理前面候选里的 `"high"`。因此这种 task.json 会被判 low：  
+```json
+{
+  "risk_level": "high",
+  "guru_risk": {
+    "low_risk": true,
+    "level": "low",
+    "reviewer_approved": true,
+    "approved_by": "r",
+    "approved_at": "2026-06-29",
+    "evidence": "e"
+  }
+}
+```  
+随后 `implement_check_independent_required()` 在第 162-176 行会扫描路径；若无跨层/storage，`has_valid_approved_low()` 为 true，最终返回 `(False, "reviewer-approved true-low")`。这违反“high 必须独立 check / fail-closed”的 P0 语义。  
+具体可落地修复：不要在解析过程中遇到 nested `low_risk` 就提前返回。改成收集所有 high/low 信号后统一裁决，规则应是：任意 high 信号优先于 low；冲突时按 high 或 unknown fail-closed。最小改法是先检查 top-level candidates 和所有 nested 字段是否存在 high，再允许 low。补回归用例：`risk_level=high + guru_risk approved low + 无跨层` 必须 `required=True` 且 reason 为 high/conflict fail-closed。
+
+2. should_fix | `/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_supervise.py:995` / `run_implement_check` | `implement-check --adversarial` 仍会把实现 provider 反向，虽然不再 advisory，但 provider/current_provider 语义是错的。  
+具体问题：`_load_config(... adversarial=True)` 会在第 417-423 行先把 `provider` 设成 `_opposite_provider(current_provider)`。`run_implement_check()` 第 1009 行只做 `replace(config, adversarial=False)`，没有把 `provider` 还原为 `current_provider`。所以 `implement-check --adversarial --provider codex` 的实际行为会变成：implement 用 `claude`，check 再换回 `codex`。这与注释“implement 与 check 都基于 non-advisory config（check 再仅替换 provider）”不一致，也让第 1025-1026 行审计输出误导。  
+具体可落地修复：在 implement-check 内部禁用 advisory 时同时还原 provider：  
+```python
+config = replace(
+    config,
+    provider=config.current_provider,
+    adversarial=False,
+    adversarial_model=None,
+    adversarial_reasoning_effort=None,
+)
+```  
+或者更干净：`run_implement_check()` 调 `_load_config(... adversarial=False)`，显式忽略外部 `--adversarial` 的 provider 翻转，只保留后续独立 check 自己做 provider 隔离。补测试：`adversarial=True, provider=codex` dry-run 必须显示 implement worker 为 `codex`、check worker 为 `claude`，且 `_execute_plan` 收到的两个 config 都是 `adversarial=False`。
+
+3. should_fix | `/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_gate.py:1677` + `/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_supervise.py:505` | full 链 `design_package` 目录存在但核心 SSOT 文件缺失时，supervise 会静默少注入正式设计基线。  
+具体问题：`collect_gate_artifacts()` 目前只在第 1696-1708 行检查 `design_package` 字段合法与目录存在；但 full 包内 `README.md` / `design-main.md` 是否存在没有在这里 fail-closed。`_gate_artifacts()` 第 1654-1655 行会把这两个路径加入 entries，即使文件不存在；随后 `build_run_plan()` 第 505 行调用 `_existing_paths()`，第 270-271 行会直接过滤不存在的路径。结果是实现期 review 可以继续启动，但正式 design SSOT 被悄悄少注入，和“注入的正式 requirement/design 包是行级权威基线”不一致。  
+具体可落地修复：在 `collect_gate_artifacts()` 对 full 链加入 repo-root aware 的包骨架校验，至少硬检查 `README.md`、`design-main.md`，以及 `chapters/` 目录在 detail 阶段的存在性；缺失时抛 `GateArtifactError`，不要依赖 supervise 的 `_existing_paths()` 静默过滤。补测试：构造 `guru_chain=full`、`design_package` 目录存在但缺 `design-main.md`，`collect_gate_artifacts(..., "detail", repo_root=...)` 必须抛错；`run_implement_check --dry-run` 也应在 spawn 前失败。
+
+补充核实结果：未发现 OCR 被作为必选依赖或完成闸；skill 文案里 OCR 只作为外部建议，且被 SSOT 否决闸约束。`scan_paths()` 的 `-z -uall` 基本解析路径、未跟踪目录展开、rename/copy from-token、删除项、含空格/非 ASCII 路径的方向是合理的。`run_tests.sh` 我尝试执行过，但当前环境禁止创建临时目录，`mktemp` 报 `Operation not permitted`，所以无法在本只读沙箱里得到有效测试结果；上述结论来自真实源码逐行核查。
+```
+
+## Round 3 (verdict + finding)
+```
+verdict=REQUEST_CHANGES
+blockers=0 should_fix=1 nice_to_have=0
+
+1. severity(should_fix) | `packages/cli/package.json:32,40-41` / `package.json:9-21` / `.github/workflows/ci.yml:45-52` / `.github/workflows/publish.yml:46-53` | `sync:guru:check` 现在只是一个可手动运行的 npm script，还没有接入任何自动完成闸。真实代码里 `packages/cli/package.json` 只新增了 `"sync:guru:check": "node scripts/sync-guru-template.js --check"`，但 `prepublishOnly` 仍是 `pnpm test && pnpm run build && ...`，root `test` / `release:check` / `release:*` 没有调用它，CI 只跑 typecheck/lint/test，publish workflow 只跑 release-preflight/typecheck/test。结果是：开发者改了 `guru-template/` 忘记 `sync:guru` 时，当前新增脚本能手动查出 drift，但默认 CI / publish / prepublish 路径不会阻断，仍可能发布 stale bundled CLI。这个不违反 OCR/fail-closed/provider 三条硬约束，但与“新增 sync:guru:check drift gate（防忘 sync）”的目标不一致，属于应修复。| 具体修复：把 `pnpm -C packages/cli sync:guru:check` 接到至少一个强制路径，建议同时接入 `packages/cli` 的 `prepublishOnly` 和 GitHub CI/publish workflow；例如 `prepublishOnly` 改为 `pnpm run sync:guru:check && pnpm test && pnpm run build && cp ...`，CI 在 test 前后增加一步 `pnpm -C packages/cli sync:guru:check`，publish workflow 在 `release-preflight` 后也跑一次。若希望本地 release 也 fail-fast，可再把 root `release:check` 或 `packages/cli/scripts/release-preflight.js` 纳入同一检查。
+
+已核实未发现 blocker：
+- `guru_risk.implement_check_independent_required` 的 flutter 路径是 fail-closed：high 先拦，git scan 失败返回 required，跨层/storage 优先于 approved-low，裸 low 无合法 approval 仍 required；non-flutter 提前返回符合“flutter 下强化”的限定。
+- `scan_paths` 使用 `git status --porcelain=v1 -z -uall`，能拿到 untracked 文件完整路径；rename/copy 的额外 token 也被收集。`.trellis/`、docs、纯配置/锁文件在跨层判定前被 `_is_scannable` 过滤。
+- R2 B1 已修正：`task_risk_level` 收集 low 但全局优先 high，不会被 nested low 提前 return 吞 high。
+- R2 SF2 已修正：`run_implement_check` 强制 `_load_config(..., adversarial=False)`；dry-run 和真实 loop 的 check 都使用 `check_config`；check 失败走 `_execute_plan(..., adversarial=False)`，rc 非 0 会直接返回阻断，不会走 `_skip_adversarial` 的 advisory rc0。
+- R2 SF3 已修正：`collect_gate_artifacts` 对 full 链缺 `design_package`、非法指针、目录不存在、缺 `README.md`/`design-main.md`、detail 缺 `chapters/` 都抛 `GateArtifactError`；`guru_supervise.collect_review_artifacts` 在 spawn 前包装为 `GuruSupervisionError`。
+- 未发现 OCR 被做成必选依赖或完成闸；Flutter review skill 中 OCR 只作为可能外部建议出现，且明确与 SSOT 冲突时以 SSOT 否决。
+- `guru_gate` / `guru_supervise` 的导入方向没有形成循环：`guru_risk` 不 import 两者，`guru_gate` import `guru_risk`，`guru_supervise` import `guru_gate` 和 `guru_risk`；`apply.sh` 也加入了 `import guru_risk, guru_gate, guru_supervise` 冒烟。
+
+测试说明：
+- 我尝试运行 `pnpm -C packages/cli sync:guru:check` 和 `guru-template/overlay/verify/tests/run_tests.sh`，但当前审查沙箱禁止在系统 temp 目录创建临时目录，分别在 `mkdtemp` / `mktemp` 处因 `EPERM: operation not permitted` 失败；这不是被审代码逻辑失败，属于本轮只读/受限环境限制。代码审查结论以上述真实文件静态核实为准。
+
+
+tokens used
+177,619
+verdict=REQUEST_CHANGES
+blockers=0 should_fix=1 nice_to_have=0
+```
+处置：sync:guru:check 接入 prepublishOnly + ci.yml(+guru-template/** paths) + publish.yml。
+
+## Round 4 — APPROVE（过闸）
+```
+verdict=APPROVE
+blockers=0 should_fix=0 nice_to_have=0
+
+findings: none
+
+核验摘要：
+
+1. A/B/C 通过：`guru_risk.implement_check_independent_required` 的顺序是 fail-closed 的。flutter 外提前返回 `non-flutter`；flutter 内先截 high，再执行 `git status --porcelain=v1 -z -uall`，扫描失败返回 required；跨层/storage 在 unknown/low 之前截断；最后只有合法 `guru_risk.level=low + reviewer_approved + approved_by/approved_at/evidence` 才放行。`scan_paths` 解析 `XY PATH` 与 rename/copy 的无前缀 from-path token，`-uall` 能避免未跟踪目录折叠；`.trellis/`、docs、纯配置/锁文件通过 `_is_scannable` 排除。见 `guru_risk.py:87-183`。
+
+2. D 通过：`run_implement_check` 强制 `_load_config(... adversarial=False)`，不会因外部 `--adversarial` 翻转 implement provider，也不会走 `_skip_adversarial` 的 rc0 advisory 分支。独立 check 只替换 `check_config.provider=_opposite_provider(config.provider)`；dry-run 和真实 loop 都用 `check_config` 构建/执行 check；check rc 非 0 直接返回阻断。见 `guru_supervise.py:992-1088`，`_execute_plan` 只有 `config.adversarial=True` 时才 advisory skip，见 `guru_supervise.py:868-948`。
+...(逐项 A–H 核验通过；无 OCR 必选依赖、无循环 import、测试非自我印证)
+```

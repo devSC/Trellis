@@ -137,3 +137,21 @@
 - **未做 R14**:R13 的 3 处修复已应用但未经 codex 再确认;按诊断同例,残留边界由**实现期那道 codex 闸**(`adversarial-review.md` 规程,implement 收口强制)继续兜。
 - 产物:prd.md / design.md / implement.md / adversarial-review.md + `codex-plan-review-rounds.md`;P0 自包含、P1 承载 packet/record 机制、③ 反绕过多层硬化。
 - 待办:用户批准后 `task.py start` 进 P0 实现。
+
+---
+
+# 实现期 P0 codex 对抗审查（opposite-provider,read-only/high,按 adversarial-review.md）
+
+代码 diff 全文经 codex 逐轮审,findings 全文留痕见 `codex-review-p0.txt`。
+
+| 轮 | verdict | 处置 commit | 要点 |
+|----|---------|-------------|------|
+| R1 | REQUEST_CHANGES 2B+2SF | `61cf1292` | B1 implement-check 强制 non-advisory;B2 full 链缺 design_package fail-closed;SF3 db/bloc 边界化+_is_scannable 过滤;SF4 补回归 |
+| R2 | REQUEST_CHANGES 1B+2SF | `8c54c46e` | B1 task_risk_level high 全局优先(防 nested low_risk 吞 high);SF2 provider 不翻转(_load_config adversarial=False);SF3 collect 包骨架 README/design-main/chapters fail-closed |
+| R3 | REQUEST_CHANGES 0B+1SF | `c4e81577` | SF1 sync:guru:check 接入 prepublishOnly + ci.yml(+`guru-template/**` paths) + publish.yml |
+| **R4** | **APPROVE 0B+0SF+0nice** | — | findings: none;逐项 A–H 核验通过 |
+
+- **过闸**:达 adversarial-review.md 标准(0B+0SF;nice 本就非阻断,本轮 0nice)。
+- codex **每轮逐条经我读真实代码核实后采纳**(非盲信);4 轮均确认**无 OCR 必选依赖**(硬约束①)、**无循环 import**、**测试非自我印证**([[test-self-confirmation-trap]])。
+- 期间独立测试额外抓出并修一个**真 bug**:`scan_paths` 默认 `git status --porcelain` 把未跟踪目录折叠成 `lib/`、丢失 `lib/data/x_datasource.dart` 层级 → 跨层/storage 漏判;加 `-uall` 修复(由 ③d3a/d3a2 独立构造用例抓出)。
+- 关于"为何 8 条":③ 是准安全闸,逐一堵绕过(advisory-skip/provider 翻转/nested-low 吞 high/包骨架静默过滤)+ drift gate 接入真实闸,是真硬化;R1→R4 单调收敛(2B→1B→0B→APPROVE)。

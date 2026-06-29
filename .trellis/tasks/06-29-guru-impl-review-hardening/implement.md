@@ -43,10 +43,12 @@ bash guru-template/overlay/apply.sh "$tmp" && echo APPLY_OK   # 先断言 apply.
 - verify:run_tests.sh + dry-run 新增——(a) 高风险 flutter check 走对立 provider;(b) 对抗失败→阻断(非 rc0);(c) 跳过 implement 不得误推进;(d) 真·low(无跨层信号)flutter / 非 flutter 行为不变;**(d2) unknown-risk flutter(含本任务自身、缺 risk 元数据)→ fail-closed 启用**;**(d3) 裸 `risk_level=low` 但路径(含 untracked,经 `git status --porcelain`)跨 datasource+repository+controller → 仍启用;缺/非法 approval schema → 仍启用;仅合法 approved-low + 无跨层信号才旧行为;**untracked 新建 datasource/controller 文件也须被检出**;**(d4) git 不可用 / 非 git root / porcelain 失败 → `unknown_scan_failed`,`risk_level=low` 仍不绕过(fail-closed)****(packet.risk override 属 P1);(e) `adversarial_enabled=false` 下高风险 flutter implement-check **返回非零阻断**(非 _skip_adversarial rc0)。
 
 ### P0 收口
-- [ ] **新增 `sync:guru:check`**:改 `packages/cli/package.json` 加 `"sync:guru:check"` script + 实现 `sync-guru-template.js --check`(或新脚本)——同步到临时目录与 `src/templates/guru` 比对(复用 excludes + workflow 文件名映射)、drift→exit≠0、**不改工作树**;补 CLI/script 测试防止该 gate 退化成注释。
-- [ ] 通用验证命令全绿;**`sync:guru` + `sync:guru:check` 无漂移**(真 gate,非 `git diff --stat`);apply.sh 收编 `guru_risk.py` 后 import 冒烟覆盖 guru_risk↔guru_gate↔guru_supervise。
-- [ ] **review gate:codex opposite-provider 对抗审查 P0 改动至 0 blocker + 0 should-fix**——按本任务 `adversarial-review.md` 规程执行,审查输出存 `codex-review-p0.txt`、轮次记 `codex-plan-review-rounds.md`。
-- [ ] 确认全程无 OCR 依赖。
+- [x] **新增 `sync:guru:check`**:`packages/cli/package.json` 加 script + `sync-guru-template.js --check`(临时目录逐文件比对 specs/workflows/overlay 三受管子树、drift→exit1、不改工作树);补 `guru-bundled.test.ts` 通过态+注入探针失败态防退化;**并接入强制闸**(prepublishOnly + ci.yml[+`guru-template/**` paths] + publish.yml,R3)。
+- [x] 通用验证命令全绿(**run_tests 215/0**);**`sync:guru` + `sync:guru:check` 无漂移**(真 gate);apply.sh 收编 `guru_risk.py` + import 冒烟覆盖 guru_risk↔guru_gate↔guru_supervise。
+- [x] **review gate:codex opposite-provider 对抗审查 P0 → 0 blocker + 0 should_fix**(4 轮 R1 2B2SF→R2 1B2SF→R3 0B1SF→**R4 APPROVE 0B0SF0nice**);输出存 `codex-review-p0.txt`、轮次记 `codex-plan-review-rounds.md`。
+- [x] 确认全程无 OCR 依赖(codex 4 轮逐轮确认:OCR 仅作外部建议且受 SSOT 否决,无命令接入任何 gate)。
+
+**P0 实质完成(2026-06-29):①②③ + 收口全绿,codex R4 APPROVE 过闸。10 个 commit `ce960b7b..c4e81577`;期间额外修一个真 bug(scan_paths `-uall` 未跟踪目录折叠)。**
 
 ## Phase P1(④⑤,P0 通过后)
 
