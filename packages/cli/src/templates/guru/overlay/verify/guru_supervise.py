@@ -21,7 +21,7 @@ import re
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -31,7 +31,12 @@ from urllib.parse import unquote, urlparse
 # .trellis/scripts/guru/）。脚本运行时其目录已是 sys.path[0]，此处显式补一遍兜底奇怪调用形态，
 # 保证 _requirements_digest 复用 guru_gate 实现而非维护第二份（消除 digest 分叉 / 永久 stale）。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from guru_gate import requirements_digest as _guru_gate_requirements_digest  # noqa: E402
+from guru_gate import (  # noqa: E402
+    requirements_digest as _guru_gate_requirements_digest,
+    collect_gate_artifacts as _guru_gate_collect_artifacts,
+    GateArtifactError as _GateArtifactError,
+)
+import guru_risk  # noqa: E402  共享风险 helper（③ 独立 check 触发判定）
 
 
 VALID_ACTIONS = {"requirements", "overview", "detail", "implement", "check", "implement-check"}
@@ -444,6 +449,21 @@ def _load_config(
     )
 
 
+def collect_review_artifacts(task_dir: Path, gate: str, repo_root: Path) -> list[Path]:
+    """为 flutter implement/check review worker 注入正式 requirement/design 包文件（SSOT 否决基线）。
+
+    复用 guru_gate.collect_gate_artifacts（repo-root 安全枚举 + 声明却非法的包 fail-closed），把
+    gate-local GateArtifactError 包装为 GuruSupervisionError（spawn 前硬停，不静默回落 task-local
+    docs）。只返回 design/requirements 源文件——task-local prd/design/implement 已由 build_run_plan
+    单独注入，避免重复。
+    """
+    try:
+        entries = _guru_gate_collect_artifacts(str(task_dir), gate, str(repo_root))
+    except _GateArtifactError as exc:
+        raise GuruSupervisionError(f"SSOT 正式包 fail-closed：{exc}") from exc
+    return [Path(e["path"]) for e in entries if e.get("source") in ("design", "requirements")]
+
+
 def build_run_plan(
     action: str,
     task_dir: Path,
@@ -478,6 +498,10 @@ def build_run_plan(
                 *_requirements_reference_files(config.root, task_dir),
             ]
         )
+    if config.platform == "flutter" and action in {"implement", "check", "implement-check"}:
+        # ② 为 flutter 实现期 review 注入正式 requirement/design 包(SSOT 否决基线);
+        # 声明却非法/缺失的包由 collect_review_artifacts → GuruSupervisionError 在 spawn 前 fail-closed
+        artifact_candidates.extend(collect_review_artifacts(task_dir, "detail", config.root))
     artifact_files = _dedupe_paths(_existing_paths(artifact_candidates))
     jsonl_names = [f"{action}.jsonl"]
     if action == "implement-check":
@@ -977,6 +1001,24 @@ def run_implement_check(args: argparse.Namespace) -> int:
     )
     base_run_id = args.run_id or _default_run_id()
 
+    # ③ P0：高风险 / unknown / 跨层信号的 flutter implement-check 须用**独立(对立 provider)check**——
+    # 实现者≠审查者。provider 隔离 + adversarial 保持 False → 天然不走 _skip_adversarial 的 advisory rc0，
+    # check 失败即 rc≠0 阻断；且不受 adversarial_enabled 开关影响（fail-closed：缺 risk 元数据 / 裸 low /
+    # git 扫描失败均不绕过，见 guru_risk.implement_check_independent_required）。
+    independent_required, independent_reason = guru_risk.implement_check_independent_required(
+        str(task_dir), config.platform, str(root)
+    )
+    check_config = (
+        replace(config, current_provider=config.provider, provider=_opposite_provider(config.provider))
+        if independent_required
+        else config
+    )
+    if independent_required:
+        sys.stderr.write(
+            f"[guru-supervise] 独立实现期 review ON（{independent_reason}）："
+            f"implement provider={config.provider} ≠ check provider={check_config.provider}\n"
+        )
+
     if args.dry_run:
         implement_plan = build_run_plan(
             "implement",
@@ -988,7 +1030,7 @@ def run_implement_check(args: argparse.Namespace) -> int:
         check_plan = build_run_plan(
             "check",
             task_dir,
-            config,
+            check_config,
             f"{base_run_id}-check-1",
             "Implement-check loop step 2/2: emit review_result=clean/final-verification-ready with route_class=none, or route_class=<defect>.",
         )
@@ -1031,11 +1073,11 @@ def run_implement_check(args: argparse.Namespace) -> int:
         check_plan = build_run_plan(
             "check",
             task_dir,
-            config,
+            check_config,
             f"{base_run_id}-check-{iteration}",
             "Emit exactly one route_class and review_result for implement-check routing.",
         )
-        rc, _terminal, messages = _execute_plan(check_plan, config)
+        rc, _terminal, messages = _execute_plan(check_plan, check_config)
         if rc != 0:
             return rc
 
