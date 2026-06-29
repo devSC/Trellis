@@ -1706,6 +1706,14 @@ def collect_gate_artifacts(task_dir: str, gate: str, repo_root: str = None) -> l
             )
         if not os.path.isdir(pkg):
             raise GateArtifactError(f"design_package 目录不存在：{pkg}")
+        # 包骨架核心 SSOT 文件 fail-closed：目录存在但缺 README/design-main(/detail 阶段缺 chapters)
+        # 时，_gate_artifacts 仍会把这些路径列入 entries，但 supervise 的 _existing_paths 会**静默
+        # 过滤**掉不存在的，导致正式 design 基线被悄悄少注入（违反「正式包是行级权威基线」）。故在此硬检。
+        for skeleton in ("README.md", "design-main.md"):
+            if not os.path.isfile(os.path.join(pkg, skeleton)):
+                raise GateArtifactError(f"design_package 缺核心骨架文件：{skeleton}（{pkg}）")
+        if gate == "detail" and not os.path.isdir(os.path.join(pkg, "chapters")):
+            raise GateArtifactError(f"design_package 缺 chapters/ 目录（detail 阶段需逐章设计；{pkg}）")
     try:
         return _gate_artifacts(task_dir, gate, repo_root)
     except RequirementManifestError as exc:

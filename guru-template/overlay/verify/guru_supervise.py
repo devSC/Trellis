@@ -992,21 +992,20 @@ def run_action(args: argparse.Namespace, action: str) -> int:
 def run_implement_check(args: argparse.Namespace) -> int:
     task_dir = Path(args.task_dir).expanduser().resolve()
     root = _resolve_root(args.root, task_dir)
+    # implement-check 内部**强制 non-advisory 且不翻转 provider**：忽略外部全局 `--adversarial`
+    # （parser 顶层 flag，对 implement-check 同样可传）。否则 _load_config(adversarial=True) 会先把
+    # provider 翻成 opposite(current_provider)，使 implement 错用对立 provider；且 _execute_plan 在
+    # worker 失败/terminal≠done 时走 _skip_adversarial 返 rc0，把③对立-provider check 失败降级成不
+    # 阻断。强制 adversarial=False ⇒ provider=args.provider（不翻转）、check 失败 rc≠0 真阻断；
+    # 独立 check 的 provider 隔离由下方 ③ 自管。
     config = _load_config(
         root,
         platform=args.platform,
         provider=args.provider,
-        adversarial=args.adversarial,
+        adversarial=False,
         trellis_bin=args.trellis_bin,
     )
     base_run_id = args.run_id or _default_run_id()
-
-    # 独立对抗 check 必须**阻断式（非 advisory）**：implement-check 内部强制 non-advisory，
-    # 否则外部全局 `--adversarial`（parser 顶层 flag，对 implement-check 同样可传）会让
-    # _execute_plan 在 worker create/spawn/send/wait 失败或 terminal≠done 时走 _skip_adversarial
-    # 返回 rc0，把③对立-provider check 的失败降级成不阻断（违反阻断契约/硬约束）。implement 与
-    # check 都基于这个 non-advisory config（check 再仅替换 provider 做隔离）。
-    config = replace(config, adversarial=False)
 
     # ③ P0：高风险 / unknown / 跨层信号的 flutter implement-check 须用**独立(对立 provider)check**——
     # 实现者≠审查者。provider 隔离 + adversarial 保持 False → 天然不走 _skip_adversarial 的 advisory rc0，

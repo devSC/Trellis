@@ -1584,10 +1584,12 @@ try:
 except G.GateArtifactError:
     ok("②fc full 链 design_package 目录不存在 → 抛 GateArtifactError", True)
 
-# ② 正常：cwd≠root + 合法 design_package + 无 req pkg → 不抛
+# ② 正常：cwd≠root + 合法 design_package（完整骨架 README+design-main+chapters）+ 无 req pkg → 不抛
 root, tdir = mk(design_package="design/pkg", guru_chain="full", prd=True)
-os.makedirs(os.path.join(root, "design", "pkg"))
-open(os.path.join(root, "design", "pkg", "design-main.md"), "w", encoding="utf-8").write("# d\n")
+_pkgdir = os.path.join(root, "design", "pkg")
+os.makedirs(os.path.join(_pkgdir, "chapters"))
+open(os.path.join(_pkgdir, "design-main.md"), "w", encoding="utf-8").write("# d\n")
+open(os.path.join(_pkgdir, "README.md"), "w", encoding="utf-8").write("# nav\n")
 prev = os.getcwd()
 try:
     os.chdir(tempfile.mkdtemp())
@@ -1642,6 +1644,48 @@ root, tdir = mk(risk="low", guru_risk=APPROVED,
                 files=["lib/data/order_database_helper.dart", "lib/page/order_page.dart"])
 req, why = R.implement_check_independent_required(tdir, "flutter", root)
 ok("③f3 真 database+ui 跨层(精化后仍检出) → 要求", req is True and "cross-layer" in why)
+
+# ---- ③ R2-blocker: high 信号不被 nested low_risk 抢先吞掉（high 全局优先 fail-closed）----
+root, tdir = mk(risk="high",
+                guru_risk={"low_risk": True, "level": "low", "reviewer_approved": True,
+                           "approved_by": "r", "approved_at": "2026-06-29", "evidence": "e"},
+                files=["lib/main.dart"])
+req, why = R.implement_check_independent_required(tdir, "flutter", root)
+ok("③R2b flutter risk_level=high 叠加 nested approved-low → 仍要求(high 优先，不被吞)",
+   req is True and why == "high-risk")
+
+# ---- ③ R2-should_fix: implement-check --adversarial 不翻转 implement provider ----
+root, tdir = mk(risk="high", files=["lib/main.dart"])
+args = argparse.Namespace(task_dir=tdir, root=root, platform="flutter", provider="codex",
+                          adversarial=True, trellis_bin="trellis", run_id="RID", dry_run=True)
+out, err = io.StringIO(), io.StringIO()
+with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+    rc = gs.run_implement_check(args)
+w = [l.split("=", 1)[1] for l in out.getvalue().splitlines() if l.startswith("WORKER=")]
+ok("③R2f2 implement-check --adversarial：implement 仍用 codex(不翻转)、check 用对立 claude",
+   rc == 0 and len(w) == 2 and "codex" in w[0] and "claude" in w[1])
+
+# ---- ② R2-should_fix: full design_package 目录在但缺核心骨架文件 → fail-closed ----
+root, tdir = mk(design_package="design/pkg2", guru_chain="full", prd=True)
+_p = os.path.join(root, "design", "pkg2")
+os.makedirs(os.path.join(_p, "chapters"))
+open(os.path.join(_p, "README.md"), "w", encoding="utf-8").write("# nav\n")  # 缺 design-main.md
+try:
+    G.collect_gate_artifacts(tdir, "detail", repo_root=root)
+    ok("②R2f3 full design_package 目录在但缺 design-main.md → 抛 GateArtifactError", False)
+except G.GateArtifactError:
+    ok("②R2f3 full design_package 目录在但缺 design-main.md → 抛 GateArtifactError", True)
+
+root, tdir = mk(design_package="design/pkg3", guru_chain="full", prd=True)
+_p = os.path.join(root, "design", "pkg3")
+os.makedirs(_p)  # 无 chapters/
+open(os.path.join(_p, "README.md"), "w", encoding="utf-8").write("# nav\n")
+open(os.path.join(_p, "design-main.md"), "w", encoding="utf-8").write("# d\n")
+try:
+    G.collect_gate_artifacts(tdir, "detail", repo_root=root)
+    ok("②R2f3 full design_package 缺 chapters/ (detail) → 抛 GateArtifactError", False)
+except G.GateArtifactError:
+    ok("②R2f3 full design_package 缺 chapters/ (detail) → 抛 GateArtifactError", True)
 
 print(f"COUNT {np} {nf}")
 sys.exit(0 if nf == 0 else 1)

@@ -53,16 +53,23 @@ def _task_json(task_dir: str) -> dict:
 
 
 def task_risk_level(task_dir: str) -> str:
-    """task.json 声明的风险等级。缺/不可判 → "unknown"（与历史 guru_gate._risk_level 同语义）。"""
+    """task.json 声明的风险等级。缺/不可判 → "unknown"（与历史 guru_gate._risk_level 同语义）。
+
+    **任意 high 信号优先于 low**（fail-closed）：自相矛盾的 task.json——如 top-level
+    `risk_level=high` 叠加 nested `guru_risk.low_risk=true`——一律从严判 high，绝不让 nested
+    low 抢先 return 而吞掉 high 信号、绕过独立 check。故先收集所有 low 信号（has_low），
+    任一处出现 high 立即判 high；扫完无 high 才考虑 low。
+    """
     data = _task_json(task_dir)
     candidates = [data.get("risk_level"), data.get("guru_risk_level")]
+    has_low = False
     for key in ("guru_risk", "risk"):
         obj = data.get(key)
         if isinstance(obj, dict):
             if obj.get("high_risk") is True:
                 return "high"
             if obj.get("low_risk") is True:
-                return "low"
+                has_low = True
             candidates.extend([obj.get("risk_level"), obj.get("level")])
         elif isinstance(obj, str):
             candidates.append(obj)
@@ -73,8 +80,8 @@ def task_risk_level(task_dir: str) -> str:
         if level in HIGH_RISK_LEVELS:
             return "high"
         if level in LOW_RISK_LEVELS:
-            return "low"
-    return "unknown"
+            has_low = True
+    return "low" if has_low else "unknown"
 
 
 def scan_paths(repo_root: str) -> set:
