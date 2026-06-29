@@ -1695,5 +1695,107 @@ echo "$P0_OUT" | grep -v '^COUNT '
 read P0P P0F <<<"$(printf '%s\n' "$P0_OUT" | sed -n 's/^COUNT //p')"
 pass=$((pass + ${P0P:-0})); failn=$((failn + ${P0F:-1}))
 
+# ============================================================================
+# P1a 测试:guru_review_record packet schema(两层非空)/reader/writer/preflight +
+# guru_risk slice_packet_risk / implement_check_independent_required(unit_id) 三分支。
+# ============================================================================
+P1A_OUT="$(PYTHONPATH="$HERE/.." python3 - <<'PY'
+import os, json, sys, tempfile, subprocess
+import guru_review_record as R
+import guru_risk as K
+
+np = nf = 0
+def ok(d, c):
+    global np, nf
+    if c: np += 1; print(f"PASS  {d}")
+    else: nf += 1; print(f"FAIL  {d}")
+
+def mktask():
+    root = tempfile.mkdtemp(); tdir = os.path.join(root, ".trellis/tasks/x"); os.makedirs(tdir); return root, tdir
+
+def write_packet(tdir, unit, **over):
+    d = os.path.join(tdir, "slice-packets"); os.makedirs(d, exist_ok=True)
+    pkt = {"schema_version": 1, "slice_id": unit, "owner_unit": unit, "target_kind": "staged",
+           "target_paths": ["lib/x.dart"],
+           "invariants": [{"invariant_id": "INV-1", "rule": "r", "source": "detail", "owner": "DAO",
+                           "positive_case": "p", "negative_case": "n", "route_if_missing": "DETAIL_DEFECT"}]}
+    pkt.update(over)
+    open(os.path.join(d, f"{unit}.json"), "w", encoding="utf-8").write(json.dumps(pkt))
+
+def mkgit(risk=None):
+    root, tdir = mktask()
+    open(os.path.join(tdir, "task.json"), "w", encoding="utf-8").write(
+        json.dumps({"risk_level": risk} if risk else {}))
+    subprocess.run(["git", "-C", root, "init", "-q"], check=True)
+    return root, tdir
+
+# --- load_packet schema(两层非空)---
+root, tdir = mktask(); write_packet(tdir, "UNIT-a")
+try:
+    R.load_packet(tdir, "UNIT-a"); ok("P1a load_packet 合法 packet 通过", True)
+except Exception as e:
+    ok(f"P1a 合法 packet 应通过:{e}", False)
+
+for case, over in [("空 invariants", {"invariants": []}), ("空 target_paths", {"target_paths": []}),
+                   ("未知 schema_version", {"schema_version": 2}),
+                   ("risk=medium", {"risk": "medium"}),
+                   ("provider=manual+required", {"semantic_review_provider": {"required": True, "provider": "manual"}})]:
+    root, tdir = mktask(); write_packet(tdir, "U", **over)
+    try:
+        R.load_packet(tdir, "U"); ok(f"P1a {case} → PACKET_INVALID", False)
+    except R.ReviewRecordError:
+        ok(f"P1a {case} → PACKET_INVALID", True)
+
+root, tdir = mktask(); write_packet(tdir, "U", risk="unknown")
+ok("P1a risk=unknown → None 不 raise", R.load_packet(tdir, "U")["risk"] is None)
+root, tdir = mktask()
+try:
+    R.load_packet(tdir, "missing"); ok("P1a 缺失 packet → ReviewRecordError", False)
+except R.ReviewRecordError:
+    ok("P1a 缺失 packet → ReviewRecordError", True)
+
+# --- append_record / preflight_failure_record ---
+root, tdir = mktask()
+R.append_record(tdir, {"run_id": "r", "slice_id": "UNIT-a", "review_target": "slice:UNIT-a",
+                       "review_result": "clean", "route_class": "none"})
+rec = json.loads(open(os.path.join(tdir, "review-records/implementation-reviews.jsonl"), encoding="utf-8").readline())
+ok("P1a append_record 写出含 review_target 可读", rec.get("review_target") == "slice:UNIT-a")
+pf = R.preflight_failure_record("PACKET_MISSING", "r", unit_id="UNIT-a")
+ok("P1a preflight PACKET_MISSING: route_class=none + repairable=false(非 PROCESS_DEFECT)",
+   pf["route_class"] == "none" and pf["repairable"] is False and pf["supervisor_failure"] == "PACKET_MISSING")
+pf2 = R.preflight_failure_record("PACKET_AMBIGUOUS", "r", candidates=["UNIT-a", "UNIT-b"])
+ok("P1a preflight 无 unit → slice:unknown + candidates 回读",
+   pf2["review_target"] == "slice:unknown" and pf2.get("candidates") == ["UNIT-a", "UNIT-b"])
+
+# --- slice_packet_risk ---
+root, tdir = mktask(); write_packet(tdir, "U", risk="high")
+ok("P1a slice_packet_risk high", K.slice_packet_risk(tdir, "U") == "high")
+root, tdir = mktask(); write_packet(tdir, "U", risk="low")
+ok("P1a slice_packet_risk low", K.slice_packet_risk(tdir, "U") == "low")
+root, tdir = mktask(); write_packet(tdir, "U", risk_reasons=["cross_layer"])
+ok("P1a slice_packet_risk risk_reasons→high", K.slice_packet_risk(tdir, "U") == "high")
+
+# --- implement_check_independent_required(unit_id) 三分支 ---
+root, tdir = mkgit("low"); write_packet(tdir, "U", risk="high")
+req, why = K.implement_check_independent_required(tdir, "flutter", root, unit_id="U")
+ok("P1a packet.risk=high override task low → required", req is True and "slice-packet high" in why)
+root, tdir = mkgit("high"); write_packet(tdir, "U", risk="low")
+req, why = K.implement_check_independent_required(tdir, "flutter", root, unit_id="U")
+ok("P1a packet.risk=low override task high → 不 required(R8-F1 slice low)", req is False and "slice-packet low" in why)
+root, tdir = mkgit(); write_packet(tdir, "U")  # packet 无 risk + task unknown
+req, why = K.implement_check_independent_required(tdir, "flutter", root, unit_id="U")
+ok("P1a packet 无 risk + task unknown → 回落 P0 required", req is True)
+root, tdir = mkgit("high")
+req, why = K.implement_check_independent_required(tdir, "flutter", root)  # unit_id=None
+ok("P1a unit_id=None → P0 字节兼容(task high→required)", req is True and why == "high-risk")
+
+print(f"COUNT {np} {nf}")
+sys.exit(0 if nf == 0 else 1)
+PY
+)"
+echo "$P1A_OUT" | grep -v '^COUNT '
+read P1AP P1AF <<<"$(printf '%s\n' "$P1A_OUT" | sed -n 's/^COUNT //p')"
+pass=$((pass + ${P1AP:-0})); failn=$((failn + ${P1AF:-1}))
+
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]

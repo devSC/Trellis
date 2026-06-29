@@ -9,10 +9,19 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # 使 guru_review_record 可 import
+import guru_review_record  # noqa: E402  P1 单一 packet reader（它不反向 import 本模块，无循环）
 
 # 与 guru_gate 历史口径字节一致（_risk_level 现兼容代理本模块）。
 HIGH_RISK_LEVELS = {"high", "critical", "p0"}
 LOW_RISK_LEVELS = {"low", "minor", "trivial"}
+# P1 §4.5.9：packet risk_reasons 命中任一即 high。
+RISK_REASON_KEYWORDS = {
+    "protocol_migration", "cross_layer", "stateful_cache_merge", "db_migration",
+    "payment", "ads", "permission", "privacy",
+}
 
 # P0 ③ 无 packet 触发信号：storage 关键词（路径子串，小写匹配）。裸短词（db/bloc）用边界形式
 # 避免子串误报（裸 "db" 会命中 "feedback"，裸 "bloc" 会命中 "block"）。
@@ -157,8 +166,33 @@ def has_valid_approved_low(task_dir: str) -> bool:
     )
 
 
-def implement_check_independent_required(task_dir: str, platform: str, repo_root: str):
-    """P0 ③ 触发判定：返回 (required: bool, reason: str)。
+def scan_dirty_paths(repo_root: str) -> set:
+    """P1 scope preflight 的**唯一 dirty path 来源**：复用 scan_paths 的
+    `git status --porcelain=v1 -z -uall`（含 untracked/rename/delete，与 P0 同口径，不重造 git diff 弱扫描）。"""
+    return scan_paths(repo_root)
+
+
+def slice_packet_risk(task_dir: str, unit_id):
+    """P1 §4.5.8/4.5.9：读 packet risk/risk_reasons → "high" | "low" | None。
+    经 guru_review_record.load_packet（单一 packet reader）；packet 非法/缺失由 load_packet 抛
+    ReviewRecordError **上抛**（由 supervise preflight 捕获记 PACKET_INVALID/PACKET_MISSING，此处不吞）。
+    unit_id=None（无 packet）→ None（回落 P0）。"""
+    if not unit_id:
+        return None
+    pkt = guru_review_record.load_packet(task_dir, unit_id)  # ReviewRecordError 上抛
+    risk = pkt.get("risk")  # 已规范化：high|critical|low|None
+    reasons = pkt.get("risk_reasons", [])
+    if risk in ("high", "critical"):
+        return "high"
+    if isinstance(reasons, list) and any(r in RISK_REASON_KEYWORDS for r in reasons):
+        return "high"
+    if risk == "low":
+        return "low"
+    return None
+
+
+def _p0_implement_check_independent_required(task_dir: str, platform: str, repo_root: str):
+    """P0 ③ 触发判定（原 L160-183 逻辑原样保留，供 unit_id=None / 无 packet risk 回落）。
 
     flutter 下：high | unknown | 跨层/storage 信号 → 须独立阻断 check（fail-closed）；
     git 扫描失败 → unknown_scan_failed 亦 fail-closed；仅「合法 approved-low + 无跨层信号 + 扫描成功」
@@ -181,3 +215,20 @@ def implement_check_independent_required(task_dir: str, platform: str, repo_root
     if has_valid_approved_low(task_dir):
         return (False, "reviewer-approved true-low")
     return (True, "bare low without valid approval (not true-low)")
+
+
+def implement_check_independent_required(task_dir: str, platform: str, repo_root: str, unit_id=None):
+    """P1 ③ 触发判定：返回 (required: bool, reason: str)。slice_packet.risk > task（§4.5.8）。
+
+    三分支（R3-F3/R8-F1）：packet_risk=="high" → required（先于 task）；packet_risk=="low" → **slice 级
+    override 直接 (False)**（SSOT §4.5.9，不被 task/git 抬高）；packet_risk is None / unit_id=None →
+    回落 _p0_（P0 task.json+git scan，字节兼容）。packet 非法/缺失经 slice_packet_risk 上抛 ReviewRecordError。
+    """
+    if platform == "flutter" and unit_id:
+        packet_risk = slice_packet_risk(task_dir, unit_id)  # ReviewRecordError 上抛
+        if packet_risk == "high":
+            return (True, "slice-packet high-risk")
+        if packet_risk == "low":
+            return (False, "slice-packet low-risk")
+        # packet_risk is None（packet 无 risk/unknown）→ 回落 P0
+    return _p0_implement_check_independent_required(task_dir, platform, repo_root)
