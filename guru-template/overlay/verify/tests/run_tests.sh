@@ -1439,5 +1439,173 @@ if printf '%s' "$RPBL_KEYS" | grep -q "requirements:v1/requirement-main.md" \
   pass=$((pass+1)); echo "PASS  [major] manifest 块列表 excludes 生效 + 非目标键块列表(supersedes)容忍"
 else failn=$((failn+1)); echo "FAIL  [major] manifest 块列表取材错误：$RPBL_KEYS"; fi
 
+# ============================================================================
+# P0 ②③ 控制流测试：guru_risk 触发判定 / run_implement_check provider 隔离 /
+# collect_gate_artifacts fail-closed / _package_dir cwd≠root 锚定。
+# 注：本块在 python 内 pop GURU_GATE_ALLOW_ABS 以测**生产语义**（拒绝绝对、按 repo_root 锚定）；
+# run_tests 全局 export 它=1 会让 _package_dir 提前返回、绕过 repo_root 锚定，掩盖 cwd≠root 修复。
+# ============================================================================
+P0_OUT="$(PYTHONPATH="$HERE/.." python3 - <<'PY'
+import io, os, json, sys, tempfile, subprocess, argparse, contextlib
+os.environ.pop("GURU_GATE_ALLOW_ABS", None)   # 测生产语义，不走夹具逃生口
+os.environ.pop("GURU_GATE_ALLOW_ENV_SOFT", None)
+import guru_risk as R
+import guru_gate as G
+import guru_supervise as gs
+
+np = nf = 0
+def ok(desc, cond):
+    global np, nf
+    if cond:
+        np += 1; print(f"PASS  {desc}")
+    else:
+        nf += 1; print(f"FAIL  {desc}")
+
+def mk(git=True, risk=None, guru_risk=None, design_package=None, requirement_package=None,
+       guru_chain=None, files=(), prd=False):
+    root = tempfile.mkdtemp()
+    tdir = os.path.join(root, ".trellis", "tasks", "06-29-x")
+    os.makedirs(tdir)
+    tj = {"id": "x", "status": "in_progress"}
+    if risk is not None: tj["risk_level"] = risk
+    if guru_risk is not None: tj["guru_risk"] = guru_risk
+    if design_package is not None: tj["design_package"] = design_package
+    if requirement_package is not None: tj["requirement_package"] = requirement_package
+    if guru_chain is not None: tj["guru_chain"] = guru_chain
+    with open(os.path.join(tdir, "task.json"), "w", encoding="utf-8") as fh:
+        json.dump(tj, fh)
+    if prd:
+        with open(os.path.join(tdir, "prd.md"), "w", encoding="utf-8") as fh:
+            fh.write("# prd\n### BHV-001 x\nGiven When Then\n")
+    for f in files:
+        p = os.path.join(root, f)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "w", encoding="utf-8").write("x")
+    if git:
+        subprocess.run(["git", "-C", root, "init", "-q"], check=True)
+    return root, tdir
+
+APPROVED = {"level": "low", "reviewer_approved": True,
+            "approved_by": "r", "approved_at": "2026-06-29", "evidence": "e"}
+
+# ---- ③ implement_check_independent_required 触发判定 ----
+root, tdir = mk(risk="low", guru_risk=APPROVED, files=["lib/main.dart"])
+req, why = R.implement_check_independent_required(tdir, "flutter", root)
+ok("③d flutter 合法 approved-low + 无跨层 → 不要求独立 check", req is False)
+
+root, tdir = mk(files=["lib/main.dart"])
+req, why = R.implement_check_independent_required(tdir, "flutter", root)
+ok("③d2 flutter 缺 risk 元数据 → unknown fail-closed 要求", req is True and "unknown" in why)
+
+root, tdir = mk(risk="low", files=["lib/data/order_datasource.dart"])
+req, why = R.implement_check_independent_required(tdir, "flutter", root)
+ok("③d3a flutter 裸 low + untracked datasource(storage 信号) → 要求", req is True and "cross-layer" in why)
+
+root, tdir = mk(risk="low", guru_risk=APPROVED,
+                files=["lib/api/order_api.dart", "lib/page/order_page.dart"])
+req, why = R.implement_check_independent_required(tdir, "flutter", root)
+ok("③d3a2 flutter approved-low 但 api+ui 跨 2 层 → 仍要求(跨层 override approval)",
+   req is True and "cross-layer" in why)
+
+root, tdir = mk(risk="low", files=["lib/main.dart"])
+req, why = R.implement_check_independent_required(tdir, "flutter", root)
+ok("③d3b flutter 裸 low 无合法 approval + 无跨层 → 要求(非 true-low)",
+   req is True and "bare low" in why)
+
+root, tdir = mk(git=False, risk="low", files=["lib/main.dart"])
+req, why = R.implement_check_independent_required(tdir, "flutter", root)
+ok("③d4 非 git root(porcelain 失败) → unknown_scan_failed fail-closed 要求",
+   req is True and "unknown_scan_failed" in why)
+
+root, tdir = mk(risk="high", files=["lib/data/x_datasource.dart"])
+req, why = R.implement_check_independent_required(tdir, "go", root)
+ok("③ 非 flutter(go) high → 不要求(仅 flutter 生效)", req is False and why == "non-flutter")
+
+# ---- ③ run_implement_check dry-run：provider 隔离 ----
+def workers_for(platform, risk, provider="codex"):
+    root, tdir = mk(risk=risk, files=["lib/main.dart"])
+    args = argparse.Namespace(task_dir=tdir, root=root, platform=platform, provider=provider,
+                              adversarial=False, trellis_bin="trellis", run_id="RID", dry_run=True)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        rc = gs.run_implement_check(args)
+    workers = [l.split("=", 1)[1] for l in out.getvalue().splitlines() if l.startswith("WORKER=")]
+    return rc, workers, err.getvalue()
+
+rc, w, err = workers_for("flutter", "high")
+ok("③a flutter high dry-run → implement=codex, check=对立(claude) + 审计行",
+   rc == 0 and len(w) == 2 and "codex" in w[0] and "claude" in w[1] and "独立实现期 review ON" in err)
+
+rc, w, err = workers_for("go", "high")
+ok("③ go high dry-run → check 同 provider(codex)，不隔离",
+   rc == 0 and len(w) == 2 and "codex" in w[1] and "独立实现期 review ON" not in err)
+
+# ---- ② _package_dir cwd≠root 锚定（生产语义）----
+root, tdir = mk(design_package="design/pkg", guru_chain="full")
+os.makedirs(os.path.join(root, "design", "pkg"))
+got = G._package_dir(tdir, repo_root=root)
+ok("②cwd _package_dir(repo_root=root) → 锚定 root 的绝对(realpath)路径",
+   got is not None and os.path.isabs(got)
+   and os.path.realpath(got) == os.path.realpath(os.path.join(root, "design/pkg")))
+
+prev = os.getcwd()
+try:
+    other = tempfile.mkdtemp()
+    os.chdir(other)
+    got_none = G._package_dir(tdir, repo_root=None)
+    ok("②cwd _package_dir(repo_root=None) → 历史相对语义(不锚 root)",
+       got_none == "design/pkg")
+finally:
+    os.chdir(prev)
+
+root_e, tdir_e = mk(design_package="../escape", guru_chain="full")
+ok("②cwd _package_dir 拒绝 `..` 穿越(repo_root 给定)",
+   G._package_dir(tdir_e, repo_root=root_e) is None)
+
+# ---- ② collect_gate_artifacts fail-closed ----
+root, tdir = mk(requirement_package="docs/req/missing", prd=True)
+try:
+    G.collect_gate_artifacts(tdir, "detail", repo_root=root)
+    ok("②fc requirement_package 版本目录不存在 → 抛 GateArtifactError", False)
+except G.GateArtifactError:
+    ok("②fc requirement_package 版本目录不存在 → 抛 GateArtifactError", True)
+
+root, tdir = mk(requirement_package="../escape", prd=True)
+try:
+    G.collect_gate_artifacts(tdir, "detail", repo_root=root)
+    ok("②fc requirement_package `..` 穿越 → 抛 GateArtifactError", False)
+except G.GateArtifactError:
+    ok("②fc requirement_package `..` 穿越 → 抛 GateArtifactError", True)
+
+root, tdir = mk(design_package="design/missing", guru_chain="full", prd=True)
+try:
+    G.collect_gate_artifacts(tdir, "detail", repo_root=root)
+    ok("②fc full 链 design_package 目录不存在 → 抛 GateArtifactError", False)
+except G.GateArtifactError:
+    ok("②fc full 链 design_package 目录不存在 → 抛 GateArtifactError", True)
+
+# ② 正常：cwd≠root + 合法 design_package + 无 req pkg → 不抛
+root, tdir = mk(design_package="design/pkg", guru_chain="full", prd=True)
+os.makedirs(os.path.join(root, "design", "pkg"))
+open(os.path.join(root, "design", "pkg", "design-main.md"), "w", encoding="utf-8").write("# d\n")
+prev = os.getcwd()
+try:
+    os.chdir(tempfile.mkdtemp())
+    try:
+        G.collect_gate_artifacts(tdir, "detail", repo_root=root)
+        ok("②ok cwd≠root + 合法 design_package + 无 req pkg → 不抛(锚定 root)", True)
+    except G.GateArtifactError as exc:
+        ok(f"②ok cwd≠root + 合法 design_package + 无 req pkg → 不抛(锚定 root)：{exc}", False)
+finally:
+    os.chdir(prev)
+
+print(f"COUNT {np} {nf}")
+sys.exit(0 if nf == 0 else 1)
+PY
+)"
+echo "$P0_OUT" | grep -v '^COUNT '
+read P0P P0F <<<"$(printf '%s\n' "$P0_OUT" | sed -n 's/^COUNT //p')"
+pass=$((pass + ${P0P:-0})); failn=$((failn + ${P0F:-1}))
+
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]

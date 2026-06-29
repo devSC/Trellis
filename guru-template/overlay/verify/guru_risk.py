@@ -71,11 +71,13 @@ def task_risk_level(task_dir: str) -> str:
 
 
 def scan_paths(repo_root: str) -> set:
-    """用 `git -C <root> status --porcelain=v1 -z` 收集 staged/unstaged/renamed/deleted/untracked
-    路径（新建文件常未 tracked，`git diff` 会漏）。git 不可用/非 git/失败 → 抛 RiskScanError。"""
+    """用 `git -C <root> status --porcelain=v1 -z -uall` 收集 staged/unstaged/renamed/deleted/
+    untracked 路径（新建文件常未 tracked，`git diff` 会漏）。**必须 -uall**：默认 git 把整个未跟踪
+    目录折叠成单条 `lib/`，丢失 `lib/data/x_datasource.dart` 层级 → 跨层/storage 检测漏判；
+    -uall 递归列出每个未跟踪文件完整路径。git 不可用/非 git/失败 → 抛 RiskScanError。"""
     try:
         proc = subprocess.run(
-            ["git", "-C", repo_root, "status", "--porcelain=v1", "-z"],
+            ["git", "-C", repo_root, "status", "--porcelain=v1", "-z", "-uall"],
             capture_output=True, timeout=20,
         )
     except (OSError, subprocess.SubprocessError) as exc:
