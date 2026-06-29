@@ -1192,6 +1192,8 @@ def run_implement_check(args: argparse.Namespace) -> int:
                 "run_id": f"{base_run_id}-check-{iteration}", "slice_id": unit_id,
                 "review_target": f"slice:{unit_id}", "target_paths": packet.get("target_paths", []),
                 "channel": check_plan.channel, "worker": check_plan.worker,
+                "check_provider": check_config.provider,  # R1-F1:worker 自报 review_provider 须 == 实际 spawn
+                "independent_required": independent_required,  # R1-F1:对立要求仅独立期强制(low-risk override 不要求)
             })
             guru_review_record.append_record(str(task_dir), record)
             if failure:

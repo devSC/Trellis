@@ -31,6 +31,7 @@ SUPERVISOR_FAILURE = {
 PACKET_RISK_VALUES = {"high", "critical", "low"}
 # semantic_review_provider.provider 第一版只支持 channel-spawnable(R5-F1);manual/ocr_optional 作 required → PACKET_INVALID。
 REQUIRED_PROVIDER_VALUES = {"codex", "claude", "opposite"}
+_CHANNEL_PROVIDERS = {"codex", "claude"}  # worker 自报 review_provider 的合法值域(真 channel-spawn;opposite 仅 packet 要求类型)
 NON_REQUIRED_PROVIDERS = {"manual", "ocr_optional"}
 OCR_VALUES = {"optional", "disabled"}
 
@@ -43,6 +44,15 @@ _INVARIANT_REQUIRED_FIELDS = (
 class ReviewRecordError(Exception):
     """packet schema / review record schema 非法。调用方(guru_supervise)据此记 PACKET_INVALID 等
     supervisor_failure 并 fail-closed(exit 2,不启 worker)。"""
+
+
+def _require_str_list(val, name: str):
+    """可选字符串数组校验(R1-F3/F6):None→[];必须是 list 且每元素非空 string,否则 ReviewRecordError。"""
+    if val is None:
+        return []
+    if not isinstance(val, list) or not all(isinstance(x, str) and x.strip() for x in val):
+        raise ReviewRecordError(f"slice packet {name} 必须是非空字符串数组")
+    return val
 
 
 def _packets_dir(task_dir: str) -> str:
@@ -74,7 +84,11 @@ def _normalize_packet_risk(raw):
 def _validate_semantic_review_provider(obj) -> dict:
     """present 时:required:bool / provider∈{codex,claude,opposite} / ocr∈{optional,disabled}。
     缺 → 默认 {required:true,provider:opposite,ocr:optional}。
-    required=true ∧ provider∈{manual,ocr_optional} → ReviewRecordError(R5-F1:第一版 required 只 channel-spawnable)。"""
+    required=true ∧ provider∈{manual,ocr_optional} → ReviewRecordError(R5-F1:第一版 required 只 channel-spawnable)。
+    第一版边界(R6):supervisor 总 spawn opposite(check_config=_opposite_provider),未接线具体 provider pin →
+    normalize 仅 provider=opposite 作 required clean(codex/claude 具体 pin 与 manual/ocr 一样 deferred);
+    `required` 字段第一版仅约束 provider 类别(manual/ocr 不得 required),**不作独立性下限**——独立性由
+    guru_risk 风险判定 / §4.5.9 low-risk slice override 决定(low-risk slice 即便 required=true 也放行同 provider 自检)。"""
     if obj is None:
         return {"required": True, "provider": "opposite", "ocr": "optional"}
     if not isinstance(obj, dict):
@@ -84,6 +98,12 @@ def _validate_semantic_review_provider(obj) -> dict:
     ocr = obj.get("ocr", "optional")
     if not isinstance(required, bool):
         raise ReviewRecordError("semantic_review_provider.required 必须是 bool")
+    # R2-F1:provider/ocr 先做字符串类型校验,防 unhashable(list/dict)在 set membership 抛 TypeError
+    # 逃逸 ReviewRecordError → packet preflight 漏判 PACKET_INVALID 而 traceback(违反 fail-closed 真闭)。
+    if not isinstance(provider, str):
+        raise ReviewRecordError("semantic_review_provider.provider 必须是字符串")
+    if not isinstance(ocr, str):
+        raise ReviewRecordError("semantic_review_provider.ocr 必须是字符串")
     if provider in NON_REQUIRED_PROVIDERS and required is True:
         raise ReviewRecordError(
             f"semantic_review_provider.provider={provider} 不能作 required(第一版仅 "
@@ -143,13 +163,15 @@ def load_packet(task_dir: str, unit_id: str) -> dict:
     pkt = dict(pkt)
     pkt["risk"] = _normalize_packet_risk(pkt.get("risk"))  # 非法枚举在此 raise
     pkt["semantic_review_provider"] = _validate_semantic_review_provider(pkt.get("semantic_review_provider"))
+    _require_str_list(pkt.get("risk_reasons"), "risk_reasons")  # R1-F6:非字符串数组 → PACKET_INVALID
+    _require_str_list(pkt.get("deterministic_checks"), "deterministic_checks")  # R1-F3:元素须非空 string(防 run 时 traceback)
     ds = pkt.get("dirty_state")
     if ds is None:
         pkt["dirty_state"] = {"unrelated": []}
-    elif not isinstance(ds, dict) or not isinstance(ds.get("unrelated", []), list):
-        raise ReviewRecordError("slice packet dirty_state.unrelated 必须是数组")
-    if not isinstance(pkt.get("deterministic_checks", []), list):
-        raise ReviewRecordError("slice packet deterministic_checks 必须是数组")
+    elif not isinstance(ds, dict):
+        raise ReviewRecordError("slice packet dirty_state 必须是对象")
+    else:
+        _require_str_list(ds.get("unrelated"), "dirty_state.unrelated")  # R1-F6
     return pkt
 
 
@@ -173,12 +195,28 @@ def append_record(task_dir: str, record: dict) -> None:
     (BHV-005;malformed/scope/packet failure 都经此入 jsonl)。"""
     if not isinstance(record, dict):
         raise ReviewRecordError("review record 必须是 dict")
+    # R3-SF1:枚举字段先做字符串类型守卫(单一 writer/校验入口须对非法 record fail-closed,而非 traceback);
+    # 防 unhashable(list/dict)在下面 set membership 抛 TypeError 逃逸 ReviewRecordError。缺失字段保留默认逻辑。
+    for _k in ("review_result", "route_class", "supervisor_failure"):
+        _v = record.get(_k)
+        if _v is not None and not isinstance(_v, str):
+            raise ReviewRecordError(f"review record {_k} 必须是字符串")
     if record.get("review_result") not in REVIEW_RESULT:
         raise ReviewRecordError(f"review_result 非法:{record.get('review_result')!r}")
     if record.get("route_class", "none") not in ROUTE_CLASS:
         raise ReviewRecordError(f"route_class 非法:{record.get('route_class')!r}")
-    if record.get("supervisor_failure", "none") not in SUPERVISOR_FAILURE:
+    sf = record.get("supervisor_failure", "none")
+    if sf not in SUPERVISOR_FAILURE:
         raise ReviewRecordError(f"supervisor_failure 非法:{record.get('supervisor_failure')!r}")
+    # R1-F5:防绕过——supervisor_failure=none 的 record 必须是完整规范化 verdict(7 字段 + 取值一致);
+    # 裸 clean(缺 gating 字段)或手写不一致直接拒,杜绝绕过 normalize_review_record 污染 jsonl。
+    # canonical failure record(sf!=none,preflight/malformed)不含 worker verdict 字段,跳过此校验。
+    if sf == "none":
+        vc = validate_verdict_values(record)
+        if vc:
+            raise ReviewRecordError(
+                "review record 非规范化(缺完整 verdict 字段或取值不一致);"
+                "须经 normalize_review_record / preflight_failure_record 产出后再 append")
     os.makedirs(os.path.dirname(_reviews_path(task_dir)), exist_ok=True)
     line = json.dumps(
         {k: record[k] for k in _RECORD_FIELDS if k in record},
@@ -194,6 +232,8 @@ def preflight_failure_record(kind: str, run_id: str, unit_id: str = None, candid
     kind ∈ {PACKET_MISSING,PACKET_INVALID,PACKET_AMBIGUOUS,SCOPE_INVALID}。
     字段策略(R5-F6):有 unit_id → slice_id=unit_id / review_target=slice:<unit>;
     无 → slice_id=None / review_target=slice:unknown;多 packet(PACKET_AMBIGUOUS)候选入 message+candidates。"""
+    if not isinstance(kind, str):  # R4-SF1:public 入口字符串守卫,防 unhashable 在 set membership 抛 TypeError
+        raise ReviewRecordError(f"preflight_failure_record kind 必须是字符串:{kind!r}")
     if kind not in SUPERVISOR_FAILURE or kind == "none" or kind == "MALFORMED_REVIEW_OUTPUT":
         raise ReviewRecordError(f"preflight_failure_record kind 非法:{kind!r}")
     rec = {
@@ -207,6 +247,8 @@ def preflight_failure_record(kind: str, run_id: str, unit_id: str = None, candid
         "repairable": False,
     }
     if candidates:
+        if not isinstance(candidates, list) or not all(isinstance(c, str) and c for c in candidates):  # R5-SF3
+            raise ReviewRecordError("preflight_failure_record candidates 必须是非空字符串数组")
         rec["candidates"] = list(candidates)
         rec["message"] = "candidates: " + ", ".join(candidates)
     return rec
@@ -230,10 +272,13 @@ def _norm_result(v):
 def validate_verdict_values(fields) -> "str|None":
     """取值校验层①（**所有 provider 共用**）：7 字段存在性 + 枚举 + clean 三通过值一致性。
     不过 → "MALFORMED_REVIEW_OUTPUT"；通过 → None。不做 provider/deterministic/invariant 重算(那在②)。"""
+    if not isinstance(fields, dict):  # R5-SF1:顶层 shape guard,非 mapping → MALFORMED 不 traceback
+        return "MALFORMED_REVIEW_OUTPUT"
     f = dict(fields)
     f["review_result"] = _norm_result(f.get("review_result"))
     for k in _VERDICT_FIELDS:
-        if not f.get(k):
+        v = f.get(k)
+        if not isinstance(v, str) or not v:  # R3-SF2:非空字符串守卫(防 unhashable 击穿后续 set membership 抛 TypeError)
             return "MALFORMED_REVIEW_OUTPUT"
     if f["review_result"] not in REVIEW_RESULT:
         return "MALFORMED_REVIEW_OUTPUT"
@@ -246,10 +291,14 @@ def validate_verdict_values(fields) -> "str|None":
     if f["invariant_coverage"] not in INVARIANT_COVERAGE:
         return "MALFORMED_REVIEW_OUTPUT"
     if f["review_result"] == "clean":
+        if f["route_class"] != "none":  # R1-F4:clean 必须 route_class=none
+            return "MALFORMED_REVIEW_OUTPUT"
         if not (f["deterministic_checks"] == "passed"
                 and f["dirty_scope"] in ("clean", "isolated")
                 and f["invariant_coverage"] == "all_passed"):
             return "MALFORMED_REVIEW_OUTPUT"
+    elif f["route_class"] == "none":  # R1-F4:findings/blocked 必须有真 route,否则无法安全路由
+        return "MALFORMED_REVIEW_OUTPUT"
     return None
 
 
@@ -257,22 +306,32 @@ def aggregate_invariant_coverage(packet_invariants, reviewer_statuses) -> str:
     """§4.3 唯一聚合：reviewer_statuses = {invariant_id: {"status","evidence","reason"}}。
     未知 id → "MALFORMED"；任一 fail → "failed"；缺 status / pass 缺 evidence / N/A 缺 reason → "missing"；
     否则 "all_passed"。supervisor 从 packet invariants + reviewer statuses 重算,不只信 worker 字符串。"""
-    inv_ids = {inv["invariant_id"] for inv in packet_invariants}
+    # R4-SF2:public 聚合入口形状守卫,非预期类型 fail-closed "MALFORMED"(非 traceback)。真实路径
+    # packet 来自 load_packet(_validate_invariant 保证非空 str)、statuses 来自 parse_verdict_block(str)。
+    if not isinstance(packet_invariants, list) or not isinstance(reviewer_statuses, dict):
+        return "MALFORMED"
+    inv_ids = set()
+    for inv in packet_invariants:
+        if not isinstance(inv, dict) or not isinstance(inv.get("invariant_id"), str) or not inv["invariant_id"]:
+            return "MALFORMED"
+        inv_ids.add(inv["invariant_id"])
     for sid in reviewer_statuses:
         if sid not in inv_ids:
             return "MALFORMED"
     for inv in packet_invariants:
         st = reviewer_statuses.get(inv["invariant_id"])
-        if not st or not st.get("status"):
+        if not isinstance(st, dict) or not st.get("status"):
             return "missing"
         status = st["status"]
+        if not isinstance(status, str):
+            return "MALFORMED"
         if status == "fail":
             return "failed"
         if status == "pass":
-            if not (st.get("evidence") or "").strip():
+            if not isinstance(st.get("evidence"), str) or not st["evidence"].strip():
                 return "missing"
         elif status == "not_applicable":
-            if not (st.get("reason") or "").strip():
+            if not isinstance(st.get("reason"), str) or not st["reason"].strip():
                 return "missing"
         else:
             return "MALFORMED"
@@ -281,27 +340,51 @@ def aggregate_invariant_coverage(packet_invariants, reviewer_statuses) -> str:
 
 def run_deterministic_checks(commands, repo_root):
     """supervisor-side 执行 packet deterministic_checks[]（R3-F1/R5-F2,BHV-008）。
-    返回 (status, results)：空/缺→("missing",[])；全 exit0→"passed"；任一失败/timeout→"failed"。
-    results 逐条 command/cwd/exit_code/timed_out/stdout_summary/duration_ms。"""
+    返回 (status, results)：空/缺→("missing",[])；全 exit0→"passed"；任一失败/timeout/非法命令→"failed"。
+    results 逐条 command/cwd/exit_code/timed_out/stdout_summary/stderr_summary/duration_ms/run_at。
+    R1-F3:非字符串/空 argv 命令转 failed result(不 traceback);load_packet 已先校验,此为 defense-in-depth。"""
     import shlex
     import subprocess
+    import time
+    from datetime import datetime, timezone
     if not commands:
         return ("missing", [])
+    if not isinstance(commands, list):  # R5-SF2:顶层非 list(非预期)→ failed,不迭代任意 iterable(如 dict key)
+        return ("failed", [])
     results = []
     status = "passed"
     for cmd in commands:
-        entry = {"command": cmd, "cwd": repo_root, "timed_out": False}
+        entry = {"command": cmd, "cwd": repo_root, "timed_out": False,
+                 "run_at": datetime.now(timezone.utc).isoformat()}
+
+        def _fail(msg):  # R1-F3:非法命令 → failed entry,不抛
+            entry.update({"exit_code": None, "stdout_summary": "", "stderr_summary": msg, "duration_ms": 0})
+            results.append(entry)
+
+        if not isinstance(cmd, str) or not cmd.strip():
+            _fail("invalid command: non-string or empty"); status = "failed"; continue
         try:
-            proc = subprocess.run(shlex.split(cmd), cwd=repo_root, capture_output=True,
+            argv = shlex.split(cmd)
+        except ValueError as exc:
+            _fail(f"shlex error: {exc}"); status = "failed"; continue
+        if not argv:
+            _fail("empty argv after shlex.split"); status = "failed"; continue
+        start = time.monotonic()
+        try:
+            proc = subprocess.run(argv, cwd=repo_root, capture_output=True,
                                   text=True, errors="replace", timeout=600)
             entry["exit_code"] = proc.returncode
             entry["stdout_summary"] = (proc.stdout or "")[-500:]
+            entry["stderr_summary"] = (proc.stderr or "")[-500:]
             if proc.returncode != 0:
                 status = "failed"
         except subprocess.TimeoutExpired:
-            entry["exit_code"] = None; entry["timed_out"] = True; entry["stdout_summary"] = ""; status = "failed"
-        except (OSError, ValueError) as exc:
-            entry["exit_code"] = None; entry["stdout_summary"] = f"exec error: {exc}"; status = "failed"
+            entry["exit_code"] = None; entry["timed_out"] = True
+            entry["stdout_summary"] = ""; entry["stderr_summary"] = "timeout"; status = "failed"
+        except OSError as exc:
+            entry["exit_code"] = None; entry["stdout_summary"] = ""
+            entry["stderr_summary"] = f"exec error: {exc}"; status = "failed"
+        entry["duration_ms"] = int((time.monotonic() - start) * 1000)
         results.append(entry)
     return (status, results)
 
@@ -312,6 +395,8 @@ def parse_verdict_block(text: str) -> dict:
     返回 fields，per-invariant 收进 fields["_invariants"] = {id: {status,evidence,reason}}。"""
     fields = {}
     invariants = {}
+    if not isinstance(text, str):  # R4-SF(穷尽):非 str 输入返回空 fields,交 validate_verdict_values 判 MALFORMED
+        return fields
     for raw in text.splitlines():
         line = raw.strip()
         if "=" not in line:
@@ -337,6 +422,10 @@ def normalize_review_record(fields, context):
     {mode:"supervisor"|"supplemental", packet, implement_provider, supervisor_deterministic_status,
      run_id, slice_id, review_target, target_paths, channel, worker, timestamp, deterministic_results}。
     返回 (record, failure_code)。调用方永远 normalize → append_record,绝不拒绝后手写。"""
+    if not isinstance(context, dict):  # R5-SF1:顶层 shape guard,非 dict context 归一(防 .get traceback)
+        context = {}
+    if not isinstance(fields, dict):  # R5-SF1:非 mapping verdict 归一为空 → 走 validate 判 MALFORMED,不 traceback
+        fields = {}
     mode = context.get("mode", "supervisor")
     f = dict(fields)
     statuses = f.pop("_invariants", {})
@@ -370,21 +459,48 @@ def normalize_review_record(fields, context):
                     "repairable": False, "supplemental": True, "required_satisfied": False})
         return (rec, None)
 
+    # R1-F2:supervisor 消费 required 时,worker 自报 review_target 必须 == 当前 resolved slice
+    # （防 check 审错 slice 却被当前 packet 消费,打穿 packet-centric 绑定）。
+    want_target = context.get("review_target")
+    if want_target and f.get("review_target") != want_target:
+        return blocked("MALFORMED_REVIEW_OUTPUT")
+
     # 层②(supervisor 消费 channel check 作 required clean)：provider gating + deterministic 双过 + 聚合重算
     if f["review_result"] == "clean":
-        prov = (context.get("packet") or {}).get("semantic_review_provider") or {"provider": "opposite"}
-        want, actual, impl = prov.get("provider", "opposite"), f.get("review_provider"), context.get("implement_provider")
-        if want == "opposite":
-            if not actual or actual == impl:
-                return blocked("MALFORMED_REVIEW_OUTPUT")
-        elif want in ("codex", "claude"):
-            if actual != want:
-                return blocked("MALFORMED_REVIEW_OUTPUT")
-        else:  # manual/ocr_optional 作 required 已在 load_packet 判 PACKET_INVALID,此处防御
+        # R6-F1:supervisor clean 必须有有效 packet(dict + 非空 invariants list)。packet 缺失 / 非 dict /
+        # 空 invariants 既会 .get 出 traceback,又会让 aggregate([],{}) 误判 all_passed → 零 invariant 核验的
+        # fail-open clean;统一 blocked(绝不静默 `or {}` 回落,那会重新引入 fail-open)。
+        pkt = context.get("packet")
+        if not isinstance(pkt, dict):
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        invs = pkt.get("invariants")
+        if not isinstance(invs, list) or not invs:
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        srp = pkt.get("semantic_review_provider")
+        if srp is None:
+            srp = {"provider": "opposite"}
+        elif not isinstance(srp, dict):  # R6-F1:嵌套 srp 非 dict → blocked(不 .get traceback)
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        want = srp.get("provider", "opposite")
+        actual, impl = f.get("review_provider"), context.get("implement_provider")
+        check_provider = context.get("check_provider")
+        # R1-F1:actual 必须是真 channel-spawn provider — 显式拒 manual/ocr_optional/未知 provider 作 required clean
+        if actual not in _CHANNEL_PROVIDERS:
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        # R1-F1:worker 自报 provider 必须 == supervisor 实际 spawn 的 check provider(防 worker 伪报)
+        if check_provider and actual != check_provider:
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        # R6-F2:第一版 supervisor 总 spawn opposite(check_config=_opposite_provider),未接线具体 provider pin;
+        # 故仅 provider=opposite 受支持作 required clean,具体 codex/claude pin 与 manual/ocr 一样第一版 deferred。
+        if want != "opposite":
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        # 对立要求默认强制(fail-closed);仅 low-risk override(SSOT §4.5.9)显式 independent_required=False
+        # 时放行同 provider 自检(P0 行为,check_config=config)。
+        if context.get("independent_required", True) and actual == impl:
             return blocked("MALFORMED_REVIEW_OUTPUT")
         if context.get("supervisor_deterministic_status") != "passed" or f["deterministic_checks"] != "passed":
             return blocked("MALFORMED_REVIEW_OUTPUT")
-        agg = aggregate_invariant_coverage((context.get("packet") or {}).get("invariants", []), statuses)
+        agg = aggregate_invariant_coverage(invs, statuses)
         if agg != "all_passed":
             return blocked("MALFORMED_REVIEW_OUTPUT")
 

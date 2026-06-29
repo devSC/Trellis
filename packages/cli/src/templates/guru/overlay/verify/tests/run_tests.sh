@@ -1757,7 +1757,9 @@ except R.ReviewRecordError:
 # --- append_record / preflight_failure_record ---
 root, tdir = mktask()
 R.append_record(tdir, {"run_id": "r", "slice_id": "UNIT-a", "review_target": "slice:UNIT-a",
-                       "review_result": "clean", "route_class": "none"})
+                       "review_provider": "claude", "review_result": "clean", "route_class": "none",
+                       "deterministic_checks": "passed", "dirty_scope": "clean",
+                       "invariant_coverage": "all_passed", "supervisor_failure": "none", "repairable": False})
 rec = json.loads(open(os.path.join(tdir, "review-records/implementation-reviews.jsonl"), encoding="utf-8").readline())
 ok("P1a append_record 写出含 review_target 可读", rec.get("review_target") == "slice:UNIT-a")
 pf = R.preflight_failure_record("PACKET_MISSING", "r", unit_id="UNIT-a")
@@ -1987,6 +1989,152 @@ try:
        rc == 2 and rec and rec["supervisor_failure"] == "MALFORMED_REVIEW_OUTPUT")
 finally:
     gs._execute_plan, R.run_deterministic_checks = real_exec, real_det
+
+# ============ R1 (codex P1-impl 对抗审查) 修复回归 ============
+def err(fn):  # 捕获 ReviewRecordError → True(packet/append 非法负例)
+    try:
+        fn(); return False
+    except R.ReviewRecordError:
+        return True
+
+ctxO = {"mode": "supervisor", "packet": {"invariants": invs, "semantic_review_provider": {"provider": "opposite"}},
+        "implement_provider": "codex", "check_provider": "claude", "independent_required": True,
+        "supervisor_deterministic_status": "passed", "run_id": "r", "slice_id": "U", "review_target": "slice:U"}
+INVOK = {"_invariants": {"INV-1": {"status": "pass", "evidence": "e"}}}  # clean 正例须覆盖 ctxO.packet 的 INV-1
+
+# R1-F1 provider gating:拒 manual/ocr/未知 + 自报≠实际 spawn;low-risk override 放行同 provider 自检
+_, f = R.normalize_review_record(vf(rp="manual"), ctxO)
+ok("R1-F1 normalize clean review_provider=manual→MALFORMED", f == "MALFORMED_REVIEW_OUTPUT")
+_, f = R.normalize_review_record(vf(rp="ocr_optional"), ctxO)
+ok("R1-F1 normalize clean review_provider=ocr_optional→MALFORMED", f == "MALFORMED_REVIEW_OUTPUT")
+_, f = R.normalize_review_record(vf(rp="banana"), ctxO)
+ok("R1-F1 normalize clean review_provider 未知→MALFORMED", f == "MALFORMED_REVIEW_OUTPUT")
+_, f = R.normalize_review_record(vf(rp="codex"), ctxO)
+ok("R1-F1 normalize 自报 provider≠实际 spawn(check_provider)→MALFORMED", f == "MALFORMED_REVIEW_OUTPUT")
+rec, f = R.normalize_review_record({**vf(rp="codex"), **INVOK},
+    {**ctxO, "independent_required": False, "check_provider": "codex", "implement_provider": "codex"})
+ok("R1-F1 low-risk override 同 provider 自检 clean→放行(不 blocked)", f is None and rec["review_result"] == "clean")
+
+# R1-F2 review_target 绑定:worker 自报 target≠当前 slice→MALFORMED
+_, f = R.normalize_review_record(vf(rt="slice:OTHER"), ctxO)
+ok("R1-F2 normalize review_target≠当前 slice→MALFORMED", f == "MALFORMED_REVIEW_OUTPUT")
+
+# R1-F3 packet deterministic 元素校验 + run_deterministic 防御(非字符串/空 argv 不 traceback)
+ro, td = mkgit(); write_packet(td, "U", deterministic_checks=[123])
+ok("R1-F3 load_packet deterministic_checks=[123]→PACKET_INVALID", err(lambda: R.load_packet(td, "U")))
+ro, td = mkgit(); write_packet(td, "U", deterministic_checks=[""])
+ok("R1-F3 load_packet deterministic_checks=['']→PACKET_INVALID", err(lambda: R.load_packet(td, "U")))
+st, res = R.run_deterministic_checks([123], ro)
+ok("R1-F3 run_deterministic [123] 非字符串→failed 不 traceback", st == "failed" and res[0]["exit_code"] is None)
+st, res = R.run_deterministic_checks([""], ro)
+ok("R1-F3 run_deterministic [''] 空 argv→failed 不 traceback", st == "failed")
+
+# R1-F4 route 一致性:findings/blocked 须非 none;clean 须 none
+ok("R1-F4 validate findings+route none→MALFORMED", R.validate_verdict_values(vf(rr="findings", rc="none")) == "MALFORMED_REVIEW_OUTPUT")
+ok("R1-F4 validate blocked+route none→MALFORMED", R.validate_verdict_values(vf(rr="blocked", rc="none")) == "MALFORMED_REVIEW_OUTPUT")
+ok("R1-F4 validate clean+route≠none→MALFORMED", R.validate_verdict_values(vf(rc="IMPLEMENT_DEFECT")) == "MALFORMED_REVIEW_OUTPUT")
+
+# R1-F5 append 收窄:裸 clean 拒;规范化/canonical preflight 放行
+ro, td = mkgit()
+ok("R1-F5 append 裸 clean(缺 gating 字段)→拒",
+   err(lambda: R.append_record(td, {"run_id": "r", "review_result": "clean", "route_class": "none"})))
+nrec, _ = R.normalize_review_record({**vf(), **INVOK}, ctxO)
+R.append_record(td, nrec)
+ok("R1-F5 append 规范化 clean→放行+回读", jsonl_last(td)["review_result"] == "clean")
+R.append_record(td, R.preflight_failure_record("PACKET_MISSING", "r", unit_id="U"))
+ok("R1-F5 append canonical preflight→放行", jsonl_last(td)["supervisor_failure"] == "PACKET_MISSING")
+
+# R1-F6 packet 可选数组元素校验(非数组/非字符串元素→PACKET_INVALID)
+ro, td = mkgit(); write_packet(td, "U", risk_reasons="cross_layer")
+ok("R1-F6 load_packet risk_reasons 字符串(非数组)→PACKET_INVALID", err(lambda: R.load_packet(td, "U")))
+ro, td = mkgit(); write_packet(td, "U", dirty_state={"unrelated": [123]})
+ok("R1-F6 load_packet dirty_state.unrelated=[123]→PACKET_INVALID", err(lambda: R.load_packet(td, "U")))
+
+# R1-nice deterministic_results 含 duration_ms/run_at/stderr_summary
+st, res = R.run_deterministic_checks(["true"], ro)
+ok("R1-nice run_deterministic results 含 duration_ms/run_at/stderr_summary",
+   "duration_ms" in res[0] and "run_at" in res[0] and "stderr_summary" in res[0])
+
+# ============ R2 (codex P1-impl 复审) blocker 修复 ============
+# R2-F1 semantic_review_provider.provider/ocr 非字符串(unhashable list/dict)→ ReviewRecordError,
+# 防 set membership 抛 TypeError 逃逸 preflight 的 ReviewRecordError 捕获(违反 fail-closed 真闭)。
+ro, td = mkgit(); write_packet(td, "U", semantic_review_provider={"provider": []})
+ok("R2-F1 load_packet provider=[](unhashable)→PACKET_INVALID(非 TypeError)", err(lambda: R.load_packet(td, "U")))
+ro, td = mkgit(); write_packet(td, "U", semantic_review_provider={"ocr": []})
+ok("R2-F1 load_packet ocr=[](unhashable)→PACKET_INVALID(非 TypeError)", err(lambda: R.load_packet(td, "U")))
+# 端到端:非法 provider 类型 packet 经 run_implement_check 走 fail-closed(exit2 + jsonl PACKET_INVALID/none/false,不启 worker)
+ro, td = mkgit("high"); write_packet(td, "U", risk="high", semantic_review_provider={"provider": []})
+rc = run_ic(td, ro); rec = jsonl_last(td)
+ok("R2-F1 run_implement_check unhashable provider→exit2 + jsonl PACKET_INVALID/route none/repairable false",
+   rc == 2 and rec and rec["supervisor_failure"] == "PACKET_INVALID"
+   and rec["route_class"] == "none" and rec["repairable"] is False)
+
+# ============ R3 (codex P1-impl 三审) should_fix + nice 修复 ============
+# R3-SF1 append_record(单一 writer 入口)枚举字段 unhashable → ReviewRecordError 而非 TypeError
+ro, td = mkgit()
+ok("R3-SF1 append_record review_result=[]→ReviewRecordError(非 TypeError)",
+   err(lambda: R.append_record(td, {"review_result": [], "route_class": "none"})))
+ok("R3-SF1 append_record route_class={}→ReviewRecordError",
+   err(lambda: R.append_record(td, {"review_result": "clean", "route_class": {}})))
+ok("R3-SF1 append_record supervisor_failure=[]→ReviewRecordError",
+   err(lambda: R.append_record(td, {"review_result": "blocked", "route_class": "none", "supervisor_failure": []})))
+# R3-SF2 validate/normalize verdict 共享校验层 unhashable → MALFORMED 而非 TypeError
+ok("R3-SF2 validate route_class=[]→MALFORMED(非 TypeError)", R.validate_verdict_values(vf(rc=[])) == "MALFORMED_REVIEW_OUTPUT")
+ok("R3-SF2 validate deterministic_checks={}→MALFORMED", R.validate_verdict_values(vf(dc={})) == "MALFORMED_REVIEW_OUTPUT")
+_, f = R.normalize_review_record(vf(rp=[]), ctxO)
+ok("R3-SF2 normalize review_provider=[]→MALFORMED(非 TypeError)", f == "MALFORMED_REVIEW_OUTPUT")
+# R3-nice semantic_review_provider dict 形态(isinstance(str) 已覆盖,补防回归)
+ro, td = mkgit(); write_packet(td, "U", semantic_review_provider={"provider": {}})
+ok("R3-nice provider={}(dict)→PACKET_INVALID", err(lambda: R.load_packet(td, "U")))
+ro, td = mkgit(); write_packet(td, "U", semantic_review_provider={"ocr": {}})
+ok("R3-nice ocr={}(dict)→PACKET_INVALID", err(lambda: R.load_packet(td, "U")))
+# R3-nice supervisor deterministic missing(packet 无 deterministic_checks)→ clean 被拒
+_, f = R.normalize_review_record(vf(), {**ctxO, "supervisor_deterministic_status": "missing"})
+ok("R3-nice supervisor deterministic missing→clean 被拒 MALFORMED", f == "MALFORMED_REVIEW_OUTPUT")
+
+# ============ R4 (codex P1-impl 四审) should_fix:穷尽 public 入口类型守卫 ============
+# R4-SF1 preflight_failure_record(public 入口)kind unhashable → ReviewRecordError 非 TypeError
+ok("R4-SF1 preflight_failure_record kind=[]→ReviewRecordError(非 TypeError)", err(lambda: R.preflight_failure_record([], "r")))
+ok("R4-SF1 preflight_failure_record kind={}→ReviewRecordError", err(lambda: R.preflight_failure_record({}, "r")))
+# R4-SF2 aggregate_invariant_coverage(public 聚合)非预期类型 → fail-closed MALFORMED/missing 非 traceback
+ok("R4-SF2 aggregate packet 非 list→MALFORMED", R.aggregate_invariant_coverage("x", {}) == "MALFORMED")
+ok("R4-SF2 aggregate statuses 非 dict→MALFORMED", R.aggregate_invariant_coverage(invs, []) == "MALFORMED")
+ok("R4-SF2 aggregate invariant_id unhashable→MALFORMED", R.aggregate_invariant_coverage([{"invariant_id": []}], {}) == "MALFORMED")
+ok("R4-SF2 aggregate evidence 非 str(非空 list)→missing 非 AttributeError",
+   R.aggregate_invariant_coverage(invs, {"INV-1": {"status": "pass", "evidence": ["x"]}}) == "missing")
+ok("R4-SF2 aggregate st 非 dict→missing 非 AttributeError", R.aggregate_invariant_coverage(invs, {"INV-1": "notdict"}) == "missing")
+# R4 parse_verdict_block 非 str → 空 fields,交 validate 判 MALFORMED(非 AttributeError)
+ok("R4 parse_verdict_block 非 str→空 fields + validate MALFORMED",
+   R.parse_verdict_block([]) == {} and R.validate_verdict_values(R.parse_verdict_block([])) == "MALFORMED_REVIEW_OUTPUT")
+
+# ============ R5 (codex P1-impl 五审) should_fix:public 入口顶层 shape guard ============
+# R5-SF1 validate/normalize 顶层非 mapping → MALFORMED 非 traceback
+ok("R5-SF1 validate_verdict_values(1)→MALFORMED", R.validate_verdict_values(1) == "MALFORMED_REVIEW_OUTPUT")
+ok("R5-SF1 validate_verdict_values([1])→MALFORMED", R.validate_verdict_values([1]) == "MALFORMED_REVIEW_OUTPUT")
+_, f = R.normalize_review_record(1, ctxO)
+ok("R5-SF1 normalize fields 非 dict→MALFORMED 非 traceback", f == "MALFORMED_REVIEW_OUTPUT")
+_, f = R.normalize_review_record(vf(), "notdict")
+ok("R5-SF1 normalize context 非 dict→归一不 traceback", f == "MALFORMED_REVIEW_OUTPUT")
+# R5-SF2 run_deterministic 顶层非 list → failed 非 traceback(不迭代任意 iterable)
+ok("R5-SF2 run_deterministic(1)→failed", R.run_deterministic_checks(1, ro)[0] == "failed")
+ok("R5-SF2 run_deterministic(dict)→failed 不迭代 key", R.run_deterministic_checks({"echo ok": 1}, ro)[0] == "failed")
+# R5-SF3 preflight candidates 非字符串数组 → ReviewRecordError 非 TypeError
+ok("R5-SF3 preflight candidates=[1]→ReviewRecordError", err(lambda: R.preflight_failure_record("PACKET_AMBIGUOUS", "r", candidates=[1])))
+
+# ============ R6 (独立复审) should_fix:normalize 嵌套 packet 守卫 + provider pin 收窄 ============
+# R6-F1 supervisor clean 的 packet 嵌套必须有效:malformed packet → blocked(既不 AttributeError 也不 fail-open)
+_, f = R.normalize_review_record({**vf(), **INVOK}, {**ctxO, "packet": "notdict"})
+ok("R6-F1 normalize packet 非 dict→MALFORMED(不 AttributeError)", f == "MALFORMED_REVIEW_OUTPUT")
+_, f = R.normalize_review_record({**vf(), **INVOK}, {**ctxO, "packet": {}})
+ok("R6-F1 normalize packet={}(无 invariants)→MALFORMED(不 fail-open)", f == "MALFORMED_REVIEW_OUTPUT")
+_, f = R.normalize_review_record({**vf(), **INVOK}, {**ctxO, "packet": {"invariants": [], "semantic_review_provider": {"provider": "opposite"}}})
+ok("R6-F1 normalize 空 invariants→MALFORMED(防 aggregate([],{}) all_passed fail-open)", f == "MALFORMED_REVIEW_OUTPUT")
+_, f = R.normalize_review_record({**vf(), **INVOK}, {**ctxO, "packet": {"invariants": invs, "semantic_review_provider": [1]}})
+ok("R6-F1 normalize semantic_review_provider 非 dict→MALFORMED(不 AttributeError)", f == "MALFORMED_REVIEW_OUTPUT")
+# R6-F2 具体 provider pin 第一版未接线 supervisor(总 spawn opposite)→ 作 required clean 一律 MALFORMED（Agent 缺口:pin 分支此前未测）
+_, f = R.normalize_review_record({**vf(rp="codex"), **INVOK},
+    {**ctxO, "packet": {"invariants": invs, "semantic_review_provider": {"provider": "codex"}}, "check_provider": "codex", "implement_provider": "claude"})
+ok("R6-F2 具体 pin provider=codex(第一版 deferred)→MALFORMED", f == "MALFORMED_REVIEW_OUTPUT")
 
 print(f"COUNT {np} {nf}")
 sys.exit(0 if nf == 0 else 1)

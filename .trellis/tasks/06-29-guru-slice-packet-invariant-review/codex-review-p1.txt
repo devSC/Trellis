@@ -1,0 +1,164 @@
+# P1 实现 codex 对抗审查 — verdict + findings 全文留痕(opposite-provider, read-only/medium)
+
+过闸标准:blockers=0 且 should_fix=0(nice 不阻断)。轮次索引与修复表见 codex-plan-review-rounds.md「P1 实现 codex 对抗审查轮次」段。
+各轮从具体 verdict 行起截取(含逐条 finding + 已核实项);codex exec 的读码过程噪声略去。
+
+════════════════════ R1 ════════════════════
+verdict=REQUEST_CHANGES  
+blockers=3 should_fix=3 nice_to_have=1  
+过闸=否
+
+1. finding:blocker | `guru_review_record.py:375-379` / `normalize_review_record` | `semantic_review_provider.provider=opposite` 的 provider gating 只检查 `actual != implement_provider`，没有校验 `review_provider` 是真实 channel-spawn provider，也没有拒绝 `manual` / `ocr_optional` / 任意字符串。我用真实代码复现：`review_provider=manual`、`ocr_optional`、`banana` 在默认 opposite + clean + invariant/deterministic passed 下全部 `fail=None` 并写 clean。这违反“manual/ocr 不可作 required clean”和“opposite 须实现者对立 channel provider”。| 修复：在 supervisor mode 中把 `check_config.provider` 作为 `check_provider` 传入 `normalize_review_record`；`want=opposite` 时要求 `actual == check_provider` 且 `actual in {"codex","claude"}`，显式拒绝 `NON_REQUIRED_PROVIDERS` 和未知 provider；补 P1c 负例测试：manual、ocr_optional、unknown provider 均 `MALFORMED_REVIEW_OUTPUT`。
+
+2. finding:blocker | `guru_review_record.py:344-347,361-389` / `normalize_review_record` | worker 输出的 `review_target` 只做“存在性”校验，随后 `base.review_target` 直接用 context 覆盖，未比较 worker verdict 的 `review_target` 是否等于当前 resolved slice。我复现 `review_target=slice:OTHER` 仍能 `fail=None` 并记录为 `slice:U` clean。这样 check 可以审错 slice 但被当前 packet 消费，打穿 packet-centric 绑定。| 修复：supervisor mode 在层①或层②校验 `f["review_target"] == context["review_target"] == f"slice:{context['slice_id']}"`；不匹配生成 canonical `MALFORMED_REVIEW_OUTPUT` record + exit2。补测试覆盖 wrong target clean 必须阻断。
+
+3. finding:blocker | `guru_review_record.py:151-152,282-305` / `load_packet` + `run_deterministic_checks` | packet 只校验 `deterministic_checks` 是 list，不校验元素为非空 string。真实代码中 `run_deterministic_checks([123], "/")` 抛未捕获 `AttributeError`，`run_deterministic_checks([""], "/")` 抛未捕获 `IndexError`；这不会走 `PACKET_INVALID` preflight，也不会写 canonical jsonl，违反“packet 非法 fail-closed + 写 record”。| 修复：`load_packet` 中要求 `deterministic_checks` 为非空字符串数组或允许空数组但每个元素必须非空 string；非法直接 `ReviewRecordError`。`run_deterministic_checks` 也应防御 `shlex.split(cmd)` 得空 argv / 非字符串，转为 failed result 而不是 traceback。补 packet 非法 deterministic command 的 P1a/P1b 测试。
+
+4. finding:should_fix | `guru_review_record.py:373-395` / `normalize_review_record`; `guru_supervise.py:1200-1213` | 非 clean verdict 不做结构一致性校验：`review_result=findings` + `route_class=none` + `invariant_coverage=all_passed` + 无 per-invariant status 会 `failure=None` 写成普通 worker record，随后 `run_implement_check` 才因 cannot route safely exit2。结果是 malformed verdict 没被标成 `MALFORMED_REVIEW_OUTPUT`，jsonl 里 `supervisor_failure=none`，审计语义错误。| 修复：在 `normalize_review_record` 中对 supervisor verdict 全部分支执行结构校验：`clean` 必须 `route_class=none`；`findings/blocked` 必须有非 none 的最高优先级 route；若 worker 自报 `invariant_coverage` 与 supervisor 重算不一致，或缺 required invariant status，则 canonical malformed。补测试：findings+none、blocked+none、worker aggregate 与重算不一致。
+
+5. finding:should_fix | `guru_review_record.py:170-188` / `append_record`; `tests/run_tests.sh:1758-1760` | `append_record` 作为“唯一 writer”但自身允许直接写 `review_result=clean, route_class=none` 且缺 7 verdict/gating 字段；测试里也直接这样写入。当前主流程大多先 normalize，但公共 writer 没有防绕过，后续任何调用者都可污染 `implementation-reviews.jsonl`。| 修复：把 `append_record` 收窄为只接受两类已规范化 record：`supervisor_failure != none` 的 canonical preflight/malformed record，或含完整 verdict 字段的 normalized/supplemental record；缺字段 clean 直接 `ReviewRecordError`。测试改成通过 `normalize_review_record` 或 preflight record 写入，而不是直接写裸 clean。
+
+6. finding:should_fix | `guru_review_record.py:146-152`; `guru_risk.py:183-188` | packet 可选数组字段校验不完整：`dirty_state.unrelated` 只校验是 list，不校验元素是 string；`risk_reasons` 完全不校验类型，若写成 `"cross_layer"` 字符串会被静默忽略，不触发 high，也不判 `PACKET_INVALID`。这会让非法 packet 进入后续流程，且风险语义可能被降级。| 修复：`load_packet` 统一校验 optional arrays：`risk_reasons` / `dirty_state.unrelated` / `deterministic_checks` 都必须是字符串数组；未知 `risk_reasons` 可以允许但必须是 string，或按白名单决定 invalid，关键是非 list / 非 string 不得静默通过。补 `risk_reasons="cross_layer"` 和 `dirty_state.unrelated=[123]` 负例。
+
+7. finding:nice_to_have | `guru_review_record.py:293-305`; `design.md:46,50` | design 说 `deterministic_results[]` 含 `duration_ms` / `run_at`，实现只写 `command/cwd/exit_code/timed_out/stdout_summary`，没有 duration 和时间戳。功能 gate 不依赖它，但审计回放信息比契约少。| 修复：在每条命令前后记录 monotonic duration，并写 ISO timestamp；可顺手加 `stderr_summary`，避免失败时只有 stdout 尾部。
+
+未执行完整 `run_tests.sh`：当前会话是 read-only 沙箱，连 shell here-doc 临时文件都不能创建；我只做了纯内存 `python -c` 复现，并逐行读取了真实实现、测试、workflow、skill 和 §4/本 task planning。A/J 其他点核实结果：`load_packet` 已挡空 `invariants`/`target_paths`、`risk=medium`、`manual required`；`risk=unknown` 回落 None；preflight failure 的 route/repairable 方向正确；`apply.sh` 已 copy/ast/import 收编 `guru_review_record.py`；`guru_review_record` 未 import 兄弟模块，`guru_risk -> guru_review_record` 单向成立；OCR 没被写成必选完成闸。阻断点主要集中在结构化 verdict 的 target/provider 绑定和 packet schema 的 fail-closed 完整性。  
+
+
+
+════════════════════ R2 ════════════════════
+verdict=REQUEST_CHANGES
+blockers=1 should_fix=0 nice_to_have=0
+
+1. finding:blocker | `/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_review_record.py:92-105` `_validate_semantic_review_provider` | `semantic_review_provider.provider` / `ocr` 没有先做字符串类型校验，非法 packet 里放 `[]` / `{}` 这类 unhashable 值会在 `provider in NON_REQUIRED_PROVIDERS` 或 `ocr in OCR_VALUES` 处抛 `TypeError`，不是 `ReviewRecordError`。`run_implement_check` 的 packet preflight 只捕获 `ReviewRecordError`，所以这种非法 packet 不会按硬约束写 `PACKET_INVALID` jsonl、`route_class=none`、`repairable=false` 后 exit2，而是 traceback/崩掉。这个违反“packet 缺失/非法/多义 fail-closed 真闭”。我用真实代码直接复现：`_validate_semantic_review_provider({"provider": []})` 和 `{"ocr": []}` 都返回 `TypeError unhashable type: 'list'`。 | 修复：在 `_validate_semantic_review_provider` 里先校验 `provider`、`ocr` 都是非空字符串，再做 membership；建议同时 `.strip().lower()` 后进入枚举。非法类型统一 `raise ReviewRecordError("semantic_review_provider.provider 必须是字符串")` / `ocr 必须是字符串`。补 `run_tests.sh` 负例：`semantic_review_provider.provider=[]`、`ocr=[]` 经过 `load_packet` 为 `ReviewRecordError`，再加一个 `run_implement_check --dry-run --slice U` 断言 exit2 + 最后一条 jsonl 为 `PACKET_INVALID`、`route_class=none`、`repairable=false`。
+
+R1 逐条复核结论：  
+1. provider gating 主路径已修复：required clean 只接受 `codex|claude`，拒 `manual/ocr_optional/未知`，并在 `guru_supervise.py:1195` 传入 `check_provider`，`normalize_review_record` 在 `guru_review_record.py:433-448` 校验实际 spawn provider。low-risk override 下 `independent_required=False` 放行同 provider 自检，符合 §4.5.9。当前真实 supervisor 调用点会传 `check_provider`；缺口是上面 blocker 的 packet 类型非法崩溃，不是这里的 spawn 绑定主路径。  
+2. `review_target` 已绑定当前 slice：`guru_review_record.py:421-425` 对 supervisor mode 校验 worker 自报 target 必须等于 `context.review_target`，`guru_supervise.py:1192-1193` 传的是 `slice:<unit_id>`。  
+3. `deterministic_checks` 元素校验已修：`load_packet` 在 `guru_review_record.py:156-157` 走 `_require_str_list`；`run_deterministic_checks` 在 `guru_review_record.py:329-336` 对非字符串、空命令、`shlex` 错误都转 failed result，不 traceback，并补了 `duration_ms/run_at/stderr_summary`。  
+4. `findings/blocked + route none` 已修：`validate_verdict_values` 在 `guru_review_record.py:270-278` 强制 clean 只能 route none，findings/blocked 必须 route 非 none；canonical supervisor failure record 因 `supervisor_failure != none` 在 append 时跳过取值级 verdict 校验，未误杀 preflight/malformed 记录。  
+5. `append_record` 裸 clean 缺字段绕过已收窄：`guru_review_record.py:198-203` 对 `supervisor_failure=none` 复跑 `validate_verdict_values`，缺 7 字段会拒；supplemental 通过 `normalize_review_record(mode=supplemental)` 产出完整字段，未被误杀。注意它只证明“取值级完整”，不重新做 provider/context gating；当前真实调用点只有 supervisor normalize、append CLI 和 preflight，未看到并行 writer。  
+6. `risk_reasons` / `dirty_state.unrelated` 元素校验已修：`guru_review_record.py:156`、`:164` 统一要求字符串数组；R1 测试覆盖了非数组和非字符串元素。  
+7. deterministic audit 字段已补：`run_deterministic_checks` 在 `guru_review_record.py:322-353` 每条写 `run_at`、`duration_ms`、`stderr_summary`。
+
+硬约束复核：  
+- OCR 没被做成必选：workflow 和 review skill 均写明 OCR optional，`manual/ocr_optional` required=true 在 `load_packet` 走 `PACKET_INVALID`，append CLI 只写 supplemental/`required_satisfied=false`。  
+- packet/scope/verdict 主路径 fail-closed：`guru_supervise.py:1048-1073` 对 ambiguous/missing/invalid/scope invalid 在 worker 前写 preflight record 并 exit2；有 packet 的 malformed verdict 在 `guru_supervise.py:1188-1201` 写 jsonl 后 exit2，不进 repair loop。blocker 是非法 provider/ocr 类型没有进入这个闭环。  
+- 单一 writer/校验方向成立：真实写入点都走 `guru_review_record.append_record`；未发现第二套 jsonl writer。  
+- packet invariants/target_paths 非空成立：`guru_review_record.py:143-152` enforce。  
+- P0 兼容和 low override 成立：`guru_risk.py:220-234` 中 `unit_id=None` / packet risk unknown 回落 P0，`packet.risk=low` 直接返回不 required，不被 task/git 抬高。  
+- import 方向成立：`guru_review_record` 不 import 兄弟模块；`guru_risk` 单向 import `guru_review_record`；`guru_supervise` import 两者，未发现循环 import。
+
+测试运行说明：我尝试执行 `guru-template/overlay/verify/tests/run_tests.sh`，但当前只读 sandbox 阻止 `mktemp/mkdir/here-doc` 写临时文件，输出大量 `Operation not permitted`，这次运行结果不可用。静态核对显示 R1 回归块覆盖了七条修复的大部分可证伪路径，但缺少本次 blocker 的 unhashable provider/ocr 类型负例。  
+
+
+════════════════════ R3 ════════════════════
+verdict=REQUEST_CHANGES
+blockers=0 should_fix=2 nice_to_have=2
+
+1. finding:should_fix | guru_review_record.py:194-200 append_record | `append_record` 仍在 record 枚举字段上直接做 set membership，未先做字符串类型守卫。`review_result=[]`、`route_class={}`、`supervisor_failure=[]` 这类非预期调用会在 `value in SET` 处抛 `TypeError: unhashable type`，逃逸 `ReviewRecordError`。当前 supervisor 的 preflight/normalize 内部生成路径不会自然传入 list/dict，但 `append_record` 是声明的单一 writer/schema 校验入口，按同类缺陷标准不应把非法 record 变成 traceback。具体修复：在 membership 前统一校验 `review_result`、`route_class`、`supervisor_failure` 为 `str`，否则 `raise ReviewRecordError("<field> 必须是字符串")`；补 `R1/R2` 回归：直接调用 `append_record(td, {"review_result": [], ...})` 应得到 `ReviewRecordError` 而非 `TypeError`。
+
+2. finding:should_fix | guru_review_record.py:258-285 validate_verdict_values / 389-466 normalize_review_record | verdict 共享校验层仍假定字段值来自 `parse_verdict_block`，因此运行时 worker 文本路径基本都是 str；但公共函数本身没有类型守卫。若 direct/API caller 传 `route_class=[]`、`deterministic_checks={}`，`validate_verdict_values` 的 set membership 会 TypeError；若传 `review_provider=[]`，`validate_verdict_values` 不校验 provider 枚举，随后 `normalize_review_record` 在 `actual not in _CHANNEL_PROVIDERS` 处 TypeError。具体修复：`validate_verdict_values` 在 7 字段存在性后先要求 `_VERDICT_FIELDS` 值均为非空 `str`；`normalize_review_record` 在 provider gating 前要求 `review_provider` 为非空 `str`，否则返回 `blocked("MALFORMED_REVIEW_OUTPUT")`。补回归：`normalize_review_record({"review_result":"clean","route_class":"none",...,"review_provider":[]}, ctx)` 应返回 `MALFORMED_REVIEW_OUTPUT`，不能 traceback。
+
+3. finding:nice_to_have | tests/run_tests.sh:2057-2069 | R2 blocker 的关键路径测试能证伪 `provider=[]` 和 `ocr=[]`，且端到端覆盖 `run_implement_check → PACKET_INVALID/route_class=none/repairable=false/exit2`；但没有覆盖 R2 描述中的 `provider={}` / `ocr={}` dict 形态。代码的 `isinstance(str)` 已实际覆盖 dict，不是当前阻断项。具体修复：在 R2-F1 块补两条 dict 负例，避免未来有人把 list 专项修成通过而 dict 回归。
+
+4. finding:nice_to_have | tests/run_tests.sh:1916-1925 / 1979-1989 | P1c 覆盖了 invariant pass/fail/missing/N/A、未知 id，以及 supervisor deterministic failed 抵消 worker passed；但没有独立覆盖 packet `deterministic_checks` 缺失/空导致 supervisor status=`missing` 时 clean 被拒的端到端 JSONL 记录。代码路径上 `run_deterministic_checks([])` 返回 `missing`，`normalize_review_record` 要求 supervisor status 为 `passed`，所以行为是闭的。具体修复：补一条 packet 不带 `deterministic_checks` 的 monkeypatch/end-to-end 用例，断言 `MALFORMED_REVIEW_OUTPUT`。
+
+R2 blocker 本身已修复：`_validate_semantic_review_provider` 在 `provider in NON_REQUIRED_PROVIDERS`、`provider not in ...`、`ocr not in OCR_VALUES` 前已经有 `provider/ocr` 的 `isinstance(str)` 校验，`provider=[]/{}`、`ocr=[]/{}` 会经 `ReviewRecordError` 进入 `load_packet` 的非法 packet 语义；`run_implement_check` 在 worker 启动前捕获 `ReviewRecordError`，写 `PACKET_INVALID` canonical record 并 `return 2`。
+
+并行 packet 路径核对结论：`packet.risk`、`target_paths`、`invariants` 必填字段、`risk_reasons`、`deterministic_checks`、`dirty_state.unrelated` 都已在 `load_packet` 里有类型守卫；`_scope_preflight` 的 `set(target_paths/unrelated)` 依赖该 preflight 后的 normalized packet，当前端到端路径安全；`slice_packet_risk` 复用 `load_packet`，不另开 JSON 解析；OCR 仍 optional，`manual/ocr_optional` required 被 packet preflight 拒绝，supplemental append 不满足 required；P0 `unit_id=None` 回落和 packet `risk=low` slice override 代码与测试都存在；三个目标模块之间未看到循环 import。
+
+未运行测试，按你的限制只做了静态读取核对。
+
+
+
+════════════════════ R4 ════════════════════
+verdict=REQUEST_CHANGES  
+blockers=0 should_fix=2 nice_to_have=0
+
+1. finding:should_fix | `/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_review_record.py:225-232` `preflight_failure_record` | 仍有 public helper 的 set membership 可被 unhashable 击穿：`preflight_failure_record([],"r")` 会在 `kind not in SUPERVISOR_FAILURE` 抛 `TypeError: unhashable type: 'list'`，没有转成 `ReviewRecordError`。真实 `guru_supervise` 当前只传常量字符串，所以 supervisor 主路径不受影响；但按本轮“public 入口不允许同类 TypeError 逃逸”的复审口径，这仍是同类遗漏。 | 修复：在 membership 前加字符串守卫，例如：
+   ```python
+   if not isinstance(kind, str):
+       raise ReviewRecordError(f"preflight_failure_record kind 必须是字符串:{kind!r}")
+   if kind not in SUPERVISOR_FAILURE or kind == "none" or kind == "MALFORMED_REVIEW_OUTPUT":
+       raise ReviewRecordError(...)
+   ```
+   并补测试：`preflight_failure_record([],"r")` / `{}` 捕获 `ReviewRecordError`，非 `TypeError`。
+
+2. finding:should_fix | `/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_review_record.py:295-315` `aggregate_invariant_coverage` | 聚合函数仍依赖调用方传入已校验结构，直接 public 调用或 malformed `normalize_review_record(..., context={"packet": ...})` 可 traceback，而不是返回 `"MALFORMED"`：`packet_invariants=[{"invariant_id": []}]` 会在 `inv_ids = {inv["invariant_id"] ...}` 抛 unhashable `TypeError`；`reviewer_statuses=[]` 会在 `reviewer_statuses.get(...)` 抛 `AttributeError`；`{"INV-1":{"status":"pass","evidence":[]}}` 会在 `.strip()` 抛 `AttributeError`。真实 supervisor 从 `load_packet()` 进入时，`_validate_invariant` 已保证 packet invariant 字段为非空字符串，`parse_verdict_block()` 也只产出字符串 evidence/reason，所以主链路可达性低；但函数本身是本轮点名要核的 public 聚合入口，仍不满足“非预期类型不 traceback”。 | 修复：在函数入口做轻量形状校验并 fail-closed 为 `"MALFORMED"`，至少覆盖 `packet_invariants` 必须是 list、每项 dict、`invariant_id` 非空 str，`reviewer_statuses` 必须是 dict，status/evidence/reason 使用前必须是 str；或在 `normalize_review_record` 调用前只接受 `load_packet()` 产物并对异常包一层 `try/except (TypeError, AttributeError, KeyError): return blocked("MALFORMED_REVIEW_OUTPUT")`。建议优先修聚合函数本体，测试可独立构造上述 3 个负例。
+
+已核实 R3 原修复本身成立：
+
+`append_record` 在 `/guru_review_record.py:196-206` 已对 `review_result` / `route_class` / `supervisor_failure` 先做 `isinstance(str)` 守卫，`[]` / `{}` 会进入 `ReviewRecordError`，不会在 set membership 泄漏 `TypeError`。  
+`validate_verdict_values` 在 `/guru_review_record.py:269-282` 已把 7 个 verdict 字段统一收敛为“非空 str”，`route_class=[]`、`deterministic_checks={}`、`review_provider=[]` 经 `normalize_review_record` 都会变成 `MALFORMED_REVIEW_OUTPUT`，不会进入 provider gating 的 membership。  
+`_validate_semantic_review_provider` 在 `/guru_review_record.py:99-111` 已覆盖 `provider=[]/{}` 与 `ocr=[]/{}`，`load_packet` 会抛 `ReviewRecordError`，`run_implement_check` 在 `/guru_supervise.py:1061-1067` 捕获后写 `PACKET_INVALID` 并 exit 2。  
+`_scope_preflight` 的 `set(packet.get("target_paths", []))` / dirty unrelated set 在 `/guru_supervise.py:1019-1021` 依赖 `load_packet` 的非空字符串数组校验，主路径无同类 unhashable JSON 击穿。  
+`run_deterministic_checks` 对命令元素已有非字符串/空字符串 defense-in-depth，`load_packet` 也先校验 `deterministic_checks`。  
+`parse_verdict_block` 从 worker 文本解析出来的 verdict 字段都是字符串，后续由 `validate_verdict_values` 统一挡住。  
+测试文件中 R3/R2/R1 回归段确实存在，且 `err()` 只捕 `ReviewRecordError`，所以这些负例对 TypeError 逃逸有证伪能力；本轮按只读要求未执行测试。
+
+硬约束复核：OCR 仍是 optional/disabled，不作为 required provider；packet preflight 仍 fail-closed 写 canonical record 后 exit 2；writer 仍集中到 `append_record`；packet `target_paths` / `invariants` 仍非空；无 packet 仍回落 P0；`guru_review_record.py` 没有 import `guru_supervise` / `guru_gate`，未看到新增循环 import。
+
+════════════════════ R5 ════════════════════
+verdict=REQUEST_CHANGES  
+blockers=0 should_fix=3 nice_to_have=0
+
+1. should_fix | `guru_review_record.py:266` / `validate_verdict_values` and `guru_review_record.py:410` / `normalize_review_record` | verdict public 入口仍缺顶层 shape guard，非 mapping 输入会 traceback，而不是 MALFORMED。`validate_verdict_values(fields)` 直接执行 `f = dict(fields)`，对 `fields=1`、`fields=[1]` 这类非预期类型会抛 `TypeError`；`normalize_review_record(fields, context)` 先执行 `context.get(...)` 和 `dict(fields)`，对 `context=[]` 或 `fields=1` 同样会抛异常。虽然真实 supervisor 主链路里的 `parse_verdict_block` 已保证返回 dict，但本轮目标是 public 入口穷尽 fail-closed，这里还没闭合。具体修复：`validate_verdict_values` 开头加 `if not isinstance(fields, dict): return "MALFORMED_REVIEW_OUTPUT"`；`normalize_review_record` 开头把非 dict `context` 归一为 `{}`，并在 `fields` 非 dict 时构造 blocked record 返回 `(record, "MALFORMED_REVIEW_OUTPUT")`，不要让 `dict(fields)` 或 `.get` 抛出原生异常。
+
+2. should_fix | `guru_review_record.py:333` / `run_deterministic_checks` | deterministic checks public 入口只守了“元素非字符串/空 argv”，未守顶层 `commands` 类型。`commands=1` 会在 `for cmd in commands` 处 `TypeError`；`commands={"echo ok": 1}` 会迭代 dict key 并可能执行字符串 key，语义上也绕过了 “commands 必须是字符串数组” 的 public 入口 fail-closed。真实路径经 `load_packet` 已校验 list，但这个函数本身被列为 public 入口且注释说 defense-in-depth。具体修复：保留 `None`/空数组返回 `("missing", [])`；对非 list 顶层直接返回 `("failed", [invalid-entry])` 或 `("failed", [])`，不要迭代任意 iterable；测试补 `R.run_deterministic_checks(1, root)[0] == "failed"` 和 dict 顶层 case。
+
+3. should_fix | `guru_review_record.py:225` / `preflight_failure_record` | R4 修了 `kind` unhashable，但同一 public 入口的 `candidates` 仍可被非字符串元素打穿。`if candidates:` 后执行 `rec["message"] = "candidates: " + ", ".join(candidates)`，当 `candidates=[1]` 或混合非 str 时会 `TypeError`，不是 `ReviewRecordError`。真实 `_resolve_slice_packet -> list_packets` 路径目前给的是字符串列表，所以主链路安全；但 public helper 的非预期类型入口还没闭。具体修复：在 `candidates` truthy 时先校验 `isinstance(candidates, list)` 且每项为非空 str，否则 `raise ReviewRecordError("preflight_failure_record candidates 必须是字符串数组")`；或安全地 `str()` 化后再写，但 fail-closed 口径更适合这里。
+
+已核实项：
+
+- R4-SF1 真修复：`preflight_failure_record` 在 `guru_review_record.py:231` 先检查 `kind` 是否 str，`[]` / `{}` 不会再进入 set membership。
+- R4-SF2 真修复：`aggregate_invariant_coverage` 在 `guru_review_record.py:303` 检查 packet/statuses 顶层类型；`guru_review_record.py:306-329` 检查 invariant item/id、status/evidence/reason，非预期类型返回 `MALFORMED` 或 `missing`，未见 AttributeError/TypeError 漏洞。
+- `parse_verdict_block` 真修复：`guru_review_record.py:388` 非 str 输入直接返回空 fields，随后 `validate_verdict_values({})` 会判 `MALFORMED_REVIEW_OUTPUT`。
+- R4- 测试可证伪：`tests/run_tests.sh:2095-2107` 是独立直接构造 public 入口调用，覆盖 `kind=[]/{}`、aggregate 顶层非 list/dict、unhashable invariant_id、非 str evidence、非 dict status、parse 非 str；这些测试如果删除当前 R4 守卫会暴露 TypeError/AttributeError 或非 MALFORMED 行为。
+- 硬约束抽查未发现回退：OCR 仍是 optional/disabled 值域且 supplemental；packet 非空、单一 writer `append_record`、P0 无 packet 旧路径、`guru_review_record` 不 import `guru_supervise/guru_gate`，`guru_risk` 只 import `guru_review_record`，未见循环 import。
+
+════════════════════ R6（codex 终审,代理恢复后,审 R5 顶层守卫 + 独立复审 F1/F2/F3 修复)════════════════════
+verdict=APPROVE
+blockers=0 should_fix=0 nice_to_have=0
+
+R5/R6 修复核实结果：过闸。
+
+1. none | [guru_review_record.py](/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_review_record.py:272) | `validate_verdict_values` 已在入口做 `fields` 顶层 dict guard；非 mapping 直接返回 `MALFORMED_REVIEW_OUTPUT`，不会 traceback。`normalize_review_record` 也在入口归一 `context`/`fields`，非 dict fields 走 validate 后 blocked，非 dict context 不再 `.get` traceback。
+
+2. none | [guru_review_record.py](/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_review_record.py:341) | `run_deterministic_checks` 已在 `not commands` 之后做顶层 list guard；非空非 list 返回 `("failed", [])`，不会迭代 dict key。空/缺仍为 `("missing", [])`，在 required clean 路径会因 supervisor deterministic status 不是 `passed` 被拒，不构成 fail-open。
+
+3. none | [guru_review_record.py](/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_review_record.py:229) | `preflight_failure_record` 已在 `candidates` truthy 时校验必须为 list 且每项为非空 str，否则 `ReviewRecordError`。真实调用路径是 `guru_supervise._resolve_slice_packet` 多 packet 未指定时把候选列表传入 preflight record；当前候选来自 `list_packets` 的文件名列表，已满足该 shape。
+
+4. none | [guru_review_record.py](/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_review_record.py:470) | R6-F1 clean 分支嵌套 packet guard 已落地：`context["packet"]` 非 dict blocked；`packet["invariants"]` 非 list 或空 list blocked；`semantic_review_provider` 非 dict blocked。这里没有 `packet or {}` / `invariants or []` 回落，避免了 `aggregate([], {}) == all_passed` 的零 invariant fail-open。你点名的 `packet={}`、空 invariants、packet 非 dict、srp 非 dict 都会返回 `MALFORMED_REVIEW_OUTPUT`，不 traceback、不 clean。
+
+5. none | [guru_review_record.py](/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_review_record.py:493) | R6-F2 provider pin 收窄已落地：required clean 只接受 `semantic_review_provider.provider == "opposite"`；`codex`/`claude` pin 虽可通过 packet schema，但在 normalize required clean 时 `want != "opposite"` 被 blocked 为 `MALFORMED_REVIEW_OUTPUT`。worker 自报 provider 还必须是真 channel provider 且等于 supervisor 实际 `check_provider`。
+
+6. none | [guru_review_record.py](/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_review_record.py:84) | R6-F3 文档已写清：`required` 第一版只约束 provider 类别，不作为独立性下限；独立性由 `guru_risk` / §4.5.9 low-risk slice override 决定。
+
+7. none | [guru_supervise.py](/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_supervise.py:1045) | 真实调用路径闭合：`run_implement_check` 先 resolve packet；多 packet 写 `PACKET_AMBIGUOUS` preflight 后 exit 2；指定/单 packet 先 `load_packet`，非法/缺失写 `PACKET_INVALID/PACKET_MISSING` 后 exit 2；scope 越界写 `SCOPE_INVALID` 后 exit 2；有 packet 时才执行 deterministic、parse worker verdict、normalize、append。未发现未校验 packet JSON 或 worker 文本绕过 schema 直接成为 clean 的路径。
+
+8. none | [guru_risk.py](/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/guru_risk.py:175) | `guru_risk` 的 packet risk 路径只通过 `guru_review_record.load_packet` 读取，并把 `ReviewRecordError` 上抛给 supervisor preflight；set membership 消费的是已规范化产物或受控扫描结果。按你给的严重性标准，没有真实可达的未校验外部数据路径。
+
+9. none | [run_tests.sh](/Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree/guru-template/overlay/verify/tests/run_tests.sh:2111) | R5 测试标记覆盖 `validate_verdict_values`/`normalize_review_record` 顶层非 mapping、`run_deterministic_checks` 顶层非 list、`preflight_failure_record` candidates。R6 测试标记覆盖 packet 非 dict、packet `{}`、空 invariants、srp 非 dict、provider pin `codex` deferred。按本轮环境要求我没有执行测试脚本；只静态核实脚本内容，不能重新证明 “314/0” 运行结果。
+
+三层 public 入口守卫核对：
+
+`load_packet`：根对象、schema_version、必填 str、非空 `target_paths`、非空 `invariants`、invariant 必填字段、risk 枚举、semantic_review_provider 类型/枚举、risk_reasons/deterministic_checks/dirty_state.unrelated 数组类型均有 guard。
+
+`append_record`：record 顶层 dict、关键枚举字段 str、枚举值、`supervisor_failure=none` 时反调 `validate_verdict_values` 防裸 clean/手写不一致绕过；canonical failure record 保留 fail-closed 写入路径。
+
+`validate_verdict_values`：顶层 dict、7 字段非空 str、枚举、clean 三通过一致性、findings/blocked 必须有非 none route 均闭合。
+
+`normalize_review_record`：顶层 context/fields guard、worker target 绑定、clean required 路径 packet/invariants/srp guard、provider/channel pin、independent check、supervisor deterministic 双过、invariant 聚合重算均闭合。
+
+`preflight_failure_record`：kind str + 合法 supervisor failure、禁止 none/MALFORMED_REVIEW_OUTPUT、candidates truthy 时 list[str nonempty]，闭合。
+
+`aggregate_invariant_coverage`：packet_invariants list + reviewer_statuses dict guard、invariant id shape、未知 id、status/evidence/reason 类型和值闭合。空 invariants 本函数本身仍会 all_passed，但真实 clean 路径已在 normalize 前置拒绝空 invariants，且 packet reader 也拒绝空 invariants，因此不再是真实可达 fail-open。
+
+`run_deterministic_checks`：缺/空 missing，非空非 list failed，元素非 str/空/shlex error/OSError/timeout/非零 exit 均 failed。空非 list 理论上返回 missing，但 clean 路径不把 missing 当 passed，不构成 blocker/should_fix。
+
+`parse_verdict_block`：非 str 返回空 fields，随后 validate 判 MALFORMED；line parser 只抽取白名单 7 字段和 invariant 前缀，不直接信任 worker 文本。
+
+硬约束核对结论：OCR 仍为 optional/supplemental，不满足 required clean；packet 缺失/非法/scope invalid/malformed verdict 都 fail-closed；写 record 仍经 `append_record` 单 writer；packet 非空由 `load_packet` + normalize clean guard 双层保证；无 packet 回落 P0 路径保留；`guru_review_record` 顶部明确不 import `guru_gate/guru_supervise`，当前 import 方向未形成循环。未发现真实可达的 fail-open、traceback 逃逸或硬约束绕过。
+
+
