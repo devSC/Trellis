@@ -52,6 +52,10 @@ bash guru-template/overlay/apply.sh "$tmp" && echo APPLY_OK   # 先断言 apply.
 
 ## Phase P1(④⑤,P0 通过后)
 
+> **DEFERRED(2026-06-29,用户决定)**:P0 已 codex 过闸交付、并安装到 guru_ai_himora。P1(④⑤)
+> 依赖 packet 生产者机制(writing-skill/trace,见 §步骤4 line 40 标注),前置未就绪,**拆为后续独立
+> 任务**,不在本任务范围内收口。下方 ④⑤ 设计保留作为该后续任务的输入。
+
 ### 步骤 4 — ④ REQ-UC×BHV 扩负向/排除维度
 - [ ] requirement/overview/detail skill + `detail-structure-single-source.md`:加"must-not / 保留-排除 / 成功路径排除"维度 + 测试映射;对齐 requirement-doc-standard,勿另起。
 - [ ] 视情扩 `guru_gate.py build_trace`/`render_matrix` 承载负向列。
