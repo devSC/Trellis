@@ -222,12 +222,13 @@ echo "  skills ×${agent_skill_n} → .agents/skills/（${PLATFORM} 平台 + sha
 mkdir -p "$TARGET/.trellis/scripts/guru"
 cp \
   "$HERE/verify/guru_gate.py" \
+  "$HERE/verify/guru_risk.py" \
   "$HERE/hooks/guru_after_create.py" \
   "$HERE/verify/guru_config_patch.py" \
   "$HERE/verify/guru_supervise.py" \
   "$TARGET/.trellis/scripts/guru/"
 chmod +x "$TARGET/.trellis/scripts/guru/"*.py
-echo "  scripts: guru_gate.py, guru_after_create.py, guru_config_patch.py, guru_supervise.py → .trellis/scripts/guru/"
+echo "  scripts: guru_gate.py, guru_risk.py, guru_after_create.py, guru_config_patch.py, guru_supervise.py → .trellis/scripts/guru/"
 
 # 3) 平台 hooks（Claude）+ trellis-local：只装共享 + 本平台专属 + 平台化 grill-nudge
 mkdir -p "$TARGET/.claude/hooks" "$TARGET/.claude/skills/trellis-local"
@@ -664,12 +665,20 @@ FAIL=0
 # 用 ast.parse 做语法检查：py_compile 会写 __pycache__ 副产物，破坏装配幂等性
 if python3 -c "import ast,sys; [ast.parse(open(f,encoding='utf-8').read()) for f in sys.argv[1:]]" \
     "$TARGET/.trellis/scripts/guru/guru_gate.py" \
+    "$TARGET/.trellis/scripts/guru/guru_risk.py" \
     "$TARGET/.trellis/scripts/guru/guru_after_create.py" \
     "$TARGET/.trellis/scripts/guru/guru_config_patch.py" \
     "$TARGET/.trellis/scripts/guru/guru_supervise.py" 2>/dev/null; then
   echo "  ✓ guru 脚本语法"
 else
   echo "  ✗ guru 脚本语法检查失败"; FAIL=1
+fi
+
+# 循环导入冒烟：ast.parse 抓不到 guru_risk↔guru_gate↔guru_supervise 的导入环；-B 不写 __pycache__ 保幂等
+if PYTHONPATH="$TARGET/.trellis/scripts/guru" python3 -B -c "import guru_risk, guru_gate, guru_supervise" 2>/dev/null; then
+  echo "  ✓ guru 脚本可导入（无循环依赖）"
+else
+  echo "  ✗ guru 脚本导入失败（循环依赖 / 缺失模块）"; FAIL=1
 fi
 
 if python3 - "$TARGET" <<'PYEOF'
