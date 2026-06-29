@@ -320,7 +320,9 @@ python3 .trellis/scripts/guru/guru_review_record.py append \
   --evidence-file .trellis/tasks/<task>/review-records/manual-review-<run_id>.md
 ```
 
-该命令复用 packet schema 校验与 review record schema 校验后追加 `implementation-reviews.jsonl`；`--run-id` 必须与 `--evidence-file` 文件名中的 `<run_id>` 一致。manual 行的 `channel` / `worker` 由 append 命令派生为 `manual` / `<reviewer>`，不需要额外参数。在该命令落地前，manual provider 不能满足 high-risk slice 的 `semantic_review_provider.required=true`；只能作为补充说明。`ocr_optional` 也只在显式触发时写同一记录，记录为 `channel=ocr_optional`，且默认不满足 required provider，除非 packet 明确选择它。
+该命令复用 packet schema 校验与 review record schema 校验后追加 `implementation-reviews.jsonl`；`--run-id` 必须与 `--evidence-file` 文件名中的 `<run_id>` 一致。manual 行的 `channel` / `worker` 由 append 命令派生为 `manual` / `<reviewer>`，不需要额外参数。manual provider 不能满足 high-risk slice 的 `semantic_review_provider.required=true`；只能作为补充说明。`ocr_optional` 也只在显式触发时写同一记录，记录为 `channel=ocr_optional`，且默认不满足 required provider。
+
+> **【task 06-29 P1 第一版落地边界（收窄本节）】**:required provider **只支持 channel-spawnable `{codex,claude,opposite}`**;packet 声明 `required=true ∧ provider∈{manual,ocr_optional}` → `PACKET_INVALID`(不可作完成闸)。manual/ocr_optional 仅作 **supplemental 补充审计记录**(`supplemental=true`/`required_satisfied=false`),**不被 supervisor 消费为 required clean**。manual/ocr 满足 required 的 verify-record 路径(`--verify-review-record`/pending-resume)**deferred 后续**;实现以 task `06-29-guru-slice-packet-invariant-review` 的 planning 为准。
 
 ### 4.7 修改 `implementation-trace-contract`
 
@@ -348,7 +350,7 @@ python3 .trellis/scripts/guru/guru_review_record.py append \
 | OCR 变成默认实现循环 | P0 | policy 未进 Guru runtime | provider 抽象 + OCR optional | brief / skill 禁止默认 OCR |
 | implementation clean 不可审计 | P1 | 无结构化 record | review result schema | review-rounds 可回放 target/provider/checks |
 | unrelated dirty files 干扰审查 | P1 | 只在事后提醒 | dirty scope gate | staged unrelated file 被标为 isolated/invalid |
-| 对抗 review 缺失在实现阶段 | P1 | adversarial 只覆盖 planning | high-risk slice 要非实现者 provider | Claude/manual/Codex 任一 provider 记录 |
+| 对抗 review 缺失在实现阶段 | P1 | adversarial 只覆盖 planning | high-risk slice 要非实现者 provider | Claude/Codex/opposite required provider + manual supplemental 记录（06-29 第一版 manual/ocr 不作 required） |
 | packet / matrix 漂移 | P1 | 允许多处维护 | packet 为唯一机器 SSOT，implement.md 只摘要 | gate / skill 只读取同一 packet |
 | manual provider 无法审计 | P1 | 不走 channel spawn | implementation-reviews.jsonl 统一记录 | manual / claude / codex 记录字段一致 |
 
@@ -400,7 +402,7 @@ python3 .trellis/scripts/guru/guru_review_record.py append \
 - default brief 不触发 OCR。
 - `guru_gate.py` 与 `guru_supervise.py` 通过同一个 `guru_risk.py` 读取风险级别。
 - `guru_gate.py` 的 `_risk_level()` 改为 `guru_risk.py` 的兼容代理，不再保留第二套风险判定逻辑。
-- supervisor 与 manual provider 都通过 `guru_review_record.py` 共享 writer / schema 校验追加 `implementation-reviews.jsonl`；manual provider 只能通过 `guru_review_record.py append` 这样的 validated append path 满足 required provider。
+- supervisor 与 manual provider 都通过 `guru_review_record.py` 共享 writer / schema 校验追加 `implementation-reviews.jsonl`；**【06-29 第一版】manual provider 经 `guru_review_record.py append` 仅写 supplemental 补充审计记录(`supplemental=true`/`required_satisfied=false`)，不满足 required provider(packet 声明 `required=true ∧ provider∈{manual,ocr_optional}` → `PACKET_INVALID`);完整 validated-append 满足 required 的路径 deferred 后续。**
 - `apply.sh` 把 `guru_risk.py` / `guru_review_record.py` 与 `guru_gate.py` / `guru_supervise.py` 一起部署到目标项目的 `.trellis/scripts/guru/`。
 - `apply.sh` 的脚本拷贝清单和语法自检清单都扩列 `guru_risk.py` / `guru_review_record.py`，不能只扩列其中一处。
 - `apply.sh` 在 `ast.parse` 语法自检之外增加不写字节码的 import 冒烟测试，例如在 `.trellis/scripts/guru/` 下执行 `python3 -B -c "import guru_risk, guru_review_record"`，捕获兄弟模块漏拷导致的 runtime ImportError。
@@ -438,7 +440,7 @@ git diff --check
 
 1. 对 Himora V2 local merge 这类问题，若 detail 已写 invariant，implementation check 必须能定位到具体 `IMPLEMENT_DEFECT`。
 2. 若 detail 未写 invariant，implementation check 必须输出 `DETAIL_DEFECT`，不能靠代码实现私自拍板。
-3. 无 OCR 的情况下，Claude / Codex / manual review provider 能完成语义审查闭环。
+3. 无 OCR 的情况下，Claude / Codex / opposite channel-spawn provider 能完成 required 语义审查闭环；**manual 仅作补充审计记录（06-29 第一版不作 required provider）**。
 4. OCR 可继续存在，但只作为 optional bounded provider。
 5. dirty worktree 下 review target 必须可审计，不能把 unrelated lockfile / generated churn 混进 clean 结论。
 6. scope-invalid 不会触发 3 次 implement repair 空转。

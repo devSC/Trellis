@@ -1,0 +1,45 @@
+# P1 planning codex 对抗审查 — verdict 留痕(10 轮)
+
+## 各轮 verdict
+r1: verdict=REQUEST_CHANGES  
+r2: verdict=REQUEST_CHANGES
+r3: verdict=REQUEST_CHANGES  
+r4: verdict=REQUEST_CHANGES
+r5: verdict=REQUEST_CHANGES  
+r6: verdict=REQUEST_CHANGES
+r7: verdict=REQUEST_CHANGES
+r8: verdict=REQUEST_CHANGES
+r9: verdict=REQUEST_CHANGES  
+r10: verdict=APPROVE  
+
+## R10 APPROVE 核实全文
+```
+verdict=APPROVE  
+blockers=0 should_fix=0 nice_to_have=0
+
+finding:none | verified | 未发现会导致实现失败、返工或与 §4 SSOT 不一致的 blocker / should_fix / nice_to_have | 无需修改
+
+核实要点：
+- R9-B1(packet 非空)已落地到 planning：`prd.md:30-31` 明确 `invariants[]` 非空、`target_paths[]` 非空；`design.md:34-38` 明确 `target_paths[]` 非空字符串数组、`invariants[]` 非空对象数组，空数组/空 path/非对象 invariant → `ReviewRecordError`/`PACKET_INVALID`；`implement.md:23-29` 同步了 schema 与测试项。
+- R9-B2(per-invariant 机器合同)已落地到 planning：`design.md:49`、`implement.md:74-77` 明确 `invariant_status.<id>`、`invariant_evidence.<id>`、`invariant_reason.<id>`，并覆盖 pass 缺 evidence→missing、N/A 缺 reason→拒、未知 id→MALFORMED、worker 自报 all_passed 但重算 missing→阻断。
+- §4 全量关键点已覆盖：packet schema、唯一 invariant SSOT、7 字段 verdict、取值级 gating、preflight、jsonl 字段、skill、trace、workflow 分别对应 `prd.md:14-17`、`prd.md:21-43`、`design.md:30-80`、`implement.md:21-123`。
+- 4 条硬约束未见冲突：OCR 在 `prd.md:36-37`、`design.md:98`、`implement.md:112-123` 保持 optional；单一 writer/校验在 `prd.md:33-34`、`design.md:39-50/95`；packet `invariants[]` 唯一机器 SSOT 在 `design.md:95-96`；P0 回落/`unit_id=None` 字节兼容在 `design.md:56-57/99`、`implement.md:35-40`。
+- 真实代码集成点核对通过：`guru_supervise.py` 当前 `ROUTE_RE` 在 `L65-68`、`_route_from_output` 在 `L350-358`，planning 的“取代全文搜索”定位正确；`run_implement_check` 当前在 `L992+` 且 P0 风险调用在 `L1014-1016`，planning 的 `unit_id` 接线点正确；`guru_risk.py` 当前 P0 逻辑在 `L160-183`，抽 `_p0_...` 的复用策略正确；`scan_paths` 当前已是 `git status --porcelain=v1 -z -uall`，planning 复用它而非重造 `git diff` 正确；`apply.sh` copy/ast/import 冒烟三处行号也与 `design.md:79-80`、`implement.md:119-121` 对齐。
+- P1a-e 顺序可执行：P1b 先建立 packet context，P1c 再按 packet high-risk slice 强制 7 字段，非 packet 流程保留旧 route 解析，控制流风险已在 `design.md:102-106`、`implement.md:125-128` 明确。
+- BHV-001..008 均有可测验收，且 `implement.md:121` 把 supervisor deterministic passed/empty/failed/worker 谎报、deterministic_results 回放、manual/ocr required invalid、PACKET_AMBIGUOUS 候选回读都纳入收口验证。
+tokens used
+221,676
+verdict=APPROVE  
+blockers=0 should_fix=0 nice_to_have=0
+
+finding:none | verified | 未发现会导致实现失败、返工或与 §4 SSOT 不一致的 blocker / should_fix / nice_to_have | 无需修改
+
+核实要点：
+- R9-B1(packet 非空)已落地到 planning：`prd.md:30-31` 明确 `invariants[]` 非空、`target_paths[]` 非空；`design.md:34-38` 明确 `target_paths[]` 非空字符串数组、`invariants[]` 非空对象数组，空数组/空 path/非对象 invariant → `ReviewRecordError`/`PACKET_INVALID`；`implement.md:23-29` 同步了 schema 与测试项。
+- R9-B2(per-invariant 机器合同)已落地到 planning：`design.md:49`、`implement.md:74-77` 明确 `invariant_status.<id>`、`invariant_evidence.<id>`、`invariant_reason.<id>`，并覆盖 pass 缺 evidence→missing、N/A 缺 reason→拒、未知 id→MALFORMED、worker 自报 all_passed 但重算 missing→阻断。
+- §4 全量关键点已覆盖：packet schema、唯一 invariant SSOT、7 字段 verdict、取值级 gating、preflight、jsonl 字段、skill、trace、workflow 分别对应 `prd.md:14-17`、`prd.md:21-43`、`design.md:30-80`、`implement.md:21-123`。
+- 4 条硬约束未见冲突：OCR 在 `prd.md:36-37`、`design.md:98`、`implement.md:112-123` 保持 optional；单一 writer/校验在 `prd.md:33-34`、`design.md:39-50/95`；packet `invariants[]` 唯一机器 SSOT 在 `design.md:95-96`；P0 回落/`unit_id=None` 字节兼容在 `design.md:56-57/99`、`implement.md:35-40`。
+- 真实代码集成点核对通过：`guru_supervise.py` 当前 `ROUTE_RE` 在 `L65-68`、`_route_from_output` 在 `L350-358`，planning 的“取代全文搜索”定位正确；`run_implement_check` 当前在 `L992+` 且 P0 风险调用在 `L1014-1016`，planning 的 `unit_id` 接线点正确；`guru_risk.py` 当前 P0 逻辑在 `L160-183`，抽 `_p0_...` 的复用策略正确；`scan_paths` 当前已是 `git status --porcelain=v1 -z -uall`，planning 复用它而非重造 `git diff` 正确；`apply.sh` copy/ast/import 冒烟三处行号也与 `design.md:79-80`、`implement.md:119-121` 对齐。
+- P1a-e 顺序可执行：P1b 先建立 packet context，P1c 再按 packet high-risk slice 强制 7 字段，非 packet 流程保留旧 route 解析，控制流风险已在 `design.md:102-106`、`implement.md:125-128` 明确。
+- BHV-001..008 均有可测验收，且 `implement.md:121` 把 supervisor deterministic passed/empty/failed/worker 谎报、deterministic_results 回放、manual/ocr required invalid、PACKET_AMBIGUOUS 候选回读都纳入收口验证。
+```
