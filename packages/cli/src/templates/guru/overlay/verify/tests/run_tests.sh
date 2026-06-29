@@ -1797,5 +1797,93 @@ echo "$P1A_OUT" | grep -v '^COUNT '
 read P1AP P1AF <<<"$(printf '%s\n' "$P1A_OUT" | sed -n 's/^COUNT //p')"
 pass=$((pass + ${P1AP:-0})); failn=$((failn + ${P1AF:-1}))
 
+# ============================================================================
+# P1b 测试:run_implement_check 的 packet resolve + packet/scope preflight
+# (PACKET_MISSING/AMBIGUOUS/SCOPE_INVALID 硬停 exit2 不进 repairable;单 packet auto;无 packet 回落 P0)。
+# ============================================================================
+P1B_OUT="$(PYTHONPATH="$HERE/.." python3 - <<'PY'
+import os, json, sys, tempfile, subprocess, io, contextlib, argparse
+import guru_review_record as R  # noqa: F401
+import guru_supervise as gs
+
+np = nf = 0
+def ok(d, c):
+    global np, nf
+    if c: np += 1; print(f"PASS  {d}")
+    else: nf += 1; print(f"FAIL  {d}")
+
+def mkgit():
+    root = tempfile.mkdtemp(); tdir = os.path.join(root, ".trellis/tasks/x"); os.makedirs(tdir)
+    open(os.path.join(tdir, "task.json"), "w", encoding="utf-8").write("{}")
+    subprocess.run(["git", "-C", root, "init", "-q"], check=True)
+    return root, tdir
+
+def write_packet(tdir, unit, **over):
+    d = os.path.join(tdir, "slice-packets"); os.makedirs(d, exist_ok=True)
+    pkt = {"schema_version": 1, "slice_id": unit, "owner_unit": unit, "target_kind": "staged",
+           "target_paths": ["lib/x.dart"],
+           "invariants": [{"invariant_id": "INV-1", "rule": "r", "source": "detail", "owner": "DAO",
+                           "positive_case": "p", "negative_case": "n", "route_if_missing": "DETAIL_DEFECT"}]}
+    pkt.update(over)
+    open(os.path.join(d, f"{unit}.json"), "w", encoding="utf-8").write(json.dumps(pkt))
+
+def run_ic(tdir, root, slice=None):
+    args = argparse.Namespace(task_dir=tdir, root=root, platform="flutter", provider="codex",
+                              adversarial=False, trellis_bin="trellis", run_id="RID", dry_run=True, slice=slice)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        rc = gs.run_implement_check(args)
+    return rc, out.getvalue(), err.getvalue()
+
+def jsonl_last(tdir):
+    p = os.path.join(tdir, "review-records/implementation-reviews.jsonl")
+    return json.loads(open(p, encoding="utf-8").readlines()[-1]) if os.path.exists(p) else None
+
+# 1. --slice 指定但 packet 缺失 → PACKET_MISSING exit2(repairable=false, route_class=none)
+root, tdir = mkgit()
+rc, o, e = run_ic(tdir, root, slice="UNIT-missing")
+rec = jsonl_last(tdir)
+ok("P1b --slice 缺失 packet → exit2 + PACKET_MISSING(repairable=false,route=none)",
+   rc == 2 and rec and rec["supervisor_failure"] == "PACKET_MISSING" and rec["repairable"] is False and rec["route_class"] == "none")
+
+# 2. 多 packet 无 --slice → PACKET_AMBIGUOUS exit2 + candidates
+root, tdir = mkgit(); write_packet(tdir, "UNIT-a"); write_packet(tdir, "UNIT-b")
+rc, o, e = run_ic(tdir, root)
+rec = jsonl_last(tdir)
+ok("P1b 多 packet 无 --slice → exit2 + PACKET_AMBIGUOUS + candidates",
+   rc == 2 and rec and rec["supervisor_failure"] == "PACKET_AMBIGUOUS" and rec.get("candidates") == ["UNIT-a", "UNIT-b"])
+
+# 3. 单 packet auto-select + scope clean(无代码 dirty)→ dry-run rc0
+root, tdir = mkgit(); write_packet(tdir, "UNIT-a")
+rc, o, e = run_ic(tdir, root)
+ok("P1b 单 packet auto-select + scope clean → dry-run rc0 不硬停", rc == 0)
+
+# 4. scope invalid(untracked 越界 .dart)→ SCOPE_INVALID exit2
+root, tdir = mkgit(); write_packet(tdir, "UNIT-a")
+os.makedirs(os.path.join(root, "lib")); open(os.path.join(root, "lib/other.dart"), "w", encoding="utf-8").write("x")
+rc, o, e = run_ic(tdir, root)
+rec = jsonl_last(tdir)
+ok("P1b scope invalid(越界 lib/other.dart)→ exit2 + SCOPE_INVALID",
+   rc == 2 and rec and rec["supervisor_failure"] == "SCOPE_INVALID")
+
+# 5. dirty 属 target_paths → 不硬停 rc0
+root, tdir = mkgit(); write_packet(tdir, "UNIT-a")
+os.makedirs(os.path.join(root, "lib")); open(os.path.join(root, "lib/x.dart"), "w", encoding="utf-8").write("x")
+rc, o, e = run_ic(tdir, root)
+ok("P1b dirty 属 target_paths → 不硬停 rc0", rc == 0)
+
+# 6. 无 packet → P0 路径 dry-run rc0(不强制 packet)
+root, tdir = mkgit()
+rc, o, e = run_ic(tdir, root)
+ok("P1b 无 packet → P0 路径 dry-run rc0(不硬停)", rc == 0)
+
+print(f"COUNT {np} {nf}")
+sys.exit(0 if nf == 0 else 1)
+PY
+)"
+echo "$P1B_OUT" | grep -v '^COUNT '
+read P1BP P1BF <<<"$(printf '%s\n' "$P1B_OUT" | sed -n 's/^COUNT //p')"
+pass=$((pass + ${P1BP:-0})); failn=$((failn + ${P1BF:-1}))
+
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]

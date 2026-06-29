@@ -37,6 +37,7 @@ from guru_gate import (  # noqa: E402
     GateArtifactError as _GateArtifactError,
 )
 import guru_risk  # noqa: E402  共享风险 helper（③ 独立 check 触发判定）
+import guru_review_record  # noqa: E402  P1 packet reader / 单一 writer / verdict 校验
 
 
 VALID_ACTIONS = {"requirements", "overview", "detail", "implement", "check", "implement-check"}
@@ -989,6 +990,37 @@ def run_action(args: argparse.Namespace, action: str) -> int:
     return rc
 
 
+def _resolve_slice_packet(task_dir: str, slice_arg):
+    """P1b resolve:--slice 显式 / 单 packet auto-select / 多 packet 未指定→ambiguous(返回候选列表) /
+    无 packet→None(回落 P0)。返回 (unit_id|None, ambiguous_candidates|None)。"""
+    if slice_arg:
+        return (slice_arg, None)
+    packets = guru_review_record.list_packets(task_dir)
+    if len(packets) == 1:
+        return (packets[0], None)
+    if len(packets) > 1:
+        return (None, packets)
+    return (None, None)
+
+
+def _scope_preflight(repo_root: str, packet: dict):
+    """P1b scope preflight(BHV-002):**代码** dirty(scan_dirty_paths 唯一 -z -uall 来源,经
+    guru_risk._is_scannable 排除 .trellis 运行时/文档/配置噪声)须全属 packet target_paths 或
+    dirty_state.unrelated;越界 → 返回 failure 描述(调用方记 SCOPE_INVALID 硬停)。scan 失败
+    fail-closed(不可确认 review target)。返回 None=通过。"""
+    try:
+        dirty = guru_risk.scan_dirty_paths(repo_root)
+    except guru_risk.RiskScanError as exc:
+        return f"scan failed (fail-closed): {exc}"
+    code_dirty = [p for p in dirty if guru_risk._is_scannable(p)]
+    targets = set(packet.get("target_paths", []))
+    unrelated = set(packet.get("dirty_state", {}).get("unrelated", []))
+    out_of_scope = sorted(p for p in code_dirty if p not in targets and p not in unrelated)
+    if out_of_scope:
+        return f"out-of-scope dirty paths: {out_of_scope}"
+    return None
+
+
 def run_implement_check(args: argparse.Namespace) -> int:
     task_dir = Path(args.task_dir).expanduser().resolve()
     root = _resolve_root(args.root, task_dir)
@@ -1007,13 +1039,48 @@ def run_implement_check(args: argparse.Namespace) -> int:
     )
     base_run_id = args.run_id or _default_run_id()
 
-    # ③ P0：高风险 / unknown / 跨层信号的 flutter implement-check 须用**独立(对立 provider)check**——
-    # 实现者≠审查者。provider 隔离 + adversarial 保持 False → 天然不走 _skip_adversarial 的 advisory rc0，
-    # check 失败即 rc≠0 阻断；且不受 adversarial_enabled 开关影响（fail-closed：缺 risk 元数据 / 裸 low /
-    # git 扫描失败均不绕过，见 guru_risk.implement_check_independent_required）。
-    independent_required, independent_reason = guru_risk.implement_check_independent_required(
-        str(task_dir), config.platform, str(root)
-    )
+    # P1b：resolve slice packet(--slice 显式 / 单 packet auto / 多 packet 未指定→PACKET_AMBIGUOUS 硬停 /
+    # 无 packet→None 回落 P0)。preflight failure 全经 preflight_failure_record + append_record + exit2,
+    # 绝不进 REPAIRABLE_IMPLEMENT_ROUTES、不启 implement worker(repairable=false,BHV-001/002)。
+    unit_id, ambiguous = _resolve_slice_packet(str(task_dir), getattr(args, "slice", None))
+    if ambiguous:
+        guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
+            "PACKET_AMBIGUOUS", f"{base_run_id}-check-1", candidates=ambiguous))
+        sys.stderr.write(f"[guru-supervise] 多 slice packet 未用 --slice 指定:{ambiguous};硬停(PACKET_AMBIGUOUS)\n")
+        return 2
+
+    # P1b：packet preflight(unit_id 有 packet → load 确认存在合法[区分 MISSING/INVALID] + scope preflight)——
+    # **先于 risk 判定**,使缺失/非法在此正确分类(risk 判定的 slice_packet_risk 会重 load,届时已合法)。
+    # fail-closed,全 exit2 不进 REPAIRABLE_IMPLEMENT_ROUTES、不启 worker(BHV-001/002)。
+    packet = None
+    if unit_id:
+        try:
+            packet = guru_review_record.load_packet(str(task_dir), unit_id)
+        except guru_review_record.ReviewRecordError as exc:
+            kind = "PACKET_MISSING" if "不存在" in str(exc) else "PACKET_INVALID"
+            guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
+                kind, f"{base_run_id}-check-1", unit_id=unit_id))
+            sys.stderr.write(f"[guru-supervise] slice packet {kind},硬停:{exc}\n")
+            return 2
+        scope_failure = _scope_preflight(str(root), packet)
+        if scope_failure:
+            guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
+                "SCOPE_INVALID", f"{base_run_id}-check-1", unit_id=unit_id))
+            sys.stderr.write(f"[guru-supervise] scope invalid,硬停(SCOPE_INVALID):{scope_failure}\n")
+            return 2
+
+    # ③ P0/P1：高风险触发独立(对立 provider)阻断 check;packet.risk 优先(unit_id,§4.5.8;packet 已 preflight 合法)。
+    # provider 隔离 + adversarial=False → 不走 advisory rc0,check 失败 rc≠0 阻断。
+    try:
+        independent_required, independent_reason = guru_risk.implement_check_independent_required(
+            str(task_dir), config.platform, str(root), unit_id=unit_id
+        )
+    except guru_review_record.ReviewRecordError as exc:  # 防御:packet 已 preflight,正常不触发
+        guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
+            "PACKET_INVALID", f"{base_run_id}-check-1", unit_id=unit_id))
+        sys.stderr.write(f"[guru-supervise] slice packet 非法,硬停(PACKET_INVALID):{exc}\n")
+        return 2
+
     check_config = (
         replace(config, current_provider=config.provider, provider=_opposite_provider(config.provider))
         if independent_required
@@ -1279,6 +1346,7 @@ def build_parser() -> argparse.ArgumentParser:
     implement_check.add_argument("task_dir")
     implement_check.add_argument("--run-id")
     implement_check.add_argument("--dry-run", action="store_true")
+    implement_check.add_argument("--slice", help="P1 slice packet unit_id（多 packet 时必填；单 packet 可省）")
     implement_check.set_defaults(func=run_implement_check)
 
     status = sub.add_parser("status")
