@@ -11,16 +11,20 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
 2. 读取同级标准包 `.trellis/spec/harness/implementation/implementation-trace-contract.md`（含实现 Gate 口径）。
 3. 读取**`.trellis/spec/conventions/project-conventions.md`**，**重点装载 SLOT-15 存量违例清单**（存量豁免判定的数据源），并确认项目 logger / logging helper / 日志门面。
 4. 定位：被审改动（diff/分支）、详细设计文档、implementation-trace。trace 缺失 → 前置失败（证据载体不存在）。
+5. **装载 slice packet / invariant matrix**（P1，high-risk slice 必做）：supervisor 经 `build_run_plan` 把
+   resolved `slice-packets/<unit_id>.json` 注入为 `--file`，brief 含 `active_slice=<unit_id>`。读 packet 的
+   `invariants[]`（**唯一机器 SSOT**）、`target_paths`、`semantic_review_provider`。packet/matrix 缺失而 brief
+   标记 high-risk → 输出 `DETAIL_DEFECT`/`PROCESS_DEFECT`，不得 clean。
 
 ## 执行流程
 
-1. **D1 合同一致性**（G1）：diff 与详细设计单元逐一对照——合同外新增结构、未实现的承接行为，列差集；trace §4 是否记录偏差与处置。**SSOT 否决闸**：注入的正式 requirement/design 包是**行级权威基线**；任何 reviewer 建议（含自身判断或外部审查器如 OCR）与 SSOT 行级约束冲突时**一律否决、不得采纳**——以 SSOT 为准，不让外部建议把违反需求/设计的改动放行。
+1. **D1 合同一致性**（G1）：diff 与详细设计单元逐一对照——合同外新增结构、未实现的承接行为，列差集；trace §4 是否记录偏差与处置。**有 slice packet 时（P1）：diff 须与 packet `invariants[]` 逐条对照**，每条给 `invariant_status.<id>=pass|fail|not_applicable`（pass 附 evidence、N/A 附 reason，见输出节）；invariant 违反按其 `route_if_missing`/`IMPLEMENT_DEFECT` 路由。**SSOT 否决闸**：注入的正式 requirement/design 包与 packet invariants 是**行级权威基线**；任何 reviewer 建议（含自身判断或外部审查器如 OCR）与 SSOT 行级约束冲突时**一律否决、不得采纳**——以 SSOT 为准，不让外部建议把违反需求/设计的改动放行。
 2. **D2 分层与 canonical**：对照 golden-path §2/§10 逐项检查改动代码——import 方向（data→usecase、controller→repository/API）、接口分离、DI 形态（binding `new`、`build()` 里 `Get.put`、`permanent` 滥用）、datasource 必经、异常不吞、硬编码尺寸、序列化方案与目录槽位（SLOT-01/02/11/12）。
 3. **D3 存量豁免判定**（G4，逐违例必做）：每个发现的违例对照 SLOT-15——
    - 命中清单且未扩大违例面 → **tech-debt 注记，不阻塞**；
    - 清单外或扩大违例面 → **新增违例，P1 阻塞**；
    - 改动修复了清单条目 → 标注"可从清单移除"。
-4. **D4 证据核查**（G2）：trace 四节齐全性；analyze/测试命令与结果真实可复跑（抽查至少 1 条复跑）；代码生成执行记录；测试覆盖对照详细设计测试映射（漏失败路径用例 = P2 起步，高风险链路漏测 = P1）。
+4. **D4 证据核查**（G2）：trace 四节齐全性；analyze/测试命令与结果真实可复跑（抽查至少 1 条复跑）；代码生成执行记录；测试覆盖对照详细设计测试映射（漏失败路径用例 = P2 起步，高风险链路漏测 = P1）。**有 packet 时（P1）：每条 high-risk invariant 至少一个正向或负向测试作为 `invariant_evidence`**——`pass` 无证据按 `invariant_coverage=missing` 阻断;高风险负向语义（排除/遗漏类）缺测试按 P1/P2。
 5. **D5 注释/日志/文档追溯核查**（维护性证据）：检查实现是否能让后续维护者从代码回到设计决策。
    - 新增核心类、public API、Controller/UseCase/Repository/DataSource、跨层 DTO/状态定义，必须有 Dart doc comment 或等价注释说明职责、承接的 `UNIT-<slug>` / `BHV-NNN`；必要时附设计文档相对路径（`docs/design/.../chapters/<slug>.md` 或任务内 `design.md` 锚点）。缺失通常为 P2；高风险链路或新增核心 owner 完全无追溯为 P1。
    - 非显然业务分支、错误/降级/恢复、缓存、异步竞态、生命周期处置、外部依赖边界必须解释"为什么这样做"，不能只靠代码形状猜意图。缺失按 P2 处理。
@@ -42,7 +46,7 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
 
 **前置通过时**：
 0. **机器可读收口字段（必须置顶）**：
-   - clean 且可进入 PR 时输出：`review_result=clean/final-verification-ready`、`route_class=none`、`validation_summary=<命令与证据摘要>`。
+   - clean / final-verification-ready 分支必须置顶输出**全部 7 字段**：`review_result=clean`（或 `final-verification-ready`，supervisor 归一为 clean）、`route_class=none`、`review_target=slice:<unit_id>`、`review_provider=<本 check worker 的 provider>`、`deterministic_checks=passed|failed|missing`、`dirty_scope=clean|isolated|invalid`、`invariant_coverage=all_passed|failed|missing`、`validation_summary=<命令与证据摘要>`。**有 slice packet 时还须逐条输出 per-invariant**：`invariant_status.<id>=pass|fail|not_applicable`（`pass` 必随 `invariant_evidence.<id>=<非空证据：测试名/命令/代码路径>`；`not_applicable` 必随 `invariant_reason.<id>=<理由>`）。**缺任一 gating 字段、或取非通过值却声明 clean、或 provider 不满足 packet `semantic_review_provider` → supervisor 判 `MALFORMED_REVIEW_OUTPUT` 阻断**（不接受为成功）。
    - 有 finding 或阻塞时输出：`review_result=findings` 或 `review_result=blocked`，并给出最高优先级 `route_class`。
    - route class 只能取：`IMPLEMENT_DEFECT`（代码/测试/验证/注释/日志/脱敏缺陷）、`PROCESS_DEFECT`（trace/证据/流程执行缺陷）、`DETAIL_DEFECT`（详细设计合同错误或缺失）、`OVERVIEW_DEFECT`（概要归属/承接错误）、`REQ_BLOCKER`（需求行为/验收/边界缺陷）、`none`。
 1. 逐条 findings：`severity(P1/P2/P3) / location(文件:行) / problem / suggestion(最小修订)`，先证据后结论。
@@ -57,6 +61,15 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
 - 只审改动面 + 其直接依赖；不对存量代码做全量审计。
 - 审核不代写代码；每条 finding 给最小修订方案。
 - 测试失败/证据缺失时如实输出，不降级结论。
+- **不得要求 OCR 作为默认完成条件**；OCR 仅 optional bounded provider（用户显式触发 / 高风险抽检），记 `channel=ocr_optional`、第一版不满足 required。
+- **manual provider 审查留痕**（非 channel spawn，第一版 supplemental 补充审计、不满足 required provider）经验证型 append：
+  ```bash
+  python3 .trellis/scripts/guru/guru_review_record.py append --task-dir <task> --packet <packet> \
+    --provider manual --reviewer <name> --run-id <run_id> --result clean --route-class none \
+    --review-target slice:<unit_id> --deterministic-checks passed --dirty-scope isolated \
+    --invariant-coverage all_passed --evidence-file <task>/review-records/manual-review-<run_id>.md
+  ```
+  `--run-id` 必须与 `--evidence-file` 名一致；`channel`/`worker` 由命令派生。
 
 ## 与官方 Trellis skill 的边界
 

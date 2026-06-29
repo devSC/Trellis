@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 SCHEMA_VERSION = 1
 
@@ -393,3 +394,55 @@ def normalize_review_record(fields, context):
                 "invariant_coverage": f["invariant_coverage"], "supervisor_failure": "none",
                 "repairable": f["review_result"] == "findings" and f["route_class"] in _REPAIRABLE_ROUTES})
     return (rec, None)
+
+
+# ============================================================================
+# append CLI(§4.6.7):manual / ocr_optional provider 的验证型留痕（第一版 supplemental 补充审计,
+# 不满足 required provider,verify-record 路径 deferred）。内部走 normalize_review_record(mode=supplemental)
+# → append_record(单一 writer / 校验)。
+# ============================================================================
+def _append_cli(argv) -> int:
+    import argparse
+    p = argparse.ArgumentParser(prog="guru_review_record.py")
+    sub = p.add_subparsers(dest="command", required=True)
+    ap = sub.add_parser("append")
+    ap.add_argument("--task-dir", required=True)
+    ap.add_argument("--packet")
+    ap.add_argument("--provider", required=True)  # manual | ocr_optional
+    ap.add_argument("--reviewer")
+    ap.add_argument("--run-id", required=True)
+    ap.add_argument("--result", required=True)
+    ap.add_argument("--route-class", default="none")
+    ap.add_argument("--review-target", required=True)
+    ap.add_argument("--deterministic-checks", required=True)
+    ap.add_argument("--dirty-scope", required=True)
+    ap.add_argument("--invariant-coverage", required=True)
+    ap.add_argument("--evidence-file", required=True)
+    args = p.parse_args(argv)
+    if args.provider not in NON_REQUIRED_PROVIDERS:
+        sys.stderr.write(f"append CLI 仅 supplemental provider {sorted(NON_REQUIRED_PROVIDERS)};got {args.provider}\n")
+        return 2
+    if args.run_id not in os.path.basename(args.evidence_file):
+        sys.stderr.write("--run-id 必须与 --evidence-file 文件名中的 run_id 一致\n")
+        return 2
+    slice_id = args.review_target.split(":", 1)[1] if args.review_target.startswith("slice:") else None
+    fields = {
+        "review_result": args.result, "route_class": args.route_class, "review_target": args.review_target,
+        "review_provider": args.provider, "deterministic_checks": args.deterministic_checks,
+        "dirty_scope": args.dirty_scope, "invariant_coverage": args.invariant_coverage, "_invariants": {},
+    }
+    channel = "ocr_optional" if args.provider == "ocr_optional" else "manual"
+    record, failure = normalize_review_record(fields, {
+        "mode": "supplemental", "run_id": args.run_id, "slice_id": slice_id,
+        "review_target": args.review_target, "channel": channel, "worker": args.reviewer or args.provider,
+    })
+    if failure:
+        sys.stderr.write(f"append 被拒({failure}):取值不合格\n")
+        return 2
+    append_record(args.task_dir, record)
+    sys.stderr.write(f"[guru_review_record] appended supplemental {args.provider} record(run_id={args.run_id})\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_append_cli(sys.argv[1:]))

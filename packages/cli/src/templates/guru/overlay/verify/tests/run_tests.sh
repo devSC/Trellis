@@ -1996,5 +1996,56 @@ echo "$P1C_OUT" | grep -v '^COUNT '
 read P1CP P1CF <<<"$(printf '%s\n' "$P1C_OUT" | sed -n 's/^COUNT //p')"
 pass=$((pass + ${P1CP:-0})); failn=$((failn + ${P1CF:-1}))
 
+# ============================================================================
+# P1d 测试:guru_review_record append CLI(manual/ocr supplemental;非 supplemental provider 拒;
+# run-id 与 evidence-file 名一致校验)。skill/spec 文档改动由 sync:guru:check + apply 自检覆盖。
+# ============================================================================
+P1D_OUT="$(PYTHONPATH="$HERE/.." python3 - <<'PY'
+import os, json, sys, tempfile, contextlib, io
+import guru_review_record as R
+
+np = nf = 0
+def ok(d, c):
+    global np, nf
+    if c: np += 1; print(f"PASS  {d}")
+    else: nf += 1; print(f"FAIL  {d}")
+
+def mkt():
+    t = os.path.join(tempfile.mkdtemp(), "task"); os.makedirs(t)
+    open(os.path.join(t, "manual-review-R1.md"), "w", encoding="utf-8").write("x")
+    return t
+
+def cli(t, **kw):
+    argv = ["append", "--task-dir", t, "--run-id", kw.get("run_id", "R1"), "--result", "clean",
+            "--route-class", "none", "--review-target", "slice:U", "--deterministic-checks", "passed",
+            "--dirty-scope", "isolated", "--invariant-coverage", "all_passed",
+            "--provider", kw.get("provider", "manual"), "--reviewer", "a",
+            "--evidence-file", os.path.join(t, "manual-review-R1.md")]
+    with contextlib.redirect_stderr(io.StringIO()):
+        return R._append_cli(argv)
+
+t = mkt()
+rc = cli(t)
+rec = json.loads(open(os.path.join(t, "review-records/implementation-reviews.jsonl"), encoding="utf-8").readline())
+ok("P1d append manual → rc0 + supplemental/required_satisfied=false/channel=manual",
+   rc == 0 and rec.get("supplemental") is True and rec.get("required_satisfied") is False and rec.get("channel") == "manual")
+
+t = mkt()
+ok("P1d append codex(非 supplemental provider)→ rc2 拒", cli(t, provider="codex") == 2)
+
+t = mkt()
+ok("P1d append run-id 不匹配 evidence-file 名 → rc2", cli(t, run_id="RX") == 2)
+
+t = mkt()
+ok("P1d append ocr_optional → rc0(supplemental)", cli(t, provider="ocr_optional") == 0)
+
+print(f"COUNT {np} {nf}")
+sys.exit(0 if nf == 0 else 1)
+PY
+)"
+echo "$P1D_OUT" | grep -v '^COUNT '
+read P1DP P1DF <<<"$(printf '%s\n' "$P1D_OUT" | sed -n 's/^COUNT //p')"
+pass=$((pass + ${P1DP:-0})); failn=$((failn + ${P1DF:-1}))
+
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]

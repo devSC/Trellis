@@ -23,7 +23,7 @@ description: 按详细设计合同执行 Flutter 编码与自测。编码规则�
 
 ## 执行流程
 
-1. **WX-1 计划**：按 trace 合同 §1 产出任务切片（每片：设计单元 / 文件范围 / 完成信号 / 验证方式），人工确认从最小切片开始。
+1. **WX-1 计划**：按 trace 合同 §1 产出任务切片（每片：**`UNIT-<slug>` / `target_paths` 文件范围摘要** / 完成信号 / 验证方式），人工确认从最小切片开始。**P1 high-risk slice（仅校验,不创建）**：校验 `<task_dir>/slice-packets/<unit_id>.json` **已由 planning / 主会话在 implement-check 前创建存在**，在 implement.md 摘要 `slice_packet` 路径 / `invariant_ids` / `negative_case`；**packet 缺失即停回 planning 补 packet，绝不在实现 worker 内创建/补造 packet 或按实现倒推 invariant**。packet 存在时以其 `target_paths`/`invariants[]` 为机器 SSOT；实现后只补 deterministic check evidence / 测试名 / 证据文件，不改 invariant 语义字段。
 2. **WX-2 逐片实现**：按入口决策树组合迷你路径（golden-path §1，§3~§7）；每片完成即更新 trace §2 执行记录。
 3. **WX-3 代码生成**：按 `[SLOT-08]` 顺序执行（仅在触发条件满足时）；记录于 trace。
 4. **WX-4 逐片验证**：`flutter analyze` + 本片相关测试 + `guru_lints`（建成后）；结果记入 trace §3，失败先修复再进下一片。

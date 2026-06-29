@@ -48,7 +48,7 @@
 5. **失败如何收口**：每条失败路径的处置（重试/降级/上抛/用户提示），错误转换位置遵循 `[SLOT-04]`（异常表逐行可对应一条失败路径 BHV 或八问 1 的行为分支）。
 6. **产生哪些事件 / 后置结果**：流发射、埋点、副作用（逐条写明消费方）。
 7. **哪些测试验证它**：映射到测试分层（unit / widget / integration / manual），逐行为给测试点（成功 + 全部失败路径）。
-8. **哪些内容不得在此补造**：显式列出本单元不拥有的决策（如"不决定缓存策略——属 repository"）。
+8. **哪些内容不得在此补造 + 负向不变量（invariant）**：显式列出本单元不拥有的决策（如"不决定缓存策略——属 repository"）；**并列出本单元的负向/排除语义不变量**——每条含 `invariant_id` / `rule`（含 must-not、保留-排除、成功路径排除等负向约束）/ `owner` / `positive_case` / `negative_case` / `route_if_missing`，作为 high-risk slice packet `invariants[]`（唯一机器 SSOT，P1 §4.3）的设计来源。Himora 类"远端权威未返回项不得被本地补回可见集"即典型负向不变量。
 
 ### 3.1 粒度标准（四条，写作与审核共用）
 
@@ -118,6 +118,10 @@ abstract class FoodRecognitionUseCase {
 
 ## 8. 不得补造清单
 本单元不拥有的决策逐条列出。
+
+## 9. 不变量矩阵（P1，high-risk slice 必填）
+| invariant_id | rule（负向/排除约束：must-not / 保留-排除 / 成功路径排除） | owner | positive_case | negative_case | route_if_missing |
+（每条为 high-risk slice packet `invariants[]` 的设计来源；packet 是**唯一机器 SSOT**，本表是设计期可读镜像，**勿另维护第二份机器矩阵**，P1 §4.3）
 ```
 
 **骨架 ↔ 八问映射**：
@@ -131,6 +135,7 @@ abstract class FoodRecognitionUseCase {
 | 5 状态管理 | 八问 3（读写状态与 owner） |
 | 7 测试映射 | 八问 7 |
 | 8 不得补造清单 | 八问 8 |
+| 9 不变量矩阵 | 八问 8（负向 invariant，P1） |
 
 辅助性文本（描述、表格、图内标签）一律中文；代码语法元素（类名/方法名/参数名/字面量）保持英文。
 
