@@ -1885,5 +1885,116 @@ echo "$P1B_OUT" | grep -v '^COUNT '
 read P1BP P1BF <<<"$(printf '%s\n' "$P1B_OUT" | sed -n 's/^COUNT //p')"
 pass=$((pass + ${P1BP:-0})); failn=$((failn + ${P1BF:-1}))
 
+# ============================================================================
+# P1c 测试:guru_review_record verdict 层(validate/aggregate/parse/normalize 两层)+
+# run_implement_check 结构化 verdict gating(deterministic 双过 / 聚合重算 / provider gating)。
+# ============================================================================
+P1C_OUT="$(PYTHONPATH="$HERE/.." python3 - <<'PY'
+import os, json, sys, tempfile, subprocess, io, contextlib, argparse
+import guru_review_record as R
+import guru_supervise as gs
+
+np = nf = 0
+def ok(d, c):
+    global np, nf
+    if c: np += 1; print(f"PASS  {d}")
+    else: nf += 1; print(f"FAIL  {d}")
+
+def vf(rr="clean", rc="none", rt="slice:U", rp="claude", dc="passed", ds="clean", ic="all_passed"):
+    return {"review_result": rr, "route_class": rc, "review_target": rt, "review_provider": rp,
+            "deterministic_checks": dc, "dirty_scope": ds, "invariant_coverage": ic}
+
+# --- validate_verdict_values ---
+ok("P1c validate clean 三通过→None", R.validate_verdict_values(vf()) is None)
+ok("P1c validate clean deterministic≠passed→MALFORMED", R.validate_verdict_values(vf(dc="failed")) == "MALFORMED_REVIEW_OUTPUT")
+ok("P1c validate 缺字段→MALFORMED", R.validate_verdict_values({"review_result": "clean"}) == "MALFORMED_REVIEW_OUTPUT")
+ok("P1c validate findings 不要求三通过→None", R.validate_verdict_values(vf(rr="findings", rc="IMPLEMENT_DEFECT", dc="failed", ic="failed")) is None)
+ok("P1c validate final-verification-ready 归一 clean→None", R.validate_verdict_values(vf(rr="final-verification-ready")) is None)
+
+# --- aggregate_invariant_coverage ---
+invs = [{"invariant_id": "INV-1", "rule": "r", "source": "s", "owner": "o",
+         "positive_case": "p", "negative_case": "n", "route_if_missing": "DETAIL_DEFECT"}]
+ok("P1c aggregate pass+evidence→all_passed", R.aggregate_invariant_coverage(invs, {"INV-1": {"status": "pass", "evidence": "test x"}}) == "all_passed")
+ok("P1c aggregate fail→failed", R.aggregate_invariant_coverage(invs, {"INV-1": {"status": "fail"}}) == "failed")
+ok("P1c aggregate pass 缺 evidence→missing", R.aggregate_invariant_coverage(invs, {"INV-1": {"status": "pass"}}) == "missing")
+ok("P1c aggregate 缺 status→missing", R.aggregate_invariant_coverage(invs, {}) == "missing")
+ok("P1c aggregate N/A 缺 reason→missing", R.aggregate_invariant_coverage(invs, {"INV-1": {"status": "not_applicable"}}) == "missing")
+ok("P1c aggregate N/A+reason→all_passed", R.aggregate_invariant_coverage(invs, {"INV-1": {"status": "not_applicable", "reason": "理由"}}) == "all_passed")
+ok("P1c aggregate 未知 id→MALFORMED", R.aggregate_invariant_coverage(invs, {"INV-X": {"status": "pass", "evidence": "e"}}) == "MALFORMED")
+
+# --- parse_verdict_block ---
+txt = ("review_result=clean\nroute_class=none\nreview_target=slice:U\nreview_provider=claude\n"
+       "deterministic_checks=passed\ndirty_scope=clean\ninvariant_coverage=all_passed\n"
+       "invariant_status.INV-1=pass\ninvariant_evidence.INV-1=test x")
+pf = R.parse_verdict_block(txt)
+ok("P1c parse 7 字段 + invariant_status/evidence",
+   pf.get("review_result") == "clean" and pf["_invariants"].get("INV-1", {}).get("status") == "pass"
+   and pf["_invariants"]["INV-1"].get("evidence") == "test x")
+
+# --- normalize_review_record(两层)---
+ctx = {"mode": "supervisor", "packet": {"invariants": invs, "semantic_review_provider": {"provider": "opposite"}},
+       "implement_provider": "codex", "supervisor_deterministic_status": "passed", "run_id": "r", "slice_id": "U"}
+rec, fail = R.normalize_review_record(R.parse_verdict_block(txt), ctx)
+ok("P1c normalize clean 双过+provider opposite(actual≠impl)→record clean", fail is None and rec["review_result"] == "clean")
+rec, fail = R.normalize_review_record(R.parse_verdict_block(txt), {**ctx, "supervisor_deterministic_status": "failed"})
+ok("P1c normalize supervisor deterministic failed→MALFORMED(即便 worker passed)", fail == "MALFORMED_REVIEW_OUTPUT" and rec["review_result"] == "blocked")
+rec, fail = R.normalize_review_record(R.parse_verdict_block(txt), {**ctx, "implement_provider": "claude"})
+ok("P1c normalize provider 同 impl→MALFORMED", fail == "MALFORMED_REVIEW_OUTPUT")
+txt_miss = txt.replace("invariant_evidence.INV-1=test x", "")  # pass 缺 evidence
+rec, fail = R.normalize_review_record(R.parse_verdict_block(txt_miss), ctx)
+ok("P1c normalize 聚合 missing(pass 缺 evidence)→MALFORMED", fail == "MALFORMED_REVIEW_OUTPUT")
+txt_m = txt.replace("review_provider=claude", "review_provider=manual")
+rec, fail = R.normalize_review_record(R.parse_verdict_block(txt_m), {"mode": "supplemental", "run_id": "r", "slice_id": "U"})
+ok("P1c normalize supplemental manual clean→保留(supplemental,required_satisfied=false,不 MALFORMED)",
+   fail is None and rec.get("supplemental") is True and rec.get("required_satisfied") is False)
+
+# --- run_implement_check 结构化 verdict gating(monkeypatch)---
+def mkgit(risk=None):
+    root = tempfile.mkdtemp(); tdir = os.path.join(root, ".trellis/tasks/x"); os.makedirs(tdir)
+    open(os.path.join(tdir, "task.json"), "w", encoding="utf-8").write(json.dumps({"risk_level": risk} if risk else {}))
+    subprocess.run(["git", "-C", root, "init", "-q"], check=True)
+    return root, tdir
+
+def write_packet(tdir, unit, **over):
+    d = os.path.join(tdir, "slice-packets"); os.makedirs(d, exist_ok=True)
+    pkt = {"schema_version": 1, "slice_id": unit, "owner_unit": unit, "target_kind": "staged",
+           "target_paths": ["lib/x.dart"], "invariants": invs}
+    pkt.update(over)
+    open(os.path.join(d, f"{unit}.json"), "w", encoding="utf-8").write(json.dumps(pkt))
+
+def jsonl_last(tdir):
+    p = os.path.join(tdir, "review-records/implementation-reviews.jsonl")
+    return json.loads(open(p, encoding="utf-8").readlines()[-1]) if os.path.exists(p) else None
+
+def run_ic(tdir, root):
+    args = argparse.Namespace(task_dir=tdir, root=root, platform="flutter", provider="codex",
+                              adversarial=False, trellis_bin="trellis", run_id="RID", dry_run=False, slice="U")
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        return gs.run_implement_check(args)
+
+real_exec, real_det = gs._execute_plan, R.run_deterministic_checks
+try:
+    R.run_deterministic_checks = lambda c, r: ("passed", [{"command": "x", "exit_code": 0}])
+    gs._execute_plan = lambda plan, cfg: (0, "done", txt if plan.action == "check" else "")
+    root, tdir = mkgit("high"); write_packet(tdir, "U", risk="high")
+    rc = run_ic(tdir, root); rec = jsonl_last(tdir)
+    ok("P1c gating: packet 结构化 clean 双过→rc0 + jsonl clean", rc == 0 and rec and rec["review_result"] == "clean")
+
+    R.run_deterministic_checks = lambda c, r: ("failed", [{"command": "x", "exit_code": 1}])
+    root, tdir = mkgit("high"); write_packet(tdir, "U", risk="high")
+    rc = run_ic(tdir, root); rec = jsonl_last(tdir)
+    ok("P1c gating: worker 谎报 passed 但 supervisor deterministic failed→rc2 MALFORMED",
+       rc == 2 and rec and rec["supervisor_failure"] == "MALFORMED_REVIEW_OUTPUT")
+finally:
+    gs._execute_plan, R.run_deterministic_checks = real_exec, real_det
+
+print(f"COUNT {np} {nf}")
+sys.exit(0 if nf == 0 else 1)
+PY
+)"
+echo "$P1C_OUT" | grep -v '^COUNT '
+read P1CP P1CF <<<"$(printf '%s\n' "$P1C_OUT" | sed -n 's/^COUNT //p')"
+pass=$((pass + ${P1CP:-0})); failn=$((failn + ${P1CF:-1}))
+
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]

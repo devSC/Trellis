@@ -471,6 +471,7 @@ def build_run_plan(
     config: SupervisionConfig,
     run_id: str,
     extra_brief: str = "",
+    slice_packet_path: Path = None,
 ) -> RunPlan:
     if action not in VALID_ACTIONS:
         raise GuruSupervisionError(f"unknown action {action!r}")
@@ -503,6 +504,8 @@ def build_run_plan(
         # ② 为 flutter 实现期 review 注入正式 requirement/design 包(SSOT 否决基线);
         # 声明却非法/缺失的包由 collect_review_artifacts → GuruSupervisionError 在 spawn 前 fail-closed
         artifact_candidates.extend(collect_review_artifacts(task_dir, "detail", config.root))
+    if slice_packet_path is not None:  # P1c R4-F2:注入 resolved slice packet,worker 才能逐条 invariant/正确 provider
+        artifact_candidates.append(slice_packet_path)
     artifact_files = _dedupe_paths(_existing_paths(artifact_candidates))
     jsonl_names = [f"{action}.jsonl"]
     if action == "implement-check":
@@ -1092,20 +1095,36 @@ def run_implement_check(args: argparse.Namespace) -> int:
             f"implement provider={config.provider} ≠ check provider={check_config.provider}\n"
         )
 
+    # P1c R4-F2：有 packet 时注入到 worker（artifact --file + brief active_slice），worker 才能逐条
+    # invariant、输出正确 review_target/provider。无 packet → slice_packet_path=None（P0 旧路径）。
+    slice_packet_path = (task_dir / "slice-packets" / f"{unit_id}.json") if unit_id else None
+    active_slice_brief = ""
+    if packet is not None:
+        _sp = packet.get("semantic_review_provider", {})
+        active_slice_brief = (
+            f"\nactive_slice={unit_id}\nslice_packet={slice_packet_path}\n"
+            f"review_target=slice:{unit_id}\ntarget_paths={packet.get('target_paths')}\n"
+            f"semantic_review_provider={_sp.get('provider')}(required={_sp.get('required')})\n"
+            "置顶输出 7 字段 + 逐条 invariant_status.<id>=pass|fail|not_applicable"
+            "（pass 必随 invariant_evidence.<id>；not_applicable 必随 invariant_reason.<id>）。\n"
+        )
+
     if args.dry_run:
         implement_plan = build_run_plan(
             "implement",
             task_dir,
             config,
             f"{base_run_id}-implement-1",
-            "Implement-check loop step 1/2: apply implementation fixes from the previous check context when present.",
+            "Implement-check loop step 1/2: apply implementation fixes from the previous check context when present." + active_slice_brief,
+            slice_packet_path=slice_packet_path,
         )
         check_plan = build_run_plan(
             "check",
             task_dir,
             check_config,
             f"{base_run_id}-check-1",
-            "Implement-check loop step 2/2: emit review_result=clean/final-verification-ready with route_class=none, or route_class=<defect>.",
+            "Implement-check loop step 2/2: emit review_result=clean/final-verification-ready with route_class=none, or route_class=<defect>." + active_slice_brief,
+            slice_packet_path=slice_packet_path,
         )
         print("IMPLEMENT-CHECK LOOP")
         print("repeat: implement -> check -> route")
@@ -1137,23 +1156,63 @@ def run_implement_check(args: argparse.Namespace) -> int:
             task_dir,
             config,
             f"{base_run_id}-implement-{iteration}",
-            extra,
+            extra + active_slice_brief,
+            slice_packet_path=slice_packet_path,
         )
         rc, _terminal, _messages = _execute_plan(implement_plan, config)
         if rc != 0:
             return rc
+
+        # P1c R4-F1：有 packet → 每轮 implement 成功后 supervisor 执行 deterministic_checks（绑定本轮 diff,不复用过期）
+        det_status, det_results = ("missing", [])
+        if packet is not None:
+            det_status, det_results = guru_review_record.run_deterministic_checks(
+                packet.get("deterministic_checks", []), str(root)
+            )
 
         check_plan = build_run_plan(
             "check",
             task_dir,
             check_config,
             f"{base_run_id}-check-{iteration}",
-            "Emit exactly one route_class and review_result for implement-check routing.",
+            "Emit exactly one route_class and review_result for implement-check routing." + active_slice_brief,
+            slice_packet_path=slice_packet_path,
         )
         rc, _terminal, messages = _execute_plan(check_plan, check_config)
         if rc != 0:
             return rc
 
+        if packet is not None:
+            # P1c 结构化 verdict gating（有 packet）：parse + normalize（单一入口,层①取值 + 层②provider/
+            # deterministic 双过/聚合重算）+ append（单一 writer）。malformed/不通过 → 硬停 exit2。
+            verdict = guru_review_record.parse_verdict_block(messages)
+            record, failure = guru_review_record.normalize_review_record(verdict, {
+                "mode": "supervisor", "packet": packet, "implement_provider": config.provider,
+                "supervisor_deterministic_status": det_status, "deterministic_results": det_results,
+                "run_id": f"{base_run_id}-check-{iteration}", "slice_id": unit_id,
+                "review_target": f"slice:{unit_id}", "target_paths": packet.get("target_paths", []),
+                "channel": check_plan.channel, "worker": check_plan.worker,
+            })
+            guru_review_record.append_record(str(task_dir), record)
+            if failure:
+                sys.stderr.write(f"[guru-supervise] check verdict {failure}; 硬停(不空转修复审查格式)\n")
+                return 2
+            if record["review_result"] == "clean":
+                print("[guru-supervise] implement-check clean（structured verdict）; stop at hard-boundary.")
+                return 0
+            if record.get("repairable"):
+                review_context = messages
+                continue
+            if record["route_class"] in UPSTREAM_ROUTE_TARGETS:
+                target = UPSTREAM_ROUTE_TARGETS[record["route_class"]]
+                print(f"[guru-supervise] implement-check routed upstream: {record['route_class']} -> {target}")
+                return 2
+            sys.stderr.write(
+                f"[guru-supervise] check {record['review_result']}/{record['route_class']}; cannot route safely\n"
+            )
+            return 2
+
+        # 无 packet（P0 存量流程,过渡）：旧 _route_from_output 全文解析
         route = _route_from_output(messages)
         if route == "clean":
             print("[guru-supervise] implement-check clean; stop at hard-boundary confirmation.")

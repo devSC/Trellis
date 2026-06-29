@@ -209,3 +209,187 @@ def preflight_failure_record(kind: str, run_id: str, unit_id: str = None, candid
         rec["candidates"] = list(candidates)
         rec["message"] = "candidates: " + ", ".join(candidates)
     return rec
+
+
+# ============================================================================
+# P1c verdict 层:取值校验 / invariant 聚合 / deterministic 执行 / 解析 / 规范化(单一入口)。
+# ============================================================================
+
+_VERDICT_FIELDS = (
+    "review_result", "route_class", "review_target", "review_provider",
+    "deterministic_checks", "dirty_scope", "invariant_coverage",
+)
+_REPAIRABLE_ROUTES = {"IMPLEMENT_DEFECT", "PROCESS_DEFECT"}  # 与 guru_supervise 同值(本模块不 import 它,防循环)
+
+
+def _norm_result(v):
+    return "clean" if v == "final-verification-ready" else v
+
+
+def validate_verdict_values(fields) -> "str|None":
+    """取值校验层①（**所有 provider 共用**）：7 字段存在性 + 枚举 + clean 三通过值一致性。
+    不过 → "MALFORMED_REVIEW_OUTPUT"；通过 → None。不做 provider/deterministic/invariant 重算(那在②)。"""
+    f = dict(fields)
+    f["review_result"] = _norm_result(f.get("review_result"))
+    for k in _VERDICT_FIELDS:
+        if not f.get(k):
+            return "MALFORMED_REVIEW_OUTPUT"
+    if f["review_result"] not in REVIEW_RESULT:
+        return "MALFORMED_REVIEW_OUTPUT"
+    if f["route_class"] not in ROUTE_CLASS:
+        return "MALFORMED_REVIEW_OUTPUT"
+    if f["deterministic_checks"] not in DETERMINISTIC_CHECKS:
+        return "MALFORMED_REVIEW_OUTPUT"
+    if f["dirty_scope"] not in DIRTY_SCOPE:
+        return "MALFORMED_REVIEW_OUTPUT"
+    if f["invariant_coverage"] not in INVARIANT_COVERAGE:
+        return "MALFORMED_REVIEW_OUTPUT"
+    if f["review_result"] == "clean":
+        if not (f["deterministic_checks"] == "passed"
+                and f["dirty_scope"] in ("clean", "isolated")
+                and f["invariant_coverage"] == "all_passed"):
+            return "MALFORMED_REVIEW_OUTPUT"
+    return None
+
+
+def aggregate_invariant_coverage(packet_invariants, reviewer_statuses) -> str:
+    """§4.3 唯一聚合：reviewer_statuses = {invariant_id: {"status","evidence","reason"}}。
+    未知 id → "MALFORMED"；任一 fail → "failed"；缺 status / pass 缺 evidence / N/A 缺 reason → "missing"；
+    否则 "all_passed"。supervisor 从 packet invariants + reviewer statuses 重算,不只信 worker 字符串。"""
+    inv_ids = {inv["invariant_id"] for inv in packet_invariants}
+    for sid in reviewer_statuses:
+        if sid not in inv_ids:
+            return "MALFORMED"
+    for inv in packet_invariants:
+        st = reviewer_statuses.get(inv["invariant_id"])
+        if not st or not st.get("status"):
+            return "missing"
+        status = st["status"]
+        if status == "fail":
+            return "failed"
+        if status == "pass":
+            if not (st.get("evidence") or "").strip():
+                return "missing"
+        elif status == "not_applicable":
+            if not (st.get("reason") or "").strip():
+                return "missing"
+        else:
+            return "MALFORMED"
+    return "all_passed"
+
+
+def run_deterministic_checks(commands, repo_root):
+    """supervisor-side 执行 packet deterministic_checks[]（R3-F1/R5-F2,BHV-008）。
+    返回 (status, results)：空/缺→("missing",[])；全 exit0→"passed"；任一失败/timeout→"failed"。
+    results 逐条 command/cwd/exit_code/timed_out/stdout_summary/duration_ms。"""
+    import shlex
+    import subprocess
+    if not commands:
+        return ("missing", [])
+    results = []
+    status = "passed"
+    for cmd in commands:
+        entry = {"command": cmd, "cwd": repo_root, "timed_out": False}
+        try:
+            proc = subprocess.run(shlex.split(cmd), cwd=repo_root, capture_output=True,
+                                  text=True, errors="replace", timeout=600)
+            entry["exit_code"] = proc.returncode
+            entry["stdout_summary"] = (proc.stdout or "")[-500:]
+            if proc.returncode != 0:
+                status = "failed"
+        except subprocess.TimeoutExpired:
+            entry["exit_code"] = None; entry["timed_out"] = True; entry["stdout_summary"] = ""; status = "failed"
+        except (OSError, ValueError) as exc:
+            entry["exit_code"] = None; entry["stdout_summary"] = f"exec error: {exc}"; status = "failed"
+        results.append(entry)
+    return (status, results)
+
+
+def parse_verdict_block(text: str) -> dict:
+    """从 worker 输出解析行级 key=value：7 字段 + per-invariant
+    invariant_status.<id> / invariant_evidence.<id> / invariant_reason.<id>。
+    返回 fields，per-invariant 收进 fields["_invariants"] = {id: {status,evidence,reason}}。"""
+    fields = {}
+    invariants = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip(); val = val.strip()
+        matched = False
+        for prefix, slot in (("invariant_status.", "status"),
+                             ("invariant_evidence.", "evidence"),
+                             ("invariant_reason.", "reason")):
+            if key.startswith(prefix):
+                invariants.setdefault(key[len(prefix):], {})[slot] = val
+                matched = True
+                break
+        if not matched and key in _VERDICT_FIELDS:
+            fields[key] = val
+    fields["_invariants"] = invariants
+    return fields
+
+
+def normalize_review_record(fields, context):
+    """**唯一规范化入口**（两层 R7-F2）。context:
+    {mode:"supervisor"|"supplemental", packet, implement_provider, supervisor_deterministic_status,
+     run_id, slice_id, review_target, target_paths, channel, worker, timestamp, deterministic_results}。
+    返回 (record, failure_code)。调用方永远 normalize → append_record,绝不拒绝后手写。"""
+    mode = context.get("mode", "supervisor")
+    f = dict(fields)
+    statuses = f.pop("_invariants", {})
+    f["review_result"] = _norm_result(f.get("review_result"))
+    base = {
+        "run_id": context.get("run_id"), "slice_id": context.get("slice_id"),
+        "review_target": context.get("review_target") or f.get("review_target"),
+        "target_paths": context.get("target_paths", []),
+        "review_provider": f.get("review_provider"), "channel": context.get("channel"),
+        "worker": context.get("worker"), "timestamp": context.get("timestamp"),
+        "deterministic_results": context.get("deterministic_results", []),
+    }
+
+    def blocked(code):
+        rec = dict(base)
+        rec.update({"review_result": "blocked", "route_class": "none",
+                    "deterministic_checks": f.get("deterministic_checks"),
+                    "dirty_scope": f.get("dirty_scope"), "invariant_coverage": f.get("invariant_coverage"),
+                    "supervisor_failure": code, "repairable": False})
+        return (rec, code)
+
+    fc = validate_verdict_values(f)  # 层①
+    if fc:
+        return blocked(fc)
+
+    if mode == "supplemental":  # manual/ocr append:只过①,保留补充审计(含 clean),不消费为 required clean
+        rec = dict(base)
+        rec.update({"review_result": f["review_result"], "route_class": f["route_class"],
+                    "deterministic_checks": f["deterministic_checks"], "dirty_scope": f["dirty_scope"],
+                    "invariant_coverage": f["invariant_coverage"], "supervisor_failure": "none",
+                    "repairable": False, "supplemental": True, "required_satisfied": False})
+        return (rec, None)
+
+    # 层②(supervisor 消费 channel check 作 required clean)：provider gating + deterministic 双过 + 聚合重算
+    if f["review_result"] == "clean":
+        prov = (context.get("packet") or {}).get("semantic_review_provider") or {"provider": "opposite"}
+        want, actual, impl = prov.get("provider", "opposite"), f.get("review_provider"), context.get("implement_provider")
+        if want == "opposite":
+            if not actual or actual == impl:
+                return blocked("MALFORMED_REVIEW_OUTPUT")
+        elif want in ("codex", "claude"):
+            if actual != want:
+                return blocked("MALFORMED_REVIEW_OUTPUT")
+        else:  # manual/ocr_optional 作 required 已在 load_packet 判 PACKET_INVALID,此处防御
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        if context.get("supervisor_deterministic_status") != "passed" or f["deterministic_checks"] != "passed":
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        agg = aggregate_invariant_coverage((context.get("packet") or {}).get("invariants", []), statuses)
+        if agg != "all_passed":
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+
+    rec = dict(base)
+    rec.update({"review_result": f["review_result"], "route_class": f["route_class"],
+                "deterministic_checks": f["deterministic_checks"], "dirty_scope": f["dirty_scope"],
+                "invariant_coverage": f["invariant_coverage"], "supervisor_failure": "none",
+                "repairable": f["review_result"] == "findings" and f["route_class"] in _REPAIRABLE_ROUTES})
+    return (rec, None)
