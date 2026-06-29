@@ -2460,3 +2460,39 @@ describe("mergeJsonDefaults", () => {
     expect(merged.hooks.PreToolUse[0]).toEqual(userHook);
   });
 });
+
+describe("sync:guru:check drift gate", () => {
+  const SYNC_SCRIPT = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../scripts/sync-guru-template.js",
+  );
+  const BUNDLED_OVERLAY = GURU_OVERLAY_ROOT;
+
+  function runCheck() {
+    return spawnSync(process.execPath, [SYNC_SCRIPT, "--check"], {
+      encoding: "utf8",
+    });
+  }
+
+  it("passes (exit 0) when bundled mirror matches guru-template/ SSOT", () => {
+    const result = runCheck();
+    // 兜底诊断：失败时打印 drift 列表，提示 `pnpm sync:guru`。
+    expect(result.stdout + result.stderr).toContain("无漂移");
+    expect(result.status).toBe(0);
+  });
+
+  it("detects drift (exit 1) when the bundled mirror diverges from SSOT", () => {
+    // 在 bundle 注入一个源不存在的探针文件 → check 应报「多余(需删除)」。
+    // 验证 gate 真能检测漂移，而非退化成永远通过的注释。finally 必删探针。
+    const probe = path.join(BUNDLED_OVERLAY, "__drift_probe__.md");
+    fs.writeFileSync(probe, "drift probe — must be detected by sync:guru:check\n");
+    try {
+      const result = runCheck();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("漂移");
+      expect(result.stderr).toContain("__drift_probe__.md");
+    } finally {
+      fs.rmSync(probe, { force: true });
+    }
+  });
+});
