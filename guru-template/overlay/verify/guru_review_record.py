@@ -12,8 +12,13 @@ aggregate_invariant_coverage / run_deterministic_checks / parse_verdict_block)�
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import select
+import subprocess
 import sys
+import tempfile
+import time
 
 SCHEMA_VERSION = 1
 
@@ -185,8 +190,431 @@ _RECORD_FIELDS = (
     "run_id", "slice_id", "review_target", "target_paths", "review_provider",
     "route_class", "review_result", "deterministic_checks", "dirty_scope", "invariant_coverage",
     "deterministic_results", "channel", "worker", "timestamp", "supervisor_failure", "repairable",
-    "message", "candidates", "supplemental", "required_satisfied",
+    "message", "candidates", "supplemental", "required_satisfied", "reviewed_target_digest",
 )
+
+
+def _clean_target_paths(target_paths) -> list:
+    if not isinstance(target_paths, list):
+        raise ReviewRecordError("target_paths 必须是数组")
+    cleaned = []
+    for raw in target_paths:
+        if not isinstance(raw, str) or not raw.strip():
+            raise ReviewRecordError("target_paths 必须是非空字符串数组")
+        path = raw.strip().replace("\\", "/")
+        if (
+            not path
+            or "\0" in path
+            or path.startswith("/")
+            or (len(path) >= 2 and path[1] == ":")
+        ):
+            raise ReviewRecordError(f"target path 越界或非法:{raw!r}")
+        while path.startswith("./"):
+            path = path[2:]
+        if (
+            not path
+            or path.startswith("../")
+            or "/../" in f"/{path}/"
+            or path.startswith(":")
+        ):
+            raise ReviewRecordError(f"target path 越界或非法:{raw!r}")
+        path = path.strip("/")
+        if not path:
+            raise ReviewRecordError(f"target path 越界或非法:{raw!r}")
+        cleaned.append(path)
+    return sorted(set(cleaned))
+
+
+_SNAPSHOT_EXCLUDED_PREFIXES = (".trellis/tasks", ".trellis/workspace")
+
+
+def _snapshot_path_excluded(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return any(
+        normalized == prefix or normalized.startswith(prefix + "/")
+        for prefix in _SNAPSHOT_EXCLUDED_PREFIXES
+    )
+
+
+def _target_contains_path(target: str, path: str) -> bool:
+    normalized_target = target.rstrip("/")
+    if normalized_target == ".":
+        return True
+    return path == normalized_target or path.startswith(normalized_target + "/")
+
+
+def _git_ls_files(repo_root: str, targets: list, args: list) -> bytes:
+    try:
+        result = subprocess.run(
+            ["git", "--literal-pathspecs", "ls-files", "-z", *args, "--", *targets],
+            cwd=repo_root,
+            capture_output=True,
+            text=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ReviewRecordError(f"cannot inspect git paths:{exc}") from exc
+    if result.returncode != 0:
+        stderr = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+        raise ReviewRecordError(f"git ls-files failed:{stderr}")
+    return result.stdout
+
+
+def _git_diff_cached_deleted(repo_root: str, targets: list) -> list:
+    try:
+        result = subprocess.run(
+            ["git", "--literal-pathspecs", "diff", "--cached", "--name-only", "--no-renames", "--diff-filter=D", "-z", "--", *targets],
+            cwd=repo_root,
+            capture_output=True,
+            text=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ReviewRecordError(f"cannot inspect staged deletions:{exc}") from exc
+    if result.returncode != 0:
+        stderr = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+        raise ReviewRecordError(f"git diff --cached failed:{stderr}")
+    return [
+        raw.decode("utf-8", errors="surrogateescape")
+        for raw in result.stdout.split(b"\0")
+        if raw
+    ]
+
+
+def _worktree_entries(repo_root: str, targets: list) -> list:
+    root_real = os.path.realpath(repo_root)
+    entries = []
+    paths = set()
+    cached_entries = {}
+    for raw in _git_ls_files(
+        repo_root, targets, ["--stage", "--cached"]
+    ).split(b"\0"):
+        if not raw:
+            continue
+        try:
+            meta, path_raw = raw.split(b"\t", 1)
+            fields = meta.split()
+            mode = fields[0].decode("ascii", errors="replace")
+            oid = fields[1].decode("ascii", errors="replace")
+            stage = fields[2].decode("ascii", errors="replace") if len(fields) > 2 else ""
+            path = path_raw.decode("utf-8", errors="surrogateescape")
+        except (IndexError, ValueError) as exc:
+            raise ReviewRecordError("cannot parse git worktree index entry") from exc
+        if _snapshot_path_excluded(path):
+            continue
+        if stage != "0":
+            raise ReviewRecordError(f"unmerged worktree index entry for {path}: stage {stage}")
+        paths.add(path)
+        cached_entries[path] = (mode, oid)
+    for deleted in _git_diff_cached_deleted(repo_root, targets):
+        if not _snapshot_path_excluded(deleted):
+            paths.add(deleted)
+    untracked = set()
+    for raw in _git_ls_files(
+        repo_root, targets, ["--others", "--exclude-standard"]
+    ).split(b"\0"):
+        if raw:
+            path = raw.decode("utf-8", errors="surrogateescape")
+            if not _snapshot_path_excluded(path):
+                untracked.add(path)
+    for target in targets:
+        if _snapshot_path_excluded(target):
+            continue
+        target_untracked = [
+            p for p in untracked
+            if _target_contains_path(target, p)
+        ]
+        paths.update(target_untracked)
+        if target != "." and target not in paths and not any(_target_contains_path(target, p) for p in paths):
+            paths.add(target)
+    for target in sorted(paths):
+        cached_mode, cached_oid = cached_entries.get(target, (None, None))
+        if cached_mode == "160000":
+            entries.append((target, _worktree_gitlink_oid(repo_root, target, cached_oid), "gitlink"))
+            continue
+        abs_path = os.path.join(repo_root, target)
+        abs_real = os.path.realpath(abs_path)
+        if not os.path.lexists(abs_path):
+            entries.append((target, None, "delete"))
+            continue
+        if os.path.islink(abs_path):
+            entries.append((target, abs_path, "symlink"))
+            continue
+        if abs_real != root_real and not abs_real.startswith(root_real + os.sep):
+            raise ReviewRecordError(f"target path escapes repo root:{target}")
+        if os.path.isfile(abs_path):
+            entries.append((target, abs_path, "file"))
+            continue
+    return sorted(entries, key=lambda item: item[0])
+
+
+def _worktree_git_mode(path: str, kind: str) -> str:
+    if kind == "symlink":
+        return "120000"
+    try:
+        st = os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot stat target file:{path}:{exc}") from exc
+    return "100755" if (st.st_mode & 0o111) else "100644"
+
+
+def _index_entries(repo_root: str, targets: list) -> list:
+    paths = {}
+    for raw in _git_ls_files(repo_root, targets, ["--stage", "--cached"]).split(b"\0"):
+        if not raw:
+            continue
+        try:
+            meta, path_raw = raw.split(b"\t", 1)
+            fields = meta.split()
+            mode = fields[0].decode("ascii", errors="replace")
+            oid = fields[1].decode("ascii", errors="replace")
+            stage = fields[2].decode("ascii", errors="replace") if len(fields) > 2 else ""
+            path = path_raw.decode("utf-8", errors="surrogateescape")
+        except (IndexError, ValueError) as exc:
+            raise ReviewRecordError("cannot parse git index entry") from exc
+        if _snapshot_path_excluded(path):
+            continue
+        if stage != "0":
+            raise ReviewRecordError(f"unmerged staged entry for {path}: stage {stage}")
+        paths[path] = (mode, oid)
+    for deleted in _git_diff_cached_deleted(repo_root, targets):
+        if not _snapshot_path_excluded(deleted):
+            paths[deleted] = (None, None)
+    indexed = set(paths)
+    for target in targets:
+        if _snapshot_path_excluded(target):
+            continue
+        if target != "." and target not in paths and not any(_target_contains_path(target, p) for p in indexed):
+            paths[target] = (None, None)
+    return [(p, *paths[p]) for p in sorted(paths)]
+
+
+def _hash_field(h, label: str, value) -> None:
+    data = value if isinstance(value, bytes) else str(value).encode(
+        "utf-8", errors="surrogateescape"
+    )
+    h.update(label.encode("ascii"))
+    h.update(b":")
+    h.update(str(len(data)).encode("ascii"))
+    h.update(b"\0")
+    h.update(data)
+    h.update(b"\0")
+
+
+def _hash_content_chunks(h, data: bytes) -> None:
+    for offset in range(0, len(data), 1024 * 1024):
+        _hash_field(h, "CONTENT_CHUNK", data[offset:offset + 1024 * 1024])
+
+
+def _hash_file_chunks(h, path: str) -> None:
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                _hash_field(h, "CONTENT_CHUNK", chunk)
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot read target file:{path}:{exc}") from exc
+
+
+def _blob_read_timeout_seconds() -> float:
+    raw = os.environ.get("GURU_REVIEW_RECORD_BLOB_TIMEOUT_SECONDS", "120")
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 120.0
+    return max(15.0, value)
+
+
+def _hash_git_blob_chunks(h, repo_root: str, rel: str, oid: str) -> None:
+    timeout_s = _blob_read_timeout_seconds()
+    if os.name == "nt":
+        with tempfile.TemporaryFile() as stdout_tmp, tempfile.TemporaryFile() as stderr_tmp:
+            try:
+                proc = subprocess.Popen(
+                    ["git", "cat-file", "-p", oid],
+                    cwd=repo_root,
+                    stdout=stdout_tmp,
+                    stderr=stderr_tmp,
+                )
+            except OSError as exc:
+                raise ReviewRecordError(f"cannot read staged blob for {rel}:{exc}") from exc
+            try:
+                rc = proc.wait(timeout=timeout_s)
+            except subprocess.TimeoutExpired as exc:
+                proc.kill()
+                proc.wait()
+                raise ReviewRecordError(f"cannot read staged blob for {rel}:timeout") from exc
+            stdout_tmp.seek(0)
+            for chunk in iter(lambda: stdout_tmp.read(1024 * 1024), b""):
+                _hash_content_chunks(h, chunk)
+            stderr_tmp.seek(0)
+            stderr = stderr_tmp.read(128 * 1024 + 1)
+    else:
+        try:
+            proc = subprocess.Popen(
+                ["git", "cat-file", "-p", oid],
+                cwd=repo_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except OSError as exc:
+            raise ReviewRecordError(f"cannot read staged blob for {rel}:{exc}") from exc
+        try:
+            assert proc.stdout is not None
+            assert proc.stderr is not None
+            if not (hasattr(proc.stdout, "fileno") and hasattr(proc.stderr, "fileno")):
+                data, stderr = proc.communicate(timeout=timeout_s)
+                _hash_content_chunks(h, data)
+                rc = proc.returncode
+                if rc != 0:
+                    message = stderr.decode("utf-8", errors="replace").strip()
+                    raise ReviewRecordError(f"cannot read staged blob for {rel}:{message}")
+                return
+            stdout_fd = proc.stdout.fileno()
+            stderr_fd = proc.stderr.fileno()
+            fds = {stdout_fd: "stdout", stderr_fd: "stderr"}
+            stderr_chunks = []
+            pending = b""
+            deadline = time.monotonic() + timeout_s
+            while fds:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    proc.kill()
+                    proc.wait()
+                    raise ReviewRecordError(f"cannot read staged blob for {rel}:timeout")
+                readable, _, _ = select.select(list(fds), [], [], min(1.0, remaining))
+                if not readable:
+                    continue
+                for fd in readable:
+                    stream_name = fds[fd]
+                    chunk = os.read(fd, 1024 * 1024)
+                    if not chunk:
+                        del fds[fd]
+                        continue
+                    if stream_name == "stdout":
+                        pending += chunk
+                        while len(pending) >= 1024 * 1024:
+                            _hash_field(h, "CONTENT_CHUNK", pending[:1024 * 1024])
+                            pending = pending[1024 * 1024:]
+                    else:
+                        stderr_chunks.append(chunk)
+            if pending:
+                _hash_field(h, "CONTENT_CHUNK", pending)
+            try:
+                rc = proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired as exc:
+                proc.kill()
+                proc.wait()
+                raise ReviewRecordError(f"cannot read staged blob for {rel}:timeout") from exc
+            stderr = b"".join(stderr_chunks)
+        finally:
+            if proc.stdout is not None:
+                proc.stdout.close()
+            if proc.stderr is not None:
+                proc.stderr.close()
+    if rc != 0:
+        message = stderr.decode("utf-8", errors="replace").strip()
+        raise ReviewRecordError(f"cannot read staged blob for {rel}:{message}")
+
+
+def _worktree_gitlink_oid(repo_root: str, rel: str, cached_oid: str | None) -> str:
+    submodule_path = os.path.join(repo_root, rel)
+    if os.path.isdir(submodule_path):
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=submodule_path,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ReviewRecordError(f"cannot read gitlink worktree HEAD for {rel}:{exc}") from exc
+        oid = result.stdout.strip()
+        if result.returncode == 0 and oid and all(ch in "0123456789abcdefABCDEF" for ch in oid):
+            return oid
+        message = (result.stderr or result.stdout or "").strip()
+        raise ReviewRecordError(f"cannot read gitlink worktree HEAD for {rel}:{message}")
+    if cached_oid:
+        return cached_oid
+    raise ReviewRecordError(f"cannot resolve gitlink target for {rel}")
+
+
+def target_snapshot_digest(repo_root: str, target_paths: list, source: str = "worktree") -> str:
+    """Return a content snapshot digest for review target paths.
+
+    `source=worktree` captures the files the implementation reviewer inspected.
+    `source=index` captures the currently staged index for commit gating. The
+    digest is intentionally path+content based rather than only path based, so
+    a clean review cannot be reused after modifying the same target file.
+    """
+    targets = _clean_target_paths(target_paths)
+    if not targets:
+        raise ReviewRecordError("target_paths 为空，无法计算 target snapshot digest")
+    h = hashlib.sha256()
+    h.update(b"guru-target-snapshot-v2\0")
+    if source == "worktree":
+        entries = _worktree_entries(repo_root, targets)
+        for rel, full, kind in entries:
+            _hash_field(h, "PATH", rel)
+            if full is None:
+                _hash_field(h, "STATE", "DELETE")
+                continue
+            if kind == "gitlink":
+                _hash_field(h, "MODE", "160000")
+                _hash_field(h, "TYPE", "GITLINK")
+                _hash_field(h, "CONTENT", full)
+                continue
+            _hash_field(h, "MODE", _worktree_git_mode(full, kind))
+            if kind == "symlink":
+                _hash_field(h, "TYPE", "SYMLINK")
+                try:
+                    link_target = os.readlink(full)
+                except OSError as exc:
+                    raise ReviewRecordError(f"cannot read symlink target:{full}:{exc}") from exc
+                _hash_field(h, "CONTENT", link_target)
+                continue
+            _hash_field(h, "TYPE", "FILE")
+            _hash_file_chunks(h, full)
+        return h.hexdigest()
+    if source == "index":
+        for rel, mode, oid in _index_entries(repo_root, targets):
+            _hash_field(h, "PATH", rel)
+            if not (mode and oid):
+                _hash_field(h, "STATE", "DELETE")
+                continue
+            if mode not in {"100644", "100755", "120000", "160000"}:
+                raise ReviewRecordError(f"unsupported staged mode for {rel}:{mode}")
+            if mode == "160000":
+                _hash_field(h, "MODE", mode)
+                _hash_field(h, "TYPE", "GITLINK")
+                _hash_field(h, "CONTENT", oid)
+                continue
+            _hash_field(h, "MODE", mode)
+            _hash_field(h, "TYPE", "SYMLINK" if mode == "120000" else "FILE")
+            if mode == "120000":
+                try:
+                    blob = subprocess.run(
+                        ["git", "cat-file", "-p", oid],
+                        cwd=repo_root,
+                        capture_output=True,
+                        text=False,
+                        timeout=15,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    raise ReviewRecordError(f"cannot read staged blob for {rel}:{exc}") from exc
+                if blob.returncode == 0:
+                    _hash_field(h, "CONTENT", blob.stdout)
+                else:
+                    stderr = (blob.stderr or b"").decode("utf-8", errors="replace").strip()
+                    raise ReviewRecordError(f"cannot read staged blob for {rel}:{stderr}")
+            else:
+                _hash_git_blob_chunks(h, repo_root, rel, oid)
+        return h.hexdigest()
+    raise ReviewRecordError(f"unknown target snapshot source:{source!r}")
 
 
 def append_record(task_dir: str, record: dict) -> None:
@@ -438,6 +866,8 @@ def normalize_review_record(fields, context):
         "worker": context.get("worker"), "timestamp": context.get("timestamp"),
         "deterministic_results": context.get("deterministic_results", []),
     }
+    if context.get("reviewed_target_digest"):
+        base["reviewed_target_digest"] = context.get("reviewed_target_digest")
 
     def blocked(code):
         rec = dict(base)
@@ -508,7 +938,8 @@ def normalize_review_record(fields, context):
     rec.update({"review_result": f["review_result"], "route_class": f["route_class"],
                 "deterministic_checks": f["deterministic_checks"], "dirty_scope": f["dirty_scope"],
                 "invariant_coverage": f["invariant_coverage"], "supervisor_failure": "none",
-                "repairable": f["review_result"] == "findings" and f["route_class"] in _REPAIRABLE_ROUTES})
+                "repairable": f["review_result"] == "findings" and f["route_class"] in _REPAIRABLE_ROUTES,
+                "required_satisfied": f["review_result"] == "clean"})
     return (rec, None)
 
 

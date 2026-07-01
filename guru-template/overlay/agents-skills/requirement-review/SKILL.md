@@ -52,7 +52,7 @@ description: 用于审核含前端（App/Web）、API-only 或 CLI-only 入口�
 8. 必须核查 `confirmation_status` 与 `open_questions` 是否满足进入概要设计的条件；`P0/P1` 核心能力若仍为 `ai_drafted`，或存在会改变范围/验收口径的高风险 `open_questions`，不得判定“可进入概要设计”；`evidence_ready` 只代表 AI 证据已收敛，不是用户确认，可在假设明确且无高风险待确认问题时放行，但不得当作 `user_confirmed*`。
 9. 本技能只判断核心能力是否达到进入概要设计的文档条件，不替代用户完成业务确认，不得把核心能力状态写成 `user_confirmed` 或 `user_confirmed_with_edits`。
 10. 必须核查 one-question loop 证据：P0/P1、范围、验收、合规、API/数据合同、付费、账号或安全决策若写成 `user_confirmed*`，同一决策条目或直接子块必须至少有 `user_quote` 或 `confirmed_ref`；缺失时按 `REQ_BLOCKER` 输出。
-11. `Brainstorm Evidence` 或需求包若只有字段摘要、无可追踪用户确认引用，按 `PROCESS_DEFECT` 输出；完整 `Question loop log` 是推荐结构，缺失时可提示补强，但只要每条 confirmed decision 有 `user_quote` 或 `confirmed_ref`，不得仅因没有完整日志而阻断。
+11. `Brainstorm Evidence` 必须具备可审计证据。高风险 confirmed decision 必须满足二选一：有结构化 `Question Loop Log`（`oq_id | asked_at | question | recommended_answer | tradeoff | user_quote | resolved_decision | artifact_update`），或有 `Question Policy` 且 `question_policy: evidence_only|mixed` 明确说明哪些问题由证据回答、哪些由用户当前轮确认。缺失时按 `PROCESS_DEFECT` 输出；若把原始 bug/source quote 当作当前轮 `user_quote` 或在 `evidence_only` 下写 `user_confirmed*`，按 `REQ_BLOCKER` 输出。
 12. 若存在多个 high-risk `open_questions`，审核下一步是否只保留一个 `next_question` / `next_action`，并声明其他 OQ 保持 open；缺失时按 one-question loop 流程缺陷处理。
 13. 批量确认只在当前用户消息明确覆盖多个 OQ / decision id 时成立；每个被标记 confirmed 的问题必须有独立 `user_quote` 或 `confirmed_ref` 并记录覆盖的 OQ id / decision id。模糊“继续”“好”“按推荐”不得让多个 OQ 同时变为 confirmed，必须回退到单个 `next_question`。
 14. 历史 `user_confirmed*` 或历史 `user_quote` 只可作为它已经确认的决策的审计证据；不得作为本轮 current-turn approval 来提升其他决策状态、删除仍 open 的高风险 OQ、进入 overview/detail 或运行 `task.py start`。

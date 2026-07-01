@@ -10,6 +10,7 @@
 hooks:
   after_create:
     - "python3 .trellis/scripts/guru/guru_after_create.py"
-  # 阻断式：需求确认 + overview/detail 双 clean review + detail 确认缺一，task.py start 直接失败
+  # 阻断式：需求确认 + overview/detail 双 clean review + detail 确认缺一，task.py start 直接失败。
+  # check-start 只代表 START_READY，不授权实现 worker 或 git commit；后续由 check-implementation/check-commit 分别把关。
   before_start:
-    - "python3 .trellis/scripts/guru/guru_gate.py check"
+    - "python3 .trellis/scripts/guru/guru_gate.py check-start"

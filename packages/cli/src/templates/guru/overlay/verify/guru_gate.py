@@ -29,7 +29,11 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
   python3 guru_gate.py grill-skip <gate> [task_dir] [--via-agent] --user-quote "<跳过理由>"
                                                   # 兼容旧流程：仅 low-risk 非 full 的 overview/detail 可跳过（留原因）
   python3 guru_gate.py status [task_dir]          # 查看需求确认、概要/详细 review 证据、详细确认状态与下一步
-  python3 guru_gate.py check [task_dir]           # before_start 钩子用：结构 Gate + review_runs 证据 + 人工确认快照，任一不满足 exit 2
+  python3 guru_gate.py check-start [task_dir]     # before_start 钩子用：只证明 START_READY（下一步仅 task.py start）
+  python3 guru_gate.py check [task_dir]           # 兼容别名：等同 check-start，不代表实现/提交放行
+  python3 guru_gate.py check-implementation [task_dir]
+                                                  # 实现/检查 worker 前置：START_READY + task.json.status == in_progress
+  python3 guru_gate.py check-commit [task_dir]    # 提交前置：check-implementation + staged scope + implementation review clean
   python3 guru_gate.py digest <gate> [task_dir]   # 输出该阶段产物的确认快照摘要（排查快照失配用）
 
 编号纪律:
@@ -46,9 +50,12 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
 设计约束: 只查结构存在性与引用闭合, 不做语义判断——"判不动的规则不进脚本"。
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re
+import subprocess
 import sys
 
 # 共享风险 helper（单一来源，防两份风险逻辑漂移）：guru_gate 作脚本运行时其目录已在 sys.path[0]，
@@ -56,6 +63,7 @@ import sys
 # guru_gate**（防循环）。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import guru_risk  # noqa: E402
+import guru_review_record  # noqa: E402
 
 PASS, BLOCK = 0, 2
 
@@ -132,6 +140,16 @@ EVIDENCE_READY_STATUS_RE = re.compile(r"(?<!`)\bconfirmation_status\s*[:=：]\s*
 OQ_ID_RE = re.compile(r"\bOQ-\d+\b", re.I)
 DECISION_ID_RE = re.compile(r"\b(?:DEC|REQ|BHV)-\d+\b", re.I)
 NEXT_ACTION_RE = re.compile(r"\b(?:next_question|next_action)\b|下一[个步]|下一问|one-question loop|保持\s*open", re.I)
+QUESTION_LOOP_REQUIRED_HEADERS = {
+    "oq_id",
+    "asked_at",
+    "question",
+    "recommended_answer",
+    "tradeoff",
+    "user_quote",
+    "resolved_decision",
+    "artifact_update",
+}
 
 
 def _logical_blocks(section: str) -> list:
@@ -196,6 +214,46 @@ def _section_between_labels(section: str, label: str) -> str:
             end = j
             break
     return "\n".join(lines[start:end]).strip()
+
+
+def _question_policy(section: str) -> str:
+    match = re.search(
+        r"(?im)^\s*(?:[-*+]\s+)?question_policy\s*[:=：]\s*([^\s`|,;]+)\s*$",
+        section,
+    )
+    return match.group(1).lower() if match else ""
+
+
+def _question_policy_block(section: str) -> str:
+    match = re.search(r"(?im)^#{3,6}\s+Question Policy\s*$", section)
+    if not match:
+        return ""
+    rest = section[match.end():]
+    next_heading = re.search(r"(?m)^#{2,6}\s+", rest)
+    return rest[: next_heading.start()].strip() if next_heading else rest.strip()
+
+
+def _question_loop_headers(section: str) -> set:
+    match = re.search(r"(?im)^#{3,6}\s+Question Loop Log\s*$", section)
+    if not match:
+        return set()
+    for raw_line in section[match.end():].splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if not stripped.startswith("|"):
+            if stripped.startswith("#"):
+                break
+            continue
+        if _is_table_separator(stripped):
+            continue
+        return {cell.strip().lower().strip("`") for cell in _split_table_cells(stripped)}
+    return set()
+
+
+def _question_loop_is_structured(section: str) -> bool:
+    headers = _question_loop_headers(section)
+    return QUESTION_LOOP_REQUIRED_HEADERS.issubset(headers)
 
 
 def _is_negative_evidence_value(value: str) -> bool:
@@ -395,11 +453,53 @@ def _brainstorm_evidence_problems(prd: str) -> list:
 
     product_value = _brainstorm_line_value(section, ("product decisions confirmed",))
     product_block = _section_between_labels(section, "Product decisions confirmed")
-    for block in _positive_decision_blocks(product_block, product_value):
-        if not CONFIRMATION_HINT_RE.search(block):
+    positive_decision_blocks = _positive_decision_blocks(product_block, product_value)
+    policy_block = _question_policy_block(section)
+    policy = _question_policy(policy_block) if policy_block else ""
+    has_structured_loop = _question_loop_is_structured(section)
+    if positive_decision_blocks and not has_structured_loop and not policy:
+        problems.append(
+            "Brainstorm Evidence confirmed decisions need `Question Loop Log` "
+            "or `question_policy: evidence_only|mixed`"
+        )
+    if policy == "evidence_only":
+        if CONFIRMED_STATUS_RE.search(section) or CURRENT_TURN_CONFIRMATION_RE.search(section):
             problems.append(
-                "Brainstorm Evidence Product decisions confirmed needs `user_quote` or "
-                "`confirmed_ref` on the same decision or direct child block"
+                "`question_policy: evidence_only` cannot produce `user_confirmed*` "
+                "or `current-turn-confirmation`; keep decisions as evidence_ready"
+            )
+        if re.search(r"\buser_quote\b\s*[:=：]", product_block, re.I):
+            problems.append(
+                "`question_policy: evidence_only` cannot use original/source quotes "
+                "as `user_quote`; use `source_quote` or `confirmed_ref` instead"
+            )
+    elif policy == "mixed":
+        if not re.search(r"证据已回答|evidence[-_ ]answered|evidence answered", policy_block, re.I):
+            problems.append("`question_policy: mixed` must list which questions were answered by evidence")
+        if not re.search(r"用户已确认|user[-_ ]confirmed|current[-_ ]turn", policy_block, re.I):
+            problems.append("`question_policy: mixed` must list which questions were confirmed by the user in this turn")
+    elif policy and policy not in {"evidence_only", "mixed"}:
+        problems.append("Question Policy question_policy must be `evidence_only` or `mixed`")
+    if re.search(r"(?im)^#{3,6}\s+Question Loop Log\s*$", section) and not has_structured_loop:
+        problems.append(
+            "Question Loop Log must include columns: "
+            + ", ".join(sorted(QUESTION_LOOP_REQUIRED_HEADERS))
+        )
+    evidence_hint_re = (
+        re.compile(r"\b(?:source_quote|confirmed_ref)\b\s*[:=：]", re.I)
+        if policy == "evidence_only"
+        else CONFIRMATION_HINT_RE
+    )
+    for block in positive_decision_blocks:
+        if not evidence_hint_re.search(block):
+            expected_hint = (
+                "`source_quote` or `confirmed_ref`"
+                if policy == "evidence_only"
+                else "`user_quote` or `confirmed_ref`"
+            )
+            problems.append(
+                "Brainstorm Evidence Product decisions confirmed needs "
+                f"{expected_hint} on the same decision or direct child block"
             )
 
     oq_block = _section_between_labels(section, "Open product/scope/risk questions")
@@ -1825,6 +1925,14 @@ def _developer_name() -> str:
         return "unknown"
 
 
+def _turn_ref() -> str:
+    for name in ("CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "TRELLIS_CONTEXT_ID"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return f"{name}={value}"
+    return ""
+
+
 def _gate_mode() -> str:
     """人工 Gate 通道：strict（默认，用户终端 TTY）/ soft（对话确认后 agent --via-agent 代跑）。
 
@@ -2198,9 +2306,19 @@ def _record_confirm(task_dir: str, gate: str, via: str, user_quote=None) -> int:
     record = {
         "confirmed_by": _developer_name(),
         "confirmed_at": _now_iso(),
+        "confirmation_scope": "requirements_gate_only" if gate == "requirements" else "detail_gate_only",
+        "allowed_next_action": "overview_design" if gate == "requirements" else "task_start",
+        "prompt_summary": (
+            "Requirements confirmation allows overview/detail planning only"
+            if gate == "requirements"
+            else "Detail confirmation allows task.py start only"
+        ),
         # 确认快照：check 时比对，产物在确认后被修改 → 要求重新确认
         "artifact_digest": _gate_digest(task_dir, gate),
     }
+    turn_ref = _turn_ref()
+    if turn_ref:
+        record["turn_ref"] = turn_ref
     if isinstance(previous, dict) and isinstance(previous.get("grill"), dict):
         record["grill"] = previous["grill"]
     if via == "agent":
@@ -2395,7 +2513,8 @@ def cmd_confirm(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None
             sys.stderr.write(f"[guru-gate:confirm] {GATE_LABEL[g]}结构 Gate 未过，先修复缺口再确认；本次到此为止。\n")
             return BLOCK
         if g == "requirements":
-            _warn_requirements_review_before_confirm(task_dir)
+            if _block_requirements_review("confirm", task_dir) != PASS:
+                return BLOCK
         if g == "detail":
             for review_gate in REVIEW_GATES:
                 if not _review_state(task_dir, review_gate)["ready"]:
@@ -2479,6 +2598,17 @@ def _requirements_review_problem(task_dir: str) -> str:
         return "requirements adversarial review digest 失配（prd.md 已改动）"
     status = str(review.get("status", "")).strip().lower()
     if status == "clean":
+        provider = str(review.get("provider", "")).strip()
+        current_provider = str(review.get("current_provider", "")).strip()
+        max_severity = str(review.get("max_severity", "")).strip().lower()
+        if review.get("adversarial") is not True:
+            return "requirements adversarial review 记录缺少 adversarial=true"
+        if not provider or not current_provider:
+            return "requirements adversarial review 记录缺少 provider/current_provider"
+        if provider == current_provider:
+            return "requirements adversarial review 不是 opposite-provider"
+        if max_severity not in {"none", "low"}:
+            return "requirements adversarial review 缺少 max_severity=none|low 证据"
         return ""
     if status == "blocked":
         reason = str(review.get("reason", "")).strip() or "requirements review blocked"
@@ -2507,21 +2637,22 @@ def _requirements_review_status_mark(task_dir: str) -> str:
     return f"⚠️ {status}/{fresh} ({provider}){suffix}"
 
 
-def _warn_requirements_review_before_confirm(task_dir: str) -> None:
+def _block_requirements_review(action: str, task_dir: str) -> int:
     problem = _requirements_review_problem(task_dir)
     if not problem:
-        return
+        return PASS
     sys.stderr.write(
-        "[guru-gate:confirm] 警告：当前需求缺少 clean/current 的对抗审查证据；"
+        f"[guru-gate:{action}] 拦截：需求确认前必须先完成 clean/current 的对抗审查证据；"
         f"{problem}。\n"
     )
     sys.stderr.write(
-        "这不会硬阻断人工确认，但不得把 missing/deferred/blocked 当成 clean；"
-        "若要补齐审查，请先运行：\n"
+        "先运行 requirements review；若返回 REQ_BLOCKER/deferred/blocked，修订需求并重跑，"
+        "直到输出 review_result=clean/requirements-ready：\n"
     )
     sys.stderr.write(
         f"  python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements {task_dir}\n"
     )
+    return BLOCK
 
 
 def cmd_status(task_dir_arg) -> int:
@@ -2553,7 +2684,14 @@ def cmd_status(task_dir_arg) -> int:
                 print(f"  ⚠️ {GATE_LABEL[g]} Gate — 确认快照失配（产物已改动），请重新确认")
             else:
                 soft_mark = "（soft：对话确认，agent 代跑）" if s.get("via") == "agent" else ""
-                print(f"  ✅ {GATE_LABEL[g]} Gate — {s['confirmed_by']} @ {s.get('confirmed_at', '?')}{soft_mark}")
+                scope = s.get("confirmation_scope")
+                allowed = s.get("allowed_next_action")
+                scope_mark = (
+                    f" ｜ scope={scope} next={allowed}"
+                    if scope and allowed
+                    else " ｜ legacy confirmation: scope missing, not implementation/commit permission"
+                )
+                print(f"  ✅ {GATE_LABEL[g]} Gate — {s['confirmed_by']} @ {s.get('confirmed_at', '?')}{soft_mark}{scope_mark}")
         else:
             confirm_pending.append(g)
             print(f"  ⬜ {GATE_LABEL[g]} Gate — 未确认")
@@ -2578,8 +2716,12 @@ def cmd_status(task_dir_arg) -> int:
             timestamp = skip.get("timestamp", "?")
             print(f"    - {timestamp} {action}/{provider}: {reason}")
 
-    if "requirements" in confirm_pending:
-        print("下一步：完成需求 review 后，由用户本人在终端运行：")
+    req_review_problem = _requirements_review_problem(task_dir)
+    if req_review_problem:
+        print("下一步：先完成 requirements adversarial review，clean 后才能确认需求：")
+        print(f"  python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements {task_dir}")
+    elif "requirements" in confirm_pending:
+        print("下一步：需求 review 已 clean/current，由用户本人在终端运行：")
         print(f"  python3 .trellis/scripts/guru/guru_gate.py confirm requirements {task_dir}")
     elif review_pending:
         g0 = review_pending[0]
@@ -2614,23 +2756,25 @@ def cmd_status(task_dir_arg) -> int:
         print("下一步：详细设计已双 clean，由用户本人在终端运行：")
         print(f"  python3 .trellis/scripts/guru/guru_gate.py confirm detail {task_dir}")
     else:
-        print("需求确认、概要/详细双 clean review、详细确认均已完成，可 task.py start 进入实现。")
+        print("START_READY：需求确认、概要/详细双 clean review、详细确认均已完成。")
+        print(f"下一步只允许：python3 .trellis/scripts/task.py start {task_dir}")
+        print("注意：START_READY 不授权实现、review worker、git commit 或发布。")
     return PASS
 
 
-def cmd_check(task_dir_arg) -> int:
+def cmd_check_start(task_dir_arg, channel: str = "check-start") -> int:
     task_dir = resolve_task_dir(task_dir_arg)
     if not task_dir:
         # check 是阻断闸门：定位不到任务即拒绝（与"任一不满足 exit 2"的合同一致）。
         # before_start 注入 TASK_JSON_PATH、hook 透传命令参数，正常路径都可定位。
-        sys.stderr.write("[guru-gate:check] 无法定位任务目录，请显式传 task_dir 或确保 TASK_JSON_PATH 已注入\n")
+        sys.stderr.write(f"[guru-gate:{channel}] 无法定位任务目录，请显式传 task_dir 或确保 TASK_JSON_PATH 已注入\n")
         return BLOCK
     # 结构 Gate 复跑：防止"确认后再改产物"带病 start（确认只代表确认时点的状态）
     for gate, checker in (("requirements", check_requirements),
                           ("overview", check_overview),
                           ("detail", check_detail)):
         if checker(task_dir) != PASS:
-            sys.stderr.write(f"[guru-gate:check] 拦截：{GATE_LABEL[gate]}结构 Gate 当前未通过"
+            sys.stderr.write(f"[guru-gate:{channel}] 拦截：{GATE_LABEL[gate]}结构 Gate 当前未通过"
                              f"（产物在 Gate 证据后被修改？）。\n")
             if gate == "overview":
                 sys.stderr.write("修复概要后重新运行 overview review loop 并写入 record-review overview；overview 不走人工确认。\n")
@@ -2640,35 +2784,257 @@ def cmd_check(task_dir_arg) -> int:
                 sys.stderr.write("修复详细设计后重新完成 detail 双 clean review，再请用户人工确认 detail。\n")
             return BLOCK
     states = _gate_states(task_dir)
+    if _block_requirements_review(channel, task_dir) != PASS:
+        return BLOCK
     req = states.get("requirements")
     if not (isinstance(req, dict) and req.get("confirmed_by")):
-        sys.stderr.write(f"[guru-gate:check] 拦截：需求 Gate 未确认（任务 {task_dir}）\n")
+        sys.stderr.write(f"[guru-gate:{channel}] 拦截：需求 Gate 未确认（任务 {task_dir}）\n")
         sys.stderr.write("由用户本人在交互式终端执行：\n")
         sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py confirm requirements {task_dir}\n")
         return BLOCK
     req_digest = req.get("artifact_digest")
     if not req_digest or req_digest != _gate_digest(task_dir, "requirements"):
         reason = "缺确认快照" if not req_digest else "确认快照失配（产物在确认后被修改）"
-        sys.stderr.write(f"[guru-gate:check] 拦截：需求 Gate {reason}\n")
+        sys.stderr.write(f"[guru-gate:{channel}] 拦截：需求 Gate {reason}\n")
         sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py confirm requirements {task_dir}\n")
         return BLOCK
 
     for gate in REVIEW_GATES:
         if not _review_state(task_dir, gate)["ready"]:
-            return _block_review("check", task_dir, gate)
+            return _block_review(channel, task_dir, gate)
 
     detail = states.get("detail")
     if not (isinstance(detail, dict) and detail.get("confirmed_by")):
-        sys.stderr.write(f"[guru-gate:check] 拦截：详细设计 Gate 未确认（任务 {task_dir}）\n")
+        sys.stderr.write(f"[guru-gate:{channel}] 拦截：详细设计 Gate 未确认（任务 {task_dir}）\n")
         sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py confirm detail {task_dir}\n")
         return BLOCK
     detail_digest = detail.get("artifact_digest")
     if not detail_digest or detail_digest != _gate_digest(task_dir, "detail"):
         reason = "缺确认快照" if not detail_digest else "确认快照失配（产物在确认后被修改）"
-        sys.stderr.write(f"[guru-gate:check] 拦截：详细设计 Gate {reason}\n")
+        sys.stderr.write(f"[guru-gate:{channel}] 拦截：详细设计 Gate {reason}\n")
         sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py confirm detail {task_dir}\n")
         return BLOCK
-    print(f"[guru-gate:check] 需求确认 + 概要/详细双 clean review + 详细确认均有效（{task_dir}），放行")
+    print(
+        f"[guru-gate:{channel}] START_READY: 需求确认 + 概要/详细双 clean review + "
+        f"详细确认均有效（{task_dir}）。下一步只允许 task.py start；"
+        "不授权实现、review worker、git commit 或发布。"
+    )
+    return PASS
+
+
+def cmd_check(task_dir_arg) -> int:
+    sys.stderr.write("[guru-gate:check] deprecated alias for check-start; START_READY only.\n")
+    return cmd_check_start(task_dir_arg, "check")
+
+
+def _task_status(task_dir: str) -> str:
+    data = _task_json_of(task_dir)
+    status = data.get("status", "planning")
+    return status if isinstance(status, str) and status else "planning"
+
+
+def cmd_check_implementation(task_dir_arg) -> int:
+    task_dir = resolve_task_dir(task_dir_arg)
+    if not task_dir:
+        sys.stderr.write("[guru-gate:check-implementation] 无法定位任务目录，请显式传 task_dir\n")
+        return BLOCK
+    if cmd_check_start(task_dir, "check-implementation") != PASS:
+        return BLOCK
+    status = _task_status(task_dir)
+    if status != "in_progress":
+        sys.stderr.write(
+            f"[guru-gate:check-implementation] 拦截：task.json.status={status!r}，"
+            "实现/检查 worker 只能在 task.py start 后运行。\n"
+        )
+        if status == "planning":
+            sys.stderr.write(
+                f"当前只达到 START_READY；下一步运行：python3 .trellis/scripts/task.py start {task_dir}\n"
+            )
+        return BLOCK
+    print(f"[guru-gate:check-implementation] IMPLEMENTATION_READY: task status is in_progress（{task_dir}）")
+    return PASS
+
+
+def _repo_root() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return os.getcwd()
+
+
+def _git_staged_paths(root: str) -> tuple[list, str]:
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--name-only", "--no-renames", "-z"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [], f"无法读取 staged changes：{exc}"
+    if result.returncode != 0:
+        return [], f"git diff --cached 失败：{result.stderr.strip()}"
+    paths = [p for p in result.stdout.split("\0") if p]
+    return paths, ""
+
+
+def _task_relative_prefix(task_dir: str, root: str) -> str:
+    try:
+        return os.path.relpath(os.path.realpath(task_dir), os.path.realpath(root)).replace(os.sep, "/").rstrip("/") + "/"
+    except ValueError:
+        return ""
+
+
+def _is_task_artifact_path(path: str, task_dir: str, root: str) -> bool:
+    normalized = path.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if (
+        normalized == ".trellis/tasks"
+        or normalized.startswith(".trellis/tasks/")
+        or normalized == ".trellis/workspace"
+        or normalized.startswith(".trellis/workspace/")
+    ):
+        return True
+    task_prefix = _task_relative_prefix(task_dir, root)
+    if task_prefix and normalized.startswith(task_prefix):
+        return True
+    return False
+
+
+def _latest_jsonl_record(path: str) -> tuple:
+    latest = None
+    if not os.path.isfile(path):
+        return None, "implementation review record missing"
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for lineno, line in enumerate(fh, 1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    row = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    return None, f"implementation review record line {lineno} invalid JSON: {exc}"
+                if isinstance(row, dict):
+                    latest = row
+    except OSError as exc:
+        return None, f"cannot read implementation review record: {exc}"
+    if latest is None:
+        return None, "implementation review record empty"
+    return latest, ""
+
+
+def _path_in_targets(path: str, target_paths: list) -> bool:
+    normalized = path.replace("\\", "/")
+    for raw_target in target_paths:
+        if not isinstance(raw_target, str) or not raw_target.strip():
+            continue
+        target = raw_target.replace("\\", "/").strip().strip("/")
+        while target.startswith("./"):
+            target = target[2:]
+        if target == ".":
+            return True
+        if normalized == target or normalized.startswith(target + "/"):
+            return True
+    return False
+
+
+def _implementation_review_problem(record, staged_paths: list, task_dir: str, root: str) -> str:
+    if not isinstance(record, dict):
+        return "implementation review record missing"
+    verdict_problem = guru_review_record.validate_verdict_values(record)
+    if verdict_problem:
+        return "latest implementation review is malformed or incomplete; rerun implement-check for a complete clean verdict"
+    if str(record.get("review_result", "")).strip().lower() != "clean":
+        return f"latest implementation review is not clean: review_result={record.get('review_result')!r}"
+    if str(record.get("route_class", "none")).strip() not in {"", "none"}:
+        return f"latest implementation review route_class is not none: {record.get('route_class')!r}"
+    if str(record.get("supervisor_failure", "none")).strip() not in {"", "none"}:
+        return f"latest implementation review has supervisor_failure={record.get('supervisor_failure')!r}"
+    if record.get("required_satisfied") is not True:
+        return "latest implementation review did not satisfy required semantic provider"
+    for key, bad_values in (
+        ("deterministic_checks", {"failed", "missing"}),
+        ("dirty_scope", {"invalid"}),
+        ("invariant_coverage", {"failed", "missing"}),
+    ):
+        value = str(record.get(key, "")).strip().lower()
+        if value in bad_values:
+            return f"latest implementation review has {key}={value}"
+    target_paths = record.get("target_paths")
+    task_artifact_paths = [
+        path for path in staged_paths
+        if _is_task_artifact_path(path, task_dir, root)
+    ]
+    if task_artifact_paths:
+        return "staged task artifacts are not covered by latest implementation review: " + ", ".join(task_artifact_paths[:5])
+    code_paths = [
+        path for path in staged_paths
+        if path not in task_artifact_paths
+    ]
+    if not code_paths:
+        return "staged changes contain only task/workspace artifacts; this is not a Guru implementation commit"
+    if not isinstance(target_paths, list) or not target_paths:
+        return "latest implementation review has no target_paths; cannot prove staged scope belongs to reviewed slice"
+    out_of_scope = [path for path in code_paths if not _path_in_targets(path, target_paths)]
+    if out_of_scope:
+        return "staged paths outside latest reviewed target_paths: " + ", ".join(out_of_scope[:5])
+    reviewed_digest = record.get("reviewed_target_digest")
+    if not isinstance(reviewed_digest, str) or not reviewed_digest.strip():
+        return "latest implementation review has no reviewed_target_digest; rerun implement-check before commit"
+    try:
+        staged_digest = guru_review_record.target_snapshot_digest(root, target_paths, "index")
+    except guru_review_record.ReviewRecordError as exc:
+        return f"cannot compute staged target digest: {exc}"
+    if staged_digest != reviewed_digest:
+        return "staged target content differs from latest clean implementation review; rerun implement-check"
+    return ""
+
+
+def cmd_check_commit(task_dir_arg) -> int:
+    task_dir = resolve_task_dir(task_dir_arg)
+    if not task_dir:
+        sys.stderr.write("[guru-gate:check-commit] 无法定位任务目录，请显式传 task_dir\n")
+        return BLOCK
+    if cmd_check_implementation(task_dir) != PASS:
+        sys.stderr.write("[guru-gate:check-commit] 提交被拒：实现期 gate 未通过。\n")
+        return BLOCK
+    root = _repo_root()
+    staged_paths, staged_error = _git_staged_paths(root)
+    if staged_error:
+        sys.stderr.write(f"[guru-gate:check-commit] {staged_error}\n")
+        return BLOCK
+    if not staged_paths:
+        sys.stderr.write("[guru-gate:check-commit] 拦截：没有 staged changes\n")
+        return BLOCK
+    review_path = os.path.join(task_dir, "review-records", "implementation-reviews.jsonl")
+    latest_record, read_error = _latest_jsonl_record(review_path)
+    if read_error:
+        sys.stderr.write(f"[guru-gate:check-commit] {read_error}\n")
+        return BLOCK
+    problem = _implementation_review_problem(latest_record, staged_paths, task_dir, root)
+    if problem:
+        sys.stderr.write(f"[guru-gate:check-commit] 拦截：{problem}\n")
+        sys.stderr.write(
+            "下一步：运行 guru_supervise.py implement-check 产出 clean implementation review record，"
+            "并只 stage 已审查 target_paths 内的实现文件。\n"
+        )
+        return BLOCK
+    print(f"[guru-gate:check-commit] COMMIT_READY: staged scope matches latest clean implementation review（{task_dir}）")
     return PASS
 
 
@@ -2688,6 +3054,8 @@ def auto(task_dir_arg) -> int:
         rc = check_requirements(task_dir)
         if rc != PASS:
             return rc
+        if _block_requirements_review("auto", task_dir) != PASS:
+            return BLOCK
         req = _gate_states(task_dir).get("requirements")
         if not (
             isinstance(req, dict)
@@ -2720,6 +3088,8 @@ def auto(task_dir_arg) -> int:
         rc = fn(task_dir)
         if rc != PASS:
             return rc
+    if _block_requirements_review("auto", task_dir) != PASS:
+        return BLOCK
     req = _gate_states(task_dir).get("requirements")
     if not (
         isinstance(req, dict)
@@ -2812,8 +3182,14 @@ def main() -> int:
         return PASS
     if cmd == "status":
         return cmd_status(arg)
+    if cmd == "check-start":
+        return cmd_check_start(arg)
     if cmd == "check":
         return cmd_check(arg)
+    if cmd == "check-implementation":
+        return cmd_check_implementation(arg)
+    if cmd == "check-commit":
+        return cmd_check_commit(arg)
     if cmd == "trace-matrix":
         if not arg or not os.path.isdir(arg):
             sys.stderr.write("[guru-gate:trace-matrix] 需要有效 task_dir 参数\n")

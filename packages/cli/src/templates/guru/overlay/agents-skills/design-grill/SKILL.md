@@ -14,7 +14,7 @@ description: 兼容用 Guru 对抗式拷问会话。新流程的 Domain Grill �
 - 能从代码或 spec 找到答案的问题不要问用户，先自己读取证据。
 - 本 skill 不从零生成需求或设计，不给正式 Gate 结论；它只在用户显式要求、旧任务迁移或兼容审计时磨稿、排雷、回写决策。
 - 新流程的 Domain Grill 归属于 `trellis-brainstorm` 需求发现阶段；不要把本 skill 当作 requirements / overview / detail 的放行前置。
-- `guru_gate.py check` / `auto` 不依赖本 skill；overview / detail 的放行凭据来自 `record-review`，requirements / detail 的硬边界来自人类 `confirm`。
+- `guru_gate.py check-start` / `auto` 不依赖本 skill；`guru_gate.py check` 只是 `check-start` 的兼容别名。overview / detail 的放行凭据来自 `record-review`，requirements / detail 的硬边界来自人类 `confirm`。
 
 ## 拷问对照物
 

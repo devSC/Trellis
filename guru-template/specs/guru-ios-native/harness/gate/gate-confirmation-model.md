@@ -10,7 +10,7 @@
 - `overview` - 概要设计 Gate：结构检查 + 当前 digest 下两次 clean review（至少一次 opposite-provider adversarial clean），自动通过，不需要用户确认。
 - `detail` - 详细设计 Gate：结构检查 + 当前 digest 下两次 clean review（至少一次 opposite-provider adversarial clean），随后用户确认。
 
-实现 Gate、代码质量检查、测试证据和 commit 前审核属于实现/审核阶段，由 implementation trace 合同、平台 golden-path、实现 review skill、`guru_supervise.py implement-check` 与 `trellis-check` 承载。
+实现 Gate、代码质量检查、测试证据和 commit 前审核属于实现/审核阶段，由 implementation trace 合同、平台 golden-path、实现 review skill、`guru_supervise.py implement-check` 与 `trellis-check` 承载。planning Gate 的成功状态只叫 `START_READY`，只能授权下一步运行 `task.py start`。
 
 ## 2. 机制边界
 
@@ -21,6 +21,9 @@
 | requirements adversarial review | `confirm requirements` 前的 opposite-provider 需求复核：先查 `prd.md`、正式需求包、task metadata/jsonl、task context 与 repo evidence，再输出 `route_class=REQ_BLOCKER` 或 `review_result=clean/requirements-ready`。 | 不写 `review_runs`，不形成 requirements clean streak，不替代人工确认。 |
 | review evidence | overview/detail review worker 把当前 artifact digest 下的 clean/findings 结果写入 `task.json.guru_gates.review_runs`；双 clean 中至少一条 clean reviewer 必须包含 `adversarial`。 | 不替代 requirements/detail 的人工确认。 |
 | confirm | 用户确认 requirements 或 detail 当前产物可以作为后续输入，并写入确认快照。 | 不替代结构 Gate 或 review evidence。 |
+| `check-start` | 复跑 requirements/overview/detail 结构 Gate、review evidence 与人工确认快照。 | 只产生 `START_READY`，不替代 `task.py start`、实现 Gate 或 commit Gate。 |
+| `check-implementation` | 在 `check-start` 仍有效的基础上要求 `task.json.status == in_progress`。 | 只授权实现/质检 worker 启动，不授权 commit。 |
+| `check-commit` | 在 `check-implementation` 通过后检查 staged scope 与最新 clean implementation review record。 | 只说明当前 staged scope 可提交，仍需用户明确 commit 确认。 |
 
 完整 planning 跃迁顺序：
 
@@ -30,7 +33,7 @@ overview writing -> overview review/fix loop -> two clean current-digest reviews
 detail writing -> detail review/fix loop -> two clean current-digest reviews (one adversarial opposite-provider clean) -> guru_gate.py confirm detail
 ```
 
-`guru.supervision.adversarial_enabled: false` 可临时关闭 `guru_supervise.py --adversarial ...` 的 opposite-provider worker；关闭后 requirements review 记录为 `deferred`，overview/detail 不会得到 adversarial clean 证据，`status`/`check` 仍按缺口提示。
+`guru.supervision.adversarial_enabled: false` 可临时关闭 `guru_supervise.py --adversarial ...` 的 opposite-provider worker；关闭后 requirements review 记录为 `deferred`，overview/detail 不会得到 adversarial clean 证据，`confirm requirements` / `check-start` 与 overview/detail review Gate 都必须按缺口硬阻断。
 
 `confirm overview` 不是正常路径，必须失败并提示改用 `record-review overview`。
 
@@ -42,6 +45,21 @@ Guru planning 只保留两个阶段性人工确认：
 - `detail`：在 overview/detail 都已有当前 digest 双 clean review（各自至少一次 opposite-provider adversarial clean）后，确认可编码合同、测试映射、不得补造清单和实现切片已定。
 
 硬边界确认另行存在：commit、archive、finish-work、publish、外部系统写入和其他不可逆操作仍必须等待用户明确确认。
+
+`guru_gate.py confirm` 写入的确认记录必须带作用域：
+
+```json
+{
+  "confirmation_scope": "requirements_gate_only|detail_gate_only",
+  "allowed_next_action": "overview_design|task_start",
+  "prompt_summary": "...",
+  "turn_ref": "..."
+}
+```
+
+- `requirements` 确认的上限是继续概要/详细 planning，不允许开始实现。
+- `detail` 确认的上限是运行 `task.py start`，不允许开始实现 worker 或 commit。
+- 旧任务缺少这些字段时只能按 legacy confirmation 显示；重新确认必须写入新字段。
 
 ## 4. Gate 覆盖范围
 
@@ -129,7 +147,7 @@ python3 .trellis/scripts/guru/guru_gate.py record-review overview <task_dir> \
 - `findings` 必须是 `max_severity=medium|high|critical`，且必须写 `finding_class`。
 - `finding_class` 只用于路由：`REQ_BLOCKER`、`OVERVIEW_DEFECT`、`DETAIL_DEFECT`、`IMPLEMENT_DEFECT`、`PROCESS_DEFECT`。
 - 两次 clean 必须来自当前 digest 下两个不同 `run_id`，且当前 clean streak 中至少一条 clean 记录的 `reviewer` 包含 `adversarial`（推荐形如 `clean-context-adversarial-<provider>`）。
-- requirements 阶段通过需求发现 / Domain Grill / adversarial review 暴露 blocker 或 clean/ready 结论；requirements review 不写 `review_runs`，不得添加 requirements clean streak，且不改变 `confirm requirements` 语义。
+- requirements 阶段通过需求发现 / Domain Grill / adversarial review 暴露 blocker 或 clean/ready 结论；requirements review 不写 `review_runs`，不得添加 requirements clean streak，但 `confirm requirements` / `check-start` 必须要求当前 digest 的 clean/current requirements review。
 - medium+ findings 会打断当前 clean streak；后续需要重新得到两个不同 run-id 的 clean。
 
 ## 7. Automation Driver
@@ -157,17 +175,18 @@ stop conditions：
 实现阶段使用：
 
 ```bash
+python3 .trellis/scripts/guru/guru_gate.py check-implementation <task_dir>
 python3 .trellis/scripts/guru/guru_supervise.py implement-check <task_dir>
 ```
 
-它复用实现 writing skill 与实现 review skill，干净后停在最终验证和 hard-boundary confirmation，不写新的 implementation `guru_gates`。
+`guru_supervise.py implement|check|implement-check` 必须在启动 worker 前自动执行 `check-implementation`；若任务仍是 `planning`，fail-closed，不启动 worker。它复用实现 writing skill 与实现 review skill，干净后停在最终验证和 hard-boundary confirmation，不写新的 implementation `guru_gates`。实现 review record 由 `review-records/implementation-reviews.jsonl` 承载，commit gate 读取最新 clean record。
 
 ## 8. Legacy design-grill 兼容
 
 旧 `grill-done` / `grill-skip` 命令可以保留，用来读取或记录历史项目的兼容审计信息。但在新模型下：
 
 - overview/detail 的放行不得依赖旧 grill 记录。
-- 旧 grill 记录不得 unblock 或 block `guru_gate.py auto` / `guru_gate.py check`。
+- 旧 grill 记录不得 unblock 或 block `guru_gate.py auto` / `guru_gate.py check-start`；`guru_gate.py check` 只是 `check-start` 的兼容别名，不能被解释成实现或提交许可。
 - `status` 可以把旧 grill 状态显示为 legacy context，但下一步提示必须以 requirements confirm、review_runs、detail confirm 为准。
 
 Domain Grill 的长期位置是需求发现阶段，而不是 overview/detail 之后的额外 Gate。
@@ -179,7 +198,7 @@ Domain Grill 的长期位置是需求发现阶段，而不是 overview/detail �
 - `strict`：默认模式。用户本人在交互式终端运行 `guru_gate.py confirm requirements|detail`；agent 不得代跑。
 - `soft`：用户在本轮对话中明确确认后，agent 可以用 `--via-agent --user-quote "<用户确认原话>"` 代跑，并在 `task.json` 留审计痕迹。
 
-无论 strict 还是 soft，结构 Gate 复跑、review digest、confirm artifact digest、`task.py start` 前的 `guru_gate.py check` 都必须生效。
+无论 strict 还是 soft，结构 Gate 复跑、review digest、confirm artifact digest、`task.py start` 前的 `guru_gate.py check-start` 都必须生效。`check-start` 通过后的状态名是 `START_READY`：下一步只允许 `task.py start`；实现 worker 必须再过 `check-implementation`，提交必须再过 `check-commit`。
 
 ## 10. 失配恢复流程
 
@@ -196,10 +215,15 @@ python3 .trellis/scripts/guru/guru_gate.py status <task_dir>
 3. overview 缺当前 digest 双 clean或缺 adversarial clean：运行 `guru_supervise.py overview <task_dir>`，缺 adversarial 时运行 `guru_supervise.py --adversarial overview <task_dir>`。
 4. detail 缺当前 digest 双 clean或缺 adversarial clean：运行 `guru_supervise.py detail <task_dir>`，缺 adversarial 时运行 `guru_supervise.py --adversarial detail <task_dir>`。
 5. detail 未确认或确认快照失配：双 clean（含 adversarial）后重新运行 `confirm detail`。
-6. `guru_gate.py check <task_dir>` 通过后才允许 `task.py start`。
+6. `guru_gate.py check-start <task_dir>` 通过后只允许 `task.py start`；不得把 `START_READY` 当成实现、review worker、commit 或发布许可。
+7. 需要启动实现/质检 worker：确认 `task.py start` 已把 `task.json.status` 置为 `in_progress`，并运行 `guru_gate.py check-implementation <task_dir>`。
+8. 需要提交：只 stage 本任务实现范围内的文件，确保最新 `review-records/implementation-reviews.jsonl` 为 clean，并运行 `guru_gate.py check-commit <task_dir>`。
+9. `guru_gate.py check <task_dir>` 仅为旧命令兼容 alias，语义等同 `check-start`。
 
 最终检查：
 
 ```bash
-python3 .trellis/scripts/guru/guru_gate.py check <task_dir>
+python3 .trellis/scripts/guru/guru_gate.py check-start <task_dir>
+python3 .trellis/scripts/guru/guru_gate.py check-implementation <task_dir>
+python3 .trellis/scripts/guru/guru_gate.py check-commit <task_dir>
 ```

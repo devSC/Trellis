@@ -78,6 +78,10 @@ Given 网络异常 When 点击 Then 提示重试
   - DEC-001: fixture behavior and acceptance criteria confirmed
     - user_quote: "fixture confirms DEC-001"
     - confirmed_ref: fixture-session DEC-001
+### Question Loop Log
+| oq_id | asked_at | question | recommended_answer | tradeoff | user_quote | resolved_decision | artifact_update |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| OQ-001 | 2026-06-30 | Confirm fixture behavior and acceptance criteria? | Confirm DEC-001 | Without this, the fixture cannot exercise the user-confirmed path | fixture confirms DEC-001 | DEC-001 | prd.md |
 - Open product/scope/risk questions: none — fixture explicitly declares no unresolved questions
 EOF
   cat > "$d/design.md" <<'EOF'
@@ -112,6 +116,12 @@ expect_grep() { # expect_grep <desc> <pattern> <cmd...>
   out=$("$@" 2>&1)
   if printf '%s' "$out" | grep -q "$pat"; then pass=$((pass+1)); echo "PASS  $desc"
   else failn=$((failn+1)); echo "FAIL  $desc (未匹配: $pat)"; echo "$out" | head -4; fi
+}
+expect_rc_grep() { # expect_rc_grep <desc> <want_rc> <pattern> <cmd...>
+  desc="$1"; want="$2"; pat="$3"; shift 3
+  out=$("$@" 2>&1); rc=$?
+  if [ "$rc" = "$want" ] && printf '%s' "$out" | grep -Eq "$pat"; then pass=$((pass+1)); echo "PASS  $desc"
+  else failn=$((failn+1)); echo "FAIL  $desc (want=$want got=$rc 未匹配: $pat)"; echo "$out" | head -4; fi
 }
 
 G=$(mk_good)
@@ -191,6 +201,7 @@ for g in ("requirements", "detail"):
     entry["artifact_digest"] = digest(g)
 open(p, "w", encoding="utf-8").write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 PY
+  write_requirements_review "$1" clean "review_result=clean/requirements-ready"
 }
 
 write_req_confirm() { # write_req_confirm <task_dir>
@@ -207,6 +218,7 @@ gates = data.setdefault("guru_gates", {})
 gates["requirements"] = {"confirmed_by": "tester", "confirmed_at": "x", "artifact_digest": dig}
 open(p, "w", encoding="utf-8").write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 PY
+  write_requirements_review "$1" clean "review_result=clean/requirements-ready"
 }
 
 write_requirements_review() { # write_requirements_review <task_dir> <status> [reason]
@@ -228,6 +240,7 @@ gates["requirements_review"] = {
     "current_provider": "codex",
     "adversarial": True,
     "status": status,
+    "max_severity": "none" if status == "clean" else "",
     "artifact_digest": gg._gate_digest(task_dir, "requirements"),
     "run_id": "requirements-review-fixture",
     "channel": "guru-fixture",
@@ -359,6 +372,7 @@ if printf '%s' "$out" | grep -q "legacy grill present:done/current (ignored by c
   pass=$((pass+1)); echo "PASS  status legacy grill 仅作兼容展示"
 else failn=$((failn+1)); echo "FAIL  status legacy grill 展示误导"; printf '%s\n' "$out" | tail -4; fi
 SS3=$(make_gate_case status-next-review)
+write_requirements_review "$SS3" clean "review_result=clean/requirements-ready"
 env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$SS3" --via-agent --user-quote "确认需求" >/dev/null
 out=$(python3 "$GATE" status "$SS3" 2>&1)
 if printf '%s' "$out" | grep -q "record-review overview"; then
@@ -373,16 +387,267 @@ expect_grep "status 显示 requirements adversarial stale" "需求对抗 Review 
 
 RR_CONFIRM_MISSING=$(make_gate_case requirements-review-confirm-missing)
 out=$(env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RR_CONFIRM_MISSING" --via-agent --user-quote "用户接受风险并确认需求" 2>&1); rc=$?
-if [ "$rc" = 0 ] && printf '%s' "$out" | grep -q "缺少 clean/current 的对抗审查证据"; then
-  pass=$((pass+1)); echo "PASS  confirm requirements 缺对抗审查时警告但不硬阻断"
-else failn=$((failn+1)); echo "FAIL  confirm requirements 缺对抗审查警告/放行异常 (rc=$rc)"; echo "$out" | head -5; fi
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "需求确认前必须先完成 clean/current"; then
+  pass=$((pass+1)); echo "PASS  confirm requirements 缺对抗审查时硬阻断"
+else failn=$((failn+1)); echo "FAIL  confirm requirements 缺对抗审查应硬阻断 (rc=$rc)"; echo "$out" | head -5; fi
 
 RR_CONFIRM_DEFERRED=$(make_gate_case requirements-review-confirm-deferred)
 write_requirements_review "$RR_CONFIRM_DEFERRED" deferred "provider launch failed"
 out=$(env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RR_CONFIRM_DEFERRED" --via-agent --user-quote "用户接受 deferred 风险" 2>&1); rc=$?
-if [ "$rc" = 0 ] && printf '%s' "$out" | grep -q "requirements adversarial review deferred"; then
-  pass=$((pass+1)); echo "PASS  confirm requirements deferred 对抗审查时警告但不硬阻断"
-else failn=$((failn+1)); echo "FAIL  confirm requirements deferred 警告/放行异常 (rc=$rc)"; echo "$out" | head -5; fi
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "requirements adversarial review deferred"; then
+  pass=$((pass+1)); echo "PASS  confirm requirements deferred 对抗审查时硬阻断"
+else failn=$((failn+1)); echo "FAIL  confirm requirements deferred 应硬阻断 (rc=$rc)"; echo "$out" | head -5; fi
+
+RR_CONFIRM_BLOCKED=$(make_gate_case requirements-review-confirm-blocked)
+write_requirements_review "$RR_CONFIRM_BLOCKED" blocked "route_class=REQ_BLOCKER"
+out=$(env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RR_CONFIRM_BLOCKED" --via-agent --user-quote "x" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "requirements adversarial review blocked"; then
+  pass=$((pass+1)); echo "PASS  confirm requirements blocked 对抗审查时硬阻断"
+else failn=$((failn+1)); echo "FAIL  confirm requirements blocked 应硬阻断 (rc=$rc)"; echo "$out" | head -5; fi
+
+RR_CHECK_MISSING=$(make_gate_case requirements-review-check-missing)
+write_confirms_all "$RR_CHECK_MISSING"
+write_reviews_all "$RR_CHECK_MISSING"
+python3 - "$RR_CHECK_MISSING/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d.get("guru_gates", {}).pop("requirements_review", None)
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+expect "check-start 缺 requirements review 时硬阻断" 2 python3 "$GATE" check-start "$RR_CHECK_MISSING"
+
+RR_CHECK_STALE=$(make_gate_case requirements-review-check-stale)
+write_new_gate_ready "$RR_CHECK_STALE"
+printf '\n需求补充：让 requirements review digest stale。\n' >> "$RR_CHECK_STALE/prd.md"
+python3 - "$GATE" "$RR_CHECK_STALE/task.json" "$RR_CHECK_STALE" <<'PY'
+import json, subprocess, sys
+gate, task_json, task_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+d = json.load(open(task_json, encoding="utf-8"))
+d["guru_gates"]["requirements"]["artifact_digest"] = subprocess.run(
+    ["python3", gate, "digest", "requirements", task_dir],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout.strip()
+open(task_json, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+out=$(python3 "$GATE" check-start "$RR_CHECK_STALE" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "requirements adversarial review digest 失配"; then
+  pass=$((pass+1)); echo "PASS  check-start requirements review stale 时硬阻断"
+else failn=$((failn+1)); echo "FAIL  check-start requirements review stale 应硬阻断 (rc=$rc)"; echo "$out" | head -5; fi
+RR_META_NO_ADV=$(make_gate_case requirements-review-no-adversarial)
+write_new_gate_ready "$RR_META_NO_ADV"
+python3 - "$RR_META_NO_ADV/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d["guru_gates"]["requirements_review"].pop("adversarial", None)
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+expect_rc_grep "check-start requirements review clean 但缺 adversarial=true 时硬阻断" 2 "adversarial=true" python3 "$GATE" check-start "$RR_META_NO_ADV"
+RR_META_NO_PROVIDER=$(make_gate_case requirements-review-no-provider)
+write_new_gate_ready "$RR_META_NO_PROVIDER"
+python3 - "$RR_META_NO_PROVIDER/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d["guru_gates"]["requirements_review"].pop("provider", None)
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+expect_rc_grep "check-start requirements review clean 但缺 provider 时硬阻断" 2 "provider/current_provider" python3 "$GATE" check-start "$RR_META_NO_PROVIDER"
+RR_META_MEDIUM=$(make_gate_case requirements-review-medium)
+write_new_gate_ready "$RR_META_MEDIUM"
+python3 - "$RR_META_MEDIUM/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d["guru_gates"]["requirements_review"]["max_severity"] = "medium"
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+expect_rc_grep "check-start requirements review clean 但 max_severity=medium 时硬阻断" 2 "max_severity=none|low" python3 "$GATE" check-start "$RR_META_MEDIUM"
+RR_META_NO_SEVERITY=$(make_gate_case requirements-review-no-severity)
+write_new_gate_ready "$RR_META_NO_SEVERITY"
+python3 - "$RR_META_NO_SEVERITY/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d["guru_gates"]["requirements_review"].pop("max_severity", None)
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+expect_rc_grep "check-start requirements review clean 但缺 max_severity 时硬阻断" 2 "max_severity=none|low" python3 "$GATE" check-start "$RR_META_NO_SEVERITY"
+RR_META_SAME_PROVIDER=$(make_gate_case requirements-review-same-provider)
+write_new_gate_ready "$RR_META_SAME_PROVIDER"
+python3 - "$RR_META_SAME_PROVIDER/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d["guru_gates"]["requirements_review"]["provider"] = d["guru_gates"]["requirements_review"]["current_provider"]
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+expect_rc_grep "check-start requirements review clean 但非 opposite-provider 时硬阻断" 2 "opposite-provider" python3 "$GATE" check-start "$RR_META_SAME_PROVIDER"
+if PYTHONPATH="$HERE/.." python3 - <<'PY'
+import guru_supervise as gs
+status, reason = gs._requirements_review_verdict(
+    "route_class=none\nreview_result=clean/requirements-ready\nroute_class=REQ_BLOCKER missing boundary\n"
+)
+assert status == "blocked", (status, reason)
+assert reason == "route_class=REQ_BLOCKER", reason
+PY
+then pass=$((pass+1)); echo "PASS  requirements adversarial 矛盾输出 route_class 优先阻断"
+else failn=$((failn+1)); echo "FAIL  requirements adversarial 矛盾输出不应按 clean 放行"; fi
+if PYTHONPATH="$HERE/.." python3 - <<'PY'
+import guru_supervise as gs
+status, reason = gs._requirements_review_verdict(
+    "example: route_class=REQ_BLOCKER means clarify requirements\n"
+    "route_class=none\n"
+    "review_result=clean/requirements-ready\n"
+)
+assert status == "clean", (status, reason)
+status, reason = gs._requirements_review_verdict(
+    "instructions echoed: review_result=clean/requirements-ready\n"
+    "route_class=none\n"
+)
+assert status == "deferred", (status, reason)
+PY
+then pass=$((pass+1)); echo "PASS  requirements adversarial final route_class=none 不被历史示例误阻断"
+else failn=$((failn+1)); echo "FAIL  requirements adversarial 不应扫描历史示例 route_class 阻断 clean"; fi
+if PYTHONPATH="$HERE/.." python3 - <<'PY'
+import guru_supervise as gs
+status, reason = gs._requirements_review_verdict(
+    "route_class=none\n"
+    "review_result=clean/requirements-ready\n"
+    "finding: REQ_BLOCKER still unresolved\n"
+)
+assert status == "blocked", (status, reason)
+assert "REQ_BLOCKER" in reason, reason
+status, reason = gs._requirements_review_verdict(
+    "finding: REQ_BLOCKER still unresolved\n"
+    "route_class=none\n"
+    "review_result=clean/requirements-ready\n"
+)
+assert status == "clean", (status, reason)
+status, reason = gs._requirements_review_verdict(
+    "review_result=clean/requirements-ready\n"
+    "finding: REQ_BLOCKER still unresolved\n"
+)
+assert status == "blocked", (status, reason)
+assert "REQ_BLOCKER" in reason, reason
+status, reason = gs._requirements_review_verdict(
+    "route_class=none\n"
+    "no REQ_BLOCKER found\n"
+    "review_result=clean/requirements-ready\n"
+)
+assert status == "clean", (status, reason)
+PY
+then pass=$((pass+1)); echo "PASS  requirements adversarial 裸 REQ_BLOCKER 不得借 clean marker 放行"
+else failn=$((failn+1)); echo "FAIL  requirements adversarial 裸 REQ_BLOCKER 应阻断"; fi
+if PYTHONPATH="$HERE/.." python3 - <<'PY'
+import guru_supervise as gs
+messages = "route_class=none\nreview_result=clean/requirements-ready\nmax_severity=medium\n"
+status, reason = gs._requirements_review_verdict(messages)
+severity = gs._requirements_review_max_severity(messages, status)
+if status == "clean" and gs.SEVERITY_ORDER[severity] > gs.SEVERITY_ORDER["low"]:
+    status = "blocked"
+    reason = f"max_severity={severity}"
+assert status == "blocked", (status, reason, severity)
+assert reason == "max_severity=medium", reason
+PY
+then pass=$((pass+1)); echo "PASS  requirements adversarial clean marker + medium severity 降级阻断"
+else failn=$((failn+1)); echo "FAIL  requirements adversarial medium severity 不应按 clean 放行"; fi
+if PYTHONPATH="$HERE/.." python3 - <<'PY'
+import guru_supervise as gs
+
+messages = "route_class=none\nreview_result=clean/requirements-ready\n"
+status, reason = gs._requirements_review_verdict(messages)
+severity = gs._requirements_review_max_severity(messages, status)
+assert status == "clean", (status, reason)
+assert severity == "", severity
+
+messages = "max_severity=medium in old quoted example\nroute_class=none\nreview_result=clean/requirements-ready\nmax_severity=none\n"
+status, reason = gs._requirements_review_verdict(messages)
+severity = gs._requirements_review_max_severity(messages, status)
+assert status == "clean", (status, reason)
+assert severity == "none", severity
+
+messages = "route_class=none\nprevious max_severity=high was repaired\nreview_result=clean/requirements-ready\nmax_severity=low\n"
+status, reason = gs._requirements_review_verdict(messages)
+severity = gs._requirements_review_max_severity(messages, status)
+assert status == "clean", (status, reason)
+assert severity == "low", severity
+PY
+then pass=$((pass+1)); echo "PASS  requirements adversarial max_severity 必须来自 final verdict 且缺失不默认 none"
+else failn=$((failn+1)); echo "FAIL  requirements adversarial max_severity 解析边界错误"; fi
+if PYTHONPATH="$HERE/.." python3 - <<'PY'
+import json
+import tempfile
+from pathlib import Path
+import guru_supervise as gs
+
+root = Path(tempfile.mkdtemp())
+task_dir = root / ".trellis" / "tasks" / "x"
+task_dir.mkdir(parents=True)
+(task_dir / "task.json").write_text("[]\n", encoding="utf-8")
+
+plan = gs.RunPlan(
+    action="requirements",
+    task_dir=task_dir,
+    run_id="requirements-clean-no-persist",
+    channel="c",
+    worker="w",
+    create_cmd=["create"],
+    spawn_cmd=["spawn"],
+    send_cmd=["send"],
+    wait_cmd=["wait"],
+    messages_cmd=["messages"],
+    brief="brief",
+    files=[],
+    jsonls=[],
+)
+config = gs.SupervisionConfig(
+    root=root,
+    platform="flutter",
+    current_provider="codex",
+    provider="claude",
+    adversarial=True,
+    adversarial_enabled=True,
+    implement_timeout="45m",
+    check_timeout="30m",
+    warn_before="5m",
+    idle_timeout=None,
+    max_live_workers=None,
+    trellis_bin="trellis",
+    adversarial_model=None,
+    adversarial_reasoning_effort=None,
+)
+
+class Result:
+    def __init__(self, returncode=0, stdout=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = ""
+
+responses = [
+    Result(),
+    Result(),
+    Result(),
+    Result(stdout=json.dumps({"kind": "done"}) + "\n"),
+    Result(stdout="route_class=none\nreview_result=clean/requirements-ready\nmax_severity=none\n"),
+]
+
+orig_run = gs._run
+def fake_run(*_args, **_kwargs):
+    return responses.pop(0)
+
+gs._run = fake_run
+try:
+    rc, terminal, messages = gs._execute_plan(plan, config)
+    assert rc == 2, (rc, terminal, messages)
+finally:
+    gs._run = orig_run
+PY
+then pass=$((pass+1)); echo "PASS  requirements adversarial clean 但证据持久化失败时 supervisor exit2"
+else failn=$((failn+1)); echo "FAIL  requirements adversarial clean 证据写入失败不应放行"; fi
 
 LOSS=$(make_gate_case detail-skeleton-loss)
 cat > "$LOSS/design.md" <<'EOF'
@@ -512,6 +777,103 @@ cat >> "$BEVOK/prd.md" <<'EOF'
 EOF
 expect "requirements evidence_ready 有 current-turn-confirmation 放行" 0 python3 "$GATE" requirements "$BEVOK"
 
+BMIXPOL="$TMP/good-brainstorm-mixed-policy"; mkdir -p "$BMIXPOL"; cp "$G/prd.md" "$BMIXPOL/prd.md"
+python3 - "$BMIXPOL/prd.md" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s2 = re.sub(r"\n### Question Loop Log\n\| oq_id.*?(?=\n- Open product/scope/risk questions:)", "", s, flags=re.S)
+if s2 == s or "### Question Loop Log" in s2:
+    raise SystemExit("failed to remove Question Loop Log fixture section")
+s = s2
+s += """
+
+### Question Policy
+
+question_policy: mixed
+
+证据已回答的问题：fixture repository artifacts cover scope and acceptance.
+
+用户已确认的问题：OQ-001 current_turn_confirmation confirmed DEC-001.
+"""
+open(p, "w", encoding="utf-8").write(s)
+PY
+expect "requirements mixed policy 无 Question Loop Log 但列明证据/用户确认放行" 0 python3 "$GATE" requirements "$BMIXPOL"
+
+BNOISEPOL="$TMP/good-question-policy-noise-ignored"; mkdir -p "$BNOISEPOL"; cp "$BMIXPOL/prd.md" "$BNOISEPOL/prd.md"
+python3 - "$BNOISEPOL/prd.md" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = s.replace(
+    "- Product decisions confirmed:",
+    "- Product decisions confirmed:\n  - historical_note: `question_policy: invalid_policy` is only quoted noise",
+    1,
+)
+open(p, "w", encoding="utf-8").write(s)
+PY
+expect "requirements Question Policy 只读取正式 block，忽略正文噪声 token" 0 python3 "$GATE" requirements "$BNOISEPOL"
+
+BQPEXAMPLE="$TMP/bad-question-policy-example-before-real"; mkdir -p "$BQPEXAMPLE"; cp "$BMIXPOL/prd.md" "$BQPEXAMPLE/prd.md"
+python3 - "$BQPEXAMPLE/prd.md" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = re.sub(
+    r"question_policy: mixed",
+    "Example: question_policy: evidence_only\n\nquestion_policy: invalid_policy",
+    s,
+    count=1,
+)
+open(p, "w", encoding="utf-8").write(s)
+PY
+expect "requirements Question Policy block 内示例 token 不得覆盖真实声明" 2 python3 "$GATE" requirements "$BQPEXAMPLE"
+
+BEONLY="$TMP/good-brainstorm-evidence-only-policy"; mkdir -p "$BEONLY"; cp "$G/prd.md" "$BEONLY/prd.md"
+python3 - "$BEONLY/prd.md" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s2 = re.sub(r"\n### Question Loop Log\n\| oq_id.*?(?=\n- Open product/scope/risk questions:)", "", s, flags=re.S)
+if s2 == s or "### Question Loop Log" in s2:
+    raise SystemExit("failed to remove Question Loop Log fixture section")
+s = s2
+s = s.replace('    - user_quote: "fixture confirms DEC-001"\n', '')
+s += """
+
+### Question Policy
+
+question_policy: evidence_only
+
+coverage:
+- risk_area: scope
+  source: fixture repository evidence
+  result: evidence_ready
+  why_no_user_question: fixture is deterministic and has no product ambiguity.
+"""
+open(p, "w", encoding="utf-8").write(s)
+PY
+expect "requirements evidence_only policy 无 user_quote 且保留 confirmed_ref 放行" 0 python3 "$GATE" requirements "$BEONLY"
+
+BESOURCE="$TMP/good-brainstorm-evidence-only-source-quote"; mkdir -p "$BESOURCE"; cp "$BEONLY/prd.md" "$BESOURCE/prd.md"
+python3 - "$BESOURCE/prd.md" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = s.replace('    - confirmed_ref: fixture-session DEC-001\n', '    - source_quote: "fixture source evidence for DEC-001"\n')
+open(p, "w", encoding="utf-8").write(s)
+PY
+expect "requirements evidence_only policy 允许 source_quote 作为证据引用" 0 python3 "$GATE" requirements "$BESOURCE"
+
+BQPBAD="$TMP/bad-question-policy-invalid"; mkdir -p "$BQPBAD"; cp "$G/prd.md" "$BQPBAD/prd.md"
+cat >> "$BQPBAD/prd.md" <<'EOF'
+
+### Question Policy
+
+question_policy: invalid_policy
+EOF
+expect "requirements 非法 question_policy 即使有 Question Loop Log 也被拦" 2 python3 "$GATE" requirements "$BQPBAD"
+
 BMIX="$TMP/good-independent-evidence-ready-and-confirmed"; mkdir -p "$BMIX"; cp "$G/prd.md" "$BMIX/prd.md"
 cat >> "$BMIX/prd.md" <<'EOF'
 
@@ -563,8 +925,15 @@ cat >> "$BVAGUE/prd.md" <<'EOF'
 EOF
 expect "requirements 模糊批量确认缺 covered id 被拦" 2 python3 "$GATE" requirements "$BVAGUE"
 
-BNOLOG="$TMP/good-no-question-loop-log"; mkdir -p "$BNOLOG"; cp "$G/prd.md" "$BNOLOG/prd.md"
-expect "requirements 缺 Question loop log 但有最小确认引用放行" 0 python3 "$GATE" requirements "$BNOLOG"
+BNOLOG="$TMP/bad-no-question-loop-log"; mkdir -p "$BNOLOG"; cp "$G/prd.md" "$BNOLOG/prd.md"
+python3 - "$BNOLOG/prd.md" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s = re.sub(r"\n### Question Loop Log\n\| oq_id.*?(?=\n- Open product/scope/risk questions:)", "", s, flags=re.S)
+open(p, "w", encoding="utf-8").write(s)
+PY
+expect "requirements 缺 Question Loop Log / Question Policy 被拦" 2 python3 "$GATE" requirements "$BNOLOG"
 B2="$TMP/bad-ov"; mkdir -p "$B2"; cp "$G/prd.md" "$B2/"; sed 's/承接索引.*//' "$G/design.md" > "$B2/design.md"
 expect "overview 缺承接索引被拦" 2 python3 "$GATE" overview "$B2"
 
@@ -693,6 +1062,18 @@ write_req_confirm "$RV"
 expect "confirm overview 被拒（新模型不支持）" 2 env GURU_GATE_MODE=soft python3 "$GATE" confirm overview "$RV" --via-agent --user-quote "确认概要"
 expect "auto 缺 overview review 被拦" 2 python3 "$GATE" auto "$RV"
 expect_grep "auto 缺 overview review 提示 record-review" "record-review overview" python3 "$GATE" auto "$RV"
+
+RVAUTO_REQ=$(make_gate_case review-auto-requirements-review-required)
+write_confirms_all "$RVAUTO_REQ"
+write_reviews_all "$RVAUTO_REQ"
+python3 - "$RVAUTO_REQ/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d.get("guru_gates", {}).pop("requirements_review", None)
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+expect "auto 缺 requirements adversarial review 时硬阻断" 2 python3 "$GATE" auto "$RVAUTO_REQ"
 write_clean_reviews overview "$RV"
 expect "auto 缺 detail review 被拦" 2 python3 "$GATE" auto "$RV"
 write_clean_reviews detail "$RV"
@@ -781,6 +1162,7 @@ cat > "$G/task.json" <<'EOF'
 {"guru_gates": {"requirements": {"confirmed_by": "tester", "confirmed_at": "2026-01-01T00:00:00+00:00"},
                 "detail": {"confirmed_by": "tester", "confirmed_at": "2026-01-01T00:00:00+00:00"}}}
 EOF
+write_requirements_review "$G" clean "review_result=clean/requirements-ready"
 write_reviews_all "$G"
 expect "check 缺确认快照被拦" 2 python3 "$GATE" check "$G"
 expect_grep "缺快照报错指明 confirm 来源" "缺确认快照" python3 "$GATE" check "$G"
@@ -791,14 +1173,840 @@ cat > "$G/task.json" <<EOF
 {"guru_gates": {"requirements": {"confirmed_by": "tester", "confirmed_at": "x", "artifact_digest": "$DG_REQ"},
                 "detail": {"confirmed_by": "tester", "confirmed_at": "x", "artifact_digest": "$DG_DT"}}}
 EOF
+write_requirements_review "$G" clean "review_result=clean/requirements-ready"
 write_reviews_all "$G"
 expect "check 新 Gate 证据齐全放行" 0 python3 "$GATE" check "$G"
 expect "status 可运行" 0 python3 "$GATE" status "$G"
 expect_grep "status 显示确认人" "tester" python3 "$GATE" status "$G"
 
+# 生命周期 Gate 拆分：START_READY 只允许 task.py start；implementation/commit 另有硬闸。
+LC=$(make_gate_case lifecycle-split)
+write_new_gate_ready "$LC"
+expect "check-start planning 任务只达到 START_READY" 0 python3 "$GATE" check-start "$LC"
+expect "check alias 兼容为 check-start" 0 python3 "$GATE" check "$LC"
+expect "check-implementation planning 任务 fail-closed" 2 python3 "$GATE" check-implementation "$LC"
+python3 - "$LC/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d["status"] = "in_progress"
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+expect "check-implementation in_progress 后放行" 0 python3 "$GATE" check-implementation "$LC"
+
+# check-commit：必须 in_progress + staged 实现文件 + 最新 clean implementation review target_paths 覆盖。
+mk_commit_gate_case() ( # mk_commit_gate_case <name> <status> <target_path>
+  set -e
+  local root="$TMP/$1-root" task="$TMP/$1-root/.trellis/tasks/$1" target="$3"
+  mkdir -p "$task" "$root/lib"
+  cp "$G/prd.md" "$G/design.md" "$G/implement.md" "$task/"
+  printf '{"status":"%s"}\n' "$2" > "$task/task.json"
+  (cd "$root" && git init -q)
+  mkdir -p "$(dirname "$root/$target")"
+  printf 'code\n' > "$root/$target"
+  write_new_gate_ready "$task"
+  mkdir -p "$task/review-records"
+  python3 - "$task/review-records/implementation-reviews.jsonl" "$target" "$root" "$GATE" <<'PY'
+import json, os, sys
+p, target, root, gate = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+sys.path.insert(0, os.path.dirname(os.path.abspath(gate)))
+import guru_review_record as R
+record = {
+    "run_id": "commit-ready",
+    "review_result": "clean",
+    "route_class": "none",
+    "supervisor_failure": "none",
+    "required_satisfied": True,
+    "deterministic_checks": "passed",
+    "dirty_scope": "clean",
+    "invariant_coverage": "all_passed",
+    "review_target": "slice:commit-ready",
+    "review_provider": "codex",
+    "target_paths": [target],
+    "reviewed_target_digest": R.target_snapshot_digest(root, [target], "worktree"),
+}
+open(p, "w", encoding="utf-8").write(json.dumps(record, ensure_ascii=False) + "\n")
+PY
+  echo "$root|$task"
+)
+
+CG_PAIR=$(mk_commit_gate_case commit-planning planning "lib/x.dart")
+CG_ROOT="${CG_PAIR%%|*}"; CG_TASK="${CG_PAIR#*|}"
+printf 'code\n' > "$CG_ROOT/lib/x.dart"
+(cd "$CG_ROOT" && git add lib/x.dart)
+expect "check-commit planning 任务即使 staged/review clean 也被拦" 2 env TASK_JSON_PATH="$CG_TASK/task.json" bash -c "cd '$CG_ROOT' && python3 '$GATE' check-commit '$CG_TASK'"
+
+CG2_PAIR=$(mk_commit_gate_case commit-ready in_progress "lib/x.dart")
+CG2_ROOT="${CG2_PAIR%%|*}"; CG2_TASK="${CG2_PAIR#*|}"
+printf 'code\n' > "$CG2_ROOT/lib/x.dart"
+(cd "$CG2_ROOT" && git add lib/x.dart)
+expect "check-commit in_progress + staged target_paths 内实现文件放行" 0 env TASK_JSON_PATH="$CG2_TASK/task.json" bash -c "cd '$CG2_ROOT' && python3 '$GATE' check-commit '$CG2_TASK'"
+CG2B_PAIR=$(mk_commit_gate_case commit-index-not-worktree in_progress "lib/x.dart")
+CG2B_ROOT="${CG2B_PAIR%%|*}"; CG2B_TASK="${CG2B_PAIR#*|}"
+printf 'code\n' > "$CG2B_ROOT/lib/x.dart"
+(cd "$CG2B_ROOT" && git add lib/x.dart)
+printf 'unstaged worktree drift\n' > "$CG2B_ROOT/lib/x.dart"
+expect "check-commit 使用 staged index digest，不被 unstaged worktree drift 误拦" 0 env TASK_JSON_PATH="$CG2B_TASK/task.json" bash -c "cd '$CG2B_ROOT' && python3 '$GATE' check-commit '$CG2B_TASK'"
+CG2C_PAIR=$(mk_commit_gate_case commit-dot-target in_progress "lib/x.dart")
+CG2C_ROOT="${CG2C_PAIR%%|*}"; CG2C_TASK="${CG2C_PAIR#*|}"
+python3 - "$CG2C_TASK/review-records/implementation-reviews.jsonl" "$CG2C_ROOT" "$GATE" <<'PY'
+import json, os, sys
+p, root, gate = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, os.path.dirname(os.path.abspath(gate)))
+import guru_review_record as R
+rec = json.loads(open(p, encoding="utf-8").readline())
+rec["target_paths"] = ["./lib"]
+rec["reviewed_target_digest"] = R.target_snapshot_digest(root, ["./lib"], "worktree")
+open(p, "w", encoding="utf-8").write(json.dumps(rec, ensure_ascii=False) + "\n")
+PY
+(cd "$CG2C_ROOT" && git add lib/x.dart)
+expect "check-commit 规范化 ./lib target_paths 并放行" 0 env TASK_JSON_PATH="$CG2C_TASK/task.json" bash -c "cd '$CG2C_ROOT' && python3 '$GATE' check-commit '$CG2C_TASK'"
+CG2ROOT_PAIR=$(mk_commit_gate_case commit-root-target in_progress "lib/x.dart")
+CG2ROOT_ROOT="${CG2ROOT_PAIR%%|*}"; CG2ROOT_TASK="${CG2ROOT_PAIR#*|}"
+python3 - "$CG2ROOT_TASK/review-records/implementation-reviews.jsonl" "$CG2ROOT_ROOT" "$GATE" <<'PY'
+import json, os, sys
+p, root, gate = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, os.path.dirname(os.path.abspath(gate)))
+import guru_review_record as R
+rec = json.loads(open(p, encoding="utf-8").readline())
+rec["target_paths"] = ["."]
+rec["reviewed_target_digest"] = R.target_snapshot_digest(root, ["."], "worktree")
+open(p, "w", encoding="utf-8").write(json.dumps(rec, ensure_ascii=False) + "\n")
+PY
+(cd "$CG2ROOT_ROOT" && git add lib/x.dart)
+expect "check-commit target_paths 点号覆盖 repo root" 0 env TASK_JSON_PATH="$CG2ROOT_TASK/task.json" bash -c "cd '$CG2ROOT_ROOT' && python3 '$GATE' check-commit '$CG2ROOT_TASK'"
+CG2D_PAIR=$(mk_commit_gate_case commit-required-missing in_progress "lib/x.dart")
+CG2D_ROOT="${CG2D_PAIR%%|*}"; CG2D_TASK="${CG2D_PAIR#*|}"
+python3 - "$CG2D_TASK/review-records/implementation-reviews.jsonl" <<'PY'
+import json
+import sys
+p = sys.argv[1]
+rec = json.loads(open(p, encoding="utf-8").readline())
+rec.pop("required_satisfied", None)
+open(p, "w", encoding="utf-8").write(json.dumps(rec, ensure_ascii=False) + "\n")
+PY
+(cd "$CG2D_ROOT" && git add lib/x.dart)
+expect_rc_grep "check-commit latest clean 缺 required_satisfied=true 时硬阻断" 2 "required semantic provider" env TASK_JSON_PATH="$CG2D_TASK/task.json" bash -c "cd '$CG2D_ROOT' && python3 '$GATE' check-commit '$CG2D_TASK'"
+CG2E_PAIR=$(mk_commit_gate_case commit-incomplete-verdict in_progress "lib/x.dart")
+CG2E_ROOT="${CG2E_PAIR%%|*}"; CG2E_TASK="${CG2E_PAIR#*|}"
+python3 - "$CG2E_TASK/review-records/implementation-reviews.jsonl" <<'PY'
+import json
+import sys
+p = sys.argv[1]
+rec = json.loads(open(p, encoding="utf-8").readline())
+rec.pop("deterministic_checks", None)
+open(p, "w", encoding="utf-8").write(json.dumps(rec, ensure_ascii=False) + "\n")
+PY
+(cd "$CG2E_ROOT" && git add lib/x.dart)
+expect_rc_grep "check-commit latest clean 缺完整 verdict 字段时硬阻断" 2 "malformed|incomplete|complete clean verdict" env TASK_JSON_PATH="$CG2E_TASK/task.json" bash -c "cd '$CG2E_ROOT' && python3 '$GATE' check-commit '$CG2E_TASK'"
+printf 'changed after review\n' > "$CG2_ROOT/lib/x.dart"
+(cd "$CG2_ROOT" && git add lib/x.dart)
+out=$(env TASK_JSON_PATH="$CG2_TASK/task.json" bash -c "cd '$CG2_ROOT' && python3 '$GATE' check-commit '$CG2_TASK'" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "staged target content differs"; then
+  pass=$((pass+1)); echo "PASS  check-commit staged target 内容与 clean review 不一致时硬阻断"
+else failn=$((failn+1)); echo "FAIL  check-commit staged target 内容与 clean review 不一致时应硬阻断 (rc=$rc)"; echo "$out" | head -5; fi
+
+SY_ROOT="$TMP/target-symlink-root"; mkdir -p "$SY_ROOT/lib"; (cd "$SY_ROOT" && git init -q)
+SY_OUT="$TMP/symlink-outside.txt"; printf 'outside v1\n' > "$SY_OUT"
+ln -s "$SY_OUT" "$SY_ROOT/lib/link.txt"
+(cd "$SY_ROOT" && git add lib/link.txt)
+if PYTHONPATH="$HERE/.." python3 - "$SY_ROOT" "$SY_OUT" <<'PY'
+import sys
+import guru_review_record as R
+root, outside = sys.argv[1], sys.argv[2]
+worktree_before = R.target_snapshot_digest(root, ["lib"], "worktree")
+index_digest = R.target_snapshot_digest(root, ["lib"], "index")
+open(outside, "w", encoding="utf-8").write("outside v2\n")
+worktree_after = R.target_snapshot_digest(root, ["lib"], "worktree")
+assert worktree_before == index_digest
+assert worktree_before == worktree_after
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest 目录内 symlink 按链接元数据哈希且不跟随外部内容"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest symlink digest 与 index 或外部内容隔离不一致"; fi
+
+MODE_ROOT="$TMP/target-mode-root"; mkdir -p "$MODE_ROOT/bin"; (cd "$MODE_ROOT" && git init -q)
+printf '#!/usr/bin/env bash\necho reviewed\n' > "$MODE_ROOT/bin/tool.sh"
+if PYTHONPATH="$HERE/.." python3 - "$MODE_ROOT" <<'PY'
+import os, sys
+import guru_review_record as R
+root = sys.argv[1]
+path = os.path.join(root, "bin", "tool.sh")
+before = R.target_snapshot_digest(root, ["bin/tool.sh"], "worktree")
+os.chmod(path, 0o755)
+after = R.target_snapshot_digest(root, ["bin/tool.sh"], "worktree")
+assert before != after
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest regular file mode change invalidates digest"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest 未纳入 regular file mode"; fi
+
+EXTLESS_ROOT="$TMP/target-extensionless-root"; mkdir -p "$EXTLESS_ROOT"; (cd "$EXTLESS_ROOT" && git init -q)
+: > "$EXTLESS_ROOT/Dockerfile"
+if PYTHONPATH="$HERE/.." python3 - "$EXTLESS_ROOT" <<'PY'
+import guru_review_record as R
+root = __import__("sys").argv[1]
+missing = R.target_snapshot_digest(root, ["Makefile"], "worktree")
+empty = R.target_snapshot_digest(root, ["Dockerfile"], "worktree")
+assert missing != empty
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest extensionless explicit missing target records DELETE"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest extensionless missing target 未记录"; fi
+
+IGN_ROOT="$TMP/target-ignored-root"; mkdir -p "$IGN_ROOT/lib"; (cd "$IGN_ROOT" && git init -q)
+printf '*.tmp\n' > "$IGN_ROOT/.gitignore"
+printf 'tracked\n' > "$IGN_ROOT/lib/x.dart"
+printf 'ignored build artifact\n' > "$IGN_ROOT/lib/cache.tmp"
+(cd "$IGN_ROOT" && git add .gitignore lib/x.dart)
+if PYTHONPATH="$HERE/.." python3 - "$IGN_ROOT" <<'PY'
+import sys
+import guru_review_record as R
+root = sys.argv[1]
+assert R.target_snapshot_digest(root, ["lib"], "worktree") == R.target_snapshot_digest(root, ["lib"], "index")
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest 忽略 target 内 ignored 噪声，与 index digest 对齐"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest 不应把 ignored 噪声纳入 reviewed target"; fi
+
+BIG_ROOT="$TMP/target-big-root"; mkdir -p "$BIG_ROOT/lib"; (cd "$BIG_ROOT" && git init -q)
+python3 - "$BIG_ROOT/lib/big.bin" <<'PY'
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_bytes((b"a" * (1024 * 1024)) + (b"b" * 12345))
+PY
+(cd "$BIG_ROOT" && git add lib/big.bin)
+if PYTHONPATH="$HERE/.." python3 - "$BIG_ROOT" <<'PY'
+import sys
+import guru_review_record as R
+root = sys.argv[1]
+assert R.target_snapshot_digest(root, ["lib"], "worktree") == R.target_snapshot_digest(root, ["lib"], "index")
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest 大文件 worktree/index chunk 边界一致"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest 大文件 chunk 边界不应影响 digest"; fi
+
+if PYTHONPATH="$HERE/.." python3 - <<'PY'
+import guru_review_record as R
+orig = R._index_entries
+R._index_entries = lambda _root, _targets: [("vendor/lib", "160000", "a" * 40)]
+try:
+    digest = R.target_snapshot_digest("/tmp", ["vendor/lib"], "index")
+    assert len(digest) == 64
+finally:
+    R._index_entries = orig
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest index gitlink mode 160000 可哈希"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest 应支持 gitlink mode 160000"; fi
+
+GITLINK_ROOT="$TMP/target-gitlink-root"; mkdir -p "$GITLINK_ROOT/vendor"; (cd "$GITLINK_ROOT" && git init -q)
+(cd "$GITLINK_ROOT" && printf '160000 %s 0\tvendor/lib\n' "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" | git update-index --index-info)
+if PYTHONPATH="$HERE/.." python3 - "$GITLINK_ROOT" <<'PY'
+import sys
+import guru_review_record as R
+root = sys.argv[1]
+assert R.target_snapshot_digest(root, ["vendor"], "worktree") == R.target_snapshot_digest(root, ["vendor"], "index")
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest worktree/index gitlink digest 对齐"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest worktree gitlink 不应与 index 表示分叉"; fi
+
+GITLINK_HEAD_ROOT="$TMP/target-gitlink-head-root"; mkdir -p "$GITLINK_HEAD_ROOT/vendor/lib"; (cd "$GITLINK_HEAD_ROOT" && git init -q)
+(cd "$GITLINK_HEAD_ROOT/vendor/lib" && git init -q && git config user.name Guru && git config user.email guru@example.invalid && printf 'submodule head\n' > README.md && git add README.md && git commit -q -m init)
+(cd "$GITLINK_HEAD_ROOT" && printf '160000 %s 0\tvendor/lib\n' "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" | git update-index --index-info)
+if PYTHONPATH="$HERE/.." python3 - "$GITLINK_HEAD_ROOT" <<'PY'
+import subprocess
+import sys
+import guru_review_record as R
+root = sys.argv[1]
+worktree_digest = R.target_snapshot_digest(root, ["vendor"], "worktree")
+index_digest = R.target_snapshot_digest(root, ["vendor"], "index")
+assert worktree_digest != index_digest
+head = subprocess.check_output(["git", "-C", f"{root}/vendor/lib", "rev-parse", "HEAD"], text=True).strip()
+subprocess.run(
+    ["git", "update-index", "--index-info"],
+    cwd=root,
+    input=f"160000 {head} 0\tvendor/lib\n",
+    text=True,
+    check=True,
+)
+assert R.target_snapshot_digest(root, ["vendor"], "worktree") == R.target_snapshot_digest(root, ["vendor"], "index")
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest worktree gitlink 使用实际 submodule HEAD"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest worktree gitlink 应读取实际 submodule HEAD"; fi
+
+META_ROOT="$TMP/target-meta-root"; mkdir -p "$META_ROOT/.trellis/tasks/t"; (cd "$META_ROOT" && git init -q)
+printf 'runtime\n' > "$META_ROOT/.trellis/tasks/t/check.jsonl"
+if PYTHONPATH="$HERE/.." python3 - "$META_ROOT" <<'PY'
+import sys
+import guru_review_record as R
+root = sys.argv[1]
+assert R.target_snapshot_digest(root, [".trellis/tasks/t"], "worktree") == R.target_snapshot_digest(root, [".trellis/tasks/t"], "index")
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest 显式 Trellis runtime target 被排除"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest 显式 Trellis runtime target 不应进入 digest fallback"; fi
+
+UM_ROOT="$TMP/target-unmerged-root"; mkdir -p "$UM_ROOT/lib"; (cd "$UM_ROOT" && git init -q)
+oid_a=$(cd "$UM_ROOT" && printf 'ours\n' | git hash-object -w --stdin)
+oid_b=$(cd "$UM_ROOT" && printf 'theirs\n' | git hash-object -w --stdin)
+(cd "$UM_ROOT" && {
+  printf '100644 %s 2\tlib/conflict.dart\n' "$oid_a"
+  printf '100644 %s 3\tlib/conflict.dart\n' "$oid_b"
+} | git update-index --index-info)
+if PYTHONPATH="$HERE/.." python3 - "$UM_ROOT" <<'PY'
+import sys
+import guru_review_record as R
+root = sys.argv[1]
+try:
+    R.target_snapshot_digest(root, ["lib"], "index")
+except R.ReviewRecordError as exc:
+    assert "unmerged staged entry" in str(exc), exc
+else:
+    raise AssertionError("unmerged index should fail closed")
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest unmerged index stage fail-closed"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest 不应把 unmerged index 当正常 staged 文件"; fi
+
+DEL_ROOT="$TMP/target-delete-root"; mkdir -p "$DEL_ROOT/lib"; (cd "$DEL_ROOT" && git init -q)
+printf 'tracked\n' > "$DEL_ROOT/lib/remove.dart"
+(cd "$DEL_ROOT" && git add lib/remove.dart && git -c user.name=Guru -c user.email=guru@example.invalid commit -q -m base)
+rm "$DEL_ROOT/lib/remove.dart"
+if PYTHONPATH="$HERE/.." python3 - "$DEL_ROOT" <<'PY'
+import sys
+import guru_review_record as R
+root = sys.argv[1]
+open(f"{root}/worktree_delete_digest", "w", encoding="utf-8").write(
+    R.target_snapshot_digest(root, ["lib"], "worktree")
+)
+PY
+then :; else failn=$((failn+1)); echo "FAIL  target_snapshot_digest staged deletion setup worktree digest 失败"; fi
+(cd "$DEL_ROOT" && git add -u lib/remove.dart)
+if PYTHONPATH="$HERE/.." python3 - "$DEL_ROOT" <<'PY'
+import sys
+import guru_review_record as R
+root = sys.argv[1]
+worktree_digest = open(f"{root}/worktree_delete_digest", encoding="utf-8").read()
+index_digest = R.target_snapshot_digest(root, ["lib"], "index")
+assert worktree_digest == index_digest
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest 目录 target 下 staged 删除与 worktree 删除 digest 对齐"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest 目录 target 下 staged 删除不应变成 target-level DELETE"; fi
+
+if PYTHONPATH="$HERE/.." python3 - "$IGN_ROOT" <<'PY'
+import sys
+import guru_review_record as R
+root = sys.argv[1]
+bad_paths = [":(glob)lib/*.dart", "./:(glob)lib/*.dart", "lib/\0x", "../secret", "/tmp/outside", "C:/repo/file"]
+for path in bad_paths:
+    try:
+        R.target_snapshot_digest(root, [path], "worktree")
+    except R.ReviewRecordError:
+        continue
+    raise AssertionError(f"accepted illegal target path: {path!r}")
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest 拒绝 pathspec magic / NUL / 越界 target_paths"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest 应拒绝非法 target_paths"; fi
+
+if PYTHONPATH="$HERE/.." python3 - <<'PY'
+import builtins
+import os
+import tempfile
+import guru_review_record as R
+
+orig_stat = os.stat
+orig_open = builtins.open
+orig_readlink = os.readlink
+
+try:
+    os.stat = lambda *a, **kw: (_ for _ in ()).throw(FileNotFoundError("gone"))
+    try:
+        R._worktree_git_mode("/tmp/gone", "file")
+    except R.ReviewRecordError:
+        pass
+    else:
+        raise AssertionError("stat race should be wrapped")
+finally:
+    os.stat = orig_stat
+
+try:
+    builtins.open = lambda *a, **kw: (_ for _ in ()).throw(PermissionError("denied"))
+    try:
+        R._hash_file_chunks(__import__("hashlib").sha256(), "/tmp/denied")
+    except R.ReviewRecordError:
+        pass
+    else:
+        raise AssertionError("read race should be wrapped")
+finally:
+    builtins.open = orig_open
+
+try:
+    root = tempfile.mkdtemp()
+    os.symlink("target", os.path.join(root, "x"))
+    os.readlink = lambda *a, **kw: (_ for _ in ()).throw(FileNotFoundError("gone"))
+    try:
+        R.target_snapshot_digest(root, ["x"], "worktree")
+    except R.ReviewRecordError:
+        pass
+    else:
+        raise AssertionError("readlink race should be wrapped")
+finally:
+    os.readlink = orig_readlink
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest 文件 stat/read/readlink 竞态 fail-closed"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest 文件竞态应包装为 ReviewRecordError"; fi
+
+if PYTHONPATH="$HERE/.." python3 - "$IGN_ROOT" <<'PY'
+import sys
+import guru_review_record as R
+root = sys.argv[1]
+orig = R.subprocess.Popen
+class FakeStdout:
+    def read(self, _size=-1):
+        return b""
+    def close(self):
+        pass
+class FakeStderr:
+    def read(self, _size=-1):
+        return b"missing blob"
+    def close(self):
+        pass
+class FakePopen:
+    stdout = FakeStdout()
+    stderr = FakeStderr()
+    returncode = 1
+    def communicate(self, timeout=None):
+        return b"", b"missing blob"
+    def wait(self, timeout=None):
+        return 1
+    def kill(self):
+        pass
+def fake_popen(args, *a, **kw):
+    if args[:2] == ["git", "cat-file"]:
+        return FakePopen()
+    return orig(args, *a, **kw)
+R.subprocess.Popen = fake_popen
+try:
+    try:
+        R.target_snapshot_digest(root, ["lib"], "index")
+    except R.ReviewRecordError:
+        pass
+    else:
+        raise AssertionError("cat-file failure should fail closed")
+finally:
+    R.subprocess.Popen = orig
+PY
+then pass=$((pass+1)); echo "PASS  target_snapshot_digest index cat-file 失败 fail-closed"
+else failn=$((failn+1)); echo "FAIL  target_snapshot_digest 不应把 cat-file 失败当 DELETE"; fi
+
+CG3_PAIR=$(mk_commit_gate_case commit-artifacts-only in_progress "lib/x.dart")
+CG3_ROOT="${CG3_PAIR%%|*}"; CG3_TASK="${CG3_PAIR#*|}"
+printf '{"event":"artifact"}\n' > "$CG3_TASK/check.jsonl"
+(cd "$CG3_ROOT" && git add .trellis/tasks/commit-artifacts-only/check.jsonl)
+expect_rc_grep "check-commit staged 仅任务文档被拦" 2 "task artifacts" env TASK_JSON_PATH="$CG3_TASK/task.json" bash -c "cd '$CG3_ROOT' && python3 '$GATE' check-commit '$CG3_TASK'"
+CG3B_PAIR=$(mk_commit_gate_case commit-mixed-artifact in_progress "lib/x.dart")
+CG3B_ROOT="${CG3B_PAIR%%|*}"; CG3B_TASK="${CG3B_PAIR#*|}"
+printf 'code\n' > "$CG3B_ROOT/lib/x.dart"
+printf '{"event":"artifact"}\n' > "$CG3B_TASK/check.jsonl"
+(cd "$CG3B_ROOT" && git add lib/x.dart .trellis/tasks/commit-mixed-artifact/check.jsonl)
+expect_rc_grep "check-commit staged 实现混入任务文档被拦" 2 "task artifacts" env TASK_JSON_PATH="$CG3B_TASK/task.json" bash -c "cd '$CG3B_ROOT' && python3 '$GATE' check-commit '$CG3B_TASK'"
+CG3C_PAIR=$(mk_commit_gate_case commit-workspace-artifact in_progress "lib/x.dart")
+CG3C_ROOT="${CG3C_PAIR%%|*}"; CG3C_TASK="${CG3C_PAIR#*|}"
+python3 - "$CG3C_TASK/review-records/implementation-reviews.jsonl" "$CG3C_ROOT" "$GATE" <<'PY'
+import json, os, sys
+p, root, gate = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, os.path.dirname(os.path.abspath(gate)))
+import guru_review_record as R
+rec = json.loads(open(p, encoding="utf-8").readline())
+rec["target_paths"] = ["."]
+rec["reviewed_target_digest"] = R.target_snapshot_digest(root, ["."], "worktree")
+open(p, "w", encoding="utf-8").write(json.dumps(rec, ensure_ascii=False) + "\n")
+PY
+mkdir -p "$CG3C_ROOT/.trellis/workspace"
+printf 'code\n' > "$CG3C_ROOT/lib/x.dart"
+printf 'runtime\n' > "$CG3C_ROOT/.trellis/workspace/journal.md"
+(cd "$CG3C_ROOT" && git add lib/x.dart .trellis/workspace/journal.md)
+expect_rc_grep "check-commit root target staged workspace runtime 被拦" 2 "task artifacts" env TASK_JSON_PATH="$CG3C_TASK/task.json" bash -c "cd '$CG3C_ROOT' && python3 '$GATE' check-commit '$CG3C_TASK'"
+
+CG4_PAIR=$(mk_commit_gate_case commit-out-of-scope in_progress "lib/x.dart")
+CG4_ROOT="${CG4_PAIR%%|*}"; CG4_TASK="${CG4_PAIR#*|}"
+printf 'code\n' > "$CG4_ROOT/lib/other.dart"
+(cd "$CG4_ROOT" && git add lib/other.dart)
+expect "check-commit staged 越出 target_paths 被拦" 2 env TASK_JSON_PATH="$CG4_TASK/task.json" bash -c "cd '$CG4_ROOT' && python3 '$GATE' check-commit '$CG4_TASK'"
+
+RN_PAIR=$(mk_commit_gate_case commit-rename-source-scope in_progress "lib/x.dart")
+RN_ROOT="${RN_PAIR%%|*}"; RN_TASK="${RN_PAIR#*|}"
+mkdir -p "$RN_ROOT/src"
+printf 'old\n' > "$RN_ROOT/src/old.dart"
+(cd "$RN_ROOT" && git add lib/x.dart src/old.dart && git -c user.name=Guru -c user.email=guru@example.invalid commit -q -m base)
+python3 - "$RN_TASK/review-records/implementation-reviews.jsonl" "$RN_ROOT" "$GATE" <<'PY'
+import json, os, sys
+p, root, gate = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, os.path.dirname(os.path.abspath(gate)))
+import guru_review_record as R
+rec = json.loads(open(p, encoding="utf-8").readline())
+rec["target_paths"] = ["lib"]
+rec["reviewed_target_digest"] = R.target_snapshot_digest(root, ["lib"], "worktree")
+open(p, "w", encoding="utf-8").write(json.dumps(rec, ensure_ascii=False) + "\n")
+PY
+(cd "$RN_ROOT" && mkdir -p lib && git mv src/old.dart lib/old.dart)
+out=$(env TASK_JSON_PATH="$RN_TASK/task.json" bash -c "cd '$RN_ROOT' && python3 '$GATE' check-commit '$RN_TASK'" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "src/old.dart"; then
+  pass=$((pass+1)); echo "PASS  check-commit staged rename source 越界被拦"
+else failn=$((failn+1)); echo "FAIL  check-commit staged rename source path 不应被 name-only 漏掉 (rc=$rc)"; echo "$out" | head -5; fi
+
+CG5_PAIR=$(mk_commit_gate_case commit-workspace-noise in_progress "lib/x.dart")
+CG5_ROOT="${CG5_PAIR%%|*}"; CG5_TASK="${CG5_PAIR#*|}"
+mkdir -p "$CG5_ROOT/.trellis/workspace"
+printf 'workspace noise\n' > "$CG5_ROOT/.trellis/workspace/journal.md"
+(cd "$CG5_ROOT" && git add lib/x.dart .trellis/workspace/journal.md)
+expect_rc_grep "check-commit staged unrelated workspace 文件按 artifact 拦截" 2 "task artifacts" env TASK_JSON_PATH="$CG5_TASK/task.json" bash -c "cd '$CG5_ROOT' && python3 '$GATE' check-commit '$CG5_TASK'"
+
+	COMMIT_HOOK="$HERE/../../hooks/platform/block-unstarted-commit.sh"
+	HN_ROOT="$TMP/hook-no-active-root"; mkdir -p "$HN_ROOT/.trellis/scripts/guru"
+	: > "$HN_ROOT/.trellis/scripts/guru/guru_gate.py"
+	out=$(printf '{"tool_input":{"command":"git commit -m test"},"cwd":"%s"}' "$HN_ROOT" | CLAUDE_PROJECT_DIR="$HN_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+	if [ "$rc" = 0 ] && [ -z "$out" ]; then
+	  pass=$((pass+1)); echo "PASS  commit hook 无 active Guru task 时不拦截"
+	else
+	  failn=$((failn+1)); echo "FAIL  commit hook 无 active Guru task 时不应拦截 (rc=$rc)"; echo "$out" | head -4
+	fi
+	HC_PAIR=$(mk_commit_gate_case hook-commit-planning planning "lib/x.dart")
+	HC_ROOT="${HC_PAIR%%|*}"; HC_TASK="${HC_PAIR#*|}"
+	mkdir -p "$HC_ROOT/.trellis/scripts/guru"
+	ln -sf "$GATE" "$HC_ROOT/.trellis/scripts/guru/guru_gate.py"
+printf 'code\n' > "$HC_ROOT/lib/x.dart"
+(cd "$HC_ROOT" && git add lib/x.dart)
+out=$(printf '{"tool_input":{"command":"git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then
+  pass=$((pass+1)); echo "PASS  commit hook 真实 git commit 被 check-commit 拦截"
+else
+  failn=$((failn+1)); echo "FAIL  commit hook 应拦截未 start commit (rc=$rc)"; echo "$out" | head -4
+fi
+ENV_ROOT="$TMP/hook-env-root"; mkdir -p "$ENV_ROOT"
+out=$(printf '{"tool_input":{"command":"git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$ENV_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then
+  pass=$((pass+1)); echo "PASS  commit hook 优先使用 command cwd 而非 CLAUDE_PROJECT_DIR"
+else
+  failn=$((failn+1)); echo "FAIL  commit hook 应优先使用 command cwd (rc=$rc)"; echo "$out" | head -4
+fi
+out=$(printf '{"tool_input":{"command":"echo git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 0 ]; then pass=$((pass+1)); echo "PASS  commit hook echo 参数位不触发"
+else failn=$((failn+1)); echo "FAIL  commit hook echo 参数位误拦 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"git status && git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook 多段 git 命令后续 commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook 多段 git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":">/tmp/guru-hook-out git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook leading stdout redirection git commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook leading stdout redirection git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"2>/tmp/guru-hook-err git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook leading fd redirection git commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook leading fd redirection git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"env -i git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook env -i wrapper 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook env -i git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"/usr/bin/env git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook absolute env wrapper 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook absolute env git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"env -u GIT_DIR git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook env -u wrapper 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook env -u git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"env -S '\''git commit -m test'\''"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook env -S split-string wrapper 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook env -S git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"env --split-string='\''git commit -m test'\''"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook env --split-string wrapper 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook env --split-string git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"env --split-string=git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook env --split-string 组合剩余参数被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook env --split-string=git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"sudo -E git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook sudo option wrapper 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook sudo option git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"sudo -u root git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook sudo -u wrapper 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook sudo -u git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"sudo GIT_DIR=.git git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "repository-changing options or environment"; then pass=$((pass+1)); echo "PASS  commit hook sudo GIT_DIR env assignment 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook sudo GIT_DIR env assignment 应按 unsafe-root-option 阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"GIT_DIR=.git git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "repository-changing options or environment"; then pass=$((pass+1)); echo "PASS  commit hook GIT_DIR env assignment 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook GIT_DIR env assignment 应按 unsafe-root-option 阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"GIT_WORK_TREE=%s git commit -m test"},"cwd":"%s"}' "$HC_ROOT" "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "repository-changing options or environment"; then pass=$((pass+1)); echo "PASS  commit hook GIT_WORK_TREE env assignment 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook GIT_WORK_TREE env assignment 应按 unsafe-root-option 阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"time git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook time wrapper 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook time git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"nice -n 5 git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook nice wrapper 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook nice git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"nohup git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook nohup wrapper 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook nohup git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"git -C %s commit -m test"},"cwd":"%s"}' "$HC_ROOT" "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "repository-changing options or environment"; then pass=$((pass+1)); echo "PASS  commit hook git -C commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook git -C commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"git --git-dir %s/.git commit -m test"},"cwd":"%s"}' "$HC_ROOT" "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "repository-changing options or environment"; then pass=$((pass+1)); echo "PASS  commit hook git --git-dir commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook git --git-dir commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"git --work-tree %s commit -m test"},"cwd":"%s"}' "$HC_ROOT" "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "repository-changing options or environment"; then pass=$((pass+1)); echo "PASS  commit hook git --work-tree commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook git --work-tree commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"bash -lc '\''git commit -m test'\''"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook bash -lc nested commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook bash -lc git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"cd .. && bash -lc '\''git commit -m test'\''"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "cwd change"; then pass=$((pass+1)); echo "PASS  commit hook cd 后 nested shell commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook cd 后 nested shell commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"echo $(git commit -m test)"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook 命令替换 git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook 命令替换 git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"cat <(git commit -m test)"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook 进程替换 git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook 进程替换 git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"echo $(date) && git status && echo commit"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 0 ]; then pass=$((pass+1)); echo "PASS  commit hook 无关命令替换 + git status + commit 文本不误拦"
+else failn=$((failn+1)); echo "FAIL  commit hook 无关命令替换不应误拦 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"eval '\''git commit -m test'\''"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook eval git commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook eval git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"cmd='\''git commit -m test'\''; eval $cmd"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook 间接 eval git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook 间接 eval git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"cmd='\''git commit -m test'\''; $cmd"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook 单行变量命令执行 git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook 单行变量命令执行应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"g=git; $g commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook 变量 git 命令执行 commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook 变量 git 命令执行应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"c=commit; git $c -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook 变量 commit 子命令保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook 变量 commit 子命令应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+DYN_BASH_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": 'cmd="git commit -m test"; bash -c "$cmd"'}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$DYN_BASH_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook 单行变量 bash -c git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook 单行变量 bash -c 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"{ git commit -m test; }"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook brace group git commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook brace group git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"f(){ git commit -m test; }; f"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook shell function git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook shell function git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+HD_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": "cat <<'EOF'\ngit commit -m test\nEOF"}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$HD_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 0 ]; then pass=$((pass+1)); echo "PASS  commit hook here-doc 文本 git commit 不误拦"
+else failn=$((failn+1)); echo "FAIL  commit hook here-doc 文本 git commit 不应误拦 (rc=$rc)"; echo "$out" | head -3; fi
+HD_TAB_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": "cat <<- EOF\ngit commit -m test\nEOF"}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$HD_TAB_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 0 ]; then pass=$((pass+1)); echo "PASS  commit hook here-doc <<- 分隔符文本 git commit 不误拦"
+else failn=$((failn+1)); echo "FAIL  commit hook here-doc <<- 文本 git commit 不应误拦 (rc=$rc)"; echo "$out" | head -3; fi
+BASH_HD_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": "bash <<'EOF'\ngit commit -m test\nEOF"}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$BASH_HD_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook shell here-doc git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook shell here-doc git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+PIPE_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": "printf 'git commit -m test\\n' | bash"}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$PIPE_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook pipe-to-shell git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook pipe-to-shell git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"xargs git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook xargs git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook xargs git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+XARGS_SH_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": "printf x | xargs sh -c 'git commit -m test'"}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$XARGS_SH_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook xargs sh -c git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook xargs sh -c git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+PARALLEL_SH_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": "parallel sh -c 'git commit -m test' ::: x"}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$PARALLEL_SH_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook parallel sh -c git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook parallel sh -c git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+FIND_EXEC_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": "find . -exec git commit -m test ';'"}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$FIND_EXEC_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook find -exec git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook find -exec git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+FIND_SH_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": "find . -exec sh -c 'git commit -m test' ';'"}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$FIND_SH_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook find -exec sh -c git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook find -exec sh -c git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+printf 'git commit -m test\n' > "$HC_ROOT/commit-from-source.sh"
+out=$(printf '{"tool_input":{"command":"source ./commit-from-source.sh"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook source dynamic execution 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook source dynamic execution 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+python3 - "$HC_ROOT/large-source.sh" <<'PY'
+import sys
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    fh.write("#" * (1024 * 1024 + 16))
+    fh.write("\ngit commit -m test\n")
+PY
+out=$(printf '{"tool_input":{"command":"source ./large-source.sh"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook source 大文件后段 git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook source 大文件后段 git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":". ./commit-from-source.sh"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook dot-script dynamic execution 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook dot-script dynamic execution 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+DYN_SOURCE_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": 'file=commit-from-source.sh; source "$file"'}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$DYN_SOURCE_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook source 变量目标保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook source 变量目标应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"source ./missing-commit-source.sh"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 0 ]; then pass=$((pass+1)); echo "PASS  commit hook source 缺失目标无 commit signal 不误拦"
+else failn=$((failn+1)); echo "FAIL  commit hook source 缺失目标无 commit signal 不应阻断 (rc=$rc)"; echo "$out" | head -3; fi
+BS_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": "git \\\ncommit -m test"}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$BS_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook 反斜杠续行 git commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook 反斜杠续行 git commit 漏判 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"cd .. && git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "cwd change"; then pass=$((pass+1)); echo "PASS  commit hook cd 后 git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook cd 后 git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+CD_ML_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": "cd ..\ngit commit -m test"}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$CD_ML_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "cwd change"; then pass=$((pass+1)); echo "PASS  commit hook 多行 cd 后 git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook 多行 cd 后 git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"pushd .. && git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "cwd change"; then pass=$((pass+1)); echo "PASS  commit hook pushd 后 git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook pushd 后 git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"builtin cd .. && git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "cwd change"; then pass=$((pass+1)); echo "PASS  commit hook builtin cd 后 git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook builtin cd 后 git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"(cd .. && true); git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && ! printf '%s' "$out" | grep -q "cwd change"; then pass=$((pass+1)); echo "PASS  commit hook subshell cd 后外层 git commit 不误报 cwd change"
+else failn=$((failn+1)); echo "FAIL  commit hook subshell cd 不应污染外层 cwd (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"env -C .. git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "cwd change"; then pass=$((pass+1)); echo "PASS  commit hook env -C git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook env -C git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"cd .. && (git commit -m test)"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "cwd change"; then pass=$((pass+1)); echo "PASS  commit hook cd 后 subshell git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook cd 后 subshell git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"env -C .. sh -c '"'"'git commit -m test'"'"'"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "cwd change"; then pass=$((pass+1)); echo "PASS  commit hook env -C nested shell commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook env -C nested shell commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"bash --rcfile /dev/null -c '"'"'git commit -m test'"'"'"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook bash --rcfile 后 -c git commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook bash --rcfile 后 -c git commit 漏判 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"/usr/bin/env sh -c '"'"'git commit -m test'"'"'"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook absolute env nested shell commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook absolute env nested shell commit 漏判 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"echo ok | bash"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 0 ]; then pass=$((pass+1)); echo "PASS  commit hook benign stdin shell 不误拦"
+else failn=$((failn+1)); echo "FAIL  commit hook benign stdin shell 不应阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"source ./missing-env"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 0 ]; then pass=$((pass+1)); echo "PASS  commit hook unknown source 无 commit signal 不误拦"
+else failn=$((failn+1)); echo "FAIL  commit hook unknown source 无 commit signal 不应阻断 (rc=$rc)"; echo "$out" | head -3; fi
+HEREDOC_SCRIPT_JSON=$(python3 - "$HC_ROOT" "$TMP/guru-commit-hook-test.sh" <<'PY'
+import json, shlex, sys
+helper = shlex.quote(sys.argv[2])
+cmd = f"cat > {helper} <<'EOF'\ngit commit -m test\nEOF\nchmod +x {helper}\n{helper}"
+print(json.dumps({"tool_input": {"command": cmd}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$HEREDOC_SCRIPT_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook heredoc 写脚本再执行 git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook heredoc 写脚本执行 git commit 应阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"if true; then :; else git commit -m test; fi"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook if/else 分支 git commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook if/else 分支 git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"if false; then :; elif git commit -m test; then :; fi"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook elif 分支 git commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook elif 分支 git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+CASE_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": 'case "$x" in y) git commit -m test;; esac'}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$CASE_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook case 分支 git commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook case 分支 git commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"git -c alias.ci=commit ci -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook git alias commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook git alias commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"git -c alias.g='\''!git'\'' g commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook shell alias !git 后续 commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook shell alias !git 后续 commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.ci GIT_CONFIG_VALUE_0=commit git ci -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook env-injected git alias commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook env-injected git alias commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+(cd "$HC_ROOT" && git config alias.ci commit)
+out=$(printf '{"tool_input":{"command":"git ci -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit"; then pass=$((pass+1)); echo "PASS  commit hook configured git alias commit 被识别"
+else failn=$((failn+1)); echo "FAIL  commit hook configured git alias commit 漏判/分类错误 (rc=$rc)"; echo "$out" | head -3; fi
+HC_OUTSIDE="$TMP/hook-outside"; mkdir -p "$HC_OUTSIDE"
+out=$(printf '{"tool_input":{"command":"cd %s && git ci -m test"},"cwd":"%s"}' "$HC_ROOT" "$HC_OUTSIDE" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_OUTSIDE" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "cwd change"; then pass=$((pass+1)); echo "PASS  commit hook cd 后 configured git alias commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook cd 后 configured git alias commit 漏判 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"git -C %s ci -m test"},"cwd":"%s"}' "$HC_ROOT" "$HC_OUTSIDE" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_OUTSIDE" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "repository-changing options or environment"; then pass=$((pass+1)); echo "PASS  commit hook git -C configured alias commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook git -C configured alias commit 漏判 (rc=$rc)"; echo "$out" | head -3; fi
+mkdir -p "$HC_ROOT/sub"
+printf 'git commit -m test\n' > "$HC_ROOT/sub/commit-from-source.sh"
+out=$(printf '{"tool_input":{"command":"cd sub && . ./commit-from-source.sh"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "cwd change"; then pass=$((pass+1)); echo "PASS  commit hook cd 后 dot-script dynamic execution 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook cd 后 dot-script dynamic execution 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+ML_JSON=$(python3 - "$HC_ROOT" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": "cmd='git commit -m test'\neval \"$cmd\""}, "cwd": sys.argv[1]}))
+PY
+)
+out=$(printf '%s' "$ML_JSON" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook 多行间接 eval git commit 保守 fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook 多行间接 eval git commit 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+out=$(printf '{"tool_input":{"command":"git commit -m '\''unterminated"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "could not safely parse"; then pass=$((pass+1)); echo "PASS  commit hook 可疑 parse error fail-closed"
+else failn=$((failn+1)); echo "FAIL  commit hook parse error 应保守阻断 (rc=$rc)"; echo "$out" | head -3; fi
+HM_PAIR=$(mk_commit_gate_case hook-missing-gate in_progress "lib/x.dart")
+HM_ROOT="${HM_PAIR%%|*}"; HM_TASK="${HM_PAIR#*|}"
+printf 'code\n' > "$HM_ROOT/lib/x.dart"
+(cd "$HM_ROOT" && git add lib/x.dart)
+out=$(printf '{"tool_input":{"command":"git commit -m test"},"cwd":"%s"}' "$HM_ROOT" | TASK_JSON_PATH="$HM_TASK/task.json" CLAUDE_PROJECT_DIR="$HM_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "cannot find .trellis/scripts/guru/guru_gate.py"; then
+  pass=$((pass+1)); echo "PASS  commit hook missing guru_gate.py fail-closed"
+else
+  failn=$((failn+1)); echo "FAIL  commit hook missing guru_gate.py should fail closed (rc=$rc)"; echo "$out" | head -4
+fi
+
 # TASK_JSON_PATH env 解析（before_start 钩子路径）
 out=$(TASK_JSON_PATH="$G/task.json" python3 "$GATE" check 2>&1); rc=$?
-if [ "$rc" = 0 ] && printf '%s' "$out" | grep -q "放行"; then pass=$((pass+1)); echo "PASS  check 经 TASK_JSON_PATH 解析任务"
+if [ "$rc" = 0 ] && printf '%s' "$out" | grep -q "START_READY" && printf '%s' "$out" | grep -q "deprecated alias"; then pass=$((pass+1)); echo "PASS  check 经 TASK_JSON_PATH 解析任务并标记 deprecated START_READY"
 else failn=$((failn+1)); echo "FAIL  check TASK_JSON_PATH (rc=$rc)"; echo "$out" | head -3; fi
 
 # check 复跑结构 Gate：确认落盘后产物被改坏 → 拦截（确认时效）
@@ -825,6 +2033,7 @@ cat > "$GD/task.json" <<EOF
   "requirements": {"confirmed_by": "t", "confirmed_at": "x", "artifact_digest": "$D_REQ"},
   "detail":       {"confirmed_by": "t", "confirmed_at": "x", "artifact_digest": "$D_DT"}}}
 EOF
+write_requirements_review "$GD" clean "review_result=clean/requirements-ready"
 write_reviews_all "$GD"
 expect "check 快照一致放行" 0 python3 "$GATE" check "$GD"
 printf '\n语义改动：阈值从 8s 调成 30s\n' >> "$GD/design.md"
@@ -856,6 +2065,7 @@ d["guru_gates"] = {
 }
 json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
 PY
+write_requirements_review "$GF" clean "review_result=clean/requirements-ready"
 write_reviews_all "$GF"
 expect "full check 快照一致放行" 0 python3 "$GATE" check "$GF"
 printf '\n导航入口调整\n' >> "$GF-docs/README.md"
@@ -874,6 +2084,7 @@ d["guru_gates"] = {g: {"confirmed_by": "t", "confirmed_at": "x", "artifact_diges
                    for g in ("requirements", "detail")}
 json.dump(d, open(f"{gf}/task.json", "w"), ensure_ascii=False, indent=2)
 PY
+write_requirements_review "$GF2" clean "review_result=clean/requirements-ready"
 write_reviews_all "$GF2"
 expect "累积快照：基线放行" 0 python3 "$GATE" check "$GF2"
 # 结构中性的上游改动（不新增 BHV，避免结构 Gate 先拦导致测不到快照路径）
@@ -886,6 +2097,7 @@ d = json.load(open(f"{gf}/task.json"))
 d["guru_gates"]["requirements"]["artifact_digest"] = dig
 json.dump(d, open(f"{gf}/task.json", "w"), ensure_ascii=False, indent=2)
 PY
+write_requirements_review "$GF2" clean "review_result=clean/requirements-ready"
 expect "累积快照：上游改动后下游 review evidence 失效被拦" 2 python3 "$GATE" check "$GF2"
 expect_grep "累积快照：拦截原因是 overview review 缺口" "record-review overview" python3 "$GATE" check "$GF2"
 
@@ -940,6 +2152,7 @@ else failn=$((failn+1)); echo "FAIL  hook 误伤 mytask.py (rc=$rc)"; fi
 SM="$TMP/softmode"; mkdir -p "$SM"; cp "$G/prd.md" "$G/design.md" "$G/implement.md" "$SM/"
 expect "strict（默认）下 --via-agent 仍被拒" 2 python3 "$GATE" confirm requirements "$SM" --via-agent
 grill_done requirements "$SM"
+write_requirements_review "$SM" clean "review_result=clean/requirements-ready"
 out=$(GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$SM" --via-agent --user-quote "确认，进概要" 2>&1); rc=$?
 if [ "$rc" = 0 ] && grep -q '"via": "agent"' "$SM/task.json" && grep -q '确认，进概要' "$SM/task.json"; then
   pass=$((pass+1)); echo "PASS  soft 单 gate 代跑成功且留痕（via/user_quote）"
@@ -955,6 +2168,7 @@ CFGROOT="$TMP/cfgroot"; mkdir -p "$CFGROOT/.trellis"
 printf 'guru:\n  gate_mode: soft\n' > "$CFGROOT/.trellis/config.yaml"
 SM2="$TMP/softmode2"; mkdir -p "$SM2"; cp "$G/prd.md" "$SM2/"
 grill_done requirements "$SM2"
+write_requirements_review "$SM2" clean "review_result=clean/requirements-ready"
 out=$(cd "$CFGROOT" && python3 "$GATE" confirm requirements "$SM2" --via-agent --user-quote "确认" 2>&1); rc=$?
 if [ "$rc" = 0 ]; then pass=$((pass+1)); echo "PASS  config.yaml gate_mode: soft 生效"
 else failn=$((failn+1)); echo "FAIL  config soft (rc=$rc)"; echo "$out" | head -3; fi
@@ -974,6 +2188,7 @@ else failn=$((failn+1)); echo "FAIL  gate_mode 作用域泄漏 (rc=$rc)"; fi
 
 # TTY 零参数批量确认（pty 逐个 y）
 PT="$TMP/ptybatch"; mkdir -p "$PT"; cp "$G/prd.md" "$G/design.md" "$G/implement.md" "$PT/"
+write_requirements_review "$PT" clean "review_result=clean/requirements-ready"
 write_reviews_all "$PT"
 out=$(python3 - "$GATE" "$PT" <<'PY'
 import os, pty, select, sys, time
@@ -1045,6 +2260,10 @@ y
 - Product decisions confirmed:
   - DEC-001: CJK-adjacent P0 parsing confirmed
     - user_quote: "fixture confirms CJK P0"
+### Question Loop Log
+| oq_id | asked_at | question | recommended_answer | tradeoff | user_quote | resolved_decision | artifact_update |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| OQ-001 | 2026-06-30 | Confirm CJK-adjacent P0 parsing fixture? | Confirm DEC-001 | Without this, the fixture would not carry user-confirmed evidence | fixture confirms CJK P0 | DEC-001 | prd.md |
 - Open product/scope/risk questions: none — fixture declares no unresolved questions
 EOF
 expect "requirements：'优先级P0' CJK 紧贴被识别（#8）" 0 python3 "$GATE" requirements "$CJKP"
@@ -1461,6 +2680,32 @@ def ok(desc, cond):
     else:
         nf += 1; print(f"FAIL  {desc}")
 
+def lifecycle_args(root, tdir):
+    return argparse.Namespace(
+        task_dir=tdir,
+        root=root,
+        platform="flutter",
+        provider="codex",
+        adversarial=False,
+        trellis_bin="trellis",
+        run_id="RID",
+        dry_run=True,
+        slice=None,
+    )
+
+lc_root = tempfile.mkdtemp()
+lc_tdir = os.path.join(lc_root, ".trellis", "tasks", "lifecycle")
+os.makedirs(lc_tdir)
+gs._guru_gate_check_implementation = lambda _task_dir: 2
+ok("supervise implement lifecycle gate 非 0 时阻断", gs.run_action(lifecycle_args(lc_root, lc_tdir), "implement") == 2)
+ok("supervise check lifecycle gate 非 0 时阻断", gs.run_action(lifecycle_args(lc_root, lc_tdir), "check") == 2)
+ok("supervise implement-check lifecycle gate 非 0 时阻断", gs.run_implement_check(lifecycle_args(lc_root, lc_tdir)) == 2)
+
+# This block verifies provider routing and artifact/risk helpers. Lifecycle
+# gating is covered separately in shell fixtures below, so keep these tests
+# focused on implement-check internals.
+gs._guru_gate_check_implementation = lambda _task_dir: 0
+
 def mk(git=True, risk=None, guru_risk=None, design_package=None, requirement_package=None,
        guru_chain=None, files=(), prd=False):
     root = tempfile.mkdtemp()
@@ -1808,6 +3053,8 @@ import os, json, sys, tempfile, subprocess, io, contextlib, argparse
 import guru_review_record as R  # noqa: F401
 import guru_supervise as gs
 
+gs._guru_gate_check_implementation = lambda _task_dir: 0
+
 np = nf = 0
 def ok(d, c):
     global np, nf
@@ -1895,6 +3142,8 @@ P1C_OUT="$(PYTHONPATH="$HERE/.." python3 - <<'PY'
 import os, json, sys, tempfile, subprocess, io, contextlib, argparse
 import guru_review_record as R
 import guru_supervise as gs
+
+gs._guru_gate_check_implementation = lambda _task_dir: 0
 
 np = nf = 0
 def ok(d, c):

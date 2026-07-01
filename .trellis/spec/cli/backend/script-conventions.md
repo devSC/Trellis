@@ -1651,6 +1651,10 @@ python3 .trellis/scripts/guru/guru_supervise.py [--provider <provider>] [--adver
 python3 .trellis/scripts/guru/guru_supervise.py [--provider <provider>] [--adversarial] detail <task-dir> [--run-id <id>] [--dry-run]
 python3 .trellis/scripts/guru/guru_supervise.py [--provider <provider>] --adversarial requirements <task-dir> [--run-id <id>] [--dry-run]
 python3 .trellis/scripts/guru/guru_gate.py record-review <overview|detail> <task-dir> --result clean|findings --max-severity none|low|medium|high|critical --reviewer <reviewer> --run-id <id> --evidence <text> [--finding-class <class>]
+python3 .trellis/scripts/guru/guru_gate.py check-start <task-dir>
+python3 .trellis/scripts/guru/guru_gate.py check-implementation <task-dir>
+python3 .trellis/scripts/guru/guru_gate.py check-commit <task-dir>
+python3 .trellis/scripts/guru/guru_review_record.py target-digest <root> <target>... --mode worktree|index
 ```
 
 ### 3. Contracts
@@ -1675,8 +1679,18 @@ python3 .trellis/scripts/guru/guru_gate.py record-review <overview|detail> <task
   the dry-run prompt must review `prd.md`, task metadata/jsonl, referenced
   formal requirements-package files, task context, and repo evidence before
   product questions; it emits `route_class=REQ_BLOCKER` for medium+ blockers or
-  `review_result=clean/requirements-ready` when clean, then stops before
-  `confirm requirements`.
+  a final clean verdict when clean, then stops before `confirm requirements`.
+  The clean final verdict must include all of:
+  `route_class=none`, `review_result=clean/requirements-ready`, and
+  `max_severity=none|low`. Missing severity is not a clean default.
+- Requirements verdict parsing is final-verdict scoped: historical examples,
+  quoted old findings, or repaired text before the final verdict must not flip
+  the result. A bare `REQ_BLOCKER` remains fail-closed only when it appears in
+  the final verdict region and is not negated by wording such as "no",
+  "none", "not", "without", "zero", or "no blocking".
+- `confirm requirements` and `check-start` both require a clean/current
+  requirements review. Missing, deferred, blocked, stale, malformed, or
+  medium+ requirements review state blocks user confirmation and task start.
 - Overview/detail readiness requires two distinct current-digest clean review
   run ids and at least one counted clean record whose `reviewer` contains
   `adversarial`.
@@ -1689,6 +1703,35 @@ python3 .trellis/scripts/guru/guru_gate.py record-review <overview|detail> <task
   writes require confirmed Domain Grill decisions.
 - `reviewer` for adversarial clean evidence must still contain `clean-context`,
   for example `clean-context-adversarial-claude`.
+- Guru lifecycle gates are purpose-specific. `check-start` means only
+  `START_READY` and the next allowed action is `task.py start`. It is not
+  permission to implement or commit. `check-implementation` requires
+  `task.json.status == "in_progress"` before starting implement/check workers.
+  `check-commit` requires `in_progress`, reviewed staged target coverage, and a
+  complete latest clean implementation review record.
+- The direct commit hook `block-unstarted-commit.sh` is a guard around command
+  execution, not a generic text scanner. It should detect real `git commit`
+  command positions through common wrappers (`command`, `builtin`, `env`, shell
+  `-c`, git aliases, and safe shell alias forms), avoid prose/echo/grep false
+  positives, and fail closed when an unsafe shell alias or dynamic execution
+  could conceal a commit. If no `.trellis/tasks/*/task.json` has status
+  `planning` or `in_progress`, the hook exits 0 because there is no active Guru
+  task candidate to protect.
+- Implementation review records must be complete clean verdicts before they
+  can unblock commit: `required_satisfied=true`,
+  `deterministic_checks=passed`, `dirty_scope=clean`,
+  `invariant_coverage=all_passed`, `review_target`, `review_provider`,
+  `target_paths`, and `reviewed_target_digest`.
+- Review target digests compare the reviewed target with the staged index.
+  Hash large blobs in chunks, handle gitlinks consistently, and for worktree
+  gitlinks read the actual submodule `HEAD` when the submodule worktree exists.
+  Exclude Trellis runtime metadata such as task jsonl/check/workspace journals
+  from the target digest, but do not allow staged runtime task artifacts to
+  pass `check-commit`.
+- Guru overlay template changes are two-surface changes: edit
+  `guru-template/...` as the source, then run `pnpm --dir packages/cli
+  sync:guru` and verify `pnpm --filter @devsc/trellis sync:guru:check`.
+  Do not hand-patch the package mirror as the authoritative source.
 
 ### 4. Validation & Error Matrix
 
@@ -1700,25 +1743,60 @@ python3 .trellis/scripts/guru/guru_gate.py record-review <overview|detail> <task
 | `record-review requirements ...` | Reject; requirements remains human-confirm only. |
 | `clean` record has medium+ severity or `finding_class` | Reject. |
 | `findings` record lacks medium+ severity or `finding_class` | Reject. |
+| Requirements review final verdict lacks `max_severity` | Block `confirm requirements` and `check-start`; do not infer `none`. |
+| Requirements review says `route_class=REQ_BLOCKER` in final verdict | Block requirements confirmation/start and route back to requirements repair. |
+| Historical text contains `REQ_BLOCKER` before final `route_class=none` clean verdict | Do not block solely on historical text. |
+| `check-start` passes while task is still `planning` | Print `START_READY`; only `task.py start` may follow. |
+| `check-implementation` runs on a `planning` task | Exit non-zero before starting any worker. |
+| `check-commit` sees staged task artifacts or workspace runtime files | Block commit even when code target paths were reviewed. |
+| Latest clean implementation review is missing required verdict fields | Block commit as malformed/incomplete clean evidence. |
+| Latest clean implementation review target digest differs from staged index digest | Block commit; require implementation review rerun for the current staged target. |
+| Commit hook sees no `planning` or `in_progress` Guru task candidate | Exit 0 without calling `check-commit`. |
+| Commit hook cannot safely parse a command that may execute `git commit` | Fail closed with a parse-safety error. |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: Codex writes an overview, `guru_supervise.py --provider codex --adversarial overview <task>` spawns Claude, and the recorded clean reviewer is `clean-context-adversarial-claude`.
-- Good: Codex runs `guru_supervise.py --provider codex --adversarial requirements <task>` and the dry-run plan spawns Claude, requires repo-evidence inspection before product questions, and stops before `confirm requirements`.
+- Good: Codex runs `guru_supervise.py --provider codex --adversarial requirements <task>` and the dry-run plan spawns Claude, requires repo-evidence inspection before product questions, requires final `route_class=none`, `review_result=clean/requirements-ready`, and `max_severity=none|low`, and stops before `confirm requirements`.
+- Good: `check-start` prints `START_READY`, the agent runs `task.py start`, `check-implementation` passes only after status becomes `in_progress`, and `check-commit` passes only after a complete clean implementation review covers the staged target digest.
+- Good: a freshly installed Guru project with no active task candidates can commit ordinary bootstrap changes because the commit hook has nothing to protect.
 - Base: Non-adversarial clean plus adversarial clean with distinct run ids makes the review evidence ready.
 - Bad: Two non-adversarial clean records pass by run-id count alone.
 - Bad: Requirements adversarial dry-run tells the worker to write requirements review evidence or omits `REQ_BLOCKER` / `review_result=clean/requirements-ready`.
+- Bad: Requirements review output echoes old `REQ_BLOCKER` examples and then omits a final structured verdict; the parser treats that as clean.
+- Bad: `git -c alias.g='!git' g commit -m test` bypasses the commit hook because shell aliases beginning with `!` were not inspected.
+- Bad: `check-commit` trusts `target_paths` without comparing the latest clean review digest against the current staged index digest.
 
 ### 6. Tests Required
 
 - Shell regression for two clean records without adversarial reviewer staying blocked.
 - Shell regression for adversarial clean moving the gate to the next missing review.
 - Shell or bundled-template regression proving `record-review requirements ...` is rejected.
+- Shell regression proving `confirm requirements` and `check-start` block when
+  requirements review is missing, deferred, blocked, stale, malformed, or has
+  `max_severity=medium+`.
+- Unit regression proving requirements verdict parsing uses the final verdict
+  region, requires explicit `max_severity=none|low` for clean, treats
+  unnegated final `REQ_BLOCKER` as blocking, and ignores negated blocker text.
 - Bundled-template regression for `codex -> claude`, `claude -> codex`, and unknown-provider -> `codex`, including requirements.
 - Bundled-template regression that requirements dry-run prints `REQ_BLOCKER`,
-  `review_result=clean/requirements-ready`, repo-evidence-first guidance, the
-  temporary-PRD vs confirmed-long-term-knowledge boundary, and no requirements
-  review-evidence command.
+  `review_result=clean/requirements-ready`, `max_severity=none|low`,
+  repo-evidence-first guidance, the temporary-PRD vs
+  confirmed-long-term-knowledge boundary, and no requirements review-evidence
+  command.
+- Lifecycle regression for `check-start`, `check-implementation`, and
+  `check-commit`, including planning-task failure, in-progress success, staged
+  task artifact blocking, incomplete clean verdict blocking, and staged digest
+  mismatch blocking.
+- Commit-hook parser regression for direct git commit, wrappers, shell `-c`,
+  git aliases, shell aliases beginning with `!`, benign text/prose commands,
+  dynamic source/eval/heredoc cases, and the no-active-task pass-through.
+- Review digest regression for large-file chunking, gitlink mode `160000`,
+  worktree submodule `HEAD` vs index OID behavior, invalid target paths,
+  stat/read/readlink races, and exclusion of Trellis runtime metadata.
+- Apply regression proving Codex hook registration validates malformed
+  `.codex/hooks.json` shapes before mutation and restores a pre-existing guard
+  file if final hooks.json replacement fails.
 - Transient cache regression must stay green: Python verification must not leave `__pycache__` in template trees.
 
 ### 7. Wrong vs Correct
@@ -1731,12 +1809,26 @@ python3 .trellis/scripts/guru/guru_gate.py record-review overview "$TASK" \
   --evidence "second clean"
 ```
 
+```bash
+# Wrong: START_READY is treated as implementation/commit permission.
+python3 .trellis/scripts/guru/guru_gate.py check-start "$TASK"
+git commit -m "implement task"
+```
+
 #### Correct
 
 ```bash
 python3 .trellis/scripts/guru/guru_gate.py record-review overview "$TASK" \
   --result clean --max-severity low --reviewer clean-context-adversarial-claude \
   --run-id overview-claude-clean-b --evidence "opposite-provider adversarial clean"
+```
+
+```bash
+python3 .trellis/scripts/guru/guru_gate.py check-start "$TASK"
+python3 .trellis/scripts/task.py start "$TASK"
+python3 .trellis/scripts/guru/guru_gate.py check-implementation "$TASK"
+python3 .trellis/scripts/guru/guru_gate.py check-commit "$TASK"
+git commit -m "implement task"
 ```
 
 ---

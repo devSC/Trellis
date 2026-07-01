@@ -48,8 +48,23 @@ diff -r "$T1/.agents/skills/client-design-overview-writing" "$T1/.claude/skills/
 [ ! -e "$T1/.trellis/tasks/old-grill-marker/.grilled-prd" ] \
   && ok "场景1 清理旧 .grilled-* 提示标记" || bad "场景1 旧 .grilled-* 标记未清理"
 
-grep -q "my-custom-guard.sh" "$T1/.claude/settings.json" && grep -q "block-unconfirmed-start.sh" "$T1/.claude/settings.json" \
-  && ok "场景1 settings.json 合并（用户 hook 保留 + 阻断 hook 接线）" || bad "场景1 settings.json 合并不完整"
+if python3 - "$T1/.claude/settings.json" <<'PY'
+import json
+import sys
+settings = json.load(open(sys.argv[1], encoding="utf-8"))
+entries = settings.get("hooks", {}).get("PreToolUse", [])
+bash_entries = [e for e in entries if e.get("matcher") == "Bash"]
+hooks = [h for e in bash_entries for h in e.get("hooks", [])]
+commands = [h.get("command") for h in hooks]
+assert len(bash_entries) == 1
+assert commands.count("my-custom-guard.sh") == 1
+assert commands.count("\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-unconfirmed-start.sh") == 1
+assert commands.count("\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-unstarted-commit.sh") == 1
+PY
+then ok "场景1 settings.json 合并（用户 hook 保留 + start/commit 阻断 hook 接线）"
+else bad "场景1 settings.json 合并不完整"; fi
+[ -x "$T1/.claude/hooks/block-unstarted-commit.sh" ] \
+  && ok "场景1 Claude commit guard hook 已安装且可执行" || bad "场景1 Claude commit guard hook 缺失或不可执行"
 python3 -c "import json;d=json.load(open('$T1/.claude/settings.json'));assert d['model']=='opus'" 2>/dev/null \
   && ok "场景1 settings.json 非 hooks 键保留" || bad "场景1 settings.json 用户键丢失"
 
@@ -363,6 +378,169 @@ PYS
 block_n=$(grep -c "<!-- gitnexus:start -->" "$T18/AGENTS.md" || true)
 [ "$block_n" = 1 ] && [ "$agents_hash_before" = "$agents_hash_after" ] \
   && ok "场景18 opt-in 二跑不重复/不改写 AGENTS" || bad "场景18 opt-in 二跑不幂等"
+
+# ============ 场景 19：目标已有 .codex 时安装 commit guard 并幂等合并 .codex/hooks.json ============
+T19=$(mk_target "codex hooks" yes)
+mkdir -p "$T19/.codex"
+cat > "$T19/.codex/hooks.json" <<'EOF'
+{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash .codex/hooks/my-custom-codex-guard.sh","timeout":5},{"type":"command","command":"bash .codex/hooks/block-unstarted-commit.sh","timeout":1,"stale":true},{"type":"command","command":"bash /old/guru/project/.codex/hooks/block-unstarted-commit.sh","timeout":2,"stale_absolute":true}]},{"matcher":"Bash","hooks":[{"type":"command","command":"bash .codex/hooks/block-unstarted-commit.sh","timeout":2,"stale_duplicate":true}]}]}}
+EOF
+out=$(bash "$APPLY" "$T19" flutter 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "场景19 apply 退出码 0" || { bad "场景19 apply 失败 (rc=$rc)"; echo "$out" | tail -5; }
+[ -x "$T19/.codex/hooks/block-unstarted-commit.sh" ] \
+  && ok "场景19 Codex commit guard hook 已安装且可执行" || bad "场景19 Codex commit guard hook 缺失或不可执行"
+python3 - "$T19/.codex/hooks.json" "$T19" <<'PY'
+import json, shlex, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+expected_guard = "bash " + shlex.quote(sys.argv[2] + "/.codex/hooks/block-unstarted-commit.sh")
+entries = d.get("hooks", {}).get("PreToolUse", [])
+bash_entries = [e for e in entries if e.get("matcher") == "Bash"]
+hooks = [h for e in bash_entries for h in e.get("hooks", [])]
+custom = [h for h in hooks if h.get("command") == "bash .codex/hooks/my-custom-codex-guard.sh"]
+guards = [h for h in hooks if h.get("command") == expected_guard]
+legacy_guards = [h for h in hooks if h.get("command") == "bash .codex/hooks/block-unstarted-commit.sh"]
+stale_absolute_guards = [h for h in hooks if h.get("command") == "bash /old/guru/project/.codex/hooks/block-unstarted-commit.sh"]
+assert len(bash_entries) == 1
+assert len(custom) == 1 and custom[0].get("timeout") == 5
+assert guards == [{"type": "command", "command": expected_guard, "timeoutSec": 15}]
+assert legacy_guards == []
+assert stale_absolute_guards == []
+PY
+[ "$?" = 0 ] && ok "场景19 .codex/hooks.json 保留用户 hook 并刷新/去重 commit guard" || bad "场景19 .codex/hooks.json 合并不完整"
+codex_hash_before=$(python3 - "$T19/.codex/hooks.json" <<'PYS'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PYS
+)
+out=$(bash "$APPLY" "$T19" flutter 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "场景19 二跑 apply 退出码 0" || { bad "场景19 二跑 apply 失败 (rc=$rc)"; echo "$out" | tail -5; }
+codex_hash_after=$(python3 - "$T19/.codex/hooks.json" <<'PYS'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PYS
+)
+[ "$codex_hash_before" = "$codex_hash_after" ] \
+  && ok "场景19 Codex hook 合并二跑幂等" || bad "场景19 Codex hook 合并二跑产生变化"
+
+codex_guard_input() {
+  python3 - "$1" "$2" <<'PY'
+import json, sys
+print(json.dumps({"tool_input": {"command": sys.argv[1]}, "cwd": sys.argv[2]}))
+PY
+}
+
+# ============ 场景 20：目标没有 .codex 时也安装 commit guard，避免安装顺序造成治理空窗 ============
+T20=$(mk_target "codex hooks fresh" yes)
+out=$(bash "$APPLY" "$T20" flutter 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "场景20 apply 退出码 0" || { bad "场景20 apply 失败 (rc=$rc)"; echo "$out" | tail -5; }
+[ -x "$T20/.codex/hooks/block-unstarted-commit.sh" ] \
+  && ok "场景20 Codex commit guard hook 已安装且可执行" || bad "场景20 Codex commit guard hook 缺失或不可执行"
+python3 - "$T20/.codex/hooks.json" "$T20" <<'PY'
+import json, shlex, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+expected_guard = "bash " + shlex.quote(sys.argv[2] + "/.codex/hooks/block-unstarted-commit.sh")
+guards = [
+    h
+    for e in d.get("hooks", {}).get("PreToolUse", [])
+    if e.get("matcher") == "Bash"
+    for h in e.get("hooks", [])
+    if h.get("command") == expected_guard
+]
+assert guards == [{"type": "command", "command": expected_guard, "timeoutSec": 15}]
+PY
+[ "$?" = 0 ] && ok "场景20 .codex/hooks.json 新建并接入 commit guard" || bad "场景20 .codex/hooks.json 未接入 commit guard"
+mkdir -p "$T20/sub/dir"
+codex_guard_cmd=$(python3 - "$T20/.codex/hooks.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+for e in d.get("hooks", {}).get("PreToolUse", []):
+    if e.get("matcher") == "Bash":
+        for h in e.get("hooks", []):
+            cmd = h.get("command", "")
+            if "block-unstarted-commit.sh" in cmd:
+                print(cmd)
+                raise SystemExit(0)
+raise SystemExit(1)
+PY
+)
+out=$(printf '{"tool_input":{"command":"git commit -m test"},"cwd":"%s"}' "$T20/sub/dir" | (cd "$T20/sub/dir" && eval "$codex_guard_cmd") 2>&1); rc=$?
+[ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit" \
+  && ok "场景20 Codex hook command nested cwd 可执行并阻断 commit" || { bad "场景20 Codex hook command nested cwd 未正确阻断 (rc=$rc)"; echo "$out" | head -4; }
+out=$(codex_guard_input "echo 'git commit'" "$T20/sub/dir" | (cd "$T20/sub/dir" && eval "$codex_guard_cmd") 2>&1); rc=$?
+[ "$rc" = 0 ] \
+  && ok "场景20 Codex hook 不误拦 echo git commit 文本" || { bad "场景20 Codex hook echo 文本误拦 (rc=$rc)"; echo "$out" | head -4; }
+out=$(codex_guard_input "git commit --amend --no-verify -m test" "$T20/sub/dir" | (cd "$T20/sub/dir" && eval "$codex_guard_cmd") 2>&1); rc=$?
+[ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit" \
+  && ok "场景20 Codex hook 阻断 amend/no-verify commit" || { bad "场景20 Codex hook amend/no-verify 漏拦 (rc=$rc)"; echo "$out" | head -4; }
+out=$(codex_guard_input "/usr/bin/env git commit --amend -m test" "$T20/sub/dir" | (cd "$T20/sub/dir" && eval "$codex_guard_cmd") 2>&1); rc=$?
+[ "$rc" = 2 ] && printf '%s' "$out" | grep -q "Guru task is not ready to commit" \
+  && ok "场景20 Codex hook 阻断 absolute env wrapper commit" || { bad "场景20 Codex hook absolute env wrapper 漏拦 (rc=$rc)"; echo "$out" | head -4; }
+out=$(codex_guard_input "git -C '$T20' commit -m test" "$T20/sub/dir" | (cd "$T20/sub/dir" && eval "$codex_guard_cmd") 2>&1); rc=$?
+[ "$rc" = 2 ] && printf '%s' "$out" | grep -q "repository-changing options" \
+  && ok "场景20 Codex hook 对 git -C commit 保守阻断" || { bad "场景20 Codex hook git -C commit 未保守阻断 (rc=$rc)"; echo "$out" | head -4; }
+
+# ============ 场景 21：Codex hooks.json 非法时不留下半安装 commit guard ============
+T21=$(mk_target codexhooks-invalid yes)
+mkdir -p "$T21/.codex"
+printf '{not valid json\n' > "$T21/.codex/hooks.json"
+out=$(bash "$APPLY" "$T21" flutter 2>&1); rc=$?
+[ "$rc" != 0 ] && ok "场景21 非法 .codex/hooks.json apply 返回非 0" || bad "场景21 非法 .codex/hooks.json 不应成功"
+[ ! -e "$T21/.codex/hooks/block-unstarted-commit.sh" ] \
+  && ok "场景21 Codex hook 合并失败不复制 commit guard 脚本" || bad "场景21 合并失败后留下半安装 commit guard"
+[ ! -e "$T21/.claude/hooks" ] && [ ! -e "$T21/.agents" ] \
+  && ok "场景21 非法 Codex hooks 失败前未写入前置安装产物" || bad "场景21 非法 Codex hooks 失败后留下前置安装副作用"
+printf '%s' "$out" | grep -q ".codex/hooks.json" && printf '%s' "$out" | grep -q "JSON" \
+  && ok "场景21 输出非法 JSON 根因" || bad "场景21 未输出非法 JSON 根因"
+
+# ============ 场景 22：Codex hooks.json shape 非法时在写入前 fail-closed ============
+check_bad_codex_hooks_shape() {
+  local name="$1" payload="$2" pattern="$3" t out rc
+  t=$(mk_target "$name" yes)
+  mkdir -p "$t/.codex"
+  printf '%s\n' "$payload" > "$t/.codex/hooks.json"
+  out=$(bash "$APPLY" "$t" flutter 2>&1); rc=$?
+  if [ "$rc" != 0 ] && printf '%s' "$out" | grep -q "$pattern" && [ ! -e "$t/.codex/hooks/block-unstarted-commit.sh" ]; then
+    ok "场景22 $name 非法 shape 被预检阻断"
+  else
+    bad "场景22 $name 非法 shape 未被预检阻断 (rc=$rc)"
+    echo "$out" | head -4
+  fi
+}
+check_bad_codex_hooks_shape "codex hooks null" '{"hooks":null}' "hooks"
+check_bad_codex_hooks_shape "codex event object" '{"hooks":{"PreToolUse":{}}}' "PreToolUse"
+check_bad_codex_hooks_shape "codex entry scalar" '{"hooks":{"PreToolUse":["bad"]}}' "PreToolUse"
+check_bad_codex_hooks_shape "codex entry hooks object" '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":{}}]}}' "hooks"
+
+# ============ 场景 23：Codex hooks.json 最终替换失败时恢复既有 guard ============
+T23=$(mk_target "codex hooks rollback" yes)
+mkdir -p "$T23/.codex/hooks"
+printf '{"hooks":{}}\n' > "$T23/.codex/hooks.json"
+printf '#!/usr/bin/env bash\necho old guard\n' > "$T23/.codex/hooks/block-unstarted-commit.sh"
+chmod +x "$T23/.codex/hooks/block-unstarted-commit.sh"
+old_guard_hash=$(python3 - "$T23/.codex/hooks/block-unstarted-commit.sh" <<'PY'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+)
+fake_mv_bin="$TMP/fake-mv-bin"; mkdir -p "$fake_mv_bin"
+cat > "$fake_mv_bin/mv" <<'EOF'
+#!/usr/bin/env bash
+dest=""
+for arg in "$@"; do dest="$arg"; done
+case "$dest" in
+  */.codex/hooks.json) exit 1 ;;
+esac
+exec /bin/mv "$@"
+EOF
+chmod +x "$fake_mv_bin/mv"
+out=$(PATH="$fake_mv_bin:$PATH" bash "$APPLY" "$T23" flutter 2>&1); rc=$?
+new_guard_hash=$(python3 - "$T23/.codex/hooks/block-unstarted-commit.sh" <<'PY'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+)
+[ "$rc" != 0 ] && [ "$old_guard_hash" = "$new_guard_hash" ] \
+  && ok "场景23 hooks.json 替换失败恢复既有 Codex guard" || { bad "场景23 hooks.json 替换失败未恢复既有 Codex guard (rc=$rc)"; echo "$out" | head -4; }
 
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]

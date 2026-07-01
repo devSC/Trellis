@@ -18,6 +18,44 @@ TARGET="$(cd "$TARGET" && pwd)"
 GURU_WITH_GITNEXUS="${GURU_WITH_GITNEXUS:-0}"
 GURU_ADVERSARIAL_ENABLED="${GURU_ADVERSARIAL_ENABLED:-}"
 
+if [ -f "$TARGET/.codex/hooks.json" ]; then
+  python3 - "$TARGET/.codex/hooks.json" <<'PYEOF'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception as exc:
+    print(f"ERROR: .codex/hooks.json 非法 JSON，跳过自动合并（请人工处理）：{exc}", file=sys.stderr)
+    sys.exit(1)
+if not isinstance(data, dict):
+    print("ERROR: .codex/hooks.json 根节点必须是对象", file=sys.stderr)
+    sys.exit(1)
+hooks = data.get("hooks", {})
+if not isinstance(hooks, dict):
+    print("ERROR: .codex/hooks.json 的 hooks 必须是对象", file=sys.stderr)
+    sys.exit(1)
+for event, entries in hooks.items():
+    if not isinstance(event, str) or not isinstance(entries, list):
+        print(f"ERROR: .codex/hooks.json 的 hooks.{event} 必须是数组", file=sys.stderr)
+        sys.exit(1)
+    for entry_idx, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            print(f"ERROR: .codex/hooks.json 的 hooks.{event}[{entry_idx}] 必须是对象", file=sys.stderr)
+            sys.exit(1)
+        entry_hooks = entry.get("hooks", [])
+        if not isinstance(entry_hooks, list):
+            print(f"ERROR: .codex/hooks.json 的 hooks.{event}[{entry_idx}].hooks 必须是数组", file=sys.stderr)
+            sys.exit(1)
+        for hook_idx, hook in enumerate(entry_hooks):
+            if not isinstance(hook, dict):
+                print(f"ERROR: .codex/hooks.json 的 hooks.{event}[{entry_idx}].hooks[{hook_idx}] 必须是对象", file=sys.stderr)
+                sys.exit(1)
+PYEOF
+fi
+
 # 平台选择（第二位置参数，默认 flutter）：决定 spec 包 / workflow / verify analyze 命令。
 PLATFORM="${2:-flutter}"
 case "$PLATFORM" in
@@ -233,7 +271,7 @@ echo "  scripts: guru_gate.py, guru_risk.py, guru_review_record.py, guru_after_c
 
 # 3) 平台 hooks（Claude）+ trellis-local：只装共享 + 本平台专属 + 平台化 grill-nudge
 mkdir -p "$TARGET/.claude/hooks" "$TARGET/.claude/skills/trellis-local"
-SHARED_HOOKS="block-legacy-dirs.sh block-sanctioned-tlds.sh block-unconfirmed-start.sh"
+SHARED_HOOKS="block-legacy-dirs.sh block-sanctioned-tlds.sh block-unconfirmed-start.sh block-unstarted-commit.sh"
 INSTALLED_HOOKS="$SHARED_HOOKS grill-nudge.sh $XTRA_HOOKS"
 # 剪枝：删目标里 guru-managed 但不属当前平台的旧 hook（含历史 grill nudge 名、非 flutter 的 block-l10n-sync.sh）
 LEGACY_GRILL_HOOK="client""-grill-nudge.sh"
@@ -453,15 +491,184 @@ for event, entries in snippet.get("hooks", {}).items():
             if not isinstance(existing_hooks, list):
                 print(f"  ERROR: .claude/settings.json matcher={entry.get('matcher')} 的 hooks 必须是数组", file=sys.stderr)
                 sys.exit(1)
-            cmds = {h.get("command") for h in existing_hooks if isinstance(h, dict)}
             for h in entry.get("hooks", []):
-                if h.get("command") not in cmds:
+                cmd = h.get("command") if isinstance(h, dict) else None
+                match_indices = [
+                    i for i, existing_hook in enumerate(existing_hooks)
+                    if isinstance(existing_hook, dict) and existing_hook.get("command") == cmd
+                ]
+                if not match_indices:
                     existing_hooks.append(h)
                     added += 1
+                    continue
+                first = match_indices[0]
+                if existing_hooks[first] != h:
+                    existing_hooks[first] = h
+                for idx in reversed(match_indices[1:]):
+                    del existing_hooks[idx]
 os.makedirs(os.path.dirname(settings_path), exist_ok=True)
 open(settings_path, "w", encoding="utf-8").write(json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
 print(f"  settings.json: hooks 接线完成（新增 {added} 条、清理悬空 {removed} 条，已有内容保留）")
 PYEOF
+
+# 5.5) Codex hooks 接线：Codex 通用模板只注入 workflow-state；Guru 专属 commit guard 由 overlay 追加。
+# 不依赖目标预先存在 .codex/：安装顺序不能决定 commit guard 是否生效。
+CODEX_HOOKS_TMP="$TARGET/.codex/hooks.json.tmp.$$"
+rm -f "$CODEX_HOOKS_TMP"
+python3 - "$TARGET" "$HERE/config-snippets/codex-hooks.hooks.json" "$CODEX_HOOKS_TMP" <<'PYEOF'
+import json
+import os
+import shlex
+import sys
+
+target_root, snippet_path, tmp_path = sys.argv[1], sys.argv[2], sys.argv[3]
+hooks_path = os.path.join(target_root, ".codex", "hooks.json")
+snippet = json.load(open(snippet_path, encoding="utf-8"))
+if os.path.isfile(hooks_path):
+    try:
+        config = json.load(open(hooks_path, encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print(f"  ERROR: .codex/hooks.json 非法 JSON，跳过自动合并（请人工处理）：{e}", file=sys.stderr)
+        sys.exit(1)
+else:
+    config = {}
+if not isinstance(config, dict):
+    print("  ERROR: .codex/hooks.json 根节点必须是对象", file=sys.stderr)
+    sys.exit(1)
+hooks = config.setdefault("hooks", {})
+if not isinstance(hooks, dict):
+    print("  ERROR: .codex/hooks.json 的 hooks 必须是对象", file=sys.stderr)
+    sys.exit(1)
+added = 0
+refreshed = 0
+deduped = 0
+legacy_commit_guard_cmd = "bash .codex/hooks/block-unstarted-commit.sh"
+commit_guard_cmd = "bash " + shlex.quote(
+    os.path.join(target_root, ".codex", "hooks", "block-unstarted-commit.sh")
+)
+
+
+def materialize_hook(hook):
+    if not isinstance(hook, dict):
+        return hook
+    out = dict(hook)
+    if out.get("command") == legacy_commit_guard_cmd:
+        out["command"] = commit_guard_cmd
+    return out
+
+
+def command_matches(existing_hook, desired_command):
+    if not isinstance(existing_hook, dict):
+        return False
+    existing_command = existing_hook.get("command")
+    if existing_command == desired_command:
+        return True
+    if desired_command != commit_guard_cmd or not isinstance(existing_command, str):
+        return False
+    if existing_command == legacy_commit_guard_cmd:
+        return True
+    try:
+        parts = shlex.split(existing_command)
+    except ValueError:
+        return False
+    return (
+        len(parts) == 2
+        and parts[0] == "bash"
+        and os.path.normpath(parts[1]).endswith(
+            os.path.join(".codex", "hooks", "block-unstarted-commit.sh")
+        )
+    )
+
+
+for event, entries in snippet.get("hooks", {}).items():
+    cur = hooks.setdefault(event, [])
+    if not isinstance(cur, list):
+        print(f"  ERROR: .codex/hooks.json 的 hooks.{event} 必须是数组", file=sys.stderr)
+        sys.exit(1)
+    for entry in entries:
+        desired_entry = dict(entry)
+        desired_entry["hooks"] = [materialize_hook(h) for h in entry.get("hooks", [])]
+        match_entries = [
+            (i, e) for i, e in enumerate(cur)
+            if isinstance(e, dict) and e.get("matcher") == entry.get("matcher")
+        ]
+        if not match_entries:
+            cur.append(desired_entry)
+            added += len(desired_entry.get("hooks", []))
+            continue
+        _first_idx, existing = match_entries[0]
+        existing_hooks = existing.setdefault("hooks", [])
+        if not isinstance(existing_hooks, list):
+            print(f"  ERROR: .codex/hooks.json matcher={entry.get('matcher')} 的 hooks 必须是数组", file=sys.stderr)
+            sys.exit(1)
+        for idx, duplicate in reversed(match_entries[1:]):
+            duplicate_hooks = duplicate.get("hooks")
+            if not isinstance(duplicate_hooks, list):
+                print(f"  ERROR: .codex/hooks.json matcher={entry.get('matcher')} 的重复 hooks 必须是数组", file=sys.stderr)
+                sys.exit(1)
+            existing_hooks.extend(duplicate_hooks)
+            del cur[idx]
+            deduped += 1
+        for h in desired_entry.get("hooks", []):
+            cmd = h.get("command") if isinstance(h, dict) else None
+            match_indices = [
+                i for i, existing_hook in enumerate(existing_hooks)
+                if command_matches(existing_hook, cmd)
+            ]
+            if not match_indices:
+                existing_hooks.append(h)
+                added += 1
+                continue
+            first = match_indices[0]
+            if existing_hooks[first] != h:
+                existing_hooks[first] = h
+                refreshed += 1
+            for idx in reversed(match_indices[1:]):
+                del existing_hooks[idx]
+                deduped += 1
+os.makedirs(os.path.dirname(hooks_path), exist_ok=True)
+open(tmp_path, "w", encoding="utf-8").write(json.dumps(config, ensure_ascii=False, indent=2) + "\n")
+print(f"  codex hooks.json: block-unstarted-commit 接线完成（新增 {added} 条、刷新 {refreshed} 条、去重 {deduped} 条，已有内容保留）")
+PYEOF
+mkdir -p "$TARGET/.codex/hooks"
+CODEX_GUARD="$TARGET/.codex/hooks/block-unstarted-commit.sh"
+CODEX_GUARD_BACKUP=""
+CODEX_GUARD_EXISTED=0
+restore_codex_guard_on_error() {
+  if [ "$CODEX_GUARD_EXISTED" = 1 ] && [ -n "$CODEX_GUARD_BACKUP" ] && [ -e "$CODEX_GUARD_BACKUP" ]; then
+    mv "$CODEX_GUARD_BACKUP" "$CODEX_GUARD" >/dev/null 2>&1 || true
+  else
+    rm -f "$CODEX_GUARD"
+  fi
+}
+if [ -e "$CODEX_GUARD" ] || [ -L "$CODEX_GUARD" ]; then
+  CODEX_GUARD_EXISTED=1
+  CODEX_GUARD_BACKUP="$TARGET/.codex/hooks/block-unstarted-commit.sh.bak.$$"
+  if ! cp -p "$CODEX_GUARD" "$CODEX_GUARD_BACKUP"; then
+    rm -f "$CODEX_HOOKS_TMP"
+    echo "ERROR: Codex commit guard hook 备份失败" >&2
+    exit 1
+  fi
+fi
+if ! cp "$HERE/hooks/platform/block-unstarted-commit.sh" "$CODEX_GUARD"; then
+  rm -f "$CODEX_HOOKS_TMP"
+  restore_codex_guard_on_error
+  echo "ERROR: Codex commit guard hook 复制失败" >&2
+  exit 1
+fi
+if ! chmod +x "$CODEX_GUARD"; then
+  rm -f "$CODEX_HOOKS_TMP"
+  restore_codex_guard_on_error
+  echo "ERROR: Codex commit guard hook chmod 失败" >&2
+  exit 1
+fi
+if ! mv "$CODEX_HOOKS_TMP" "$TARGET/.codex/hooks.json"; then
+  rm -f "$CODEX_HOOKS_TMP"
+  restore_codex_guard_on_error
+  echo "ERROR: Codex hooks.json 更新失败" >&2
+  exit 1
+fi
+rm -f "$CODEX_GUARD_BACKUP"
 
 # 6) workflow + SSOT 同步（升级通道：CLI update 不跟踪非 native workflow，spec/ 又是其保护路径）
 # Source guru-template keeps <id>-workflow.md, while the packaged CLI bundle
@@ -551,9 +758,10 @@ merge(os.path.join(t, ".trellis", "config.yaml"),
 """hooks:
   after_create:
     - "python3 .trellis/scripts/guru/guru_after_create.py"
-  # 阻断式：需求确认 + overview/detail 双 clean review + detail 确认缺一，task.py start 直接失败
+  # 阻断式：需求确认 + overview/detail 双 clean review + detail 确认缺一，task.py start 直接失败。
+  # check-start 只代表 START_READY，不授权实现 worker 或 git commit；后续由 check-implementation/check-commit 分别把关。
   before_start:
-    - "python3 .trellis/scripts/guru/guru_gate.py check\"""")
+    - "python3 .trellis/scripts/guru/guru_gate.py check-start\"""")
 PYEOF
 
 # 7.5) by-layer 项目 spec 骨架 + bootstrap 任务接线

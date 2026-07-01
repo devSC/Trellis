@@ -63,7 +63,7 @@ PY
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 TDIR=""
 [ "$HIT" != "-" ] && TDIR="$HIT"
-if ! python3 .trellis/scripts/guru/guru_gate.py check ${TDIR:+"$TDIR"} >&2; then
+if ! python3 .trellis/scripts/guru/guru_gate.py check-start ${TDIR:+"$TDIR"} >&2; then
   echo "BLOCKED: Guru Gate 校验未通过，禁止 task.py start。请先运行 guru_gate.py status <task_dir> 查看下一步。" >&2
   exit 2
 fi

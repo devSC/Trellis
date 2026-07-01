@@ -57,6 +57,10 @@ const PYTHON_NO_BYTECODE_ENV = {
   PYTHONDONTWRITEBYTECODE: "1",
 };
 
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
+}
+
 function overlayPath(...segments: string[]): string {
   return path.join(GURU_OVERLAY_ROOT, ...segments);
 }
@@ -65,11 +69,21 @@ function readOverlayFile(...segments: string[]): string {
   return fs.readFileSync(overlayPath(...segments), "utf8");
 }
 
+function isTransientCacheArtifact(entry: string): boolean {
+  return (
+    entry === "__pycache__" ||
+    entry === ".DS_Store" ||
+    entry.endsWith(".pyc") ||
+    entry.endsWith(".pyo")
+  );
+}
+
 function listFilesRecursive(root: string): string[] {
   if (!fs.existsSync(root)) return [];
 
   const files: string[] = [];
   for (const entry of fs.readdirSync(root)) {
+    if (isTransientCacheArtifact(entry)) continue;
     const fullPath = path.join(root, entry);
     if (fs.statSync(fullPath).isDirectory()) {
       files.push(...listFilesRecursive(fullPath));
@@ -564,7 +578,7 @@ fi
       "新流程的 Domain Grill 归属于 `trellis-brainstorm`",
     );
     expect(designGrill).toContain(
-      "`guru_gate.py check` / `auto` 不依赖本 skill",
+      "`guru_gate.py check-start` / `auto` 不依赖本 skill",
     );
     expect(designGrill).toContain("grill-done");
     expect(designGrill).toContain("grill-skip");
@@ -775,7 +789,7 @@ fi
 
     expect(gate).toContain('REQUIREMENTS_REVIEW_KEY = "requirements_review"');
     expect(gate).toContain("需求对抗 Review");
-    expect(gate).toContain("缺少 clean/current 的对抗审查证据");
+    expect(gate).toContain("需求确认前必须先完成 clean/current 的对抗审查证据");
     expect(gate).toContain(
       "python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements",
     );
@@ -1052,12 +1066,233 @@ channel:
   function writeTask(name: string): string {
     const taskDir = path.join(tmpDir, ".trellis", "tasks", name);
     fs.mkdirSync(taskDir, { recursive: true });
-    fs.writeFileSync(path.join(taskDir, "prd.md"), "# PRD\n", "utf8");
-    fs.writeFileSync(path.join(taskDir, "design.md"), "# Design\n", "utf8");
+    fs.writeFileSync(
+      path.join(taskDir, "task.json"),
+      JSON.stringify(
+        { name, status: "in_progress", guru_chain: "light", risk_level: "low" },
+        null,
+        2,
+      ) + "\n",
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(taskDir, "prd.md"),
+      `# PRD
+
+P0 core: supervisor fixture task is ready for implementation.
+P1 follow-up: keep dry-run coverage focused on supervisor routing.
+
+### BHV-001 Supervisor dry-run fixture
+
+Given a Guru task has completed planning gates.
+When guru_supervise.py runs implement, check, or implement-check.
+Then the worker plan can be generated because task.json.status is in_progress.
+
+## 失败路径
+
+- failure: planning tasks must be blocked before supervisor dry-run.
+
+## 验收标准
+
+- acceptance: supervisor dry-run emits channel and worker commands.
+
+## 未决问题
+
+无未决问题，因为该 fixture 只验证 supervisor routing.
+
+## Brainstorm Evidence
+
+- Skill loaded: trellis-brainstorm loaded for supervisor fixture.
+- Repository evidence inspected: guru_supervise.py and guru_gate.py.
+- Domain/terminology triggers: Guru lifecycle and supervisor routing.
+- Current code vs user intent conflicts: fixture prevents lifecycle gate from masking routing assertions.
+- Product decisions confirmed:
+  - DEC-001 confirmation_status=user_confirmed user_quote: "fixture task is implementation ready" confirmed_ref: OQ-001
+- Open product/scope/risk questions: none — deterministic fixture has no unresolved product questions.
+
+### Question Loop Log
+
+| oq_id | asked_at | question | recommended_answer | tradeoff | user_quote | resolved_decision | artifact_update |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| OQ-001 | 2026-06-30 | Should this supervisor fixture be implementation ready? | Yes | Keeps dry-run tests focused on routing, not lifecycle gating | fixture task is implementation ready | DEC-001 | prd.md |
+`,
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(taskDir, "design.md"),
+      `# §1 概要设计
+
+## 行为 owner 归属表
+
+| BHV | owner | 三问理由 | 承接索引 |
+| --- | --- | --- | --- |
+| BHV-001 | UNIT-supervisor-routing | 为什么属于：supervisor routing owns worker command generation；为什么不属于别人：lifecycle gate only authorizes entry；是否需独立存在：需要 | chapter_target=design.md#UNIT-supervisor-routing doc_type=数据合同 |
+
+# §2 详细设计
+
+### UNIT-supervisor-routing
+
+#### 单元职责
+
+负责承接 BHV-001 的 supervisor dry-run routing.
+
+#### 行为定义
+
+行为清单：BHV-001 在 in_progress 状态下允许生成 worker plan.
+
+#### 核心数据结构
+
+task.json.status, implement.jsonl, check.jsonl, channel name, worker name.
+
+#### 逐行为设计
+
+BHV-001: generate implement/check worker command without committing.
+
+#### 状态/边界
+
+Only in_progress tasks may enter implement/check/implement-check.
+
+#### 数据合同
+
+Input task_dir and run_id; output dry-run command lines.
+
+#### 测试映射
+
+哪些测试：guru-bundled supervisor dry-run tests.
+
+#### 不得补造清单
+
+不得补造 commits, user confirmations, or review records during dry-run.
+
+失败如何收口：return exit 2 before worker spawn.
+`,
+      "utf8",
+    );
     fs.writeFileSync(
       path.join(taskDir, "implement.md"),
-      "# Implement\n",
+      `# Implement
+
+## 计划 / 切片
+
+- UNIT-supervisor-routing: verify dry-run route generation.
+
+## 执行 / 改动文件
+
+- No real code changes; this is a fixture.
+
+## 证据 / analyze / test
+
+- Supervisor dry-run output is asserted by tests.
+
+## 阻塞 / 偏差
+
+- None.
+`,
       "utf8",
+    );
+    const gateEnv = {
+      ...PYTHON_NO_BYTECODE_ENV,
+      GURU_GATE_MODE: "soft",
+      GURU_GATE_ALLOW_ENV_SOFT: "1",
+    };
+    const taskJsonPath = path.join(taskDir, "task.json");
+    const requirementsDigest = execFileSync(
+      python,
+      [gate, "digest", "requirements", taskDir],
+      { cwd: tmpDir, encoding: "utf8", env: gateEnv, stdio: "pipe" },
+    ).trim();
+    const taskJson = JSON.parse(
+      fs.readFileSync(taskJsonPath, "utf8"),
+    ) as { guru_gates?: Record<string, unknown> };
+    const guruGates = taskJson.guru_gates ?? {};
+    guruGates.requirements_review = {
+      action: "requirements",
+      provider: "claude",
+      current_provider: "codex",
+      adversarial: true,
+      status: "clean",
+      artifact_digest: requirementsDigest,
+      run_id: "fixture-requirements-review",
+      channel: "guru-fixture",
+      worker: "requirements-claude-fixture",
+      reason: "review_result=clean/requirements-ready",
+      max_severity: "none",
+      timestamp: "2026-06-30T00:00:00+00:00",
+    };
+    taskJson.guru_gates = guruGates;
+    fs.writeFileSync(taskJsonPath, JSON.stringify(taskJson, null, 2) + "\n");
+    execFileSync(
+      python,
+      [
+        gate,
+        "confirm",
+        "requirements",
+        taskDir,
+        "--via-agent",
+        "--user-quote",
+        "fixture task is implementation ready",
+      ],
+      { cwd: tmpDir, encoding: "utf8", env: gateEnv, stdio: "pipe" },
+    );
+    for (const [reviewGate, extra] of [
+      ["overview", []],
+      ["detail", ["--deletion-audit", "none"]],
+    ] as const) {
+      execFileSync(
+        python,
+        [
+          gate,
+          "record-review",
+          reviewGate,
+          taskDir,
+          "--result",
+          "clean",
+          "--max-severity",
+          "none",
+          "--reviewer",
+          "clean-context-a",
+          "--run-id",
+          `${reviewGate}-1`,
+          "--evidence",
+          "fixture",
+          ...extra,
+        ],
+        { cwd: tmpDir, encoding: "utf8", env: gateEnv, stdio: "pipe" },
+      );
+      execFileSync(
+        python,
+        [
+          gate,
+          "record-review",
+          reviewGate,
+          taskDir,
+          "--result",
+          "clean",
+          "--max-severity",
+          "none",
+          "--reviewer",
+          "clean-context-adversarial-b",
+          "--run-id",
+          `${reviewGate}-2`,
+          "--evidence",
+          "fixture",
+          ...extra,
+        ],
+        { cwd: tmpDir, encoding: "utf8", env: gateEnv, stdio: "pipe" },
+      );
+    }
+    execFileSync(
+      python,
+      [
+        gate,
+        "confirm",
+        "detail",
+        taskDir,
+        "--via-agent",
+        "--user-quote",
+        "fixture detail is ready for task start",
+      ],
+      { cwd: tmpDir, encoding: "utf8", env: gateEnv, stdio: "pipe" },
     );
     return taskDir;
   }
@@ -1231,6 +1466,11 @@ fi
       ? "clean"
       : "blocked";
     const fake = path.join(tmpDir, `fake-requirements-verdict-${suffix}.sh`);
+    const message = JSON.stringify({
+      kind: "message",
+      by: "requirements-claude-fixture",
+      text: verdictText,
+    });
     fs.writeFileSync(
       fake,
       `#!/usr/bin/env bash
@@ -1244,7 +1484,7 @@ elif [ "$1" = "channel" ] && [ "$2" = "send" ]; then
 elif [ "$1" = "channel" ] && [ "$2" = "wait" ]; then
   echo '{"kind":"done","by":"requirements-claude-fixture"}'
 elif [ "$1" = "channel" ] && [ "$2" = "messages" ]; then
-  echo ${JSON.stringify(JSON.stringify({ kind: "message", by: "requirements-claude-fixture", text: verdictText }))}
+  printf '%s\\n' ${shellSingleQuote(message)}
 else
   echo "unexpected fake trellis args: $*" >&2
   exit 2
@@ -1497,7 +1737,7 @@ fi
     );
   });
 
-  it("skips failed adversarial reviewers without hiding normal worker failures", () => {
+  it("records failed requirements adversarial reviewers as deferred without hiding normal worker failures", () => {
     writeConfig("go");
     writeSkill(".agents/skills/requirement-review/SKILL.md");
     const taskDir = writeTask("task-adversarial-skip");
@@ -1516,7 +1756,7 @@ fi
         "--run-id",
         "skip1",
       ]),
-    ).not.toThrow();
+    ).toThrow();
     expect(() =>
       runSupervisor([
         "--trellis-bin",
@@ -1529,7 +1769,7 @@ fi
         "--run-id",
         "skip2",
       ]),
-    ).not.toThrow();
+    ).toThrow();
     expect(() =>
       runSupervisor([
         "--trellis-bin",
@@ -1545,7 +1785,12 @@ fi
 
     const task = JSON.parse(
       fs.readFileSync(path.join(taskDir, "task.json"), "utf8"),
-    ) as { guru_gates?: { adversarial_skips?: Record<string, string>[] } };
+    ) as {
+      guru_gates?: {
+        adversarial_skips?: Record<string, string>[];
+        requirements_review?: Record<string, string | boolean>;
+      };
+    };
     const skips = task.guru_gates?.adversarial_skips ?? [];
     expect(skips).toHaveLength(2);
     expect(skips[0]).toMatchObject({
@@ -1555,6 +1800,15 @@ fi
     });
     expect(skips[0]?.reason).toContain("exited 127");
     expect(skips[1]?.reason).toContain("worker terminal status was error");
+    expect(task.guru_gates?.requirements_review).toMatchObject({
+      action: "requirements",
+      provider: "claude",
+      current_provider: "codex",
+      adversarial: true,
+      status: "deferred",
+      reason: "worker terminal status was error",
+      run_id: "skip2",
+    });
 
     const statusOutput = execFileSync(python, [gate, "status", taskDir], {
       encoding: "utf8",
@@ -1565,7 +1819,7 @@ fi
     expect(statusOutput).toContain("worker terminal status was error");
   });
 
-  it("skips disabled adversarial reviews before creating trellis channels", () => {
+  it("records disabled requirements adversarial reviews as deferred and blocks success", () => {
     const configPath = path.join(tmpDir, ".trellis", "config.yaml");
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(
@@ -1593,7 +1847,7 @@ fi
         "--run-id",
         "disabled1",
       ]),
-    ).not.toThrow();
+    ).toThrow();
     expect(fs.existsSync(path.join(tmpDir, "forbidden-trellis.log"))).toBe(
       false,
     );
@@ -1629,7 +1883,7 @@ fi
     const cleanTask = writeTask("task-requirements-clean");
     const blockedTask = writeTask("task-requirements-blocked");
     const cleanTrellis = writeRequirementsVerdictTrellis(
-      "review_result=clean/requirements-ready route_class=none",
+      "route_class=none review_result=clean/requirements-ready max_severity=none",
     );
     const blockedTrellis = writeRequirementsVerdictTrellis(
       "route_class=REQ_BLOCKER missing acceptance boundary",
@@ -1646,17 +1900,19 @@ fi
       "--run-id",
       "clean1",
     ]);
-    runSupervisor([
-      "--trellis-bin",
-      blockedTrellis,
-      "--provider",
-      "codex",
-      "--adversarial",
-      "requirements",
-      blockedTask,
-      "--run-id",
-      "blocked1",
-    ]);
+    expect(() =>
+      runSupervisor([
+        "--trellis-bin",
+        blockedTrellis,
+        "--provider",
+        "codex",
+        "--adversarial",
+        "requirements",
+        blockedTask,
+        "--run-id",
+        "blocked1",
+      ]),
+    ).toThrow();
 
     const clean = JSON.parse(
       fs.readFileSync(path.join(cleanTask, "task.json"), "utf8"),
@@ -2056,13 +2312,11 @@ describe("guru requirements digest versioned package (source overlay)", () => {
 
   function writeCleanRequirementsTrellis(): string {
     const fake = path.join(tmpDir, "fake-req-clean.sh");
-    const verdict = JSON.stringify(
-      JSON.stringify({
-        kind: "message",
-        by: "requirements-claude-fixture",
-        text: "review_result=clean/requirements-ready route_class=none",
-      }),
-    );
+    const verdict = JSON.stringify({
+      kind: "message",
+      by: "requirements-claude-fixture",
+      text: "route_class=none review_result=clean/requirements-ready max_severity=none",
+    });
     fs.writeFileSync(
       fake,
       `#!/usr/bin/env bash
@@ -2076,7 +2330,7 @@ elif [ "$1" = "channel" ] && [ "$2" = "send" ]; then
 elif [ "$1" = "channel" ] && [ "$2" = "wait" ]; then
   echo '{"kind":"done","by":"requirements-claude-fixture"}'
 elif [ "$1" = "channel" ] && [ "$2" = "messages" ]; then
-  echo ${verdict}
+  printf '%s\\n' ${shellSingleQuote(verdict)}
 else
   echo "unexpected fake trellis args: $*" >&2
   exit 2

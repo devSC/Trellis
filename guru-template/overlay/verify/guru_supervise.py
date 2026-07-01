@@ -35,6 +35,7 @@ from guru_gate import (  # noqa: E402
     requirements_digest as _guru_gate_requirements_digest,
     collect_gate_artifacts as _guru_gate_collect_artifacts,
     GateArtifactError as _GateArtifactError,
+    cmd_check_implementation as _guru_gate_check_implementation,
 )
 import guru_risk  # noqa: E402  共享风险 helper（③ 独立 check 触发判定）
 import guru_review_record  # noqa: E402  P1 packet reader / 单一 writer / verdict 校验
@@ -65,6 +66,11 @@ UPSTREAM_ROUTE_TARGETS = {
 }
 ROUTE_RE = re.compile(
     r"\broute_class\s*[:=：]\s*`?(REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|PROCESS_DEFECT|IMPLEMENT_DEFECT|none)`?",
+    re.IGNORECASE,
+)
+SEVERITY_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+MAX_SEVERITY_RE = re.compile(
+    r"\bmax_severity\s*[:=：]\s*`?(none|low|medium|high|critical)`?",
     re.IGNORECASE,
 )
 
@@ -641,8 +647,12 @@ def build_run_plan(
             "and current-code-vs-user-intent conflicts. Emit route_class=REQ_BLOCKER for any medium/high/"
             "critical requirement blocker; route REQ_BLOCKER back to requirements repair and rerun "
             "downstream overview/detail evidence after the requirements digest changes. Low severity "
-            "wording nits or observations are non-blocking. Emit review_result=clean/requirements-ready "
-            "only when no blocker remains. Keep temporary requirement decisions in prd.md; do not write "
+            "wording nits or observations are non-blocking. In the final verdict, emit these fields "
+            "together on separate lines: route_class=none|REQ_BLOCKER, "
+            "review_result=clean/requirements-ready, and max_severity=none|low|medium|high|critical. "
+            "Use max_severity=none or low only when no blocker remains. Emit "
+            "review_result=clean/requirements-ready only when no blocker remains. Keep temporary "
+            "requirement decisions in prd.md; do not write "
             "long-term glossary/spec/ADR content unless confirmed via Domain Grill rules. Requirements "
             "has no review-evidence command or clean streak. Stop before confirm requirements."
         )
@@ -803,15 +813,57 @@ def _requirements_digest(task_dir: Path, repo_root: Path | None = None) -> str:
     )
 
 
+def _negated_req_blocker_mention(messages: str, start: int) -> bool:
+    line_start = messages.rfind("\n", 0, start) + 1
+    prefix = messages[line_start:start].lower()[-120:]
+    return bool(
+        re.search(
+            r"\b(?:no|not|without|zero)\s+"
+            r"(?:(?:a|an|actual|blocking|open|remaining|unresolved|new|medium\+)\s+){0,4}$",
+            prefix,
+        )
+        or re.search(
+            r"\b(?:there\s+(?:is|are)\s+no|no\s+blocking|not\s+a|not\s+an)\s+"
+            r"(?:(?:actual|blocking|open|remaining|unresolved|new|medium\+)\s+){0,4}$",
+            prefix,
+        )
+    )
+
+
 def _requirements_review_verdict(messages: str) -> tuple[str, str]:
-    if REQUIREMENTS_CLEAN_MARKER in messages:
-        return "clean", REQUIREMENTS_CLEAN_MARKER
-    match = ROUTE_RE.search(messages)
-    if match:
-        route = match.group(1).upper()
+    matches = list(ROUTE_RE.finditer(messages))
+    if matches:
+        route = matches[-1].group(1).upper()
         if route != "NONE":
             return "blocked", f"route_class={route}"
+    verdict_start = matches[-1].start() if matches else 0
+    verdict_region = messages[verdict_start:]
+    route_spans = [
+        (match.start(1) - verdict_start, match.end(1) - verdict_start)
+        for match in matches
+        if match.start() >= verdict_start
+    ]
+    for match in re.finditer(r"\bREQ_BLOCKER\b", verdict_region, re.IGNORECASE):
+        if any(start <= match.start() and match.end() <= end for start, end in route_spans):
+            continue
+        if _negated_req_blocker_mention(verdict_region, match.start()):
+            continue
+        return "blocked", "bare REQ_BLOCKER"
+    if REQUIREMENTS_CLEAN_MARKER in verdict_region:
+        return "clean", REQUIREMENTS_CLEAN_MARKER
     return "deferred", "missing requirements review verdict"
+
+
+def _requirements_review_max_severity(messages: str, status: str) -> str:
+    matches = list(ROUTE_RE.finditer(messages))
+    verdict_region = messages[matches[-1].start():] if matches else messages
+    values = [
+        match.group(1).lower()
+        for match in MAX_SEVERITY_RE.finditer(verdict_region)
+    ]
+    if not values:
+        return ""
+    return values[-1]
 
 
 def _record_requirements_review(
@@ -819,23 +871,25 @@ def _record_requirements_review(
     config: SupervisionConfig,
     status: str,
     reason: str,
-) -> None:
+    max_severity: str = "",
+) -> bool:
     if not (config.adversarial and plan.action == "requirements"):
-        return
+        return True
     task_json = plan.task_dir / "task.json"
     try:
         data = json.loads(task_json.read_text(encoding="utf-8")) if task_json.exists() else {}
         if not isinstance(data, dict):
-            return
+            return False
         gates = data.setdefault(GATES_KEY, {})
         if not isinstance(gates, dict):
-            return
+            return False
         gates[REQUIREMENTS_REVIEW_KEY] = {
             "action": plan.action,
             "provider": config.provider,
             "current_provider": config.current_provider,
             "adversarial": True,
             "status": status,
+            "max_severity": max_severity,
             "artifact_digest": _requirements_digest(plan.task_dir, config.root),
             "run_id": plan.run_id,
             "channel": plan.channel,
@@ -850,9 +904,11 @@ def _record_requirements_review(
             encoding="utf-8",
         )
         os.replace(tmp_path, task_json)
+        return True
     except Exception as exc:
-        # Requirements review state is advisory visibility; do not block the main workflow.
+        # Missing persisted evidence makes the requirements review unusable for downstream gates.
         sys.stderr.write(f"[guru-supervise] failed to record requirements review: {exc}\n")
+        return False
 
 
 def _skip_adversarial(
@@ -866,6 +922,8 @@ def _skip_adversarial(
     sys.stderr.write(
         f"[guru-supervise] skipped adversarial {config.provider} review: {reason}\n"
     )
+    if plan.action == "requirements":
+        return 2, "skipped", messages
     return 0, "skipped", messages
 
 
@@ -948,7 +1006,29 @@ def _execute_plan(plan: RunPlan, config: SupervisionConfig) -> tuple[int, str | 
         )
     if config.adversarial and plan.action == "requirements":
         status, reason = _requirements_review_verdict(messages.stdout)
-        _record_requirements_review(plan, config, status, reason)
+        max_severity = _requirements_review_max_severity(messages.stdout, status)
+        if status == "clean":
+            if not max_severity:
+                status = "blocked"
+                reason = "missing max_severity"
+            elif SEVERITY_ORDER.get(max_severity, 99) > SEVERITY_ORDER["low"]:
+                status = "blocked"
+                reason = f"max_severity={max_severity}"
+        recorded = _record_requirements_review(plan, config, status, reason, max_severity)
+        if not recorded:
+            sys.stderr.write(
+                "[guru-supervise] BLOCKED: requirements adversarial review "
+                "could not be persisted to task.json; downstream gates would "
+                "not have clean/current evidence.\n"
+            )
+            return 2, terminal, messages.stdout
+        if status != "clean":
+            sys.stderr.write(
+                "[guru-supervise] BLOCKED: requirements adversarial review is not clean "
+                f"({reason}). Repair requirements and rerun until "
+                f"{REQUIREMENTS_CLEAN_MARKER} with no blocking route_class.\n"
+            )
+            return 2, terminal, messages.stdout
     return (0 if terminal == "done" else 1), terminal, messages.stdout
 
 
@@ -967,6 +1047,14 @@ def _terminal_status(output: str) -> str | None:
 def run_action(args: argparse.Namespace, action: str) -> int:
     task_dir = Path(args.task_dir).expanduser().resolve()
     root = _resolve_root(args.root, task_dir)
+    if action in {"implement", "check", "implement-check"}:
+        if _guru_gate_check_implementation(str(task_dir)) != 0:
+            print(
+                "[guru-supervise] BLOCKED: implementation/check workers require "
+                "task.json.status == in_progress. Run task.py start after START_READY.",
+                file=sys.stderr,
+            )
+            return 2
     config = _load_config(
         root,
         platform=args.platform,
@@ -1027,6 +1115,13 @@ def _scope_preflight(repo_root: str, packet: dict):
 def run_implement_check(args: argparse.Namespace) -> int:
     task_dir = Path(args.task_dir).expanduser().resolve()
     root = _resolve_root(args.root, task_dir)
+    if _guru_gate_check_implementation(str(task_dir)) != 0:
+        print(
+            "[guru-supervise] BLOCKED: implement-check requires "
+            "task.json.status == in_progress. Run task.py start after START_READY.",
+            file=sys.stderr,
+        )
+        return 2
     # implement-check 内部**强制 non-advisory 且不翻转 provider**：忽略外部全局 `--adversarial`
     # （parser 顶层 flag，对 implement-check 同样可传）。否则 _load_config(adversarial=True) 会先把
     # provider 翻成 opposite(current_provider)，使 implement 错用对立 provider；且 _execute_plan 在
@@ -1186,6 +1281,15 @@ def run_implement_check(args: argparse.Namespace) -> int:
             # P1c 结构化 verdict gating（有 packet）：parse + normalize（单一入口,层①取值 + 层②provider/
             # deterministic 双过/聚合重算）+ append（单一 writer）。malformed/不通过 → 硬停 exit2。
             verdict = guru_review_record.parse_verdict_block(messages)
+            try:
+                reviewed_target_digest = guru_review_record.target_snapshot_digest(
+                    str(root), packet.get("target_paths", []), "worktree"
+                )
+            except guru_review_record.ReviewRecordError as exc:
+                guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
+                    "SCOPE_INVALID", f"{base_run_id}-check-{iteration}", unit_id=unit_id))
+                sys.stderr.write(f"[guru-supervise] target snapshot digest failed,硬停(SCOPE_INVALID):{exc}\n")
+                return 2
             record, failure = guru_review_record.normalize_review_record(verdict, {
                 "mode": "supervisor", "packet": packet, "implement_provider": config.provider,
                 "supervisor_deterministic_status": det_status, "deterministic_results": det_results,
@@ -1194,6 +1298,7 @@ def run_implement_check(args: argparse.Namespace) -> int:
                 "channel": check_plan.channel, "worker": check_plan.worker,
                 "check_provider": check_config.provider,  # R1-F1:worker 自报 review_provider 须 == 实际 spawn
                 "independent_required": independent_required,  # R1-F1:对立要求仅独立期强制(low-risk override 不要求)
+                "reviewed_target_digest": reviewed_target_digest,
             })
             guru_review_record.append_record(str(task_dir), record)
             if failure:
