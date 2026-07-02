@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/cli/backend/index.md", "reason": "CLI/backend spec routing for Guru overlay, workflow template, script, and command changes"}
+{"file": ".trellis/spec/cli/backend/guru-overlay-gates.md", "reason": "Primary contract for Guru risk routing, gate contracts, adversarial review config, commit-plan, and fail-closed behavior"}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Python overlay script conventions for guru_gate.py, guru_contract.py, guru_supervise.py, and helper commands"}
+{"file": ".trellis/spec/cli/backend/commands-channel.md", "reason": "Channel worker status/cleanup behavior and event lifecycle for terminal worker acceleration"}
+{"file": ".trellis/spec/cli/backend/workflow-state-contract.md", "reason": "Workflow state and lifecycle boundary rules affected by route-aware workflow wording and start/implementation gates"}
+{"file": ".trellis/spec/cli/backend/platform-integration.md", "reason": "Template install/apply behavior and target overlay integration into guru_ai_himora"}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "General backend quality expectations, native dependency constraints, and validation discipline"}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Regression coverage expectations for new gate commands, route policy, slice-plan, and status JSON"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Avoid duplicating contract schema/risk tables; reuse guru_contract.py and existing helpers"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Gate contracts and status records cross workflow, hooks, scripts, templates, and target overlay"}

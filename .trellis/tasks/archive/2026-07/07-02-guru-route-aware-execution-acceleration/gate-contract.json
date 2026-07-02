@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "risk": "high",
+  "route": "full_chain",
+  "assessment": {
+    "confidence": 0.98,
+    "reasons": [
+      "Touches Guru workflow, gate runtime, contract commands, slice preflight, worker status, template mirrors, and target overlay install."
+    ],
+    "risk_flags": [
+      "workflow",
+      "gate",
+      "runtime",
+      "template-sync",
+      "target-overlay-install"
+    ]
+  },
+  "scope": {
+    "allowed_paths": [
+      ".trellis/tasks/07-02-guru-route-aware-execution-acceleration",
+      ".trellis/scripts/guru",
+      "packages/cli/src/templates/guru",
+      "guru-template",
+      ".trellis/spec/cli/backend"
+    ],
+    "forbidden_path_patterns": [],
+    "max_files": null
+  },
+  "required_gates": [
+    "requirements_review",
+    "overview_review",
+    "detail_review",
+    "implementation_review",
+    "check_commit"
+  ],
+  "optional_gates": [],
+  "allowed_degradations": [],
+  "commit_policy": {
+    "require_in_progress": true,
+    "require_clean_implementation_review": true,
+    "allow_task_artifacts_only": false
+  },
+  "created_by": "planning",
+  "created_at": "2026-07-02T00:00:00Z",
+  "policy_version": "guru-risk-contract-v1"
+}

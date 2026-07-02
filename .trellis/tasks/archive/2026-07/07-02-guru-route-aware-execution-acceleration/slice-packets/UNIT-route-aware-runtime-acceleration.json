@@ -1,0 +1,111 @@
+{
+  "deterministic_checks": [
+    "python3 -m py_compile packages/cli/src/templates/guru/overlay/verify/guru_gate.py packages/cli/src/templates/guru/overlay/verify/guru_contract.py packages/cli/src/templates/guru/overlay/verify/guru_supervise.py packages/cli/src/templates/guru/overlay/verify/guru_risk.py packages/cli/src/templates/guru/overlay/verify/guru_review_record.py guru-template/overlay/verify/guru_gate.py guru-template/overlay/verify/guru_contract.py guru-template/overlay/verify/guru_supervise.py guru-template/overlay/verify/guru_risk.py guru-template/overlay/verify/guru_review_record.py",
+    "bash packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh",
+    "pnpm --filter @devsc/trellis --fail-if-no-match build",
+    "node packages/cli/dist/cli/index.js guru apply flutter /Users/devSC/Documents/JobProject/guru_ai_himora",
+    "git diff --check && git diff --cached --check",
+    "node .gitnexus/run.cjs detect-changes --scope staged --repo /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-01-risk-based-gate-contract-routing/check.jsonl",
+      ".trellis/tasks/07-01-risk-based-gate-contract-routing/design.md",
+      ".trellis/tasks/07-01-risk-based-gate-contract-routing/finish-commit-route-aware-md-plan.md",
+      ".trellis/tasks/07-01-risk-based-gate-contract-routing/implement.jsonl",
+      ".trellis/tasks/07-01-risk-based-gate-contract-routing/implement.md",
+      ".trellis/tasks/07-01-risk-based-gate-contract-routing/prd.md",
+      ".trellis/tasks/07-01-risk-based-gate-contract-routing/review-records/implementation-reviews.jsonl",
+      ".trellis/tasks/07-01-risk-based-gate-contract-routing/task.json",
+      ".trellis/tasks/07-01-risk-based-gate-contract-routing/validation-2026-07-02-route-review-policy.md",
+      ".trellis/tasks/07-02-guru-route-aware-execution-acceleration/check.jsonl",
+      ".trellis/tasks/07-02-guru-route-aware-execution-acceleration/commit-plan.json",
+      ".trellis/tasks/07-02-guru-route-aware-execution-acceleration/design.md",
+      ".trellis/tasks/07-02-guru-route-aware-execution-acceleration/gate-contract.json",
+      ".trellis/tasks/07-02-guru-route-aware-execution-acceleration/implement.jsonl",
+      ".trellis/tasks/07-02-guru-route-aware-execution-acceleration/implement.md",
+      ".trellis/tasks/07-02-guru-route-aware-execution-acceleration/prd.md",
+      ".trellis/tasks/07-02-guru-route-aware-execution-acceleration/review-records/implementation-reviews.jsonl",
+      ".trellis/tasks/07-02-guru-route-aware-execution-acceleration/slice-packets/UNIT-route-aware-runtime-acceleration.json",
+      ".trellis/tasks/07-02-guru-route-aware-execution-acceleration/task.json",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "marketplace"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-route-aware-adversarial-policy",
+      "negative_case": "an unconditional default --adversarial requirements instruction reappears in workflow or skill text",
+      "owner": "guru workflow templates",
+      "positive_case": "rg confirms no unconditional default adversarial requirements wording remains",
+      "route_if_missing": "PROCESS_DEFECT",
+      "rule": "workflow defaults must only require requirements adversarial review for full_chain when guru.supervision.adversarial_enabled=true; lite/micro stay bounded and blocked/medium+ evidence remains blocking",
+      "source": ".trellis/spec/cli/backend/guru-overlay-gates.md",
+      "test_evidence": [
+        "route-aware wording grep passed"
+      ]
+    },
+    {
+      "invariant_id": "INV-full-chain-packet-preflight",
+      "negative_case": "implement-check starts a worker for high/full without a packet",
+      "owner": "guru_gate.py/guru_supervise.py",
+      "positive_case": "verify fixture blocks with PACKET_REQUIRED_BEFORE_IMPLEMENT and passes once a packet exists",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "rule": "high-risk full_chain implementation must fail before worker launch when no slice packet exists",
+      "source": ".trellis/spec/cli/backend/guru-overlay-gates.md",
+      "test_evidence": [
+        "Guru verify tests: 497 passed / 0 failed"
+      ]
+    },
+    {
+      "invariant_id": "INV-commit-plan-and-status-json",
+      "negative_case": "terminal workers keep blocking=true or commit-plan file diverges from stdout",
+      "owner": "guru_gate.py/guru_supervise.py",
+      "positive_case": "verify fixtures assert commit-plan file equality and status live/terminal counts",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "rule": "commit-plan --write persists stdout-identical mutable evidence; status --json separates live and terminal workers",
+      "source": ".trellis/spec/cli/backend/guru-overlay-gates.md",
+      "test_evidence": [
+        "Guru verify tests: 497 passed / 0 failed"
+      ]
+    }
+  ],
+  "owner_unit": "UNIT-route-aware-runtime-acceleration",
+  "risk": "high",
+  "risk_reasons": [
+    "gate_runtime",
+    "workflow_template",
+    "commit_gate",
+    "target_overlay_install"
+  ],
+  "schema_version": 1,
+  "semantic_review_provider": {
+    "ocr": "disabled",
+    "provider": "opposite",
+    "required": true
+  },
+  "slice_id": "UNIT-route-aware-runtime-acceleration",
+  "target_kind": "staged",
+  "target_paths": [
+    ".trellis/spec/cli/backend/guru-overlay-gates.md",
+    "guru-template/overlay/agents-skills/client-small-iteration-dev/SKILL.md",
+    "guru-template/overlay/verify/guru_gate.py",
+    "guru-template/overlay/verify/guru_risk.py",
+    "guru-template/overlay/verify/guru_supervise.py",
+    "guru-template/overlay/verify/tests/run_tests.sh",
+    "guru-template/workflows/guru-client-workflow.md",
+    "guru-template/workflows/guru-go-workflow.md",
+    "guru-template/workflows/guru-h5-workflow.md",
+    "guru-template/workflows/guru-ios-workflow.md",
+    "packages/cli/src/templates/guru/overlay/agents-skills/client-small-iteration-dev/SKILL.md",
+    "packages/cli/src/templates/guru/overlay/verify/guru_gate.py",
+    "packages/cli/src/templates/guru/overlay/verify/guru_risk.py",
+    "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py",
+    "packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh",
+    "packages/cli/src/templates/guru/workflows/guru-client.md",
+    "packages/cli/src/templates/guru/workflows/guru-go.md",
+    "packages/cli/src/templates/guru/workflows/guru-h5.md",
+    "packages/cli/src/templates/guru/workflows/guru-ios.md"
+  ]
+}

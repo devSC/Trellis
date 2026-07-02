@@ -1,0 +1,93 @@
+{
+  "id": "guru-route-aware-execution-acceleration",
+  "name": "guru-route-aware-execution-acceleration",
+  "title": "Guru route-aware execution acceleration",
+  "description": "Make risk-based Guru routing faster in practice: route-aware workflow defaults, contract generation, full-chain slice preflight, commit-plan persistence, slice planning, and terminal worker cleanup.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-07-02",
+  "completedAt": "2026-07-02",
+  "branch": null,
+  "base_branch": "codex/guru-0.6.0-ga-worktree",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "route=full_chain; risk=high because this task touches Guru workflow/gate/runtime/template behavior and target overlay install.",
+  "meta": {
+    "guru_chain": "full",
+    "route": "full_chain",
+    "risk": "high",
+    "source_task": "07-01-risk-based-gate-contract-routing"
+  },
+  "guru_gates": {
+    "requirements": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-02T16:12:29+08:00",
+      "confirmation_scope": "requirements_gate_only",
+      "allowed_next_action": "overview_design",
+      "prompt_summary": "Requirements confirmation allows overview/detail planning only",
+      "artifact_digest": "a1f185808ce25b040cb7d906f6751c4bf2c4e41a417b7609026eaf12001dfc71"
+    },
+    "review_runs": {
+      "overview": [
+        {
+          "run_id": "main-overview-a-20260702-route-execution-acceleration",
+          "reviewer": "clean-context-main-local-a",
+          "recorded_at": "2026-07-02T16:22:41+08:00",
+          "artifact_digest": "9f46a0aa79eaf855c742784698f5873366bc30d83a44b5b793a6e33cab4eee29",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "non-OCR review: checked prd/design/implement/gate-contract consistency; scope preserves full_chain strict gates, route-aware defaults, source/template plus minimal dogfood bounds; overview/detail/trace gates pass."
+        },
+        {
+          "run_id": "main-overview-b-20260702-route-execution-acceleration",
+          "reviewer": "clean-context-main-local-b",
+          "recorded_at": "2026-07-02T16:22:52+08:00",
+          "artifact_digest": "9f46a0aa79eaf855c742784698f5873366bc30d83a44b5b793a6e33cab4eee29",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "non-OCR independent pass: verified behavior owner table covers BHV-001..BHV-007, architecture keeps acceleration separate from gate weakening, and target overlay install remains bounded to overlay-managed files."
+        }
+      ],
+      "detail": [
+        {
+          "run_id": "main-detail-a-20260702-route-execution-acceleration",
+          "reviewer": "clean-context-main-local-a",
+          "recorded_at": "2026-07-02T16:23:02+08:00",
+          "artifact_digest": "b0e885a7ff3737e67421bc2ac7eb7a6b5b5d464de17905f26f3dcf93e633299d",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "non-OCR detail review: checked each UNIT has responsibility, behavior definition, data contract, failure handling, tests, and no-fabrication boundary; trace matrix strict shows all BHV mapped to units and slices.",
+          "deletion_audit": "none; planning artifacts only, no runtime deletion proposed"
+        },
+        {
+          "run_id": "main-detail-b-20260702-route-execution-acceleration",
+          "reviewer": "clean-context-main-local-b",
+          "recorded_at": "2026-07-02T16:23:14+08:00",
+          "artifact_digest": "b0e885a7ff3737e67421bc2ac7eb7a6b5b5d464de17905f26f3dcf93e633299d",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "non-OCR independent detail pass: implement.md slices align with UNIT-route-aware-workflow-defaults through UNIT-target-overlay-install; validation commands cover py_compile, verify tests, mirror checks, target apply, and diff checks.",
+          "deletion_audit": "none; no deletion-sensitive changes in design, cleanup behavior is status/report-first and fail-closed"
+        }
+      ]
+    },
+    "detail": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-02T16:30:46+08:00",
+      "confirmation_scope": "detail_gate_only",
+      "allowed_next_action": "task_start",
+      "prompt_summary": "Detail confirmation allows task.py start only",
+      "artifact_digest": "b0e885a7ff3737e67421bc2ac7eb7a6b5b5d464de17905f26f3dcf93e633299d"
+    }
+  }
+}
