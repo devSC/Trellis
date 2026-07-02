@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/cli/backend/index.md", "reason": "Review changed files against backend/template pre-development and quality checklist"}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Check Python overlay scripts for stdlib-only implementation, robust subprocess handling, and clear exit behavior"}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "Check code quality, typing discipline for any TypeScript touch, and forbidden patterns"}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Check whether new classifier, contract, and commit-gate behavior has focused regression coverage"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check for duplicated JSON contract parsing or repeated risk policy tables"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check that task-local contract records remain consistent across intake, hooks, gates, and commit flow"}

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/cli/backend/index.md", "reason": "CLI/backend implementation checklist and relevant spec routing for template and script changes"}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Python overlay script conventions: stdlib-only, subprocess handling, encoding, and entrypoint shape"}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "General quality expectations and validation discipline for backend/template work"}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Unit and regression test expectations for new helper logic and bug-fix behavior"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Avoid duplicated contract parsing and keep shared helpers as the single source of truth"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Gate contracts are cross-layer records consumed by workflow, scripts, hooks, and agents"}

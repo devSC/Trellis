@@ -48,3 +48,36 @@ P0 ①逐行数据语义密度(D7)②SSOT 加载+collect_gate_artifacts fail-clo
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Guru route-aware execution acceleration
+
+**Date**: 2026-07-02
+**Task**: Guru route-aware execution acceleration
+**Branch**: `codex/guru-0.6.0-ga-worktree`
+
+### Summary
+
+Implemented route-aware Guru execution acceleration: workflow defaults, contract generation, full-chain slice preflight, commit-plan persistence, slice-plan summaries, status JSON, and Himora overlay install verification.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `de63dfc2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,0 +1,146 @@
+{
+  "id": "risk-based-gate-contract-routing",
+  "name": "risk-based-gate-contract-routing",
+  "title": "Risk-based intake routing with gate contracts",
+  "description": "Implement an intake risk classifier that routes low-risk work to automatic small-inline execution, medium-risk work to lite tasks, and high-risk work to full Guru/Trellis chains. Manage task-local gate-contract and gate-degradation records for scoped gate downgrades and commit checks.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-07-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/guru-0.6.0-ga-worktree",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {},
+  "guru_gates": {
+    "requirements": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-02T14:25:50+08:00",
+      "confirmation_scope": "requirements_gate_only",
+      "allowed_next_action": "overview_design",
+      "prompt_summary": "Requirements confirmation allows overview/detail planning only",
+      "artifact_digest": "ab293d665d031e4f86693cbbc4df56b481dade251a823a2717db11f3dfa97f6e"
+    },
+    "review_runs": {
+      "overview": [
+        {
+          "run_id": "main-overview-a-20260702-direct-small-inline",
+          "reviewer": "clean-context-main-local-a",
+          "recorded_at": "2026-07-02T01:23:37+08:00",
+          "artifact_digest": "458ed3297d53fe688bd9e8493b4c4c1ba149a2c278a50f5ee99b1a73e1c8acce",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Non-OCR local review: verified requirements/design alignment for risk routing, task-local gate-contract/degradation ownership, adversarial_enabled=false boundary, source/template/local mirror plan, and full-chain preservation. Checks: guru structure gates, trace matrix, 467-pass verify suite, 16 mirror pairs, staged detect_changes critical recorded as expected for gate/template surface."
+        },
+        {
+          "run_id": "main-overview-c-20260702-direct-small-inline",
+          "reviewer": "clean-context-main-local-c",
+          "recorded_at": "2026-07-02T07:24:01+08:00",
+          "artifact_digest": "458ed3297d53fe688bd9e8493b4c4c1ba149a2c278a50f5ee99b1a73e1c8acce",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Sequential non-OCR overview review after parallel-write race: rechecked route architecture, task-local contract authority, direct small_inline no-task fallback boundary, full-chain governance for this critical staged change, and mirror/test evidence. No blocker found."
+        },
+        {
+          "run_id": "main-overview-a-20260702-commit-plan-runtime",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-02T12:30:25+08:00",
+          "artifact_digest": "b1a0cc9da096f11fdddaac0287f41ad4480741dbc06e258f5a2c195726315acd",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "requirements/overview/detail/implement gates pass; trace-matrix strict passes; no OCR used"
+        },
+        {
+          "run_id": "main-overview-c-20260702-commit-plan-runtime",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-02T12:30:53+08:00",
+          "artifact_digest": "b1a0cc9da096f11fdddaac0287f41ad4480741dbc06e258f5a2c195726315acd",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "second current-digest overview clean after sequential retry; no OCR used"
+        }
+      ],
+      "detail": [
+        {
+          "run_id": "main-detail-a-20260702-direct-small-inline",
+          "reviewer": "clean-context-main-local-a",
+          "recorded_at": "2026-07-02T01:23:37+08:00",
+          "artifact_digest": "520f78a78a59a7cc0b60f1b825ce6ca1db9f1d64ff0621d9cd68ad0e74a7ac68",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Non-OCR detail review: checked implement slices against UNIT-intake-risk-router, UNIT-gate-contract-store, UNIT-commit-contract-gate, and UNIT-template-sync. Verified direct simple-task fix is scoped to no task_dir resolution, max 3 files, no task/workspace artifacts, no high-risk path signal, no cross-layer/storage signal. 467 verify tests pass.",
+          "deletion_audit": "none: review-only; no detail sections deleted"
+        },
+        {
+          "run_id": "main-detail-b-20260702-direct-small-inline",
+          "reviewer": "clean-context-main-local-b",
+          "recorded_at": "2026-07-02T01:23:37+08:00",
+          "artifact_digest": "520f78a78a59a7cc0b60f1b825ce6ca1db9f1d64ff0621d9cd68ad0e74a7ac68",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Second non-OCR detail review pass: rechecked high-risk fail-closed paths, degradation validation, staged scope checks, explicit Himora regression tests, local dogfood runtime sync, and adversarial_enabled=false blocked/current evidence behavior. No blocker found.",
+          "deletion_audit": "none: review-only; no detail sections deleted"
+        },
+        {
+          "run_id": "main-detail-c-20260702-current-digest",
+          "reviewer": "clean-context-main-local-c",
+          "recorded_at": "2026-07-02T07:25:14+08:00",
+          "artifact_digest": "96245745d838deb445add755217da536bd93e02be89adffed6d1fee8ab7c9b84",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Non-OCR detail re-review after implement.md evidence update changed detail digest: rechecked implementation plan evidence update only, no design/contract semantics changed; previous code/test/mirror/GitNexus evidence remains valid. No blocker found.",
+          "deletion_audit": "none: review-only; no detail sections deleted"
+        },
+        {
+          "run_id": "main-detail-e-20260702-current-digest",
+          "reviewer": "clean-context-main-local-e",
+          "recorded_at": "2026-07-02T07:25:23+08:00",
+          "artifact_digest": "96245745d838deb445add755217da536bd93e02be89adffed6d1fee8ab7c9b84",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Sequential non-OCR detail re-review after task.json write-race: current digest includes final implement.md evidence; no further artifact edits planned before user detail confirmation. No blocker found.",
+          "deletion_audit": "none: review-only; no detail sections deleted"
+        },
+        {
+          "run_id": "main-detail-f-20260702-commit-plan-runtime",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-02T12:31:13+08:00",
+          "artifact_digest": "0e4a3b4e2cdffc62d4c451434780d08fbf2e3549a9c709f285d7d7d73eb53dde",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "current detail digest after EOF cleanup; gates and trace matrix pass; no OCR used",
+          "deletion_audit": "none"
+        },
+        {
+          "run_id": "main-detail-g-20260702-commit-plan-runtime",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-02T12:31:23+08:00",
+          "artifact_digest": "0e4a3b4e2cdffc62d4c451434780d08fbf2e3549a9c709f285d7d7d73eb53dde",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "second current detail digest clean; commit-plan runtime is read-only and no OCR used",
+          "deletion_audit": "none"
+        }
+      ]
+    },
+    "detail": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-02T14:29:36+08:00",
+      "confirmation_scope": "detail_gate_only",
+      "allowed_next_action": "task_start",
+      "prompt_summary": "Detail confirmation allows task.py start only",
+      "artifact_digest": "0e4a3b4e2cdffc62d4c451434780d08fbf2e3549a9c709f285d7d7d73eb53dde"
+    }
+  }
+}
