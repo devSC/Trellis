@@ -27,7 +27,7 @@ description: 客户端小需求端到端闭环编排：按入口决策树分流�
 
    **判轨落盘**：`guru_chain` 仍只表达 `full|light` 的既有 Guru 产物形态；route 由任务目录 `gate-contract.json` 记录（`micro_task|lite_task|full_chain`）。`gate-degradations.jsonl` 只能追加真实发生的 gate/tool 失败与补偿检查证据，是事实记录，不是预授权绕行单。全局 gate policy 决定哪些 gate 可降级；高风险命中后必须保持 `full_chain`，不得被 task-local contract 降为 `lite_task`、`micro_task` 或 `small_inline`。
 
-   **route review policy**：route 只能放宽 adversarial 证据要求，不能绕过结构 Gate、人工确认、当前 blocked/medium+ 证据、staged scope 或 implementation review digest。`small_inline` / `micro_task` 不要求 requirements adversarial review；`lite_task` 不强制 requirements adversarial review，overview/detail 仍需当前 digest 两条 clean，但不强制 adversarial reviewer；`full_chain`、`risk=unknown`、缺失或非法 contract 保持 strict 默认。lite 中低严重度文案 nit / P3 follow-up 可作为后续项，不强制刷新 PRD digest 或重跑 requirements review；若 review/supervise 发现范围扩大、验收变化或高风险信号，必须停下请用户确认扩 scope 或升级 full，不能把 `evidence_ready` 静默改成 `user_confirmed`。
+   **route review policy**：route 只能放宽 adversarial 证据要求，不能绕过结构 Gate、人工确认、当前 blocked/medium+ 证据、staged scope 或 implementation review digest。`small_inline` / `micro_task` 不要求 requirements adversarial review；`lite_task` 不强制 requirements adversarial review，overview/detail 仍需当前 digest 两条 clean，但不强制 adversarial reviewer；`full_chain`、`risk=unknown`、缺失或非法 contract 保持 strict gate 路径，且只有 `guru.supervision.adversarial_enabled=true` 时才默认要求 requirements adversarial review。lite 中低严重度文案 nit / P3 follow-up 可作为后续项，不强制刷新 PRD digest 或重跑 requirements review；若 review/supervise 发现范围扩大、验收变化或高风险信号，必须停下请用户确认扩 scope 或升级 full，不能把 `evidence_ready` 静默改成 `user_confirmed`。
 
 2. **需求澄清（简版）**：行为（Given/When/Then）+ 边界（不做什么）+ 验收（怎么算对）三要素；未决问题向用户提问（一次 1~4 个），不私自拍板。
 

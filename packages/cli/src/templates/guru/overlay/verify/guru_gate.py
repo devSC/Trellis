@@ -34,7 +34,11 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
   python3 guru_gate.py check-implementation [task_dir]
                                                   # 实现/检查 worker 前置：START_READY + task.json.status == in_progress
   python3 guru_gate.py check-commit [task_dir]    # 提交前置：check-implementation + staged scope + implementation review clean
-  python3 guru_gate.py commit-plan [task_dir]     # 只读输出提交计划 JSON：route、staged scope、阻断原因、切分建议
+  python3 guru_gate.py commit-plan [task_dir] [--write]
+                                                  # 输出提交计划 JSON；--write 同步写 task-local commit-plan.json mutable evidence
+  python3 guru_gate.py init-contract <task_dir> --route <route> --risk <risk> [--allowed-path <path> ...] [--max-files <n>]
+                                                  # 用 guru_contract.default_contract + validator 写 gate-contract.json
+  python3 guru_gate.py slice-plan <task_dir>      # 只读输出 full-chain slice packet 执行计划 JSON
   python3 guru_gate.py digest <gate> [task_dir]   # 输出该阶段产物的确认快照摘要（排查快照失配用）
 
 编号纪律:
@@ -3050,6 +3054,11 @@ def cmd_check_implementation(task_dir_arg) -> int:
                 f"当前只达到 START_READY；下一步运行：python3 .trellis/scripts/task.py start {task_dir}\n"
             )
         return BLOCK
+    packet_problem = _implementation_packet_preflight_problem(task_dir)
+    if packet_problem:
+        sys.stderr.write(f"[guru-gate:check-implementation] 拦截：{packet_problem}\n")
+        sys.stderr.write(f"下一步：python3 .trellis/scripts/guru/guru_gate.py slice-plan {task_dir}\n")
+        return BLOCK
     print(f"[guru-gate:check-implementation] IMPLEMENTATION_READY: task status is in_progress（{task_dir}）")
     return PASS
 
@@ -3377,6 +3386,194 @@ def _finish_commit_plan(plan: dict) -> dict:
     return plan
 
 
+def _write_json_atomic(path: str, payload: dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
+def _parse_positive_int(value: str, field: str, problems: list):
+    if value in (None, ""):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        problems.append(f"{field} must be a positive integer")
+        return None
+    if parsed <= 0:
+        problems.append(f"{field} must be a positive integer")
+        return None
+    return parsed
+
+
+def _parse_confidence(value: str, problems: list):
+    if value in (None, ""):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        problems.append("confidence must be a number between 0 and 1")
+        return None
+    if parsed < 0 or parsed > 1:
+        problems.append("confidence must be a number between 0 and 1")
+        return None
+    return parsed
+
+
+def cmd_init_contract(task_dir_arg, options: dict) -> int:
+    task_dir = resolve_task_dir(task_dir_arg, allow_unique_planning_fallback=False)
+    if not task_dir and task_dir_arg and os.path.isdir(task_dir_arg):
+        task_dir = os.path.abspath(task_dir_arg)
+    if not task_dir:
+        sys.stderr.write("[guru-gate:init-contract] 无法定位任务目录，请显式传 task_dir\n")
+        return BLOCK
+
+    route = str(options.get("route") or "").strip()
+    risk = str(options.get("risk") or "").strip()
+    problems = []
+    risk_problem = guru_contract.raw_risk_problem(risk)
+    if risk_problem:
+        problems.append(risk_problem)
+
+    contract = guru_contract.default_contract(
+        route,
+        risk,
+        created_by=str(options.get("created_by") or "init-contract"),
+    )
+    scope = contract.setdefault("scope", {})
+    scope["allowed_paths"] = options.get("allowed_paths") or []
+    scope["forbidden_path_patterns"] = options.get("forbidden_patterns") or []
+    max_files = _parse_positive_int(options.get("max_files"), "max-files", problems)
+    if max_files is not None:
+        scope["max_files"] = max_files
+    confidence = _parse_confidence(options.get("confidence"), problems)
+    assessment = contract.setdefault("assessment", {})
+    assessment["confidence"] = confidence
+    assessment["reasons"] = options.get("reasons") or []
+    assessment["risk_flags"] = options.get("risk_flags") or []
+
+    problems.extend(guru_contract.validate_contract(contract))
+    if problems:
+        sys.stderr.write("[guru-gate:init-contract] 拒绝写入 gate-contract.json：\n")
+        for problem in problems:
+            sys.stderr.write(f"  - {problem}\n")
+        return BLOCK
+
+    previous, read_error = guru_contract.load_contract(task_dir)
+    if read_error:
+        sys.stderr.write(f"[guru-gate:init-contract] existing contract unreadable: {read_error}\n")
+        return BLOCK
+    old_route = guru_contract.contract_route(previous) if isinstance(previous, dict) else ""
+    guru_contract.write_contract(task_dir, contract)
+    summary = {
+        "schema_version": 1,
+        "task_dir": _display_task_dir(task_dir, _repo_root()),
+        "written_path": _display_task_dir(guru_contract.contract_path(task_dir), _repo_root()),
+        "old_route": old_route or None,
+        "new_route": contract["route"],
+        "risk": contract["risk"],
+    }
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    return PASS
+
+
+def _implementation_packet_preflight_problem(task_dir: str) -> str:
+    required, reason = guru_risk.full_chain_packet_required(task_dir)
+    if not required:
+        return ""
+    packets = guru_review_record.list_packets(task_dir)
+    if not packets:
+        return f"PACKET_REQUIRED_BEFORE_IMPLEMENT: {reason}; create slice-packets/<unit>.json or lower risk only by confirmed contract change"
+    return ""
+
+
+def _dirty_scope_for_packet(root: str, packet: dict) -> tuple[str, list, str]:
+    try:
+        dirty = guru_risk.scan_dirty_paths(root)
+    except guru_risk.RiskScanError as exc:
+        return "unknown", [], f"scan failed: {exc}"
+    code_dirty = [p for p in dirty if guru_risk._is_scannable(p)]
+    targets = packet.get("target_paths", [])
+    unrelated = set(packet.get("dirty_state", {}).get("unrelated", []))
+    out_of_scope = sorted(
+        p for p in code_dirty
+        if p not in unrelated and not _path_in_targets(p, targets)
+    )
+    if out_of_scope:
+        return "invalid", out_of_scope, "dirty paths outside target_paths and dirty_state.unrelated"
+    return ("isolated" if code_dirty else "clean"), [], ""
+
+
+def _slice_plan_payload(task_dir_arg) -> dict:
+    root = _repo_root()
+    task_dir = resolve_task_dir(task_dir_arg, allow_unique_planning_fallback=False)
+    plan = {
+        "schema_version": 1,
+        "task_dir": _display_task_dir(task_dir, root) if task_dir else "",
+        "route": "",
+        "risk": "",
+        "packet_required": False,
+        "packet_required_reason": "",
+        "slices": [],
+        "blocking_reasons": [],
+    }
+    if not task_dir:
+        plan["blocking_reasons"].append("TASK_DIR_NOT_FOUND")
+        return plan
+
+    route, risk, source = guru_risk.task_route_and_risk(task_dir)
+    required, required_reason = guru_risk.full_chain_packet_required(task_dir)
+    plan["route"] = route or guru_contract.ROUTE_FULL_CHAIN
+    plan["risk"] = risk
+    plan["packet_required"] = required
+    plan["packet_required_reason"] = required_reason
+    packets = guru_review_record.list_packets(task_dir)
+    if required and not packets:
+        plan["blocking_reasons"].append("PACKET_REQUIRED_BEFORE_IMPLEMENT")
+    for unit_id in packets:
+        try:
+            packet = guru_review_record.load_packet(task_dir, unit_id)
+        except guru_review_record.ReviewRecordError as exc:
+            plan["blocking_reasons"].append(f"PACKET_INVALID:{unit_id}:{exc}")
+            continue
+        dirty_status, out_of_scope, dirty_reason = _dirty_scope_for_packet(root, packet)
+        if dirty_status == "invalid":
+            plan["blocking_reasons"].append(f"SCOPE_INVALID:{unit_id}")
+        provider = packet.get("semantic_review_provider", {})
+        checks = packet.get("deterministic_checks", [])
+        plan["slices"].append({
+            "slice_id": unit_id,
+            "target_paths": packet.get("target_paths", []),
+            "risk": packet.get("risk", "unknown"),
+            "risk_reasons": packet.get("risk_reasons", []),
+            "deterministic_checks": [
+                check.get("command") if isinstance(check, dict) else check
+                for check in checks
+            ],
+            "semantic_review_provider": provider if isinstance(provider, dict) else {},
+            "dirty_scope": dirty_status,
+            "dirty_out_of_scope": out_of_scope,
+            "dirty_reason": dirty_reason,
+            "recommended_command": (
+                f"python3 .trellis/scripts/guru/guru_supervise.py implement-check "
+                f"{shlex.quote(_display_task_dir(task_dir, root))} --slice {shlex.quote(unit_id)}"
+            ),
+        })
+    if len(plan["slices"]) > 1:
+        plan["blocking_reasons"].append("PACKET_AMBIGUOUS_WITHOUT_SLICE")
+    plan["source"] = source
+    plan["blocking_reasons"] = _dedupe_strings(plan["blocking_reasons"])
+    return plan
+
+
+def cmd_slice_plan(task_dir_arg) -> int:
+    print(json.dumps(_slice_plan_payload(task_dir_arg), ensure_ascii=False, indent=2, sort_keys=True))
+    return PASS
+
+
 def _commit_plan_split_required(staged_paths: list, task_dir: str, root: str) -> bool:
     artifact_paths = [
         path for path in staged_paths
@@ -3565,8 +3762,19 @@ def _commit_plan_payload(task_dir_arg) -> dict:
     return _finish_commit_plan(plan)
 
 
-def cmd_commit_plan(task_dir_arg) -> int:
-    print(json.dumps(_commit_plan_payload(task_dir_arg), ensure_ascii=False, indent=2, sort_keys=True))
+def cmd_commit_plan(task_dir_arg, write: bool = False) -> int:
+    plan = _commit_plan_payload(task_dir_arg)
+    if write:
+        task_dir = resolve_task_dir(task_dir_arg, allow_unique_planning_fallback=False)
+        if not task_dir:
+            sys.stderr.write("[guru-gate:commit-plan] --write 需要显式可定位的 task_dir\n")
+            return BLOCK
+        try:
+            _write_json_atomic(os.path.join(task_dir, "commit-plan.json"), plan)
+        except OSError as exc:
+            sys.stderr.write(f"[guru-gate:commit-plan] 写 commit-plan.json 失败：{exc}\n")
+            return BLOCK
+    print(json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True))
     return PASS
 
 
@@ -3667,6 +3875,19 @@ def _pop_value_option(argv: list, name: str):
     return value
 
 
+def _pop_all_value_options(argv: list, name: str) -> list:
+    values = []
+    while name in argv:
+        idx = argv.index(name)
+        if idx + 1 >= len(argv):
+            del argv[idx]
+            values.append("")
+            continue
+        values.append(argv[idx + 1])
+        del argv[idx:idx + 2]
+    return values
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         sys.stderr.write(__doc__ or "")
@@ -3683,6 +3904,17 @@ def main() -> int:
         "run_id": _pop_value_option(argv, "--run-id"),
         "evidence": _pop_value_option(argv, "--evidence"),
         "deletion_audit": _pop_value_option(argv, "--deletion-audit"),
+    }
+    init_contract_options = {
+        "route": _pop_value_option(argv, "--route"),
+        "risk": _pop_value_option(argv, "--risk"),
+        "max_files": _pop_value_option(argv, "--max-files"),
+        "confidence": _pop_value_option(argv, "--confidence"),
+        "created_by": _pop_value_option(argv, "--created-by"),
+        "allowed_paths": _pop_all_value_options(argv, "--allowed-path"),
+        "forbidden_patterns": _pop_all_value_options(argv, "--forbidden-pattern"),
+        "reasons": _pop_all_value_options(argv, "--reason"),
+        "risk_flags": _pop_all_value_options(argv, "--risk-flag"),
     }
     rest = [a for a in argv if not a.startswith("--")]
     flags = {a for a in argv if a.startswith("--")}
@@ -3740,7 +3972,11 @@ def main() -> int:
     if cmd == "check-implementation":
         return cmd_check_implementation(arg)
     if cmd == "commit-plan":
-        return cmd_commit_plan(arg)
+        return cmd_commit_plan(arg, write="--write" in flags)
+    if cmd == "init-contract":
+        return cmd_init_contract(arg, init_contract_options)
+    if cmd == "slice-plan":
+        return cmd_slice_plan(arg)
     if cmd == "check-commit":
         return cmd_check_commit(arg)
     if cmd == "trace-matrix":

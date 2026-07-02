@@ -13,6 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # 使 guru_review_record 可 import
 import guru_review_record  # noqa: E402  P1 单一 packet reader（它不反向 import 本模块，无循环）
+import guru_contract  # noqa: E402  gate-contract route/risk 单一 schema owner
 
 # 与 guru_gate 历史口径字节一致（_risk_level 现兼容代理本模块）。
 HIGH_RISK_LEVELS = {"high", "critical", "p0"}
@@ -113,6 +114,49 @@ def task_risk_level(task_dir: str) -> str:
         if level in LOW_RISK_LEVELS:
             has_low = True
     return "low" if has_low else "unknown"
+
+
+def task_route_and_risk(task_dir: str) -> tuple[str, str, str]:
+    """Return (route, risk, source) from gate-contract first, then task metadata.
+
+    Invalid/missing contracts intentionally fall back to task metadata so legacy
+    full-chain tasks keep their strict behavior without inheriting new packet
+    requirements unless they explicitly declare high/full risk.
+    """
+    contract, read_error = guru_contract.load_contract(task_dir)
+    if isinstance(contract, dict) and not read_error and not guru_contract.validate_contract(contract):
+        route = guru_contract.contract_route(contract)
+        risk = guru_contract.contract_risk(contract)
+        return route, risk, "gate-contract.json"
+
+    data = _task_json(task_dir)
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    route = str(meta.get("route") or data.get("route") or "").strip().lower().replace("-", "_")
+    if route not in {ROUTE_SMALL_INLINE, ROUTE_MICRO_TASK, ROUTE_LITE_TASK, ROUTE_FULL_CHAIN}:
+        chain = str(meta.get("guru_chain") or data.get("guru_chain") or "").strip().lower()
+        route = ROUTE_FULL_CHAIN if chain == "full" else ""
+    risk = str(meta.get("risk") or data.get("risk") or task_risk_level(task_dir)).strip().lower()
+    if risk in HIGH_RISK_LEVELS:
+        risk = "high"
+    elif risk in MEDIUM_RISK_LEVELS:
+        risk = "medium"
+    elif risk in LOW_RISK_LEVELS:
+        risk = "low"
+    else:
+        risk = "unknown"
+    return route, risk, "task.json"
+
+
+def full_chain_packet_required(task_dir: str) -> tuple[bool, str]:
+    """High-risk full-chain tasks need an explicit slice packet before workers.
+
+    This is intentionally narrow: unknown/missing contracts preserve legacy
+    strict full-chain behavior without forcing packets onto old doc-only tasks.
+    """
+    route, risk, source = task_route_and_risk(task_dir)
+    if route == ROUTE_FULL_CHAIN and risk == "high":
+        return True, f"{source} route=full_chain risk=high"
+    return False, f"{source} route={route or 'unknown'} risk={risk}"
 
 
 def _keyword_flags(text: str, keywords: set) -> list:

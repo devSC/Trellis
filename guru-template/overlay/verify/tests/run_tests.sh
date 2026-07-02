@@ -3974,5 +3974,218 @@ echo "$P1D_OUT" | grep -v '^COUNT '
 read P1DP P1DF <<<"$(printf '%s\n' "$P1D_OUT" | sed -n 's/^COUNT //p')"
 pass=$((pass + ${P1DP:-0})); failn=$((failn + ${P1DF:-1}))
 
+# ============================================================================
+# P2 route-aware acceleration: contract generation, packet preflight, slice-plan,
+# commit-plan persistence, and machine-readable worker status.
+# ============================================================================
+write_gate_contract() { # write_gate_contract <task> <route> <risk>
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, os, sys
+task, route, risk = sys.argv[1], sys.argv[2], sys.argv[3]
+contract = {
+  "schema_version": 1,
+  "risk": risk,
+  "route": route,
+  "assessment": {"confidence": 0.9, "reasons": ["fixture"], "risk_flags": []},
+  "scope": {"allowed_paths": [], "forbidden_path_patterns": [], "max_files": None},
+  "required_gates": [],
+  "optional_gates": [],
+  "allowed_degradations": [],
+  "commit_policy": {
+    "require_in_progress": route in ("lite_task", "full_chain"),
+    "require_clean_implementation_review": route in ("lite_task", "full_chain"),
+    "allow_task_artifacts_only": False,
+  },
+  "created_by": "test",
+  "created_at": "2026-07-02T00:00:00Z",
+  "policy_version": "guru-risk-contract-v1",
+}
+with open(os.path.join(task, "gate-contract.json"), "w", encoding="utf-8") as fh:
+    json.dump(contract, fh)
+    fh.write("\n")
+PY
+}
+
+write_slice_packet() { # write_slice_packet <task> <unit> <target> <risk>
+  python3 - "$1" "$2" "$3" "$4" <<'PY'
+import json, os, sys
+task, unit, target, risk = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+packet = {
+  "schema_version": 1,
+  "slice_id": unit,
+  "owner_unit": unit,
+  "target_kind": "staged",
+  "target_paths": [target],
+  "risk": risk,
+  "risk_reasons": ["fixture"],
+  "deterministic_checks": ["python3 -m py_compile packages/cli/src/templates/guru/overlay/verify/guru_gate.py"],
+  "dirty_state": {"unrelated": []},
+  "semantic_review_provider": {"required": True, "provider": "opposite", "ocr": "optional"},
+  "invariants": [{
+    "invariant_id": f"INV-{unit}",
+    "rule": "fixture invariant",
+    "source": "detail",
+    "owner": "test",
+    "positive_case": "passes",
+    "negative_case": "fails",
+    "route_if_missing": "DETAIL_DEFECT",
+  }],
+}
+path = os.path.join(task, "slice-packets")
+os.makedirs(path, exist_ok=True)
+with open(os.path.join(path, f"{unit}.json"), "w", encoding="utf-8") as fh:
+    json.dump(packet, fh)
+    fh.write("\n")
+PY
+}
+
+IC_TASK="$TMP/init-contract-task"; mkdir -p "$IC_TASK"
+out=$(python3 "$GATE" init-contract "$IC_TASK" --route micro_task --risk low --allowed-path lib/ui/dot.dart --max-files 1 --reason fixture --risk-flag low-risk 2>&1); rc=$?
+if [ "$rc" = 0 ] && SUMMARY="$out" TASK="$IC_TASK" python3 - <<'PY'
+import json, os
+summary = json.loads(os.environ["SUMMARY"])
+contract = json.load(open(os.path.join(os.environ["TASK"], "gate-contract.json"), encoding="utf-8"))
+assert summary["new_route"] == "micro_task", summary
+assert contract["route"] == "micro_task", contract
+assert contract["risk"] == "low", contract
+assert contract["scope"]["allowed_paths"] == ["lib/ui/dot.dart"], contract
+assert contract["scope"]["max_files"] == 1, contract
+PY
+then pass=$((pass+1)); echo "PASS  init-contract 生成 micro_task 合同"
+else failn=$((failn+1)); echo "FAIL  init-contract 生成 micro_task 合同 (rc=$rc)"; echo "$out" | head -8; fi
+
+IC_BAD="$TMP/init-contract-bad"; mkdir -p "$IC_BAD"
+expect_rc_grep "init-contract 拒绝 high-risk downgrade" 2 "high-risk|full_chain" python3 "$GATE" init-contract "$IC_BAD" --route lite_task --risk high
+
+LC_HIGH=$(make_gate_case accel-high-full)
+write_new_gate_ready "$LC_HIGH"
+write_gate_contract "$LC_HIGH" full_chain high
+python3 - "$LC_HIGH/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d["status"] = "in_progress"
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+expect_rc_grep "check-implementation high/full 无 slice packet 先于 worker 阻断" 2 "PACKET_REQUIRED_BEFORE_IMPLEMENT" python3 "$GATE" check-implementation "$LC_HIGH"
+out=$(python3 "$GATE" slice-plan "$LC_HIGH" 2>&1); rc=$?
+if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["packet_required"] is True, plan
+assert plan["slices"] == [], plan
+assert "PACKET_REQUIRED_BEFORE_IMPLEMENT" in plan["blocking_reasons"], plan
+PY
+then pass=$((pass+1)); echo "PASS  slice-plan high/full 无 packet 输出阻断 JSON"
+else failn=$((failn+1)); echo "FAIL  slice-plan high/full 无 packet JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+LC_PKT=$(make_gate_case accel-one-packet)
+write_new_gate_ready "$LC_PKT"
+write_gate_contract "$LC_PKT" full_chain high
+python3 - "$LC_PKT/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d["status"] = "in_progress"
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+write_slice_packet "$LC_PKT" UNIT-a "lib/a.dart" high
+expect "check-implementation high/full 有 packet 放行" 0 python3 "$GATE" check-implementation "$LC_PKT"
+out=$(python3 "$GATE" slice-plan "$LC_PKT" 2>&1); rc=$?
+if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["packet_required"] is True, plan
+assert len(plan["slices"]) == 1, plan
+assert plan["slices"][0]["slice_id"] == "UNIT-a", plan
+assert "--slice UNIT-a" in plan["slices"][0]["recommended_command"], plan
+PY
+then pass=$((pass+1)); echo "PASS  slice-plan 单 packet 输出 recommended command"
+else failn=$((failn+1)); echo "FAIL  slice-plan 单 packet JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+LC_MULTI=$(make_gate_case accel-multi-packet)
+write_new_gate_ready "$LC_MULTI"
+write_gate_contract "$LC_MULTI" full_chain high
+write_slice_packet "$LC_MULTI" UNIT-a "lib/a.dart" high
+write_slice_packet "$LC_MULTI" UNIT-b "lib/b.dart" high
+out=$(python3 "$GATE" slice-plan "$LC_MULTI" 2>&1); rc=$?
+if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert len(plan["slices"]) == 2, plan
+assert "PACKET_AMBIGUOUS_WITHOUT_SLICE" in plan["blocking_reasons"], plan
+PY
+then pass=$((pass+1)); echo "PASS  slice-plan 多 packet 标记 ambiguous"
+else failn=$((failn+1)); echo "FAIL  slice-plan 多 packet JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+out=$(bash -c "cd '$MC_ROOT' && python3 '$GATE' commit-plan '$MC_TASK' --write" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" micro_task implementation && [ -f "$MC_TASK/commit-plan.json" ] && PLAN="$out" FILE="$MC_TASK/commit-plan.json" python3 - <<'PY'
+import json, os
+stdout_plan = json.loads(os.environ["PLAN"])
+file_plan = json.load(open(os.environ["FILE"], encoding="utf-8"))
+assert stdout_plan == file_plan, (stdout_plan, file_plan)
+assert file_plan["can_commit_now"] is True, file_plan
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan --write 同步写 mutable evidence"
+else failn=$((failn+1)); echo "FAIL  commit-plan --write JSON/文件错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+P2_STATUS_OUT="$(PYTHONPATH="$HERE/.." python3 - <<'PY'
+import argparse, contextlib, io, json, os, subprocess, tempfile, sys
+import guru_supervise as S
+
+np = nf = 0
+def ok(d, c):
+    global np, nf
+    if c: np += 1; print(f"PASS  {d}")
+    else: nf += 1; print(f"FAIL  {d}")
+
+root = tempfile.mkdtemp()
+task = os.path.join(root, ".trellis/tasks/status-json")
+os.makedirs(task, exist_ok=True)
+events = [
+    {"kind": "spawned", "as": "live-worker", "provider": "codex"},
+    {"kind": "spawned", "as": "done-worker", "provider": "claude"},
+    {"kind": "spawned", "as": "killed-worker", "provider": "codex"},
+    {"kind": "done", "by": "done-worker"},
+    {"kind": "killed", "by": "cli:kill", "worker": "killed-worker", "reason": "explicit-kill"},
+]
+
+class Result:
+    returncode = 0
+    stderr = ""
+    stdout = json.dumps([{
+        "name": "guru-status-json-run",
+        "task": task,
+        "workersAlive": 1,
+        "workersTotal": 3,
+        "lastEventKind": "killed",
+    }])
+
+old_run, old_load = S.subprocess.run, S._load_channel_events
+try:
+    S.subprocess.run = lambda *a, **kw: Result()
+    S._load_channel_events = lambda _config, _channel: events
+    args = argparse.Namespace(task_dir=task, root=root, platform="flutter", provider="codex",
+                              adversarial=False, trellis_bin="trellis", dry_run=False, json=True)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = S.status_action(args)
+    payload = json.loads(buf.getvalue())
+    ok("status --json rc0", rc == 0)
+    ok("status --json 区分 live/terminal", payload["live_workers"] == 1 and payload["terminal_workers"] == 2)
+    ok("status --json blocking 只看 live", payload["blocking"] is True and payload["cleanup_available"] is True)
+    ok("status --json 给出单条 cleanup command", "done-worker" in payload["cleanup_command"])
+    ok("status --json cli:kill worker 字段归属 terminal", any(c["worker"] == "killed-worker" for c in payload["cleanup_candidates"]))
+finally:
+    S.subprocess.run, S._load_channel_events = old_run, old_load
+
+print(f"COUNT {np} {nf}")
+sys.exit(0 if nf == 0 else 1)
+PY
+)"
+echo "$P2_STATUS_OUT" | grep -v '^COUNT '
+read P2SP P2SF <<<"$(printf '%s\n' "$P2_STATUS_OUT" | sed -n 's/^COUNT //p')"
+pass=$((pass + ${P2SP:-0})); failn=$((failn + ${P2SF:-1}))
+
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]

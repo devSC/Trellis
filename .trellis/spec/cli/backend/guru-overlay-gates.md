@@ -34,8 +34,29 @@ This is an executable gate surface. Changes must be fail-closed by default, mirr
   - `gate-degradations.jsonl`
   - `gate-evidence/`
 
+- Contract generation:
+  - `python3 guru_gate.py init-contract <task_dir> --route <route> --risk <risk> [--allowed-path <path> ...] [--max-files <n>]`
+  - The command must call `guru_contract.default_contract()`, validate the result, and write `gate-contract.json` atomically or through the shared contract writer.
+  - The command must reject high-risk downgrade attempts, invalid raw risk strings, invalid route names, non-positive max file limits, and invalid micro scopes.
+
+- Full-chain slice planning:
+  - `python3 guru_gate.py slice-plan <task_dir>`
+  - The command emits read-only JSON summarizing whether a slice packet is required, available packets, dirty scope, blocking reasons, and recommended per-slice implement commands.
+  - For `route=full_chain` and `risk=high`, `check-implementation` and `guru_supervise.py implement-check` must fail before worker launch when no slice packet exists.
+  - Missing or invalid contracts on legacy tasks must not force packet creation by themselves; legacy full-chain strict behavior is preserved unless the task explicitly resolves to high-risk full-chain.
+
 - Commit gate:
   - `python3 guru_gate.py check-commit [task_dir]`
+
+- Commit plan:
+  - `python3 guru_gate.py commit-plan [task_dir] [--write]`
+  - Without `--write`, the command is read-only stdout JSON.
+  - With `--write`, it writes task-local `commit-plan.json` as mutable evidence and keeps stdout JSON identical to the written file.
+
+- Worker status:
+  - `python3 guru_supervise.py status <task_dir> [--json]`
+  - JSON mode must distinguish `live_workers` from `terminal_workers`; terminal `done|killed|error` workers must not make `blocking=true`.
+  - Cleanup must be exposed as one cleanup command plus structured cleanup candidates.
 
 - Configuration key:
   - `.trellis/config.yaml` path: `guru.supervision.adversarial_enabled`
@@ -63,6 +84,16 @@ This is an executable gate surface. Changes must be fail-closed by default, mirr
 `gate-degradations.jsonl` is append-only evidence, not permission. Permission comes from global policy plus the current contract. Each row must identify the gate and include passed compensating checks required by the contract.
 
 `task.json.guru_chain` remains the legacy artifact-shape selector `full | light`. New route names use `lite_task`; do not introduce a new light-prefixed task route.
+
+`init-contract` is the preferred writer for task-local gate contracts. Handwritten
+contracts are allowed only when they validate through the same validator. The
+writer must not silently preserve an invalid existing contract, and an unreadable
+existing contract must fail closed instead of being overwritten.
+
+`slice-plan` is a runtime summary, not a planning contract. It must not edit
+`prd.md`, `design.md`, `implement.md`, review records, confirmations, or gate
+contracts. Dirty scope is advisory for planning and blocking when it proves the
+selected packet is not isolated.
 
 Route policy may relax only adversarial reviewer requirements. It must not bypass
 requirements/detail human confirmations, current-digest checks, structure gates,
@@ -108,12 +139,20 @@ expand the contract or promote to `full_chain`; it must not silently rewrite
 | `lite_task` with current requirements `blocked` or clean `max_severity=medium+` | Block |
 | `lite_task` review discovers high-risk or expanded scope | Stop for user confirmation; do not silently promote evidence-ready scope to user-confirmed |
 | `risk=unknown` or invalid `gate-contract.json` | Strict default policy; do not apply route-aware adversarial relaxation |
+| `init-contract --risk high --route lite_task|micro_task` | Block; high risk requires `full_chain` |
+| `init-contract` sees unreadable existing contract | Block; do not overwrite ambiguous state |
+| high-risk `full_chain` implementation without slice packet | Block before worker launch with `PACKET_REQUIRED_BEFORE_IMPLEMENT` |
+| high-risk `full_chain` with one valid slice packet | Allow implementation preflight and expose recommended `--slice <id>` command |
+| high-risk `full_chain` with multiple packets and no selected slice | Report `PACKET_AMBIGUOUS_WITHOUT_SLICE` in `slice-plan` |
+| `status --json` sees only terminal workers | Return `blocking=false`, `cleanup_available=true` |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: a low-risk single-path UI/text change uses `micro_task` only when commit is requested, with explicit scope, positive `max_files`, and deterministic compensating checks for optional GitNexus degradation.
+- Good: a high-risk full-chain runtime task writes a slice packet before implementation, runs `slice-plan`, then launches one explicit slice.
 - Base: a task without `gate-contract.json` follows the existing full-chain `check-implementation` plus implementation-review digest and staged-scope checks.
 - Bad: a task-local degradation row claims a required semantic review or commit gate can be skipped. Required gates are globally non-degradable and must fail closed.
+- Bad: a high-risk full-chain task starts an implementation worker before any slice packet exists.
 
 ### 6. Tests Required
 
@@ -126,7 +165,12 @@ Guru overlay verify tests must cover:
 - Contract validation rejects empty micro scope, repo-root micro scope, risk typos, empty fallback checks, unauthorized degradations, and malformed roots.
 - `check-commit` blocks staged task artifacts, out-of-scope staged paths, non-full high-risk paths, and missing compensating evidence.
 - `adversarial_enabled=false` allows double ordinary clean reviews to proceed, but does not bypass current blocked or medium+ review evidence.
-- Route-aware review policy: `micro_task` skips requirements adversarial review, `lite_task` bounded review accepts double ordinary clean, and `full_chain` remains strict by default.
+- Route-aware review policy: `micro_task` skips requirements adversarial review, `lite_task` bounded review accepts double ordinary clean, and `full_chain` keeps strict gates while only requiring requirements adversarial review when `adversarial_enabled=true`.
+- `init-contract` generates valid micro/lite/full contracts and rejects high-risk downgrade.
+- `check-implementation` and `guru_supervise.py implement-check` block high-risk full-chain tasks with no slice packet before worker launch.
+- `slice-plan` covers zero, one, and multiple packet fixtures, including dirty out-of-scope reporting.
+- `commit-plan --write` writes `commit-plan.json` identical to stdout JSON.
+- `guru_supervise.py status --json` distinguishes live and terminal workers and exposes one cleanup command.
 - Source/template mirror pairs are checked with `diff -q`.
 
 ### 7. Wrong vs Correct
@@ -225,7 +269,7 @@ Commit decisions must be available through a machine-readable plan before stagin
 Required command shape:
 
 ```bash
-python3 .trellis/scripts/guru/guru_gate.py commit-plan [task_dir]
+python3 .trellis/scripts/guru/guru_gate.py commit-plan [task_dir] [--write]
 ```
 
 Required JSON fields:
@@ -246,7 +290,7 @@ Required JSON fields:
 }
 ```
 
-`check-commit` and `commit-plan` must use the same decision model. It is acceptable to ship `commit-plan` as a read-only diagnostic first, but final behavior must avoid two independent pass/block implementations.
+`check-commit` and `commit-plan` must use the same decision model. `commit-plan` without `--write` is a read-only diagnostic; `commit-plan --write` persists the same JSON into task-local `commit-plan.json` mutable evidence. Final behavior must avoid two independent pass/block implementations.
 
 ### 5. Spec Update Budget
 

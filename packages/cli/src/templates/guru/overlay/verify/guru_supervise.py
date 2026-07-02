@@ -8,7 +8,7 @@ Usage:
     python3 guru_supervise.py [--adversarial] implement <task-dir> [--dry-run]
     python3 guru_supervise.py [--adversarial] check <task-dir> [--dry-run]
     python3 guru_supervise.py [--adversarial] implement-check <task-dir> [--dry-run]
-    python3 guru_supervise.py status <task-dir>
+    python3 guru_supervise.py status <task-dir> [--json]
     python3 guru_supervise.py kill <task-dir> --channel <name> --worker <name>
 """
 
@@ -1112,9 +1112,29 @@ def _scope_preflight(repo_root: str, packet: dict):
     return None
 
 
+def _task_status(task_dir: Path) -> str:
+    try:
+        data = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "planning"
+    status = data.get("status", "planning") if isinstance(data, dict) else "planning"
+    return status if isinstance(status, str) and status else "planning"
+
+
 def run_implement_check(args: argparse.Namespace) -> int:
     task_dir = Path(args.task_dir).expanduser().resolve()
     root = _resolve_root(args.root, task_dir)
+    base_run_id = args.run_id or _default_run_id()
+    if _task_status(task_dir) == "in_progress":
+        required, reason = guru_risk.full_chain_packet_required(str(task_dir))
+        if required and not guru_review_record.list_packets(str(task_dir)):
+            guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
+                "PACKET_REQUIRED_BEFORE_IMPLEMENT", f"{base_run_id}-check-1"))
+            sys.stderr.write(
+                "[guru-supervise] high-risk full_chain requires slice packet before worker launch; "
+                f"硬停(PACKET_REQUIRED_BEFORE_IMPLEMENT):{reason}\n"
+            )
+            return 2
     if _guru_gate_check_implementation(str(task_dir)) != 0:
         print(
             "[guru-supervise] BLOCKED: implement-check requires "
@@ -1135,8 +1155,6 @@ def run_implement_check(args: argparse.Namespace) -> int:
         adversarial=False,
         trellis_bin=args.trellis_bin,
     )
-    base_run_id = args.run_id or _default_run_id()
-
     # P1b：resolve slice packet(--slice 显式 / 单 packet auto / 多 packet 未指定→PACKET_AMBIGUOUS 硬停 /
     # 无 packet→None 回落 P0)。preflight failure 全经 preflight_failure_record + append_record + exit2,
     # 绝不进 REPAIRABLE_IMPLEMENT_ROUTES、不启 implement worker(repairable=false,BHV-001/002)。
@@ -1369,6 +1387,18 @@ def _load_channel_events(config: SupervisionConfig, channel: str) -> list[dict]:
     return events
 
 
+def _terminal_worker_name(event: dict) -> str:
+    worker = str(event.get("worker") or "").strip()
+    if worker:
+        return worker
+    by = str(event.get("by") or "").strip()
+    if by.startswith("supervisor:"):
+        return by.split(":", 1)[1].strip()
+    if by.startswith("cli:"):
+        return ""
+    return by
+
+
 def status_action(args: argparse.Namespace) -> int:
     task_dir = Path(args.task_dir).expanduser().resolve()
     root = _resolve_root(args.root, task_dir)
@@ -1419,15 +1449,32 @@ def status_action(args: argparse.Namespace) -> int:
         )
     ]
     if not matched:
+        if args.json:
+            print(json.dumps({
+                "schema_version": 1,
+                "task_dir": str(task_dir),
+                "channels": [],
+                "live_workers": 0,
+                "terminal_workers": 0,
+                "cleanup_available": False,
+                "blocking": False,
+                "cleanup_command": "",
+            }, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
         print(f"No Guru supervision channels found for {task_dir}")
         return 0
 
+    json_channels = []
+    live_workers = 0
+    terminal_workers = 0
+    cleanup_candidates = []
     for item in matched:
         channel = str(item.get("name"))
-        print(f"channel: {channel}")
-        print(f"  task: {item.get('task', '-')}")
-        print(f"  workers: {item.get('workersAlive', 0)}/{item.get('workersTotal', 0)}")
-        print(f"  last: {item.get('lastEventKind', '-')}")
+        if not args.json:
+            print(f"channel: {channel}")
+            print(f"  task: {item.get('task', '-')}")
+            print(f"  workers: {item.get('workersAlive', 0)}/{item.get('workersTotal', 0)}")
+            print(f"  last: {item.get('lastEventKind', '-')}")
         events = _load_channel_events(config, channel)
         workers: dict[str, dict[str, str]] = {}
         for event in events:
@@ -1439,27 +1486,71 @@ def status_action(args: argparse.Namespace) -> int:
                     "terminal": "running",
                 }
             elif kind in {"done", "error", "killed"}:
-                by = str(event.get("by") or "")
-                if by:
-                    workers.setdefault(by, {"provider": "-", "terminal": "running"})
-                    workers[by]["terminal"] = kind
+                worker_name = _terminal_worker_name(event)
+                if worker_name:
+                    workers.setdefault(worker_name, {"provider": "-", "terminal": "running"})
+                    workers[worker_name]["terminal"] = kind
+        channel_workers = []
         for worker, info in sorted(workers.items()):
-            print(
-                f"  worker: {worker} provider={info['provider']} "
-                f"terminal={info['terminal']}"
-            )
-            print(
-                "    kill: "
+            terminal = info["terminal"]
+            is_live = terminal == "running"
+            if is_live:
+                live_workers += 1
+            else:
+                terminal_workers += 1
+                cleanup_candidates.append({"channel": channel, "worker": worker, "terminal": terminal})
+            kill_command = (
                 "python3 .trellis/scripts/guru/guru_supervise.py kill "
                 f"{shlex.quote(str(task_dir))} --channel {shlex.quote(channel)} "
                 f"--worker {shlex.quote(worker)}"
             )
-        print(
-            "  messages: "
-            + shlex.join(
-                _trellis_cmd(config, ["channel", "messages", channel, "--raw", "--last", "20"])
-            )
+            channel_workers.append({
+                "worker": worker,
+                "provider": info["provider"],
+                "terminal": terminal,
+                "live": is_live,
+                "kill_command": kill_command,
+            })
+            if not args.json:
+                print(
+                    f"  worker: {worker} provider={info['provider']} "
+                    f"terminal={terminal}"
+                )
+                print(f"    kill: {kill_command}")
+        messages_command = shlex.join(
+            _trellis_cmd(config, ["channel", "messages", channel, "--raw", "--last", "20"])
         )
+        json_channels.append({
+            "channel": channel,
+            "task": item.get("task", "-"),
+            "workers_alive": item.get("workersAlive", 0),
+            "workers_total": item.get("workersTotal", 0),
+            "last_event_kind": item.get("lastEventKind", "-"),
+            "workers": channel_workers,
+            "messages_command": messages_command,
+        })
+        if not args.json:
+            print("  messages: " + messages_command)
+    if args.json:
+        cleanup_command = ""
+        if cleanup_candidates:
+            first = cleanup_candidates[0]
+            cleanup_command = (
+                "python3 .trellis/scripts/guru/guru_supervise.py kill "
+                f"{shlex.quote(str(task_dir))} --channel {shlex.quote(first['channel'])} "
+                f"--worker {shlex.quote(first['worker'])}"
+            )
+        print(json.dumps({
+            "schema_version": 1,
+            "task_dir": str(task_dir),
+            "channels": json_channels,
+            "live_workers": live_workers,
+            "terminal_workers": terminal_workers,
+            "cleanup_available": bool(cleanup_candidates),
+            "blocking": live_workers > 0,
+            "cleanup_command": cleanup_command,
+            "cleanup_candidates": cleanup_candidates,
+        }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
 
@@ -1518,6 +1609,7 @@ def build_parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status")
     status.add_argument("task_dir")
     status.add_argument("--dry-run", action="store_true")
+    status.add_argument("--json", action="store_true")
     status.set_defaults(func=status_action)
 
     kill = sub.add_parser("kill")
