@@ -34,6 +34,7 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
   python3 guru_gate.py check-implementation [task_dir]
                                                   # 实现/检查 worker 前置：START_READY + task.json.status == in_progress
   python3 guru_gate.py check-commit [task_dir]    # 提交前置：check-implementation + staged scope + implementation review clean
+  python3 guru_gate.py commit-plan [task_dir]     # 只读输出提交计划 JSON：route、staged scope、阻断原因、切分建议
   python3 guru_gate.py digest <gate> [task_dir]   # 输出该阶段产物的确认快照摘要（排查快照失配用）
 
 编号纪律:
@@ -55,6 +56,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -2014,6 +2016,67 @@ def _adversarial_enabled(task_dir: str = None) -> bool:
     return _config_bool(("guru", "supervision", "adversarial_enabled"), True, task_dir)
 
 
+def _contract_route_for_review_policy(task_dir: str = None) -> str:
+    if not task_dir:
+        return ""
+    contract, error = guru_contract.load_contract(task_dir)
+    if error or not isinstance(contract, dict):
+        return ""
+    route = guru_contract.contract_route(contract)
+    if not route:
+        return ""
+    risk_problem = guru_contract.raw_risk_problem(contract.get("risk"))
+    if risk_problem:
+        return ""
+    risk = guru_contract.contract_risk(contract)
+    if risk == guru_contract.RISK_UNKNOWN:
+        return ""
+    if risk == guru_contract.RISK_HIGH and route != guru_contract.ROUTE_FULL_CHAIN:
+        return ""
+    validation_problems = guru_contract.validate_contract(contract)
+    if route == guru_contract.ROUTE_SMALL_INLINE:
+        validation_problems = [
+            problem for problem in validation_problems
+            if problem != "small_inline cannot be used as a commit contract; use micro_task when committing"
+        ]
+    if validation_problems:
+        return ""
+    return route
+
+
+def _review_policy(task_dir: str = None) -> dict:
+    route = _contract_route_for_review_policy(task_dir)
+    adversarial_enabled = _adversarial_enabled(task_dir)
+    requirements_required = adversarial_enabled
+    review_adversarial_required = adversarial_enabled
+    reason = "strict full_chain/default policy"
+    if not adversarial_enabled:
+        reason = "adversarial disabled by config"
+    elif route in {guru_contract.ROUTE_SMALL_INLINE, guru_contract.ROUTE_MICRO_TASK}:
+        requirements_required = False
+        review_adversarial_required = False
+        reason = f"route={route}: adversarial review not required"
+    elif route == guru_contract.ROUTE_LITE_TASK:
+        requirements_required = False
+        review_adversarial_required = False
+        reason = "route=lite_task: bounded review policy"
+    return {
+        "route": route or guru_contract.ROUTE_FULL_CHAIN,
+        "requirements_adversarial_required": requirements_required,
+        "review_adversarial_required": review_adversarial_required,
+        "adversarial_enabled": adversarial_enabled,
+        "reason": reason,
+    }
+
+
+def _requirements_adversarial_required(task_dir: str = None) -> bool:
+    return bool(_review_policy(task_dir)["requirements_adversarial_required"])
+
+
+def _review_adversarial_required(task_dir: str = None) -> bool:
+    return bool(_review_policy(task_dir)["review_adversarial_required"])
+
+
 def _gate_mode() -> str:
     """人工 Gate 通道：strict（默认，用户终端 TTY）/ soft（对话确认后 agent --via-agent 代跑）。
 
@@ -2125,7 +2188,8 @@ def _review_run_is_clean(run: dict) -> bool:
 def _review_state(task_dir: str, gate: str) -> dict:
     """返回当前 digest 下的 review clean streak 状态。findings/非法记录会打断 streak。"""
     digest = _gate_digest(task_dir, gate)
-    adversarial_required = _adversarial_enabled(task_dir)
+    policy = _review_policy(task_dir)
+    adversarial_required = bool(policy["review_adversarial_required"])
     all_runs = [run for run in _review_runs(task_dir, gate) if isinstance(run, dict)]
     current_runs = [
         run for run in all_runs
@@ -2171,6 +2235,8 @@ def _review_state(task_dir: str, gate: str) -> dict:
         "clean_run_ids": clean_run_ids,
         "adversarial_clean_run_ids": adversarial_clean_run_ids,
         "adversarial_required": adversarial_required,
+        "adversarial_policy_reason": policy["reason"],
+        "review_policy_route": policy["route"],
         "has_adversarial_clean": bool(adversarial_clean_run_ids),
         "duplicate_clean_run_ids": duplicate_clean_run_ids,
         "clean_count": len(clean_run_ids),
@@ -2244,7 +2310,7 @@ def _review_status_mark(task_dir: str, gate: str) -> str:
         if state.get("adversarial_required", True):
             adv = ", ".join(state["adversarial_clean_run_ids"])
             return f"review ✅ clean x{state['clean_count']} ({ids}; adversarial {adv})"
-        return f"review ✅ clean x{state['clean_count']} ({ids}; adversarial disabled by config)"
+        return f"review ✅ clean x{state['clean_count']} ({ids}; {state.get('adversarial_policy_reason', 'adversarial not required')})"
     problem = _review_problem(task_dir, gate)
     return f"review ⬜ {state['clean_count']}/{REQUIRED_CLEAN_REVIEWS} clean — {problem}"
 
@@ -2309,7 +2375,7 @@ def _block_review(channel: str, task_dir: str, gate: str) -> int:
     adversarial_clause = (
         "，且至少一次来自 opposite-provider adversarial review"
         if state.get("adversarial_required", True)
-        else "（adversarial_enabled=false 时不要求 adversarial reviewer）"
+        else f"（{state.get('adversarial_policy_reason', 'adversarial not required')}）"
     )
     sys.stderr.write(
         f"由 review worker 记录两次不同 run-id 的 clean 证据{adversarial_clause}：\n"
@@ -2680,7 +2746,7 @@ def _requirements_review(task_dir: str) -> dict:
 
 def _requirements_review_problem(task_dir: str) -> str:
     review = _requirements_review(task_dir)
-    adversarial_required = _adversarial_enabled(task_dir)
+    adversarial_required = _requirements_adversarial_required(task_dir)
     if not review:
         if not adversarial_required:
             return ""
@@ -2719,10 +2785,11 @@ def _requirements_review_problem(task_dir: str) -> str:
 
 def _requirements_review_status_mark(task_dir: str) -> str:
     review = _requirements_review(task_dir)
-    adversarial_required = _adversarial_enabled(task_dir)
+    policy = _review_policy(task_dir)
+    adversarial_required = bool(policy["requirements_adversarial_required"])
     if not review:
         if not adversarial_required:
-            return "✅ disabled by config — adversarial requirements review not required"
+            return f"✅ not required — {policy['reason']}"
         return "⬜ missing — 缺少 opposite-provider requirements adversarial review"
     status = str(review.get("status", "")).strip().lower() or "missing"
     fresh = "current" if review.get("artifact_digest") == _gate_digest(task_dir, "requirements") else "stale"
@@ -2744,10 +2811,18 @@ def _block_requirements_review(action: str, task_dir: str) -> int:
     problem = _requirements_review_problem(task_dir)
     if not problem:
         return PASS
-    if not _adversarial_enabled(task_dir):
+    policy = _review_policy(task_dir)
+    if not policy["adversarial_enabled"]:
         sys.stderr.write(
             f"[guru-gate:{action}] 拦截：requirements review 记录存在当前阻断问题；"
             f"{problem}。\n"
+        )
+        sys.stderr.write("下一步：修订需求或清理/重跑当前 digest 的 requirements review 证据后再确认。\n")
+        return BLOCK
+    if not policy["requirements_adversarial_required"]:
+        sys.stderr.write(
+            f"[guru-gate:{action}] 拦截：requirements adversarial review 按当前 route policy 可选，"
+            f"但当前 requirements review 证据存在阻断问题；{problem}。\n"
         )
         sys.stderr.write("下一步：修订需求或清理/重跑当前 digest 的 requirements review 证据后再确认。\n")
         return BLOCK
@@ -2828,8 +2903,15 @@ def cmd_status(task_dir_arg) -> int:
 
     req_review_problem = _requirements_review_problem(task_dir)
     if req_review_problem:
-        print("下一步：先完成 requirements adversarial review，clean 后才能确认需求：")
-        print(f"  python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements {task_dir}")
+        policy = _review_policy(task_dir)
+        if not policy["requirements_adversarial_required"]:
+            print(
+                "下一步：requirements adversarial review 当前 policy 非必需，"
+                "但已有 requirements review 证据存在阻断问题；先修订需求或清理/重跑该证据。"
+            )
+        else:
+            print("下一步：先完成 requirements adversarial review，clean 后才能确认需求：")
+            print(f"  python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements {task_dir}")
     elif "requirements" in confirm_pending:
         print("下一步：需求 review 已 clean/current，由用户本人在终端运行：")
         print(f"  python3 .trellis/scripts/guru/guru_gate.py confirm requirements {task_dir}")
@@ -2861,7 +2943,7 @@ def cmd_status(task_dir_arg) -> int:
         adv_note = (
             "（其中至少一次 adversarial）"
             if state.get("adversarial_required", True)
-            else "（adversarial_enabled=false，不要求 adversarial reviewer）"
+            else f"（{state.get('adversarial_policy_reason', 'adversarial not required')}）"
         )
         print(f"下一步：继续 {GATE_LABEL[g0]} review，当前 digest 需要两个不同 run-id 的 clean 记录{adv_note}：")
         audit_hint = ' --deletion-audit "<none|删除审计摘要>"' if g0 == "detail" else ""
@@ -3188,52 +3270,322 @@ def _cmd_check_direct_low_risk_commit(staged_paths: list, root: str) -> int:
     return PASS
 
 
-def cmd_check_commit(task_dir_arg) -> int:
+def _compact_gate_output(text: str) -> str:
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    return "; ".join(lines[:4])
+
+
+def _captured_gate_problem(cmd: str, task_dir: str, root: str) -> str:
+    try:
+        result = subprocess.run(
+            [sys.executable or "python3", os.path.abspath(__file__), cmd, task_dir],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"{cmd} failed to run: {exc}"
+    if result.returncode == PASS:
+        return ""
+    detail = _compact_gate_output(result.stderr) or _compact_gate_output(result.stdout)
+    return detail or f"{cmd} failed with rc={result.returncode}"
+
+
+def _display_task_dir(task_dir: str, root: str) -> str:
+    if not task_dir:
+        return ""
+    try:
+        rel = os.path.relpath(os.path.realpath(task_dir), os.path.realpath(root)).replace(os.sep, "/")
+        if not rel.startswith("../"):
+            return rel
+    except ValueError:
+        pass
+    return task_dir
+
+
+def _gate_command(command: str, task_dir: str, root: str) -> str:
+    display_task = _display_task_dir(task_dir, root)
+    suffix = f" {shlex.quote(display_task)}" if display_task else ""
+    return f"python3 .trellis/scripts/guru/guru_gate.py {command}{suffix}"
+
+
+def _stage_command(paths: list) -> list:
+    cleaned = [path for path in paths if isinstance(path, str) and path.strip()]
+    if not cleaned:
+        return []
+    if any(path.strip().strip("/") in {"", "."} for path in cleaned):
+        return []
+    chunk_size = 20
+    return [
+        "git add -- " + " ".join(shlex.quote(path) for path in cleaned[i:i + chunk_size])
+        for i in range(0, len(cleaned), chunk_size)
+    ]
+
+
+def _dedupe_strings(values: list) -> list:
+    seen = set()
+    deduped = []
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if value not in seen:
+            seen.add(value)
+            deduped.append(value)
+    return deduped
+
+
+def _new_commit_plan(staged_paths: list) -> dict:
+    return {
+        "schema_version": 1,
+        "route": "",
+        "commit_mode": "implementation",
+        "task_dir": "",
+        "staged_paths": staged_paths,
+        "allowed_stage_paths": [],
+        "forbidden_stage_paths": [],
+        "can_commit_now": False,
+        "split_required": False,
+        "blocking_reasons": [],
+        "required_commands": [],
+        "optional_commands": [],
+        "required_user_confirmations": [],
+        "suggested_stage_commands": [],
+        "stop_boundary": "before_commit",
+        "contract_present": False,
+        "contract_valid": None,
+    }
+
+
+def _finish_commit_plan(plan: dict) -> dict:
+    plan["allowed_stage_paths"] = _dedupe_strings(plan.get("allowed_stage_paths", []))
+    plan["forbidden_stage_paths"] = _dedupe_strings(plan.get("forbidden_stage_paths", []))
+    plan["blocking_reasons"] = _dedupe_strings(plan.get("blocking_reasons", []))
+    plan["required_commands"] = _dedupe_strings(plan.get("required_commands", []))
+    plan["optional_commands"] = _dedupe_strings(plan.get("optional_commands", []))
+    plan["required_user_confirmations"] = _dedupe_strings(plan.get("required_user_confirmations", []))
+    suggested = _dedupe_strings(plan.get("suggested_stage_commands", []))
+    if not suggested:
+        suggested = _stage_command(plan.get("allowed_stage_paths", []))
+    plan["suggested_stage_commands"] = suggested
+    if plan.get("split_required"):
+        plan["commit_mode"] = "split_required"
+    if plan.get("can_commit_now") and not plan.get("required_user_confirmations"):
+        plan["required_user_confirmations"] = ["confirm_commit"]
+    return plan
+
+
+def _commit_plan_split_required(staged_paths: list, task_dir: str, root: str) -> bool:
+    artifact_paths = [
+        path for path in staged_paths
+        if guru_contract.is_task_artifact_path(path, task_dir or "", root)
+    ]
+    code_paths = [path for path in staged_paths if path not in artifact_paths]
+    return bool(artifact_paths and code_paths)
+
+
+def _direct_commit_stage_paths(staged_paths: list, root: str) -> tuple[list, list]:
+    artifact_paths = [path for path in staged_paths if guru_contract.is_task_artifact_path(path, "", root)]
+    code_paths = [path for path in staged_paths if path not in artifact_paths]
+    forbidden = list(artifact_paths)
+    high_risk_paths = set(guru_contract.high_risk_path_signals(code_paths))
+    if guru_risk.has_cross_layer_or_storage(code_paths):
+        high_risk_paths.update(code_paths)
+    forbidden.extend(path for path in code_paths if path in high_risk_paths)
+    if len(code_paths) > 3:
+        forbidden.extend(code_paths[3:])
+    forbidden = _dedupe_strings(forbidden)
+    allowed = [path for path in code_paths if path not in forbidden]
+    return allowed, forbidden
+
+
+def _contract_commit_stage_paths(contract: dict, staged_paths: list, task_dir: str, root: str) -> tuple[list, list]:
+    scope = contract.get("scope", {}) if isinstance(contract, dict) else {}
+    if not isinstance(scope, dict):
+        scope = {}
+    allowed_scope = scope.get("allowed_paths") if isinstance(scope.get("allowed_paths"), list) else []
+    forbidden_patterns = scope.get("forbidden_path_patterns") if isinstance(scope.get("forbidden_path_patterns"), list) else []
+    max_files = scope.get("max_files")
+    artifact_paths = [path for path in staged_paths if guru_contract.is_task_artifact_path(path, task_dir, root)]
+    code_paths = [path for path in staged_paths if path not in artifact_paths]
+    forbidden = list(artifact_paths)
+    forbidden.extend(path for path in code_paths if not guru_contract.path_in_scope(path, allowed_scope))
+    for path in code_paths:
+        normalized = path.replace("\\", "/").strip("/")
+        if any(isinstance(pattern, str) and pattern and pattern in normalized for pattern in forbidden_patterns):
+            forbidden.append(path)
+    if isinstance(max_files, int) and max_files > 0 and len(staged_paths) > max_files:
+        forbidden.extend(staged_paths[max_files:])
+    route = guru_contract.contract_route(contract)
+    if route and route != guru_contract.ROUTE_FULL_CHAIN:
+        high_risk_paths = set(guru_contract.high_risk_path_signals(code_paths))
+        if guru_risk.has_cross_layer_or_storage(code_paths):
+            high_risk_paths.update(code_paths)
+        forbidden.extend(path for path in code_paths if path in high_risk_paths)
+    forbidden = _dedupe_strings(forbidden)
+    allowed = [path for path in code_paths if path not in forbidden]
+    return allowed, forbidden
+
+
+def _review_commit_stage_paths(record, staged_paths: list, task_dir: str, root: str) -> tuple[list, list]:
+    task_artifacts = [
+        path for path in staged_paths
+        if guru_contract.is_task_artifact_path(path, task_dir, root)
+    ]
+    code_paths = [path for path in staged_paths if path not in task_artifacts]
+    target_paths = record.get("target_paths") if isinstance(record, dict) else None
+    if not isinstance(target_paths, list) or not target_paths:
+        return [], staged_paths
+    forbidden = list(task_artifacts)
+    forbidden.extend(path for path in code_paths if not _path_in_targets(path, target_paths))
+    forbidden = _dedupe_strings(forbidden)
+    allowed = [path for path in code_paths if path not in forbidden]
+    return allowed, forbidden
+
+
+def _commit_plan_payload(task_dir_arg) -> dict:
     root = _repo_root()
     staged_paths, staged_error = _git_staged_paths(root)
+    plan = _new_commit_plan(staged_paths)
+
+    def block(reason: str) -> None:
+        if reason and reason not in plan["blocking_reasons"]:
+            plan["blocking_reasons"].append(reason)
+
     if staged_error:
-        sys.stderr.write(f"[guru-gate:check-commit] {staged_error}\n")
-        return BLOCK
-    if not staged_paths:
-        sys.stderr.write("[guru-gate:check-commit] 拦截：没有 staged changes\n")
-        return BLOCK
+        block(staged_error)
+        plan["required_commands"].append("git diff --cached --name-only")
+        return _finish_commit_plan(plan)
     task_dir = resolve_task_dir(task_dir_arg, allow_unique_planning_fallback=False)
+    if not staged_paths:
+        if task_dir:
+            plan["task_dir"] = _display_task_dir(task_dir, root)
+            contract, contract_error = guru_contract.load_contract(task_dir)
+            plan["contract_present"] = isinstance(contract, dict)
+            plan["contract_valid"] = False if contract_error else (not bool(guru_contract.validate_contract(contract)) if isinstance(contract, dict) else None)
+            plan["route"] = guru_contract.contract_route(contract) or guru_contract.ROUTE_FULL_CHAIN
+        elif task_dir_arg:
+            plan["route"] = guru_contract.ROUTE_FULL_CHAIN
+        else:
+            plan["route"] = "direct_small_inline"
+            plan["commit_mode"] = "direct"
+        block("没有 staged changes")
+        plan["required_commands"].append("git add -- <paths>")
+        return _finish_commit_plan(plan)
+
     if not task_dir:
         if task_dir_arg:
-            sys.stderr.write("[guru-gate:check-commit] 无法定位任务目录，请检查显式 task_dir\n")
-            return BLOCK
-        return _cmd_check_direct_low_risk_commit(staged_paths, root)
+            plan["route"] = guru_contract.ROUTE_FULL_CHAIN
+            plan["forbidden_stage_paths"] = staged_paths
+            block("无法定位任务目录，请检查显式 task_dir")
+            plan["required_commands"].append(_gate_command("check-commit", task_dir_arg, root))
+            return _finish_commit_plan(plan)
+        plan["route"] = "direct_small_inline"
+        plan["commit_mode"] = "direct"
+        plan["split_required"] = _commit_plan_split_required(staged_paths, "", root)
+        allowed, forbidden = _direct_commit_stage_paths(staged_paths, root)
+        plan["allowed_stage_paths"] = allowed
+        plan["forbidden_stage_paths"] = forbidden
+        problem = _direct_low_risk_commit_problem(staged_paths, root)
+        if problem:
+            block(problem)
+            plan["required_commands"].append(
+                "create or select a micro_task/lite_task/full_chain task, then rerun commit-plan"
+            )
+        else:
+            plan["can_commit_now"] = True
+        plan["suggested_stage_commands"] = _stage_command(plan["allowed_stage_paths"])
+        return _finish_commit_plan(plan)
+
+    plan["task_dir"] = _display_task_dir(task_dir, root)
+    plan["split_required"] = _commit_plan_split_required(staged_paths, task_dir, root)
     contract, contract_error = guru_contract.load_contract(task_dir)
     if contract_error:
-        sys.stderr.write(f"[guru-gate:check-commit] 拦截：{contract_error}\n")
-        return BLOCK
-    route = guru_contract.contract_route(contract)
-    if route == guru_contract.ROUTE_MICRO_TASK:
-        return _cmd_check_micro_commit(task_dir, contract, staged_paths, root)
+        block(contract_error)
+        plan["route"] = guru_contract.ROUTE_FULL_CHAIN
+        plan["forbidden_stage_paths"] = staged_paths
+        plan["contract_present"] = True
+        plan["contract_valid"] = False
+        plan["required_commands"].append(_gate_command("check-commit", task_dir, root))
+        return _finish_commit_plan(plan)
+    plan["contract_present"] = isinstance(contract, dict)
+    route = guru_contract.contract_route(contract) or guru_contract.ROUTE_FULL_CHAIN
+    plan["route"] = route
+    if isinstance(contract, dict):
+        contract_problems = guru_contract.validate_commit_contract(contract, staged_paths, task_dir, root)
+        plan["contract_valid"] = not bool(contract_problems)
+        allowed, forbidden = _contract_commit_stage_paths(contract, staged_paths, task_dir, root)
+        plan["allowed_stage_paths"] = allowed
+        plan["forbidden_stage_paths"] = forbidden
+    else:
+        contract_problems = []
 
-    if cmd_check_implementation(task_dir) != PASS:
-        sys.stderr.write("[guru-gate:check-commit] 提交被拒：实现期 gate 未通过。\n")
-        return BLOCK
+    if route == guru_contract.ROUTE_MICRO_TASK:
+        plan["commit_mode"] = "implementation"
+        problem = _micro_commit_contract_problem(contract, staged_paths, task_dir, root)
+        if problem:
+            block(problem)
+            plan["required_commands"].append(_gate_command("check-commit", task_dir, root))
+        else:
+            plan["can_commit_now"] = True
+        plan["suggested_stage_commands"] = _stage_command(plan["allowed_stage_paths"])
+        return _finish_commit_plan(plan)
+
+    implementation_problem = _captured_gate_problem("check-implementation", task_dir, root)
+    if implementation_problem:
+        block(f"check-implementation failed: {implementation_problem}")
+        plan["required_commands"].append(_gate_command("check-implementation", task_dir, root))
+
     review_path = os.path.join(task_dir, "review-records", "implementation-reviews.jsonl")
     latest_record, read_error = _latest_jsonl_record(review_path)
     if read_error:
-        sys.stderr.write(f"[guru-gate:check-commit] {read_error}\n")
+        block(read_error)
+    else:
+        review_problem = _implementation_review_problem(latest_record, staged_paths, task_dir, root)
+        if review_problem:
+            block(review_problem)
+        allowed, forbidden = _review_commit_stage_paths(latest_record, staged_paths, task_dir, root)
+        if allowed or forbidden:
+            plan["allowed_stage_paths"] = allowed
+            plan["forbidden_stage_paths"] = forbidden
+        target_paths = latest_record.get("target_paths") if isinstance(latest_record, dict) else None
+        if isinstance(target_paths, list) and target_paths:
+            plan["suggested_stage_commands"] = _stage_command(plan["allowed_stage_paths"])
+            if not plan["suggested_stage_commands"]:
+                plan["suggested_stage_commands"] = _stage_command(staged_paths)
+
+    if contract_problems:
+        block("; ".join(contract_problems[:5]))
+    if plan["blocking_reasons"]:
+        plan["required_commands"].append(_gate_command("check-commit", task_dir, root))
+    else:
+        plan["can_commit_now"] = True
+    return _finish_commit_plan(plan)
+
+
+def cmd_commit_plan(task_dir_arg) -> int:
+    print(json.dumps(_commit_plan_payload(task_dir_arg), ensure_ascii=False, indent=2, sort_keys=True))
+    return PASS
+
+
+def cmd_check_commit(task_dir_arg) -> int:
+    plan = _commit_plan_payload(task_dir_arg)
+    if not plan.get("can_commit_now"):
+        reasons = plan.get("blocking_reasons") or ["commit-plan blocked"]
+        sys.stderr.write(f"[guru-gate:check-commit] 拦截：{'; '.join(reasons)}\n")
+        for command in plan.get("required_commands") or []:
+            sys.stderr.write(f"下一步：{command}\n")
         return BLOCK
-    problem = _implementation_review_problem(latest_record, staged_paths, task_dir, root)
-    if problem:
-        sys.stderr.write(f"[guru-gate:check-commit] 拦截：{problem}\n")
-        sys.stderr.write(
-            "下一步：运行 guru_supervise.py implement-check 产出 clean implementation review record，"
-            "并只 stage 已审查 target_paths 内的实现文件。\n"
-        )
-        return BLOCK
-    if contract:
-        contract_problem = _contract_validation_problem(contract, staged_paths, task_dir, root)
-        if contract_problem:
-            sys.stderr.write(f"[guru-gate:check-commit] 拦截：{contract_problem}\n")
-            sys.stderr.write("下一步：修正 gate-contract.json / gate-degradations.jsonl 后重跑 check-commit。\n")
-            return BLOCK
-    print(f"[guru-gate:check-commit] COMMIT_READY: staged scope matches latest clean implementation review（{task_dir}）")
+    route = plan.get("route")
+    task_dir = plan.get("task_dir") or task_dir_arg or ""
+    if route == "direct_small_inline":
+        print("[guru-gate:check-commit] COMMIT_READY: direct small_inline scoped low-risk commit")
+    elif route == guru_contract.ROUTE_MICRO_TASK:
+        print(f"[guru-gate:check-commit] COMMIT_READY: micro_task contract allows scoped low-risk commit（{task_dir}）")
+    else:
+        print(f"[guru-gate:check-commit] COMMIT_READY: staged scope matches latest clean implementation review（{task_dir}）")
     return PASS
 
 
@@ -3387,6 +3739,8 @@ def main() -> int:
         return cmd_check(arg)
     if cmd == "check-implementation":
         return cmd_check_implementation(arg)
+    if cmd == "commit-plan":
+        return cmd_commit_plan(arg)
     if cmd == "check-commit":
         return cmd_check_commit(arg)
     if cmd == "trace-matrix":

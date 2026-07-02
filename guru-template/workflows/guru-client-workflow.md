@@ -31,11 +31,12 @@
   - `overview`：结构 Gate 通过 + 当前 digest 下两个不同 `run_id` 的 clean review（默认至少一条 reviewer 含 `adversarial`，通常由 `guru_supervise.py --adversarial overview` 的 opposite provider 记录；若 `guru.supervision.adversarial_enabled=false`，只要求双 clean）后自动通过；`confirm overview` 必须失败。
   - `detail`：结构 Gate 通过 + 当前 digest 下两个不同 `run_id` 的 clean review（默认至少一条 reviewer 含 `adversarial`，通常由 `guru_supervise.py --adversarial detail` 的 opposite provider 记录；若 `guru.supervision.adversarial_enabled=false`，只要求双 clean）后，用户运行 `guru_gate.py confirm detail <task_dir>`。
   - 配置 `guru.supervision.adversarial_enabled: false` 可临时关闭 `--adversarial` 的 opposite-provider worker；gate 会动态读取该配置：requirements 不再强制 opposite-provider adversarial clean，overview/detail 不再要求 adversarial reviewer，但仍要求当前 digest、双 clean review、用户确认以及没有 blocked/medium+ 当前证据。
+  - route-aware review policy 只放宽 adversarial 证据要求：`small_inline`/`micro_task` 不要求 requirements adversarial review；`lite_task` 采用 bounded review policy（requirements adversarial 可省略，overview/detail 仍要当前 digest 双 clean，但不强制 adversarial reviewer）；`full_chain` / `risk=unknown` / 缺失或非法 contract 保持 strict 默认。当前 digest 的 blocked、malformed、medium+ evidence 仍硬阻断。
   - **strict（默认）**：用户本人在交互式终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm requirements|detail`；agent 经工具运行因无 TTY 被拒。
   - **soft**：用户在对话中明确确认后，agent 运行 `guru_gate.py confirm requirements|detail --via-agent --user-quote "<用户确认原话>"` 代跑（`--user-quote` 必填，留痕标注 soft/agent + 用户原话）；**未获用户本轮明确确认不得执行**。
   - 进度用 `guru_gate.py status <task_dir>` 查；最终以 `guru_gate.py check-start <task_dir>` 作为 `task.py start` 前强制复查。
   - `check-start` 成功只产生 `START_READY`：下一步仅可运行 `task.py start`；实现/质检 worker 另由 `check-implementation` 要求 `task.json.status == in_progress`，提交另由 `check-commit` 校验 staged scope 与 implementation review。
-- **风险路由合同**：收到任务后先收集任务/路径/差异证据并输出 route。固定表为 `low -> small_inline`、`low + commit -> micro_task`、`medium -> lite_task`、`high -> full_chain`。`gate-contract.json` 与 `gate-degradations.jsonl` 均位于任务目录；前者记录本任务 route 与 gate 条件，后者只能记录真实发生的 gate/tool 失败和补偿检查，是事实证据，不是预授权。全局 gate policy 决定可降级边界；高风险不得被 task-local contract 降为 lite/micro/inline。
+- **风险路由合同**：收到任务后先收集任务/路径/差异证据并输出 route。固定表为 `low -> small_inline`、`low + commit -> micro_task`、`medium -> lite_task`、`high -> full_chain`。`gate-contract.json` 与 `gate-degradations.jsonl` 均位于任务目录；前者记录本任务 route 与 gate 条件，后者只能记录真实发生的 gate/tool 失败和补偿检查，是事实证据，不是预授权。全局 gate policy 决定可降级边界；高风险不得被 task-local contract 降为 lite/micro/inline。route policy 只能放宽 adversarial 证据要求，不能绕过结构 Gate、人工确认、当前 blocked/medium+ 证据、staged scope 或 implementation review digest。
 
 ### Planning Artifacts（guru 五阶段语义，双轨制）
 
@@ -43,7 +44,7 @@
 
 - `low -> small_inline`：局部 UI / 文案 / 注释 / 格式 / 非共享配置等低风险小改，且无高风险信号时，本轮 inline 处理，默认不创建完整 task。
 - `low + commit -> micro_task`：低风险小改一旦需要 commit，必须创建或复用最小任务，并写入 `gate-contract.json` 承载 scoped commit contract。
-- `medium -> lite_task`：局部业务行为、单层逻辑、小范围多文件或需要可复跑验证的变更，进入 lite route（产物形态仍复用既有 `guru_chain=light`）。
+- `medium -> lite_task`：局部业务行为、单层逻辑、小范围多文件或需要可复跑验证的变更，进入 lite route（产物形态仍复用既有 `guru_chain=light`）。lite route 使用 bounded review policy：低严重度措辞 nit / P3 follow-up 不强制刷新 PRD digest 或重跑 requirements review；一旦改变范围、行为、验收或命中高风险信号，必须停下请用户确认扩 scope 或升级 full，不得把 `evidence_ready` 静默改成 `user_confirmed`。
 - `high -> full_chain`：核心玩法 / 付费 / 广告 / 存档或持久化状态 / 权限 / 隐私或数据采集 / DB 或 schema / workflow、hook、gate、runtime / 跨层协议 / 发布交付链，强制 full 链。
 
 `gate-degradations.jsonl` 只能追加真实降级事实：失败命令、stderr 摘要、影响 gate、允许依据、补偿检查与操作者。它不能预先写作绕行许可，也不能扩大 `gate-contract.json` 和全局 gate policy 的权限。命中 high 后必须保持 `full_chain`，task-local contract 不得降级。
@@ -280,9 +281,9 @@ check 可作为 `implement-check` 的拆分子命令运行：`python3 .trellis/s
 
 #### 3.4 Commit `[required · once]`
 
-提交前必须先通过 `python3 .trellis/scripts/guru/guru_gate.py check-commit <task-dir>` 或等价 PreToolUse hook。full/lite 的既有 Guru gate 语义不降：full 链要求任务已 `in_progress`、staged scope 落在最新 clean implementation review 的 `target_paths` 内；lite route 仍需 scoped 验证和 review 证据（产物形态兼容 `guru_chain=light`）。`small_inline` 不能直接 commit；低风险一旦需要 commit 必须走 `micro_task` 并由任务目录 `gate-contract.json` 约束 staged scope。`gate-degradations.jsonl` 只可作为真实失败与补偿检查证据，不能预授权跳过 gate；high/full_chain 不得被 task-local contract 降级。
+提交前先运行 `python3 .trellis/scripts/guru/guru_gate.py commit-plan [task-dir]` 获取机器可读 JSON，按其中 `route`、`commit_mode`、`allowed_stage_paths`、`forbidden_stage_paths`、`can_commit_now`、`split_required`、`blocking_reasons` 汇报 staged scope 和建议切分；计划可提交时仍必须通过 `python3 .trellis/scripts/guru/guru_gate.py check-commit <task-dir>` 或等价 PreToolUse hook。full/lite 的既有 Guru gate 语义不降：full 链要求任务已 `in_progress`、staged scope 落在最新 clean implementation review 的 `target_paths` 内；lite route 仍需 scoped 验证和 review 证据（产物形态兼容 `guru_chain=light`）。`small_inline` 不能直接 commit；低风险一旦需要 commit 必须走 `micro_task` 并由任务目录 `gate-contract.json` 约束 staged scope。`gate-degradations.jsonl` 只可作为真实失败与补偿检查证据，不能预授权跳过 gate；high/full_chain 不得被 task-local contract 降级。
 
-提交前展示变更范围、验证证据与建议 commit 切分，等待用户确认；不 amend、不 push；只 stage 本任务相关文件，不回滚用户改动。
+提交前展示 `commit-plan` 摘要、验证证据与建议 commit 切分，等待用户确认；不 amend、不 push；只 stage 本任务相关文件，不回滚用户改动。
 
 #### 3.5 收尾提醒
 

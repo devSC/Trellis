@@ -130,6 +130,44 @@ expect_rc_grep() { # expect_rc_grep <desc> <want_rc> <pattern> <cmd...>
   else failn=$((failn+1)); echo "FAIL  $desc (want=$want got=$rc 未匹配: $pat)"; echo "$out" | head -4; fi
 }
 
+assert_commit_plan_json() { # assert_commit_plan_json <json> <route> <commit_mode>
+  PLAN="$1" EXPECT_ROUTE="$2" EXPECT_MODE="$3" python3 - <<'PY'
+import json
+import os
+
+plan = json.loads(os.environ["PLAN"])
+required = {
+    "schema_version",
+    "route",
+    "commit_mode",
+    "allowed_stage_paths",
+    "forbidden_stage_paths",
+    "required_commands",
+    "optional_commands",
+    "required_user_confirmations",
+    "can_commit_now",
+    "blocking_reasons",
+    "suggested_stage_commands",
+}
+missing = required - set(plan)
+assert not missing, {"missing": sorted(missing), "plan": plan}
+assert plan["schema_version"] == 1, plan
+assert plan["route"] == os.environ["EXPECT_ROUTE"], plan
+assert plan["commit_mode"] == os.environ["EXPECT_MODE"], plan
+assert plan["commit_mode"] in {"direct", "implementation", "docs", "tooling", "split_required"}, plan
+for key in [
+    "allowed_stage_paths",
+    "forbidden_stage_paths",
+    "required_commands",
+    "optional_commands",
+    "required_user_confirmations",
+    "blocking_reasons",
+    "suggested_stage_commands",
+]:
+    assert isinstance(plan[key], list), (key, plan)
+PY
+}
+
 G=$(mk_good)
 
 make_gate_case() { # make_gate_case <name>
@@ -276,6 +314,22 @@ write_plain_clean_reviews() { # write_plain_clean_reviews <gate> <task_dir>
     python3 "$GATE" record-review "$1" "$2" --result clean --max-severity none --reviewer clean-context --run-id "$1-clean-a" --evidence "$1 clean a" >/dev/null
     python3 "$GATE" record-review "$1" "$2" --result clean --max-severity low --reviewer clean-context --run-id "$1-clean-b" --evidence "$1 clean b" >/dev/null
   fi
+}
+
+write_route_contract() { # write_route_contract <task_dir> <route> <risk>
+  python3 - "$GATE" "$1" "$2" "$3" <<'PY'
+import os, sys
+gate, task_dir, route, risk = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+sys.path.insert(0, os.path.dirname(gate))
+import guru_contract
+contract = guru_contract.default_contract(route, risk, created_by="fixture")
+contract["assessment"]["reasons"] = [f"fixture route={route}"]
+if route == guru_contract.ROUTE_MICRO_TASK:
+    contract["scope"] = {"allowed_paths": ["lib"], "forbidden_path_patterns": [], "max_files": 3}
+elif route == guru_contract.ROUTE_LITE_TASK:
+    contract["scope"] = {"allowed_paths": ["lib", "test"], "forbidden_path_patterns": [], "max_files": 8}
+guru_contract.write_contract(task_dir, contract)
+PY
 }
 
 write_reviews_all() { # write_reviews_all <task_dir>
@@ -664,6 +718,70 @@ finally:
 PY
 then pass=$((pass+1)); echo "PASS  requirements adversarial clean 但证据持久化失败时 supervisor exit2"
 else failn=$((failn+1)); echo "FAIL  requirements adversarial clean 证据写入失败不应放行"; fi
+if PYTHONPATH="$HERE/.." python3 - <<'PY'
+import json
+import tempfile
+from pathlib import Path
+import guru_supervise as gs
+
+root = Path(tempfile.mkdtemp())
+task_dir = root / ".trellis" / "tasks" / "x"
+task_dir.mkdir(parents=True)
+(task_dir / "task.json").write_text("{}\n", encoding="utf-8")
+
+plan = gs.RunPlan(
+    action="requirements",
+    task_dir=task_dir,
+    run_id="requirements-provider-failure",
+    channel="c",
+    worker="w",
+    create_cmd=["create"],
+    spawn_cmd=["spawn"],
+    send_cmd=["send"],
+    wait_cmd=["wait"],
+    messages_cmd=["messages"],
+    brief="brief",
+    files=[],
+    jsonls=[],
+)
+config = gs.SupervisionConfig(
+    root=root,
+    platform="flutter",
+    current_provider="codex",
+    provider="claude",
+    adversarial=True,
+    adversarial_enabled=True,
+    implement_timeout="45m",
+    check_timeout="30m",
+    warn_before="5m",
+    idle_timeout=None,
+    max_live_workers=None,
+    trellis_bin="trellis",
+    adversarial_model=None,
+    adversarial_reasoning_effort=None,
+)
+
+class Result:
+    returncode = 7
+    stdout = ""
+    stderr = "provider unavailable"
+
+orig_run = gs._run
+gs._run = lambda *_args, **_kwargs: Result()
+try:
+    rc, terminal, _messages = gs._execute_plan(plan, config)
+finally:
+    gs._run = orig_run
+
+data = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
+review = data["guru_gates"]["requirements_review"]
+assert rc == 2 and terminal == "skipped", (rc, terminal)
+assert review["status"] == "deferred", review
+assert "exited 7" in review["reason"], review
+assert data["guru_gates"]["adversarial_skips"], data
+PY
+then pass=$((pass+1)); echo "PASS  requirements provider failure 记录 deferred evidence 并 exit2"
+else failn=$((failn+1)); echo "FAIL  requirements provider failure 应记录 deferred evidence"; fi
 
 LOSS=$(make_gate_case detail-skeleton-loss)
 cat > "$LOSS/design.md" <<'EOF'
@@ -1134,19 +1252,56 @@ RV_ADV=$(make_gate_case review-adversarial-required)
 write_req_confirm "$RV_ADV"
 python3 "$GATE" record-review overview "$RV_ADV" --result clean --max-severity none --reviewer clean-context --run-id normal-a --evidence "normal clean a" >/dev/null
 python3 "$GATE" record-review overview "$RV_ADV" --result clean --max-severity low --reviewer clean-context --run-id normal-b --evidence "normal clean b" >/dev/null
-	expect "auto 双 clean 但缺 adversarial review 被拦" 2 python3 "$GATE" auto "$RV_ADV"
-	expect_grep "status 指明缺 adversarial clean review" "adversarial" python3 "$GATE" status "$RV_ADV"
-	python3 "$GATE" record-review overview "$RV_ADV" --result clean --max-severity low --reviewer clean-context-adversarial-claude --run-id adversarial-claude --evidence "opposite provider clean" >/dev/null
-	expect_grep "adversarial clean 后 auto 前进到 detail review 缺口" "record-review detail" python3 "$GATE" auto "$RV_ADV"
+expect "auto 双 clean 但缺 adversarial review 被拦" 2 python3 "$GATE" auto "$RV_ADV"
+expect_grep "status 指明缺 adversarial clean review" "adversarial" python3 "$GATE" status "$RV_ADV"
+python3 "$GATE" record-review overview "$RV_ADV" --result clean --max-severity low --reviewer clean-context-adversarial-claude --run-id adversarial-claude --evidence "opposite provider clean" >/dev/null
+expect_grep "adversarial clean 后 auto 前进到 detail review 缺口" "record-review detail" python3 "$GATE" auto "$RV_ADV"
 
-	RV_OFF_ROOT="$TMP/adversarial-disabled-root"
-	RV_OFF="$RV_OFF_ROOT/.trellis/tasks/review-adversarial-disabled"
-	mkdir -p "$RV_OFF" "$RV_OFF_ROOT/.trellis"
-	cp "$G/prd.md" "$G/design.md" "$G/implement.md" "$RV_OFF/"
-	cat > "$RV_OFF/task.json" <<'EOF'
+RV_LITE=$(make_gate_case review-lite-bounded-route)
+write_route_contract "$RV_LITE" lite_task medium
+expect "lite_task route 不强制 requirements adversarial review" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_LITE" --via-agent --user-quote "lite 任务按 bounded review policy 确认需求"
+write_plain_clean_reviews overview "$RV_LITE"
+write_plain_clean_reviews detail "$RV_LITE"
+expect "lite_task route 双普通 clean 可确认 detail" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm detail "$RV_LITE" --via-agent --user-quote "lite 任务双普通 clean 确认详细"
+expect "lite_task route check-start 不要求 adversarial reviewer" 0 python3 "$GATE" check-start "$RV_LITE"
+expect_grep "lite_task status 标注 bounded review policy" "bounded review policy" python3 "$GATE" status "$RV_LITE"
+
+RV_LITE_BLOCK=$(make_gate_case review-lite-bounded-blocked)
+write_route_contract "$RV_LITE_BLOCK" lite_task medium
+write_requirements_review "$RV_LITE_BLOCK" blocked "route_class=REQ_BLOCKER"
+expect_rc_grep "lite_task route 不绕过当前 requirements blocker" 2 "blocked" env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_LITE_BLOCK" --via-agent --user-quote "尝试绕过 lite blocker"
+
+RV_MICRO=$(make_gate_case review-micro-route)
+write_route_contract "$RV_MICRO" micro_task low
+expect "micro_task route 不强制 requirements adversarial review" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_MICRO" --via-agent --user-quote "micro 任务不需要 requirements adversarial review"
+
+RV_BAD_MICRO=$(make_gate_case review-invalid-micro-strict)
+python3 - "$GATE" "$RV_BAD_MICRO" <<'PY'
+import os, sys
+gate, task_dir = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.dirname(gate))
+import guru_contract
+contract = guru_contract.default_contract(guru_contract.ROUTE_MICRO_TASK, guru_contract.RISK_LOW, created_by="fixture")
+guru_contract.write_contract(task_dir, contract)
+PY
+expect_rc_grep "invalid micro_task contract 回退 strict requirements review" 2 "requirements adversarial review" env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_BAD_MICRO" --via-agent --user-quote "非法 micro 不应降级"
+
+RV_UNKNOWN=$(make_gate_case review-unknown-risk-strict)
+write_route_contract "$RV_UNKNOWN" lite_task unknown
+expect_rc_grep "unknown risk route 回退 strict requirements review" 2 "requirements adversarial review" env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_UNKNOWN" --via-agent --user-quote "unknown risk 不应降级"
+
+RV_HIGH_LITE=$(make_gate_case review-high-lite-strict)
+write_route_contract "$RV_HIGH_LITE" lite_task high
+expect_rc_grep "high risk lite_task 回退 strict requirements review" 2 "requirements adversarial review" env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_HIGH_LITE" --via-agent --user-quote "high risk 不应降级"
+
+RV_OFF_ROOT="$TMP/adversarial-disabled-root"
+RV_OFF="$RV_OFF_ROOT/.trellis/tasks/review-adversarial-disabled"
+mkdir -p "$RV_OFF" "$RV_OFF_ROOT/.trellis"
+cp "$G/prd.md" "$G/design.md" "$G/implement.md" "$RV_OFF/"
+cat > "$RV_OFF/task.json" <<'EOF'
 {}
 EOF
-	cat > "$RV_OFF_ROOT/.trellis/config.yaml" <<'EOF'
+cat > "$RV_OFF_ROOT/.trellis/config.yaml" <<'EOF'
 guru:
   supervision:
     adversarial_enabled: false
@@ -1318,6 +1473,67 @@ open(p, "w", encoding="utf-8").write(json.dumps(rec, ensure_ascii=False) + "\n")
 PY
 (cd "$CG2ROOT_ROOT" && git add lib/x.dart)
 expect "check-commit target_paths 点号覆盖 repo root" 0 env TASK_JSON_PATH="$CG2ROOT_TASK/task.json" bash -c "cd '$CG2ROOT_ROOT' && python3 '$GATE' check-commit '$CG2ROOT_TASK'"
+out=$(env TASK_JSON_PATH="$CG2ROOT_TASK/task.json" bash -c "cd '$CG2ROOT_ROOT' && python3 '$GATE' commit-plan '$CG2ROOT_TASK'" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" full_chain implementation && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["can_commit_now"] is True, plan
+assert plan["allowed_stage_paths"] == ["lib/x.dart"], plan
+assert plan["forbidden_stage_paths"] == [], plan
+assert plan["required_user_confirmations"] == ["confirm_commit"], plan
+assert plan["suggested_stage_commands"], plan
+joined = "\n".join(plan["suggested_stage_commands"])
+assert "git add -- ." not in joined, plan
+assert "lib/x.dart" in joined, plan
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan root target 不建议 git add -- ."
+else failn=$((failn+1)); echo "FAIL  commit-plan root target 不应建议 git add -- . (rc=$rc)"; echo "$out" | head -8; fi
+
+out=$(env TASK_JSON_PATH="$CG2_TASK/task.json" bash -c "cd '$CG2_ROOT' && python3 '$GATE' commit-plan '$CG2_TASK'" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" full_chain implementation && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["can_commit_now"] is True, plan
+assert plan["allowed_stage_paths"] == ["lib/x.dart"], plan
+assert plan["forbidden_stage_paths"] == [], plan
+assert plan["required_user_confirmations"] == ["confirm_commit"], plan
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan full_chain 输出 implementation stage plan"
+else failn=$((failn+1)); echo "FAIL  commit-plan full_chain stage plan 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+CG_LITE_PAIR=$(mk_commit_gate_case commit-lite in_progress "lib/x.dart")
+CG_LITE_ROOT="${CG_LITE_PAIR%%|*}"; CG_LITE_TASK="${CG_LITE_PAIR#*|}"
+write_route_contract "$CG_LITE_TASK" lite_task medium
+(cd "$CG_LITE_ROOT" && git add lib/x.dart)
+out=$(env TASK_JSON_PATH="$CG_LITE_TASK/task.json" bash -c "cd '$CG_LITE_ROOT' && python3 '$GATE' commit-plan '$CG_LITE_TASK'" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" lite_task implementation && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["contract_present"] is True, plan
+assert plan["contract_valid"] is True, plan
+assert plan["can_commit_now"] is True, plan
+assert plan["allowed_stage_paths"] == ["lib/x.dart"], plan
+assert plan["forbidden_stage_paths"] == [], plan
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan lite_task 输出 implementation stage plan"
+else failn=$((failn+1)); echo "FAIL  commit-plan lite_task stage plan 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+CG_SPLIT_PAIR=$(mk_commit_gate_case commit-split in_progress "lib/x.dart")
+CG_SPLIT_ROOT="${CG_SPLIT_PAIR%%|*}"; CG_SPLIT_TASK="${CG_SPLIT_PAIR#*|}"
+printf '{"schema_version":1,"status":"passed"}\n' > "$CG_SPLIT_TASK/verification-evidence.jsonl"
+(cd "$CG_SPLIT_ROOT" && git add lib/x.dart .trellis/tasks/commit-split/verification-evidence.jsonl)
+out=$(env TASK_JSON_PATH="$CG_SPLIT_TASK/task.json" bash -c "cd '$CG_SPLIT_ROOT' && python3 '$GATE' commit-plan '$CG_SPLIT_TASK'" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" full_chain split_required && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["can_commit_now"] is False, plan
+assert plan["split_required"] is True, plan
+assert plan["allowed_stage_paths"] == ["lib/x.dart"], plan
+assert any(path.endswith("verification-evidence.jsonl") for path in plan["forbidden_stage_paths"]), plan
+assert any("task artifacts" in reason for reason in plan["blocking_reasons"]), plan
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan 混入 task artifact 标记 split_required"
+else failn=$((failn+1)); echo "FAIL  commit-plan split_required 错误 (rc=$rc)"; echo "$out" | head -8; fi
 CG2D_PAIR=$(mk_commit_gate_case commit-required-missing in_progress "lib/x.dart")
 CG2D_ROOT="${CG2D_PAIR%%|*}"; CG2D_TASK="${CG2D_PAIR#*|}"
 python3 - "$CG2D_TASK/review-records/implementation-reviews.jsonl" <<'PY'
@@ -1889,6 +2105,68 @@ expect_rc_grep "check-commit direct small_inline 高风险路径被拦" 2 "high-
 
 DCM_ROOT=$(mk_direct_commit_case direct-too-many "lib/a.dart" "lib/b.dart" "lib/c.dart" "lib/d.dart")
 expect_rc_grep "check-commit direct small_inline 超过 3 文件被拦" 2 "max_files=3" bash -c "cd '$DCM_ROOT' && python3 '$GATE' check-commit"
+
+out=$(bash -c "cd '$DC_ROOT' && python3 '$GATE' commit-plan" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" direct_small_inline direct && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["route"] == "direct_small_inline", plan
+assert plan["can_commit_now"] is True, plan
+assert plan["blocking_reasons"] == [], plan
+assert len(plan["staged_paths"]) == 2, plan
+assert plan["allowed_stage_paths"] == [
+    "lib/ui/character_chat_ai_bubble.dart",
+    "test/ui/character_chat_message_list_test.dart",
+], plan
+assert plan["forbidden_stage_paths"] == [], plan
+assert plan["required_user_confirmations"] == ["confirm_commit"], plan
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan direct small_inline 输出可提交 JSON"
+else failn=$((failn+1)); echo "FAIL  commit-plan direct small_inline JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+out=$(bash -c "cd '$DCH_ROOT' && python3 '$GATE' commit-plan" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" direct_small_inline direct && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["route"] == "direct_small_inline", plan
+assert plan["can_commit_now"] is False, plan
+assert plan["allowed_stage_paths"] == [], plan
+assert plan["forbidden_stage_paths"] == [".trellis/config.yaml"], plan
+assert any("high-risk" in reason for reason in plan["blocking_reasons"]), plan
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan direct high-risk 输出阻断 JSON"
+else failn=$((failn+1)); echo "FAIL  commit-plan direct high-risk JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+out=$(bash -c "cd '$MC_ROOT' && python3 '$GATE' commit-plan '$MC_TASK'" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" micro_task implementation && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["route"] == "micro_task", plan
+assert plan["contract_present"] is True, plan
+assert plan["contract_valid"] is True, plan
+assert plan["can_commit_now"] is True, plan
+assert plan["blocking_reasons"] == [], plan
+assert plan["allowed_stage_paths"] == ["lib/ui/dot.dart"], plan
+assert plan["forbidden_stage_paths"] == [], plan
+assert plan["required_user_confirmations"] == ["confirm_commit"], plan
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan micro_task 输出可提交 JSON"
+else failn=$((failn+1)); echo "FAIL  commit-plan micro_task JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+CP_EMPTY="$TMP/commit-plan-empty-root"; mkdir -p "$CP_EMPTY"
+(cd "$CP_EMPTY" && git init -q)
+out=$(bash -c "cd '$CP_EMPTY' && python3 '$GATE' commit-plan" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" direct_small_inline direct && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["can_commit_now"] is False, plan
+assert plan["staged_paths"] == [], plan
+assert plan["allowed_stage_paths"] == [], plan
+assert plan["forbidden_stage_paths"] == [], plan
+assert any("没有 staged changes" in reason for reason in plan["blocking_reasons"]), plan
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan 无 staged changes 输出阻断 JSON"
+else failn=$((failn+1)); echo "FAIL  commit-plan 无 staged JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
 
 	COMMIT_HOOK="$HERE/../../hooks/platform/block-unstarted-commit.sh"
 	install_hook_runtime() {
