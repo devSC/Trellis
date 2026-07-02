@@ -44,7 +44,7 @@ guru:
     adversarial_codex_reasoning_effort: high
 ```
 
-`adversarial_enabled: false` 只关闭 `guru_supervise.py --adversarial ...` 的 opposite-provider worker 启动，用来临时缩短任务耗时。它不会伪造 clean 证据：requirements 会记录为 `requirements_review.status=deferred`，并被 `confirm requirements` / `check-start` 硬阻断；overview/detail 仍需要当前 Gate 要求的 review evidence，否则 `guru_gate.py status/check` 仍会提示缺口。
+`adversarial_enabled: false` 关闭 `guru_supervise.py --adversarial ...` 的 opposite-provider worker 启动，用来临时缩短任务耗时。它不会伪造 clean 证据；`guru_gate.py` 会动态读取该配置：requirements 不再强制 opposite-provider adversarial review，overview/detail 不再要求 adversarial reviewer，但仍要求当前 digest、双 clean review、用户确认以及没有 blocked/medium+ 当前证据。
 
 安装/刷新 overlay 时可以显式写入这个开关：
 

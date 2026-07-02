@@ -261,13 +261,14 @@ mkdir -p "$TARGET/.trellis/scripts/guru"
 cp \
   "$HERE/verify/guru_gate.py" \
   "$HERE/verify/guru_risk.py" \
+  "$HERE/verify/guru_contract.py" \
   "$HERE/verify/guru_review_record.py" \
   "$HERE/hooks/guru_after_create.py" \
   "$HERE/verify/guru_config_patch.py" \
   "$HERE/verify/guru_supervise.py" \
   "$TARGET/.trellis/scripts/guru/"
 chmod +x "$TARGET/.trellis/scripts/guru/"*.py
-echo "  scripts: guru_gate.py, guru_risk.py, guru_review_record.py, guru_after_create.py, guru_config_patch.py, guru_supervise.py → .trellis/scripts/guru/"
+echo "  scripts: guru_gate.py, guru_risk.py, guru_contract.py, guru_review_record.py, guru_after_create.py, guru_config_patch.py, guru_supervise.py → .trellis/scripts/guru/"
 
 # 3) 平台 hooks（Claude）+ trellis-local：只装共享 + 本平台专属 + 平台化 grill-nudge
 mkdir -p "$TARGET/.claude/hooks" "$TARGET/.claude/skills/trellis-local"
@@ -875,6 +876,7 @@ FAIL=0
 if python3 -c "import ast,sys; [ast.parse(open(f,encoding='utf-8').read()) for f in sys.argv[1:]]" \
     "$TARGET/.trellis/scripts/guru/guru_gate.py" \
     "$TARGET/.trellis/scripts/guru/guru_risk.py" \
+    "$TARGET/.trellis/scripts/guru/guru_contract.py" \
     "$TARGET/.trellis/scripts/guru/guru_review_record.py" \
     "$TARGET/.trellis/scripts/guru/guru_after_create.py" \
     "$TARGET/.trellis/scripts/guru/guru_config_patch.py" \
@@ -885,7 +887,7 @@ else
 fi
 
 # 循环导入冒烟：ast.parse 抓不到 guru_risk↔guru_gate↔guru_supervise 的导入环；-B 不写 __pycache__ 保幂等
-if PYTHONPATH="$TARGET/.trellis/scripts/guru" python3 -B -c "import guru_risk, guru_review_record, guru_gate, guru_supervise" 2>/dev/null; then
+if PYTHONPATH="$TARGET/.trellis/scripts/guru" python3 -B -c "import guru_risk, guru_contract, guru_review_record, guru_gate, guru_supervise" 2>/dev/null; then
   echo "  ✓ guru 脚本可导入（无循环依赖）"
 else
   echo "  ✗ guru 脚本导入失败（循环依赖 / 缺失模块）"; FAIL=1

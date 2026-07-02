@@ -1,6 +1,6 @@
 ---
 name: client-small-iteration-dev
-description: 客户端小需求端到端闭环编排：按入口决策树分流（碰哪几层、风险多大），组合需求澄清、详细设计单元、实现与验证；高风险需求升级到完整 SDD 链。本 Skill 只编排流程，不维护任何写作/审核规范；规则唯一来源是各阶段标准包与通用 golden-path。
+description: 客户端小需求端到端闭环编排：按入口决策树分流（碰哪几层、风险多大），按 low/medium/high 风险路由到 small_inline / micro_task / lite_task / full_chain，组合需求澄清、详细设计单元、实现与验证；高风险需求升级到完整 SDD 链。本 Skill 只编排流程，不维护任何写作/审核规范；规则唯一来源是各阶段标准包与通用 golden-path。
 ---
 
 # 客户端小迭代闭环
@@ -19,8 +19,13 @@ description: 客户端小需求端到端闭环编排：按入口决策树分流�
    - 只改业务规则/编排 → domain 迷你路径（§3）。
    - 整页 feature → presentation + 下层全链（§6 + 所需下层）。
 
-   同时判定风险：**核心玩法 / 付费 / 广告 / 存档 / 涉权限或数据采集 → 停止轻量链**，建议升级完整 SDD（requirement-writing 起步），等待用户确认。
-   **判轨落盘**：任务 task.json 的 `guru_chain` 默认 full；只有分流结论为小改且**用户明确同意走轻量链**时，才改写为 `guru_chain: light`（同时在 prd 记录分流理由）。升级完整 SDD 时保持 full 不动。
+   同时判定风险并按固定表路由：
+   - `low -> small_inline`：局部 UI / 文案 / 注释 / 格式 / 非共享配置等低风险小改，且未命中高风险信号时，默认本轮 inline 处理，不创建完整 Trellis task，不要求 full Guru gate。
+   - `low + commit -> micro_task`：同一低风险小改一旦需要 commit，必须创建或复用最小任务，写入任务目录 `gate-contract.json`，只承载 scoped commit contract，不进入完整规划链。
+   - `medium -> lite_task`：局部业务行为、单层逻辑、小范围多文件或需要可复跑验证的变更，进入轻量链（prd 简版 + 所碰层 design 合同 + 实现/验证）。
+   - `high -> full_chain`：核心玩法 / 付费 / 广告 / 存档或持久化状态 / 权限 / 隐私或数据采集 / DB 或 schema / workflow、hook、gate、runtime / 跨层协议 / 发布交付链，强制完整五阶段（full 链，目录级设计包）。
+
+   **判轨落盘**：`guru_chain` 仍只表达 `full|light` 的既有 Guru 产物形态；route 由任务目录 `gate-contract.json` 记录（`micro_task|lite_task|full_chain`）。`gate-degradations.jsonl` 只能追加真实发生的 gate/tool 失败与补偿检查证据，是事实记录，不是预授权绕行单。全局 gate policy 决定哪些 gate 可降级；高风险命中后必须保持 `full_chain`，不得被 task-local contract 降为 `lite_task`、`micro_task` 或 `small_inline`。
 
 2. **需求澄清（简版）**：行为（Given/When/Then）+ 边界（不做什么）+ 验收（怎么算对）三要素；未决问题向用户提问（一次 1~4 个），不私自拍板。
 
@@ -40,6 +45,7 @@ description: 客户端小需求端到端闭环编排：按入口决策树分流�
 
 - 本 Skill 不写规范正文；阶段产物的"什么算对"一律以对应标准包为准。
 - 分流到完整 SDD 后，本 Skill 让位于 requirement → overview → detail → implementation 链路。
+- 未知风险不得降为 low；扫描失败至少按 medium 处理，含高风险关键词或路径信号时按 high/full_chain 处理。
 
 ## 与官方 Trellis skill 的边界
 

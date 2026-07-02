@@ -23,7 +23,7 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
                                                   # strict 模式（默认）：仅限用户本人在交互式终端运行，agent 代跑被拒
                                                   # soft 模式（config guru.gate_mode: soft）：用户对话确认后 agent 以 --via-agent 代跑（记录留痕标注）
   python3 guru_gate.py record-review <overview|detail> <task_dir> --result clean|findings --max-severity none|low|medium|high|critical --reviewer clean-context --run-id <id> --evidence <text> [--finding-class <class>] [--deletion-audit <summary>]
-                                                  # 记录概要/详细设计 review 证据；当前产物 digest 下需两个不同 run-id 的 clean 记录，且至少一条 reviewer 含 adversarial
+                                                  # 记录概要/详细设计 review 证据；当前产物 digest 下需两个不同 run-id 的 clean 记录，默认至少一条 reviewer 含 adversarial
   python3 guru_gate.py grill-done <gate> [task_dir] [--via-agent] --user-quote "<用户确认原话>"
                                                   # 兼容旧流程：记录 design-grill 已完成（不再作为新 gate 放行条件）
   python3 guru_gate.py grill-skip <gate> [task_dir] [--via-agent] --user-quote "<跳过理由>"
@@ -63,6 +63,7 @@ import sys
 # guru_gate**（防循环）。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import guru_risk  # noqa: E402
+import guru_contract  # noqa: E402
 import guru_review_record  # noqa: E402
 
 PASS, BLOCK = 0, 2
@@ -1610,7 +1611,7 @@ def check_implement(task_dir: str) -> int:
     return fail("implement", problems) if problems else ok("implement")
 
 
-def resolve_task_dir(arg):
+def resolve_task_dir(arg, *, allow_unique_planning_fallback=True):
     # before_start 注入 TASK_JSON_PATH（指向正要 start 的任务）：与显式 arg 不一致时警告，
     # 避免 check 校验了 A（已确认）却给 B（正要 start、未确认）放行（F4 跨任务错配）。
     tj = os.environ.get("TASK_JSON_PATH", "")
@@ -1639,6 +1640,8 @@ def resolve_task_dir(arg):
             return m.group(1)
     except Exception:
         pass
+    if not allow_unique_planning_fallback:
+        return None
     # 用户终端跑 confirm 时通常无会话指针：唯一 planning 任务可安全兜底
     tasks_root = os.path.join(".trellis", "tasks")
     planning = []
@@ -1933,6 +1936,84 @@ def _turn_ref() -> str:
     return ""
 
 
+def _parse_config_key_line(line: str):
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or ":" not in line:
+        return None
+    indent = len(line) - len(line.lstrip(" "))
+    key, raw_value = line.strip().split(":", 1)
+    key = key.strip()
+    if not key:
+        return None
+    return indent, key, raw_value
+
+
+def _config_scalar(raw_value: str) -> str:
+    value = raw_value.strip()
+    if value.startswith("#"):
+        return ""
+    for marker in (" #", "\t#"):
+        idx = value.find(marker)
+        if idx >= 0:
+            value = value[:idx].rstrip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    return value
+
+
+def _config_has_scalar(raw_value: str) -> bool:
+    return bool(_config_scalar(raw_value))
+
+
+def _config_root_for_task(task_dir: str = None) -> str:
+    if task_dir:
+        real = os.path.realpath(task_dir)
+        marker = f"{os.sep}.trellis{os.sep}tasks{os.sep}"
+        idx = real.find(marker)
+        if idx >= 0:
+            return real[:idx]
+        candidate = real if os.path.isdir(real) else os.path.dirname(real)
+        while candidate and candidate != os.path.dirname(candidate):
+            if os.path.isfile(os.path.join(candidate, ".trellis", "config.yaml")):
+                return candidate
+            candidate = os.path.dirname(candidate)
+    try:
+        return _repo_root()
+    except Exception:
+        return os.getcwd()
+
+
+def _config_value(path: tuple[str, ...], task_dir: str = None) -> str:
+    cfg = read(os.path.join(_config_root_for_task(task_dir), ".trellis", "config.yaml"))
+    if not cfg:
+        return ""
+    stack = []
+    for line in cfg.splitlines():
+        parsed = _parse_config_key_line(line)
+        if parsed is None:
+            continue
+        indent, key, raw_value = parsed
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        current_path = tuple(k for _, k in stack) + (key,)
+        if current_path == path:
+            return _config_scalar(raw_value)
+        if not _config_has_scalar(raw_value):
+            stack.append((indent, key))
+    return ""
+
+
+def _config_bool(path: tuple[str, ...], default: bool, task_dir: str = None) -> bool:
+    value = _config_value(path, task_dir).strip().lower()
+    if not value:
+        return default
+    return value not in {"0", "false", "no", "off"}
+
+
+def _adversarial_enabled(task_dir: str = None) -> bool:
+    return _config_bool(("guru", "supervision", "adversarial_enabled"), True, task_dir)
+
+
 def _gate_mode() -> str:
     """人工 Gate 通道：strict（默认，用户终端 TTY）/ soft（对话确认后 agent --via-agent 代跑）。
 
@@ -1944,13 +2025,9 @@ def _gate_mode() -> str:
         return mode  # env 收紧到 strict 总是允许
     if mode == "soft" and os.environ.get("GURU_GATE_ALLOW_ENV_SOFT") == "1":
         return mode  # env 放宽到 soft 仅限测试（需双开关）——生产降级必须改 config（留 git 痕迹可审计）
-    cfg = read(os.path.join(".trellis", "config.yaml"))
-    # 只认顶层 guru: 块内的 gate_mode（防止其他配置节的同名键误开 soft）
-    guru = re.search(r"(?ms)^guru\s*:\s*\n(?P<body>(?:^[ \t]+[^\n]*\n?)*)", cfg)
-    if guru:
-        m = re.search(r"(?m)^[ \t]+gate_mode\s*:\s*(soft|strict)\b", guru.group("body"))
-        if m:
-            return m.group(1)
+    config_mode = _config_value(("guru", "gate_mode")).strip().lower()
+    if config_mode in {"soft", "strict"}:
+        return config_mode
     return "strict"
 
 
@@ -2048,6 +2125,7 @@ def _review_run_is_clean(run: dict) -> bool:
 def _review_state(task_dir: str, gate: str) -> dict:
     """返回当前 digest 下的 review clean streak 状态。findings/非法记录会打断 streak。"""
     digest = _gate_digest(task_dir, gate)
+    adversarial_required = _adversarial_enabled(task_dir)
     all_runs = [run for run in _review_runs(task_dir, gate) if isinstance(run, dict)]
     current_runs = [
         run for run in all_runs
@@ -2083,7 +2161,7 @@ def _review_state(task_dir: str, gate: str) -> dict:
         adversarial_clean_run_ids = []
     ready = (
         len(clean_run_ids) >= REQUIRED_CLEAN_REVIEWS
-        and bool(adversarial_clean_run_ids)
+        and (not adversarial_required or bool(adversarial_clean_run_ids))
     )
     return {
         "digest": digest,
@@ -2092,6 +2170,7 @@ def _review_state(task_dir: str, gate: str) -> dict:
         "latest_stale_digest": stale_runs[-1].get("artifact_digest") if stale_runs else "",
         "clean_run_ids": clean_run_ids,
         "adversarial_clean_run_ids": adversarial_clean_run_ids,
+        "adversarial_required": adversarial_required,
         "has_adversarial_clean": bool(adversarial_clean_run_ids),
         "duplicate_clean_run_ids": duplicate_clean_run_ids,
         "clean_count": len(clean_run_ids),
@@ -2112,6 +2191,8 @@ def _review_problem(task_dir: str, gate: str) -> str:
             )
         return f"当前产物 digest 尚无 {GATE_LABEL[gate]} review 记录"
     if (
+        state.get("adversarial_required", True)
+        and
         state["clean_count"] >= REQUIRED_CLEAN_REVIEWS
         and not state.get("has_adversarial_clean")
     ):
@@ -2160,8 +2241,10 @@ def _review_status_mark(task_dir: str, gate: str) -> str:
     state = _review_state(task_dir, gate)
     if state["ready"]:
         ids = ", ".join(state["clean_run_ids"][-REQUIRED_CLEAN_REVIEWS:])
-        adv = ", ".join(state["adversarial_clean_run_ids"])
-        return f"review ✅ clean x{state['clean_count']} ({ids}; adversarial {adv})"
+        if state.get("adversarial_required", True):
+            adv = ", ".join(state["adversarial_clean_run_ids"])
+            return f"review ✅ clean x{state['clean_count']} ({ids}; adversarial {adv})"
+        return f"review ✅ clean x{state['clean_count']} ({ids}; adversarial disabled by config)"
     problem = _review_problem(task_dir, gate)
     return f"review ⬜ {state['clean_count']}/{REQUIRED_CLEAN_REVIEWS} clean — {problem}"
 
@@ -2200,6 +2283,8 @@ def _block_review(channel: str, task_dir: str, gate: str) -> int:
         sys.stderr.write(f"下一步：{route_guidance}\n")
         return BLOCK
     if (
+        state.get("adversarial_required", True)
+        and
         state["clean_count"] >= REQUIRED_CLEAN_REVIEWS
         and not state.get("has_adversarial_clean")
     ):
@@ -2221,8 +2306,13 @@ def _block_review(channel: str, task_dir: str, gate: str) -> int:
         f"[guru-gate:{channel}] 拦截：{GATE_LABEL[gate]} Gate 缺少当前产物的双 clean review 证据："
         f"{_review_problem(task_dir, gate)}\n"
     )
+    adversarial_clause = (
+        "，且至少一次来自 opposite-provider adversarial review"
+        if state.get("adversarial_required", True)
+        else "（adversarial_enabled=false 时不要求 adversarial reviewer）"
+    )
     sys.stderr.write(
-        "由 review worker 记录两次不同 run-id 的 clean 证据，且至少一次来自 opposite-provider adversarial review：\n"
+        f"由 review worker 记录两次不同 run-id 的 clean 证据{adversarial_clause}：\n"
         f"  python3 .trellis/scripts/guru/guru_gate.py record-review {gate} {task_dir} "
         f"--result clean --max-severity low --reviewer clean-context[-adversarial-<provider>] --run-id <id> --evidence \"<review证据>\"{audit_hint}\n"
     )
@@ -2590,38 +2680,49 @@ def _requirements_review(task_dir: str) -> dict:
 
 def _requirements_review_problem(task_dir: str) -> str:
     review = _requirements_review(task_dir)
+    adversarial_required = _adversarial_enabled(task_dir)
     if not review:
+        if not adversarial_required:
+            return ""
         return "缺少当前需求 digest 的 opposite-provider requirements adversarial review 记录"
     recorded = review.get("artifact_digest")
     current = _gate_digest(task_dir, "requirements")
     if recorded != current:
+        if not adversarial_required:
+            return ""
         return "requirements adversarial review digest 失配（prd.md 已改动）"
     status = str(review.get("status", "")).strip().lower()
     if status == "clean":
         provider = str(review.get("provider", "")).strip()
         current_provider = str(review.get("current_provider", "")).strip()
         max_severity = str(review.get("max_severity", "")).strip().lower()
-        if review.get("adversarial") is not True:
-            return "requirements adversarial review 记录缺少 adversarial=true"
-        if not provider or not current_provider:
-            return "requirements adversarial review 记录缺少 provider/current_provider"
-        if provider == current_provider:
-            return "requirements adversarial review 不是 opposite-provider"
+        if adversarial_required:
+            if review.get("adversarial") is not True:
+                return "requirements adversarial review 记录缺少 adversarial=true"
+            if not provider or not current_provider:
+                return "requirements adversarial review 记录缺少 provider/current_provider"
+            if provider == current_provider:
+                return "requirements adversarial review 不是 opposite-provider"
         if max_severity not in {"none", "low"}:
-            return "requirements adversarial review 缺少 max_severity=none|low 证据"
+            return "requirements review 缺少 max_severity=none|low 证据"
         return ""
     if status == "blocked":
         reason = str(review.get("reason", "")).strip() or "requirements review blocked"
         return f"requirements adversarial review blocked：{reason}"
     if status == "deferred":
         reason = str(review.get("reason", "")).strip() or "requirements review deferred"
+        if not adversarial_required and "adversarial_enabled=false" in reason:
+            return ""
         return f"requirements adversarial review deferred：{reason}"
     return f"requirements adversarial review 状态非法：{status or '<missing>'}"
 
 
 def _requirements_review_status_mark(task_dir: str) -> str:
     review = _requirements_review(task_dir)
+    adversarial_required = _adversarial_enabled(task_dir)
     if not review:
+        if not adversarial_required:
+            return "✅ disabled by config — adversarial requirements review not required"
         return "⬜ missing — 缺少 opposite-provider requirements adversarial review"
     status = str(review.get("status", "")).strip().lower() or "missing"
     fresh = "current" if review.get("artifact_digest") == _gate_digest(task_dir, "requirements") else "stale"
@@ -2633,6 +2734,8 @@ def _requirements_review_status_mark(task_dir: str) -> str:
     if status == "blocked" and fresh == "current":
         return f"⚠️ blocked/current ({provider}){suffix}"
     if status == "deferred" and fresh == "current":
+        if not adversarial_required and "adversarial_enabled=false" in reason:
+            return f"✅ deferred/current ({provider}) — adversarial disabled by config"
         return f"⚠️ deferred/current ({provider}){suffix}"
     return f"⚠️ {status}/{fresh} ({provider}){suffix}"
 
@@ -2641,6 +2744,13 @@ def _block_requirements_review(action: str, task_dir: str) -> int:
     problem = _requirements_review_problem(task_dir)
     if not problem:
         return PASS
+    if not _adversarial_enabled(task_dir):
+        sys.stderr.write(
+            f"[guru-gate:{action}] 拦截：requirements review 记录存在当前阻断问题；"
+            f"{problem}。\n"
+        )
+        sys.stderr.write("下一步：修订需求或清理/重跑当前 digest 的 requirements review 证据后再确认。\n")
+        return BLOCK
     sys.stderr.write(
         f"[guru-gate:{action}] 拦截：需求确认前必须先完成 clean/current 的对抗审查证据；"
         f"{problem}。\n"
@@ -2731,6 +2841,8 @@ def cmd_status(task_dir_arg) -> int:
             print(f"下一步：{route_guidance}")
             return PASS
         if (
+            state.get("adversarial_required", True)
+            and
             state["clean_count"] >= REQUIRED_CLEAN_REVIEWS
             and not state.get("has_adversarial_clean")
         ):
@@ -2746,7 +2858,12 @@ def cmd_status(task_dir_arg) -> int:
                 f"--result clean --max-severity low --reviewer clean-context-adversarial-<provider> --run-id <id> --evidence \"<review证据>\"{audit_hint}"
             )
             return PASS
-        print(f"下一步：继续 {GATE_LABEL[g0]} review，当前 digest 需要两个不同 run-id 的 clean 记录：")
+        adv_note = (
+            "（其中至少一次 adversarial）"
+            if state.get("adversarial_required", True)
+            else "（adversarial_enabled=false，不要求 adversarial reviewer）"
+        )
+        print(f"下一步：继续 {GATE_LABEL[g0]} review，当前 digest 需要两个不同 run-id 的 clean 记录{adv_note}：")
         audit_hint = ' --deletion-audit "<none|删除审计摘要>"' if g0 == "detail" else ""
         print(
             f"  python3 .trellis/scripts/guru/guru_gate.py record-review {g0} {task_dir} "
@@ -3005,14 +3122,73 @@ def _implementation_review_problem(record, staged_paths: list, task_dir: str, ro
     return ""
 
 
+def _contract_validation_problem(contract: dict, staged_paths: list, task_dir: str, root: str) -> str:
+    problems = guru_contract.validate_commit_contract(contract, staged_paths, task_dir, root)
+    if problems:
+        return "; ".join(problems[:5])
+    return ""
+
+
+def _micro_commit_contract_problem(contract: dict, staged_paths: list, task_dir: str, root: str) -> str:
+    problem = _contract_validation_problem(contract, staged_paths, task_dir, root)
+    if problem:
+        return problem
+    code_paths = [
+        path for path in staged_paths
+        if not guru_contract.is_task_artifact_path(path, task_dir, root)
+    ]
+    high_path_signals = set(guru_contract.high_risk_path_signals(code_paths))
+    if guru_risk.has_cross_layer_or_storage(code_paths):
+        high_path_signals.add("cross-layer/storage path signal")
+    if high_path_signals:
+        return "micro_task staged paths contain high-risk signals: " + ", ".join(sorted(high_path_signals)[:5])
+    return ""
+
+
+def _cmd_check_micro_commit(task_dir: str, contract: dict, staged_paths: list, root: str) -> int:
+    problem = _micro_commit_contract_problem(contract, staged_paths, task_dir, root)
+    if problem:
+        sys.stderr.write(f"[guru-gate:check-commit] 拦截：{problem}\n")
+        sys.stderr.write(
+            "下一步：收窄 staged scope / 补齐 gate-degradations.jsonl 的补偿检查，"
+            "或将任务升级为 lite/full 后重跑对应 review。\n"
+        )
+        return BLOCK
+    print(f"[guru-gate:check-commit] COMMIT_READY: micro_task contract allows scoped low-risk commit（{task_dir}）")
+    return PASS
+
+
+def _direct_low_risk_commit_problem(staged_paths: list, root: str) -> str:
+    artifact_paths = [path for path in staged_paths if guru_contract.is_task_artifact_path(path, "", root)]
+    if artifact_paths:
+        return "direct low-risk commit cannot include task/workspace artifacts: " + ", ".join(artifact_paths[:5])
+    code_paths = [path for path in staged_paths if path not in artifact_paths]
+    if not code_paths:
+        return "direct low-risk commit requires staged implementation files"
+    if len(code_paths) > 3:
+        return f"direct low-risk commit staged file count {len(code_paths)} exceeds max_files=3"
+    high_path_signals = set(guru_contract.high_risk_path_signals(code_paths))
+    if guru_risk.has_cross_layer_or_storage(code_paths):
+        high_path_signals.add("cross-layer/storage path signal")
+    if high_path_signals:
+        return "direct low-risk staged paths contain high-risk signals: " + ", ".join(sorted(high_path_signals)[:5])
+    return ""
+
+
+def _cmd_check_direct_low_risk_commit(staged_paths: list, root: str) -> int:
+    problem = _direct_low_risk_commit_problem(staged_paths, root)
+    if problem:
+        sys.stderr.write(f"[guru-gate:check-commit] 拦截：{problem}\n")
+        sys.stderr.write(
+            "下一步：创建/切换到 micro_task 或 lite/full 任务并生成 gate-contract.json，"
+            "或收窄 staged scope 后重跑 check-commit。\n"
+        )
+        return BLOCK
+    print("[guru-gate:check-commit] COMMIT_READY: direct small_inline scoped low-risk commit")
+    return PASS
+
+
 def cmd_check_commit(task_dir_arg) -> int:
-    task_dir = resolve_task_dir(task_dir_arg)
-    if not task_dir:
-        sys.stderr.write("[guru-gate:check-commit] 无法定位任务目录，请显式传 task_dir\n")
-        return BLOCK
-    if cmd_check_implementation(task_dir) != PASS:
-        sys.stderr.write("[guru-gate:check-commit] 提交被拒：实现期 gate 未通过。\n")
-        return BLOCK
     root = _repo_root()
     staged_paths, staged_error = _git_staged_paths(root)
     if staged_error:
@@ -3020,6 +3196,23 @@ def cmd_check_commit(task_dir_arg) -> int:
         return BLOCK
     if not staged_paths:
         sys.stderr.write("[guru-gate:check-commit] 拦截：没有 staged changes\n")
+        return BLOCK
+    task_dir = resolve_task_dir(task_dir_arg, allow_unique_planning_fallback=False)
+    if not task_dir:
+        if task_dir_arg:
+            sys.stderr.write("[guru-gate:check-commit] 无法定位任务目录，请检查显式 task_dir\n")
+            return BLOCK
+        return _cmd_check_direct_low_risk_commit(staged_paths, root)
+    contract, contract_error = guru_contract.load_contract(task_dir)
+    if contract_error:
+        sys.stderr.write(f"[guru-gate:check-commit] 拦截：{contract_error}\n")
+        return BLOCK
+    route = guru_contract.contract_route(contract)
+    if route == guru_contract.ROUTE_MICRO_TASK:
+        return _cmd_check_micro_commit(task_dir, contract, staged_paths, root)
+
+    if cmd_check_implementation(task_dir) != PASS:
+        sys.stderr.write("[guru-gate:check-commit] 提交被拒：实现期 gate 未通过。\n")
         return BLOCK
     review_path = os.path.join(task_dir, "review-records", "implementation-reviews.jsonl")
     latest_record, read_error = _latest_jsonl_record(review_path)
@@ -3034,6 +3227,12 @@ def cmd_check_commit(task_dir_arg) -> int:
             "并只 stage 已审查 target_paths 内的实现文件。\n"
         )
         return BLOCK
+    if contract:
+        contract_problem = _contract_validation_problem(contract, staged_paths, task_dir, root)
+        if contract_problem:
+            sys.stderr.write(f"[guru-gate:check-commit] 拦截：{contract_problem}\n")
+            sys.stderr.write("下一步：修正 gate-contract.json / gate-degradations.jsonl 后重跑 check-commit。\n")
+            return BLOCK
     print(f"[guru-gate:check-commit] COMMIT_READY: staged scope matches latest clean implementation review（{task_dir}）")
     return PASS
 

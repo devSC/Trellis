@@ -4,6 +4,12 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GATE="$HERE/../guru_gate.py"
 TMP="$(mktemp -d)"
+mkdir -p "$TMP/.trellis"
+cat > "$TMP/.trellis/config.yaml" <<'EOF'
+guru:
+  supervision:
+    adversarial_enabled: true
+EOF
 export GURU_GATE_ALLOW_ABS=1  # 夹具的 design_package 用绝对路径；生产环境默认拒绝绝对路径
 export GURU_GATE_ALLOW_ENV_SOFT=1  # 允许夹具用 env 开 soft；生产降级只能改 config（留 git 痕迹）
 export PYTHONDONTWRITEBYTECODE=1  # 测试不得在可打包 overlay 中留下 __pycache__
@@ -259,6 +265,16 @@ write_clean_reviews() { # write_clean_reviews <gate> <task_dir>
   else
     python3 "$GATE" record-review "$1" "$2" --result clean --max-severity none --reviewer clean-context --run-id "$1-clean-a" --evidence "$1 clean a" >/dev/null
     python3 "$GATE" record-review "$1" "$2" --result clean --max-severity low --reviewer clean-context-adversarial-codex --run-id "$1-clean-adversarial-codex" --evidence "$1 adversarial clean" >/dev/null
+  fi
+}
+
+write_plain_clean_reviews() { # write_plain_clean_reviews <gate> <task_dir>
+  if [ "$1" = "detail" ]; then
+    python3 "$GATE" record-review "$1" "$2" --result clean --max-severity none --reviewer clean-context --run-id "$1-clean-a" --evidence "$1 clean a" --deletion-audit "none" >/dev/null
+    python3 "$GATE" record-review "$1" "$2" --result clean --max-severity low --reviewer clean-context --run-id "$1-clean-b" --evidence "$1 clean b" --deletion-audit "none" >/dev/null
+  else
+    python3 "$GATE" record-review "$1" "$2" --result clean --max-severity none --reviewer clean-context --run-id "$1-clean-a" --evidence "$1 clean a" >/dev/null
+    python3 "$GATE" record-review "$1" "$2" --result clean --max-severity low --reviewer clean-context --run-id "$1-clean-b" --evidence "$1 clean b" >/dev/null
   fi
 }
 
@@ -1118,12 +1134,39 @@ RV_ADV=$(make_gate_case review-adversarial-required)
 write_req_confirm "$RV_ADV"
 python3 "$GATE" record-review overview "$RV_ADV" --result clean --max-severity none --reviewer clean-context --run-id normal-a --evidence "normal clean a" >/dev/null
 python3 "$GATE" record-review overview "$RV_ADV" --result clean --max-severity low --reviewer clean-context --run-id normal-b --evidence "normal clean b" >/dev/null
-expect "auto 双 clean 但缺 adversarial review 被拦" 2 python3 "$GATE" auto "$RV_ADV"
-expect_grep "status 指明缺 adversarial clean review" "adversarial" python3 "$GATE" status "$RV_ADV"
-python3 "$GATE" record-review overview "$RV_ADV" --result clean --max-severity low --reviewer clean-context-adversarial-claude --run-id adversarial-claude --evidence "opposite provider clean" >/dev/null
-expect_grep "adversarial clean 后 auto 前进到 detail review 缺口" "record-review detail" python3 "$GATE" auto "$RV_ADV"
-RV_REQ=$(make_gate_case review-req-blocker)
-write_req_confirm "$RV_REQ"
+	expect "auto 双 clean 但缺 adversarial review 被拦" 2 python3 "$GATE" auto "$RV_ADV"
+	expect_grep "status 指明缺 adversarial clean review" "adversarial" python3 "$GATE" status "$RV_ADV"
+	python3 "$GATE" record-review overview "$RV_ADV" --result clean --max-severity low --reviewer clean-context-adversarial-claude --run-id adversarial-claude --evidence "opposite provider clean" >/dev/null
+	expect_grep "adversarial clean 后 auto 前进到 detail review 缺口" "record-review detail" python3 "$GATE" auto "$RV_ADV"
+
+	RV_OFF_ROOT="$TMP/adversarial-disabled-root"
+	RV_OFF="$RV_OFF_ROOT/.trellis/tasks/review-adversarial-disabled"
+	mkdir -p "$RV_OFF" "$RV_OFF_ROOT/.trellis"
+	cp "$G/prd.md" "$G/design.md" "$G/implement.md" "$RV_OFF/"
+	cat > "$RV_OFF/task.json" <<'EOF'
+{}
+EOF
+	cat > "$RV_OFF_ROOT/.trellis/config.yaml" <<'EOF'
+guru:
+  supervision:
+    adversarial_enabled: false
+EOF
+	expect "adversarial_enabled=false 时 requirements confirm 不强制对抗 review" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_OFF" --via-agent --user-quote "配置关闭对抗审查，确认需求"
+	write_plain_clean_reviews overview "$RV_OFF"
+	write_plain_clean_reviews detail "$RV_OFF"
+	expect "adversarial_enabled=false 时双普通 clean 可确认 detail" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm detail "$RV_OFF" --via-agent --user-quote "配置关闭对抗审查，确认详细"
+	expect "adversarial_enabled=false 时 check-start 动态放行双普通 clean" 0 python3 "$GATE" check-start "$RV_OFF"
+	expect_grep "adversarial_enabled=false status 显示配置关闭" "adversarial disabled" python3 "$GATE" status "$RV_OFF"
+
+	RV_OFF_BLOCK="$RV_OFF_ROOT/.trellis/tasks/review-adversarial-disabled-blocked"
+	mkdir -p "$RV_OFF_BLOCK"
+	cp "$G/prd.md" "$G/design.md" "$G/implement.md" "$RV_OFF_BLOCK/"
+	echo '{}' > "$RV_OFF_BLOCK/task.json"
+	write_requirements_review "$RV_OFF_BLOCK" blocked "route_class=REQ_BLOCKER"
+	expect_rc_grep "adversarial_enabled=false 不绕过当前 requirements blocker" 2 "blocked" env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_OFF_BLOCK" --via-agent --user-quote "尝试绕过 blocker"
+
+	RV_REQ=$(make_gate_case review-req-blocker)
+	write_req_confirm "$RV_REQ"
 python3 "$GATE" record-review overview "$RV_REQ" --result findings --max-severity high --finding-class REQ_BLOCKER --reviewer clean-context --run-id req-blocker-a --evidence "requirements boundary missing" >/dev/null
 expect_grep "status 中 REQ_BLOCKER 回到需求" "需求澄清" python3 "$GATE" status "$RV_REQ"
 expect_grep "check 中 REQ_BLOCKER 回到需求" "需求澄清" python3 "$GATE" check "$RV_REQ"
@@ -1655,7 +1698,208 @@ printf 'workspace noise\n' > "$CG5_ROOT/.trellis/workspace/journal.md"
 (cd "$CG5_ROOT" && git add lib/x.dart .trellis/workspace/journal.md)
 expect_rc_grep "check-commit staged unrelated workspace 文件按 artifact 拦截" 2 "task artifacts" env TASK_JSON_PATH="$CG5_TASK/task.json" bash -c "cd '$CG5_ROOT' && python3 '$GATE' check-commit '$CG5_TASK'"
 
+# risk-based gate contract routing：helper + check-commit micro_task 回归。
+if PYTHONPATH="$HERE/.." python3 - <<'PY'
+import guru_contract
+import guru_risk
+
+low = guru_risk.assess_intake("change unread dot color", ["lib/ui/unread_dot.dart"])
+assert low["risk"] == "low" and low["route"] == "small_inline", low
+micro = guru_risk.assess_intake("change unread dot color", ["lib/ui/unread_dot.dart"], commit_requested=True)
+assert micro["risk"] == "low" and micro["route"] == "micro_task", micro
+no_path = guru_risk.assess_intake("fix typo")
+assert no_path["risk"] == "medium" and no_path["route"] == "lite_task" and no_path["needs_user_choice"], no_path
+medium = guru_risk.assess_intake("fix local behavior bug with test", ["lib/controller/x_controller.dart"])
+assert medium["risk"] == "medium" and medium["route"] == "lite_task", medium
+high = guru_risk.assess_intake("change payment workflow gate", ["packages/cli/src/templates/guru/overlay/verify/guru_gate.py"])
+assert high["risk"] == "high" and high["route"] == "full_chain", high
+
+bad = guru_contract.default_contract("micro_task", "high")
+assert any("high-risk" in p for p in guru_contract.validate_contract(bad))
+default_micro = guru_contract.default_contract("micro_task", "low")
+assert any("scope.allowed_paths" in p for p in guru_contract.validate_contract(default_micro))
+assert any("scope.max_files" in p for p in guru_contract.validate_contract(default_micro))
+assert guru_contract.validate_commit_contract("not-a-contract", ["lib/x.dart"], "/tmp/task", "/tmp")
+bad_policy = {
+    "schema_version": 1,
+    "risk": "low",
+    "route": "micro_task",
+    "scope": {"allowed_paths": ["lib"], "forbidden_path_patterns": [], "max_files": 1},
+    "commit_policy": "bad",
+    "allowed_degradations": [],
+}
+assert any("commit_policy" in p for p in guru_contract.validate_commit_contract(bad_policy, ["lib/x.dart"], "/tmp/task", "/tmp"))
+bad_typo = dict(bad_policy, risk="hihg", commit_policy={})
+assert any("unknown value" in p for p in guru_contract.validate_contract(bad_typo))
+lite_high_path = {
+    "schema_version": 1,
+    "risk": "medium",
+    "route": "lite_task",
+    "scope": {"allowed_paths": ["packages"], "forbidden_path_patterns": [], "max_files": 3},
+    "commit_policy": {},
+    "allowed_degradations": [],
+}
+assert any("high-risk signals" in p for p in guru_contract.validate_commit_contract(
+    lite_high_path,
+    ["packages/cli/src/templates/guru/overlay/verify/guru_gate.py"],
+    "/tmp/task",
+    "/tmp",
+))
+empty_fallback = dict(bad_policy, commit_policy={})
+empty_fallback["allowed_degradations"] = [{"gate": "gitnexus_impact"}]
+assert any("fallback_checks" in p for p in guru_contract.validate_contract(empty_fallback))
+ok = guru_contract.default_contract("micro_task", "low")
+ok["scope"] = {"allowed_paths": ["lib"], "forbidden_path_patterns": [], "max_files": 3}
+ok["allowed_degradations"] = [{"gate": "gitnexus_impact", "fallback_checks": ["rg_callers"]}]
+rows = [{"schema_version": 1, "gate": "gitnexus_impact",
+         "compensating_checks": [{"name": "rg_callers", "status": "passed"}]}]
+assert guru_contract.validate_degradations(ok, rows) == []
+rows[0]["gate"] = "requirements_review"
+assert guru_contract.validate_degradations(ok, rows)
+PY
+then pass=$((pass+1)); echo "PASS  risk contract helper routes and degradation validation"
+else failn=$((failn+1)); echo "FAIL  risk contract helper routes/degradation validation"; fi
+
+mk_micro_contract_case() ( # mk_micro_contract_case <name> <target> <mode>
+  set -e
+  local name="$1" target="$2" mode="${3:-plain}"
+  local root="$TMP/$name-root" task="$TMP/$name-root/.trellis/tasks/$name"
+  mkdir -p "$task" "$(dirname "$root/$target")"
+  printf '{"status":"planning"}\n' > "$task/task.json"
+  (cd "$root" && git init -q)
+  printf 'code\n' > "$root/$target"
+  python3 - "$task" "$mode" <<'PY'
+import json, os, sys
+task, mode = sys.argv[1], sys.argv[2]
+contract = {
+  "schema_version": 1,
+  "risk": "low",
+  "route": "micro_task",
+  "assessment": {"confidence": 0.9, "reasons": ["fixture"], "risk_flags": []},
+  "scope": {"allowed_paths": ["lib"], "forbidden_path_patterns": [], "max_files": 3},
+  "required_gates": [],
+  "optional_gates": [],
+  "allowed_degradations": [],
+  "commit_policy": {
+    "require_in_progress": False,
+    "require_clean_implementation_review": False,
+    "allow_task_artifacts_only": False,
+  },
+  "created_by": "test",
+  "created_at": "2026-07-01T00:00:00Z",
+  "policy_version": "guru-risk-contract-v1",
+}
+if mode == "allowed-degradation":
+    contract["allowed_degradations"] = [{"gate": "gitnexus_impact", "fallback_checks": ["rg_callers"]}]
+if mode == "empty-fallback":
+    contract["allowed_degradations"] = [{"gate": "gitnexus_impact"}]
+if mode == "bad-high":
+    contract["risk"] = "high"
+if mode == "empty-scope":
+    contract["scope"] = {"allowed_paths": [], "forbidden_path_patterns": [], "max_files": None}
+if mode == "high-path-scope":
+    contract["scope"] = {"allowed_paths": ["packages"], "forbidden_path_patterns": [], "max_files": 3}
+with open(os.path.join(task, "gate-contract.json"), "w", encoding="utf-8") as fh:
+    json.dump(contract, fh)
+    fh.write("\n")
+if mode in ("allowed-degradation", "unauthorized-degradation", "empty-fallback"):
+    row = {
+        "schema_version": 1,
+        "gate": "gitnexus_impact",
+        "reason": "tool_unavailable",
+        "command": "node .gitnexus/run.cjs impact x",
+        "stderr_excerpt": "incompatible architecture",
+        "allowed_by": "gate-contract.json#/allowed_degradations/0",
+        "compensating_checks": [] if mode == "empty-fallback" else [{"name": "rg_callers", "status": "passed", "evidence": "gate-evidence/rg.txt"}],
+        "created_at": "2026-07-01T00:00:00Z",
+        "created_by": "test",
+    }
+    with open(os.path.join(task, "gate-degradations.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(row) + "\n")
+PY
+  echo "$root|$task"
+)
+
+MC_PAIR=$(mk_micro_contract_case micro-ready "lib/ui/dot.dart")
+MC_ROOT="${MC_PAIR%%|*}"; MC_TASK="${MC_PAIR#*|}"
+(cd "$MC_ROOT" && git add lib/ui/dot.dart)
+expect "check-commit micro_task planning + scoped low-risk commit 放行" 0 env TASK_JSON_PATH="$MC_TASK/task.json" bash -c "cd '$MC_ROOT' && python3 '$GATE' check-commit '$MC_TASK'"
+
+MCE_PAIR=$(mk_micro_contract_case micro-empty-scope "lib/ui/dot.dart" "empty-scope")
+MCE_ROOT="${MCE_PAIR%%|*}"; MCE_TASK="${MCE_PAIR#*|}"
+(cd "$MCE_ROOT" && git add lib/ui/dot.dart)
+expect_rc_grep "check-commit micro_task 空 scope 合同被拦" 2 "scope.allowed_paths|scope.max_files" env TASK_JSON_PATH="$MCE_TASK/task.json" bash -c "cd '$MCE_ROOT' && python3 '$GATE' check-commit '$MCE_TASK'"
+
+MCH_PAIR=$(mk_micro_contract_case micro-bad-high "lib/ui/dot.dart" "bad-high")
+MCH_ROOT="${MCH_PAIR%%|*}"; MCH_TASK="${MCH_PAIR#*|}"
+(cd "$MCH_ROOT" && git add lib/ui/dot.dart)
+expect_rc_grep "check-commit micro_task high risk 合同被拦" 2 "high-risk|risk=low" env TASK_JSON_PATH="$MCH_TASK/task.json" bash -c "cd '$MCH_ROOT' && python3 '$GATE' check-commit '$MCH_TASK'"
+
+MCD_PAIR=$(mk_micro_contract_case micro-allowed-degradation "lib/ui/dot.dart" "allowed-degradation")
+MCD_ROOT="${MCD_PAIR%%|*}"; MCD_TASK="${MCD_PAIR#*|}"
+(cd "$MCD_ROOT" && git add lib/ui/dot.dart)
+expect "check-commit micro_task 允许 GitNexus 降级且补偿检查通过" 0 env TASK_JSON_PATH="$MCD_TASK/task.json" bash -c "cd '$MCD_ROOT' && python3 '$GATE' check-commit '$MCD_TASK'"
+
+MCF_PAIR=$(mk_micro_contract_case micro-empty-fallback "lib/ui/dot.dart" "empty-fallback")
+MCF_ROOT="${MCF_PAIR%%|*}"; MCF_TASK="${MCF_PAIR#*|}"
+(cd "$MCF_ROOT" && git add lib/ui/dot.dart)
+expect_rc_grep "check-commit micro_task degradation 空 fallback_checks 被拦" 2 "fallback_checks" env TASK_JSON_PATH="$MCF_TASK/task.json" bash -c "cd '$MCF_ROOT' && python3 '$GATE' check-commit '$MCF_TASK'"
+
+MCU_PAIR=$(mk_micro_contract_case micro-unauthorized-degradation "lib/ui/dot.dart" "unauthorized-degradation")
+MCU_ROOT="${MCU_PAIR%%|*}"; MCU_TASK="${MCU_PAIR#*|}"
+(cd "$MCU_ROOT" && git add lib/ui/dot.dart)
+expect_rc_grep "check-commit micro_task 未授权 degradation 被拦" 2 "not allowed" env TASK_JSON_PATH="$MCU_TASK/task.json" bash -c "cd '$MCU_ROOT' && python3 '$GATE' check-commit '$MCU_TASK'"
+
+MCS_PAIR=$(mk_micro_contract_case micro-storage-signal "lib/data/user_dao.dart")
+MCS_ROOT="${MCS_PAIR%%|*}"; MCS_TASK="${MCS_PAIR#*|}"
+(cd "$MCS_ROOT" && git add lib/data/user_dao.dart)
+expect_rc_grep "check-commit micro_task staged storage 高风险信号被拦" 2 "high-risk" env TASK_JSON_PATH="$MCS_TASK/task.json" bash -c "cd '$MCS_ROOT' && python3 '$GATE' check-commit '$MCS_TASK'"
+
+MCP_PAIR=$(mk_micro_contract_case micro-gate-path-signal "packages/cli/src/templates/guru/overlay/verify/guru_gate.py" "high-path-scope")
+MCP_ROOT="${MCP_PAIR%%|*}"; MCP_TASK="${MCP_PAIR#*|}"
+(cd "$MCP_ROOT" && git add packages/cli/src/templates/guru/overlay/verify/guru_gate.py)
+expect_rc_grep "check-commit micro_task staged gate 高风险路径被拦" 2 "high-risk signals" env TASK_JSON_PATH="$MCP_TASK/task.json" bash -c "cd '$MCP_ROOT' && python3 '$GATE' check-commit '$MCP_TASK'"
+
+MCO_PAIR=$(mk_micro_contract_case micro-out-of-scope "src/x.dart")
+MCO_ROOT="${MCO_PAIR%%|*}"; MCO_TASK="${MCO_PAIR#*|}"
+(cd "$MCO_ROOT" && git add src/x.dart)
+expect_rc_grep "check-commit micro_task staged 越出合同 scope 被拦" 2 "outside gate contract scope" env TASK_JSON_PATH="$MCO_TASK/task.json" bash -c "cd '$MCO_ROOT' && python3 '$GATE' check-commit '$MCO_TASK'"
+
+mk_direct_commit_case() ( # mk_direct_commit_case <name> <paths...>
+  set -e
+  local root="$TMP/$1-root"
+  shift
+  mkdir -p "$root/.trellis/tasks/old-a" "$root/.trellis/tasks/old-b"
+  printf '{"status":"planning"}\n' > "$root/.trellis/tasks/old-a/task.json"
+  printf '{"status":"in_progress"}\n' > "$root/.trellis/tasks/old-b/task.json"
+  (cd "$root" && git init -q)
+  for path in "$@"; do
+    mkdir -p "$(dirname "$root/$path")"
+    printf 'code\n' > "$root/$path"
+    (cd "$root" && git add "$path")
+  done
+  echo "$root"
+)
+
+DC_ROOT=$(mk_direct_commit_case direct-low-risk "lib/ui/character_chat_ai_bubble.dart" "test/ui/character_chat_message_list_test.dart")
+expect_rc_grep "check-commit direct small_inline 无 task + scoped low-risk 放行" 0 "direct small_inline scoped low-risk commit" bash -c "cd '$DC_ROOT' && python3 '$GATE' check-commit"
+
+DCH_ROOT=$(mk_direct_commit_case direct-high-risk ".trellis/config.yaml")
+expect_rc_grep "check-commit direct small_inline 高风险路径被拦" 2 "high-risk signals" bash -c "cd '$DCH_ROOT' && python3 '$GATE' check-commit"
+
+DCM_ROOT=$(mk_direct_commit_case direct-too-many "lib/a.dart" "lib/b.dart" "lib/c.dart" "lib/d.dart")
+expect_rc_grep "check-commit direct small_inline 超过 3 文件被拦" 2 "max_files=3" bash -c "cd '$DCM_ROOT' && python3 '$GATE' check-commit"
+
 	COMMIT_HOOK="$HERE/../../hooks/platform/block-unstarted-commit.sh"
+	install_hook_runtime() {
+	  local root="$1"
+	  mkdir -p "$root/.trellis/scripts/guru"
+	  cp "$HERE/../guru_gate.py" \
+	     "$HERE/../guru_risk.py" \
+	     "$HERE/../guru_contract.py" \
+	     "$HERE/../guru_review_record.py" \
+	     "$root/.trellis/scripts/guru/"
+	}
 	HN_ROOT="$TMP/hook-no-active-root"; mkdir -p "$HN_ROOT/.trellis/scripts/guru"
 	: > "$HN_ROOT/.trellis/scripts/guru/guru_gate.py"
 	out=$(printf '{"tool_input":{"command":"git commit -m test"},"cwd":"%s"}' "$HN_ROOT" | CLAUDE_PROJECT_DIR="$HN_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
@@ -1663,6 +1907,14 @@ expect_rc_grep "check-commit staged unrelated workspace 文件按 artifact 拦�
 	  pass=$((pass+1)); echo "PASS  commit hook 无 active Guru task 时不拦截"
 	else
 	  failn=$((failn+1)); echo "FAIL  commit hook 无 active Guru task 时不应拦截 (rc=$rc)"; echo "$out" | head -4
+	fi
+	HD_ROOT=$(mk_direct_commit_case hook-direct-low-risk "lib/ui/character_chat_ai_bubble.dart" "test/ui/character_chat_message_list_test.dart")
+	install_hook_runtime "$HD_ROOT"
+	out=$(printf '{"tool_input":{"command":"git commit -m test"},"cwd":"%s"}' "$HD_ROOT" | CLAUDE_PROJECT_DIR="$HD_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
+	if [ "$rc" = 0 ] && printf '%s' "$out" | grep -q "direct small_inline scoped low-risk commit"; then
+	  pass=$((pass+1)); echo "PASS  commit hook 存在旧任务但无当前 task 时放行 direct low-risk"
+	else
+	  failn=$((failn+1)); echo "FAIL  commit hook direct low-risk 应放行 (rc=$rc)"; echo "$out" | head -4
 	fi
 	HC_PAIR=$(mk_commit_gate_case hook-commit-planning planning "lib/x.dart")
 	HC_ROOT="${HC_PAIR%%|*}"; HC_TASK="${HC_PAIR#*|}"

@@ -33,7 +33,7 @@ overview writing -> overview review/fix loop -> two clean current-digest reviews
 detail writing -> detail review/fix loop -> two clean current-digest reviews (one adversarial opposite-provider clean) -> guru_gate.py confirm detail
 ```
 
-`guru.supervision.adversarial_enabled: false` 可临时关闭 `guru_supervise.py --adversarial ...` 的 opposite-provider worker；关闭后 requirements review 记录为 `deferred`，overview/detail 不会得到 adversarial clean 证据，`confirm requirements` / `check-start` 与 overview/detail review Gate 都必须按缺口硬阻断。
+`guru.supervision.adversarial_enabled: false` 可临时关闭 `guru_supervise.py --adversarial ...` 的 opposite-provider worker；关闭后 `guru_gate.py` 按配置动态判定：requirements 不再强制 opposite-provider adversarial review，overview/detail 不再要求 adversarial reviewer，但仍要求当前 digest、双 clean review、用户确认以及没有 blocked/medium+ 当前证据。
 
 `confirm overview` 不是正常路径，必须失败并提示改用 `record-review overview`。
 
@@ -66,8 +66,8 @@ Guru planning 只保留两个阶段性人工确认：
 | Gate | 完成条件 | artifact digest 覆盖范围 | 决策含义 |
 |------|----------|--------------------------|----------|
 | `requirements` | `guru_gate.py requirements <task_dir>` 通过 + `guru_supervise.py --adversarial requirements <task_dir>` 输出 `review_result=clean/requirements-ready` + `guru_gate.py confirm requirements <task_dir>` | `prd.md` | 需求行为、失败路径、验收口径、术语边界已定。 |
-| `overview` | `guru_gate.py overview <task_dir>` 通过 + 两个不同 `run_id` 的当前 digest clean review，且其中至少一条 reviewer 含 `adversarial` | `prd.md` + `design_package/README.md` + `design_package/design-main.md`；light 链为 `prd.md` + `design.md` | owner、架构归属、技术决策承接和详细设计索引已定。 |
-| `detail` | `guru_gate.py detail <task_dir>` 通过 + 两个不同 `run_id` 的当前 digest clean review，且其中至少一条 reviewer 含 `adversarial` + `guru_gate.py confirm detail <task_dir>` | overview 覆盖范围 + `design_package/chapters/*.md` + `implement.md`；light 链为 `prd.md` + `design.md` + `implement.md` | 可编码合同、测试映射、不得补造清单和实现切片已定。 |
+| `overview` | `guru_gate.py overview <task_dir>` 通过 + 两个不同 `run_id` 的当前 digest clean review；默认其中至少一条 reviewer 含 `adversarial`，`guru.supervision.adversarial_enabled=false` 时不要求 | `prd.md` + `design_package/README.md` + `design_package/design-main.md`；light 链为 `prd.md` + `design.md` | owner、架构归属、技术决策承接和详细设计索引已定。 |
+| `detail` | `guru_gate.py detail <task_dir>` 通过 + 两个不同 `run_id` 的当前 digest clean review；默认其中至少一条 reviewer 含 `adversarial`，`guru.supervision.adversarial_enabled=false` 时不要求 + `guru_gate.py confirm detail <task_dir>` | overview 覆盖范围 + `design_package/chapters/*.md` + `implement.md`；light 链为 `prd.md` + `design.md` + `implement.md` | 可编码合同、测试映射、不得补造清单和实现切片已定。 |
 
 ## 5. Digest 与失效规则
 
@@ -146,7 +146,7 @@ python3 .trellis/scripts/guru/guru_gate.py record-review overview <task_dir> \
 - `clean` 只允许 `max_severity=none|low`，且不得写 `finding_class`。
 - `findings` 必须是 `max_severity=medium|high|critical`，且必须写 `finding_class`。
 - `finding_class` 只用于路由：`REQ_BLOCKER`、`OVERVIEW_DEFECT`、`DETAIL_DEFECT`、`IMPLEMENT_DEFECT`、`PROCESS_DEFECT`。
-- 两次 clean 必须来自当前 digest 下两个不同 `run_id`，且当前 clean streak 中至少一条 clean 记录的 `reviewer` 包含 `adversarial`（推荐形如 `clean-context-adversarial-<provider>`）。
+- 两次 clean 必须来自当前 digest 下两个不同 `run_id`。默认当前 clean streak 中至少一条 clean 记录的 `reviewer` 包含 `adversarial`（推荐形如 `clean-context-adversarial-<provider>`）；若 `guru.supervision.adversarial_enabled=false`，只要求双 clean，不要求 adversarial reviewer。
 - requirements 阶段通过需求发现 / Domain Grill / adversarial review 暴露 blocker 或 clean/ready 结论；requirements review 不写 `review_runs`，不得添加 requirements clean streak，但 `confirm requirements` / `check-start` 必须要求当前 digest 的 clean/current requirements review。
 - medium+ findings 会打断当前 clean streak；后续需要重新得到两个不同 run-id 的 clean。
 

@@ -19,6 +19,13 @@ import json
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "verify"))
+try:
+    import guru_contract  # noqa: E402
+except Exception:  # pragma: no cover - source-tree fallback, installed overlay has same-dir module
+    guru_contract = None
+
 BASELINE = [
     {"file": ".trellis/spec/conventions/project-conventions.md",
      "reason": "项目约定槽位取值与 SLOT-15 存量违例清单（所有阶段硬前置）"},
@@ -108,6 +115,7 @@ def main() -> int:
 
     # 判轨安全默认：guru_chain=full（轻量链须显式降级）
     chain_note = ""
+    contract_note = ""
     try:
         with open(task_json, encoding="utf-8") as f:
             data = json.load(f)
@@ -126,11 +134,20 @@ def main() -> int:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
             chain_note = "；guru_chain 默认 full（降 light 需分流+用户同意）"
+        if guru_contract is not None and not os.path.exists(os.path.join(task_dir, guru_contract.CONTRACT_FILE)):
+            contract = guru_contract.default_contract(
+                guru_contract.ROUTE_FULL_CHAIN,
+                data.get("risk_level", "unknown"),
+                created_by="guru_after_create",
+            )
+            contract["assessment"]["reasons"] = ["fail-safe default: new Guru tasks start as full_chain"]
+            guru_contract.write_contract(task_dir, contract)
+            contract_note = "；gate-contract 默认 full_chain（改 micro/lite 需 intake 分流）"
     except (ValueError, OSError) as e:
         # ValueError 覆盖 json.JSONDecodeError（其子类）与非对象根节点；保持 best-effort 不阻塞主流程
         sys.stderr.write(f"[guru-after-create] 警告：guru_chain 写入失败（{e}）\n")
 
-    print(f"[guru-after-create] jsonl 基线注入完成（implement +{a} / check +{b}）{chain_note}")
+    print(f"[guru-after-create] jsonl 基线注入完成（implement +{a} / check +{b}）{chain_note}{contract_note}")
     return 0
 
 

@@ -71,6 +71,16 @@ codex:
   dispatch_mode: sub-agent  # values: "inline", "sub-agent", "channel"
 
 #-------------------------------------------------------------------------------
+# Guru supervision
+#-------------------------------------------------------------------------------
+# Disable the mandatory adversarial reviewer requirement for local Guru gates.
+# The gates still require current digests, double clean review evidence, and
+# fail closed on current blockers or medium+ findings.
+guru:
+  supervision:
+    adversarial_enabled: false
+
+#-------------------------------------------------------------------------------
 # Session Auto-Commit
 #-------------------------------------------------------------------------------
 

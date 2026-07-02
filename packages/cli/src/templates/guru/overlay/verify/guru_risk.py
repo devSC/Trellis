@@ -16,12 +16,32 @@ import guru_review_record  # noqa: E402  P1 单一 packet reader（它不反向 
 
 # 与 guru_gate 历史口径字节一致（_risk_level 现兼容代理本模块）。
 HIGH_RISK_LEVELS = {"high", "critical", "p0"}
+MEDIUM_RISK_LEVELS = {"medium", "moderate", "normal", "p1", "p2"}
 LOW_RISK_LEVELS = {"low", "minor", "trivial"}
 # P1 §4.5.9：packet risk_reasons 命中任一即 high。
 RISK_REASON_KEYWORDS = {
     "protocol_migration", "cross_layer", "stateful_cache_merge", "db_migration",
     "payment", "ads", "permission", "privacy",
 }
+HIGH_RISK_TEXT_KEYWORDS = RISK_REASON_KEYWORDS | {
+    "schema", "migration", "workflow", "hook", "gate", "runtime", "auth",
+    "login", "account", "security", "release", "publish", "compliance",
+    "数据采集", "隐私", "权限", "支付", "广告", "门禁", "工作流", "迁移",
+}
+MEDIUM_RISK_TEXT_KEYWORDS = {
+    "bug", "behavior", "logic", "test", "state", "controller", "usecase",
+    "repository", "api", "interaction", "local behavior", "业务", "行为",
+    "测试", "状态", "接口",
+}
+LOW_RISK_TEXT_KEYWORDS = {
+    "color", "colour", "copy", "text", "label", "typo", "comment", "format",
+    "spacing", "style", "icon", "文案", "颜色", "注释", "格式", "样式",
+}
+
+ROUTE_SMALL_INLINE = "small_inline"
+ROUTE_MICRO_TASK = "micro_task"
+ROUTE_LITE_TASK = "lite_task"
+ROUTE_FULL_CHAIN = "full_chain"
 
 # P0 ③ 无 packet 触发信号：storage 关键词（路径子串，小写匹配）。裸短词（db/bloc）用边界形式
 # 避免子串误报（裸 "db" 会命中 "feedback"，裸 "bloc" 会命中 "block"）。
@@ -88,9 +108,91 @@ def task_risk_level(task_dir: str) -> str:
         level = value.strip().lower().replace("_", "-")
         if level in HIGH_RISK_LEVELS:
             return "high"
+        if level in MEDIUM_RISK_LEVELS:
+            return "medium"
         if level in LOW_RISK_LEVELS:
             has_low = True
     return "low" if has_low else "unknown"
+
+
+def _keyword_flags(text: str, keywords: set) -> list:
+    haystack = text.lower()
+    return sorted(k for k in keywords if k.lower() in haystack)
+
+
+def path_high_risk_flags(paths) -> list:
+    flags = []
+    normalized = [str(p).lower().replace("\\", "/") for p in paths]
+    if has_cross_layer_or_storage(normalized):
+        flags.append("cross_layer_or_storage")
+    for path in normalized:
+        for keyword in (
+            ".trellis/workflow.md", ".trellis/config.yaml", ".codex/", ".claude/",
+            "hooks/", "/hooks/", "workflow", "guru_gate.py", "guru_risk.py",
+            "guru_contract.py", "guru_supervise.py", "schema", "migration",
+            "payment", "ads", "permission", "privacy",
+        ):
+            if keyword in path:
+                flags.append(keyword.strip("/"))
+    return sorted(set(flags))
+
+
+def assess_intake(description: str = "", paths=None, commit_requested: bool = False) -> dict:
+    """Classify incoming Guru work into risk + route.
+
+    This is intentionally conservative: any high-risk signal wins; unknown work
+    never becomes low.  The helper is side-effect free so workflow hooks, skills,
+    and tests can share the same table.
+    """
+    paths = list(paths or [])
+    high_flags = _keyword_flags(description, HIGH_RISK_TEXT_KEYWORDS) + path_high_risk_flags(paths)
+    medium_flags = _keyword_flags(description, MEDIUM_RISK_TEXT_KEYWORDS)
+    low_flags = _keyword_flags(description, LOW_RISK_TEXT_KEYWORDS)
+    reasons = []
+    if high_flags:
+        return {
+            "risk": "high",
+            "route": ROUTE_FULL_CHAIN,
+            "confidence": 0.95,
+            "reasons": [f"high-risk signal: {flag}" for flag in sorted(set(high_flags))],
+            "risk_flags": sorted(set(high_flags)),
+            "needs_user_choice": False,
+            "recommended_contract": ROUTE_FULL_CHAIN,
+        }
+    if medium_flags:
+        return {
+            "risk": "medium",
+            "route": ROUTE_LITE_TASK,
+            "confidence": 0.8,
+            "reasons": [f"medium-risk signal: {flag}" for flag in sorted(set(medium_flags))],
+            "risk_flags": sorted(set(medium_flags)),
+            "needs_user_choice": False,
+            "recommended_contract": ROUTE_LITE_TASK,
+        }
+    if low_flags and 0 < len(paths) <= 3:
+        route = ROUTE_MICRO_TASK if commit_requested else ROUTE_SMALL_INLINE
+        return {
+            "risk": "low",
+            "route": route,
+            "confidence": 0.85,
+            "reasons": [f"low-risk signal: {flag}" for flag in sorted(set(low_flags))],
+            "risk_flags": sorted(set(low_flags)),
+            "needs_user_choice": False,
+            "recommended_contract": route,
+        }
+    if paths:
+        reasons.append("paths present but no low-risk classifier match")
+    else:
+        reasons.append("no concrete low-risk evidence")
+    return {
+        "risk": "medium",
+        "route": ROUTE_LITE_TASK,
+        "confidence": 0.55,
+        "reasons": reasons,
+        "risk_flags": ["unknown_non_low"],
+        "needs_user_choice": True,
+        "recommended_contract": ROUTE_LITE_TASK,
+    }
 
 
 def scan_paths(repo_root: str) -> set:
@@ -211,6 +313,8 @@ def _p0_implement_check_independent_required(task_dir: str, platform: str, repo_
         return (True, "cross-layer/storage path signal (overrides low)")
     if level == "unknown":
         return (True, "unknown-risk fail-closed")
+    if level == "medium":
+        return (True, "medium-risk")
     # level == "low"、无跨层信号、扫描成功
     if has_valid_approved_low(task_dir):
         return (False, "reviewer-approved true-low")
