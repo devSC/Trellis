@@ -65,11 +65,11 @@ Phase 3: Finish  → 验证（go build/vet/test + golangci-lint）→ 萃取回�
 
 - 简单对话/小任务：先问是否需要建 Trellis 任务；用户说不需要则本轮跳过 Trellis。
 - 进入任务后第一步加载 golden-path 的入口决策树：判定本任务落在哪个 `services/<svc>/`、碰哪几层（只查询/读取→repository+service；只新端点→transport+service；新服务/新协议→全链）与风险等级；确认是否需动 `packages/contracts/` 跨服务契约。
-- **新服务 / 新协议端点 / 鉴权或会话 / DB 迁移 / 跨服务契约变更 → 必须走完整五阶段（full 链，目录级设计包）**；同包内小改可走轻量链（prd 简版 + 所碰层的详细合同 + 实现），但每步仍要 Gate。判轨结论落 task.json `guru_chain`（默认 full；降 light 需用户同意）。
+- **新服务 / 新协议端点 / 鉴权或会话 / DB 迁移 / 跨服务契约变更 → 默认推荐完整五阶段（full 链，目录级设计包）**；同包内小改可走轻量链（prd 简版 + 所碰层的详细合同 + 实现），但每步仍要 Gate。判轨结论落 task.json `guru_chain`（默认 full；降 light 需用户同意）和 `gate-contract.json`；用户明确选择较轻 route 时必须记录 `route_selection` 风险确认审计。
 - 建任务许可 ≠ 实现许可：实现必须等 requirements 确认、overview/detail 双 clean（默认各含 adversarial clean；`adversarial_enabled=false` 时不要求）、detail 确认后 `task.py start`。
 
 [workflow-state:no_task]
-无任务：先分类请求并征得建任务同意。小任务可不建；新服务/新协议端点/鉴权会话/DB迁移/跨服务契约变更必须建任务走完整五阶段。先按 golden-path 入口决策树定服务边界与所碰层。
+无任务：先分类请求并征得建任务同意。小任务可不建；新服务/新协议端点/鉴权会话/DB迁移/跨服务契约变更默认推荐完整五阶段；用户选择较轻 route 时记录 route_selection 风险确认审计。先按 golden-path 入口决策树定服务边界与所碰层。
 [/workflow-state:no_task]
 
 ### Phase 1: Plan（承载 需求 → 概要 → 详细 三阶段）

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/cli/backend/guru-overlay-gates.md", "reason": "Verify updated behavior matches executable gate contract"}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Check Python overlay script edits follow project conventions"}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "Check quality and regression coverage obligations"}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Check test naming, assertion, and regression-test patterns"}
+{"file": ".trellis/tasks/07-02-guru-route-recommendation-user-override/prd.md", "reason": "Task requirements and acceptance criteria"}
+{"file": ".trellis/tasks/07-02-guru-route-recommendation-user-override/design.md", "reason": "Technical design and route-selection contract"}

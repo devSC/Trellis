@@ -101,11 +101,11 @@ Phase 3: Finish  → 验证（tsc --noEmit / next build / eslint）→ 萃取回
 
 - 简单对话/小任务：先问是否需要建 Trellis 任务；用户说不需要则本轮跳过 Trellis。
 - 进入任务后第一步判定碰哪几层（只文案 → l10n/文案路径；只一个 `ui-component`/`client-component` → 局部链；新增 route 段 / 跨 server-client → 全链）与风险等级。
-- **核心玩法 / 付费 / 广告 / 存档 / 涉权限或数据采集 / 跨 server-client 边界 / 新增 route 段 → 必须走完整五阶段（full 链，目录级设计包）**；单层小改可走轻量链（prd 简版 + 所碰 doc_type 的详细合同 + 实现），但每步仍要 Gate。判轨结论落 task.json `guru_chain`（默认 full；降 light 需用户同意）。
+- **核心玩法 / 付费 / 广告 / 存档 / 涉权限或数据采集 / 跨 server-client 边界 / 新增 route 段 → 默认推荐完整五阶段（full 链，目录级设计包）**；单层小改可走轻量链（prd 简版 + 所碰 doc_type 的详细合同 + 实现），但每步仍要 Gate。判轨结论落 task.json `guru_chain`（默认 full；降 light 需用户同意）和 `gate-contract.json`；用户明确选择较轻 route 时必须记录 `route_selection` 风险确认审计。
 - 建任务许可 ≠ 实现许可：实现必须等 requirements 确认、overview/detail 双 clean（默认各含 adversarial clean；`adversarial_enabled=false` 时不要求）、detail 确认后 `task.py start`。
 
 [workflow-state:no_task]
-无任务：先分类请求并征得建任务同意。单层小改可不建；核心玩法/付费/广告/存档/权限/数据采集/跨 server-client/新增 route 段必须建任务走完整五阶段（full 链）。
+无任务：先分类请求并征得建任务同意。单层小改可不建；核心玩法/付费/广告/存档/权限/数据采集/跨 server-client/新增 route 段默认推荐完整五阶段（full 链）；用户选择较轻 route 时记录 route_selection 风险确认审计。
 [/workflow-state:no_task]
 
 ### Phase 1: Plan（承载 需求 → 概要 → 详细 三阶段）

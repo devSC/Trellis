@@ -332,6 +332,32 @@ guru_contract.write_contract(task_dir, contract)
 PY
 }
 
+write_user_override_contract() { # write_user_override_contract <task_dir> <route> <risk> <recommended> <quote>
+  python3 - "$GATE" "$1" "$2" "$3" "$4" "$5" <<'PY'
+import os, sys
+gate, task_dir, route, risk, recommended, quote = sys.argv[1:7]
+sys.path.insert(0, os.path.dirname(gate))
+import guru_contract
+contract = guru_contract.default_contract(route, risk, created_by="fixture")
+contract["assessment"]["reasons"] = [f"fixture recommended={recommended}", f"fixture selected={route}"]
+contract["assessment"]["recommended_route"] = recommended
+contract["route_selection"] = {
+    "selected_route": route,
+    "source": "user_override",
+    "recommended_route": recommended,
+    "risk_acknowledged": True,
+    "user_quote": quote,
+    "selected_by": "user",
+    "selected_at": "2026-07-02T00:00:00Z",
+}
+if route == guru_contract.ROUTE_MICRO_TASK:
+    contract["scope"] = {"allowed_paths": ["packages"], "forbidden_path_patterns": [], "max_files": 3}
+elif route == guru_contract.ROUTE_LITE_TASK:
+    contract["scope"] = {"allowed_paths": ["lib", "test", "packages"], "forbidden_path_patterns": [], "max_files": 8}
+guru_contract.write_contract(task_dir, contract)
+PY
+}
+
 write_reviews_all() { # write_reviews_all <task_dir>
   write_clean_reviews overview "$1"
   write_clean_reviews detail "$1"
@@ -1290,9 +1316,17 @@ RV_UNKNOWN=$(make_gate_case review-unknown-risk-strict)
 write_route_contract "$RV_UNKNOWN" lite_task unknown
 expect_rc_grep "unknown risk route 回退 strict requirements review" 2 "requirements adversarial review" env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_UNKNOWN" --via-agent --user-quote "unknown risk 不应降级"
 
-RV_HIGH_LITE=$(make_gate_case review-high-lite-strict)
-write_route_contract "$RV_HIGH_LITE" lite_task high
-expect_rc_grep "high risk lite_task 回退 strict requirements review" 2 "requirements adversarial review" env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_HIGH_LITE" --via-agent --user-quote "high risk 不应降级"
+RV_HIGH_LITE_MISSING=$(make_gate_case review-high-lite-missing-override)
+write_route_contract "$RV_HIGH_LITE_MISSING" lite_task high
+expect_rc_grep "high risk lite_task 缺 override audit 回退 strict requirements review" 2 "requirements adversarial review" env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_HIGH_LITE_MISSING" --via-agent --user-quote "缺 audit 不应降级"
+
+RV_HIGH_LITE=$(make_gate_case review-high-lite-user-override)
+write_user_override_contract "$RV_HIGH_LITE" lite_task high full_chain "用户确认 high 风险仍走 lite"
+expect "high risk lite_task 带用户 override 使用 bounded requirements policy" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_HIGH_LITE" --via-agent --user-quote "high 风险已确认，按 lite bounded policy 确认需求"
+write_plain_clean_reviews overview "$RV_HIGH_LITE"
+write_plain_clean_reviews detail "$RV_HIGH_LITE"
+expect "high risk lite_task override 双普通 clean 可确认 detail" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm detail "$RV_HIGH_LITE" --via-agent --user-quote "high 风险已确认，按 lite bounded policy 确认详细"
+expect "high risk lite_task override 双普通 clean 可 check-start" 0 python3 "$GATE" check-start "$RV_HIGH_LITE"
 
 RV_OFF_ROOT="$TMP/adversarial-disabled-root"
 RV_OFF="$RV_OFF_ROOT/.trellis/tasks/review-adversarial-disabled"
@@ -1931,7 +1965,18 @@ high = guru_risk.assess_intake("change payment workflow gate", ["packages/cli/sr
 assert high["risk"] == "high" and high["route"] == "full_chain", high
 
 bad = guru_contract.default_contract("micro_task", "high")
-assert any("high-risk" in p for p in guru_contract.validate_contract(bad))
+assert any("route_selection" in p for p in guru_contract.validate_contract(bad))
+bad["route_selection"] = {
+    "selected_route": "micro_task",
+    "source": "user_override",
+    "recommended_route": "full_chain",
+    "risk_acknowledged": True,
+    "user_quote": "走 micro",
+    "selected_by": "user",
+    "selected_at": "2026-07-02T00:00:00Z",
+}
+bad["scope"] = {"allowed_paths": ["packages"], "forbidden_path_patterns": [], "max_files": 3}
+assert guru_contract.validate_contract(bad) == []
 default_micro = guru_contract.default_contract("micro_task", "low")
 assert any("scope.allowed_paths" in p for p in guru_contract.validate_contract(default_micro))
 assert any("scope.max_files" in p for p in guru_contract.validate_contract(default_micro))
@@ -1949,13 +1994,22 @@ bad_typo = dict(bad_policy, risk="hihg", commit_policy={})
 assert any("unknown value" in p for p in guru_contract.validate_contract(bad_typo))
 lite_high_path = {
     "schema_version": 1,
-    "risk": "medium",
+    "risk": "high",
     "route": "lite_task",
+    "route_selection": {
+        "selected_route": "lite_task",
+        "source": "user_override",
+        "recommended_route": "full_chain",
+        "risk_acknowledged": True,
+        "user_quote": "走 lite",
+        "selected_by": "user",
+        "selected_at": "2026-07-02T00:00:00Z",
+    },
     "scope": {"allowed_paths": ["packages"], "forbidden_path_patterns": [], "max_files": 3},
     "commit_policy": {},
     "allowed_degradations": [],
 }
-assert any("high-risk signals" in p for p in guru_contract.validate_commit_contract(
+assert not any("high-risk signals" in p for p in guru_contract.validate_commit_contract(
     lite_high_path,
     ["packages/cli/src/templates/guru/overlay/verify/guru_gate.py"],
     "/tmp/task",
@@ -2015,6 +2069,19 @@ if mode == "empty-scope":
     contract["scope"] = {"allowed_paths": [], "forbidden_path_patterns": [], "max_files": None}
 if mode == "high-path-scope":
     contract["scope"] = {"allowed_paths": ["packages"], "forbidden_path_patterns": [], "max_files": 3}
+if mode == "high-path-override":
+    contract["risk"] = "high"
+    contract["assessment"]["recommended_route"] = "full_chain"
+    contract["route_selection"] = {
+        "selected_route": "micro_task",
+        "source": "user_override",
+        "recommended_route": "full_chain",
+        "risk_acknowledged": True,
+        "user_quote": "用户确认 high 风险仍走 micro",
+        "selected_by": "user",
+        "selected_at": "2026-07-02T00:00:00Z",
+    }
+    contract["scope"] = {"allowed_paths": ["packages"], "forbidden_path_patterns": [], "max_files": 3}
 with open(os.path.join(task, "gate-contract.json"), "w", encoding="utf-8") as fh:
     json.dump(contract, fh)
     fh.write("\n")
@@ -2049,7 +2116,7 @@ expect_rc_grep "check-commit micro_task 空 scope 合同被拦" 2 "scope.allowed
 MCH_PAIR=$(mk_micro_contract_case micro-bad-high "lib/ui/dot.dart" "bad-high")
 MCH_ROOT="${MCH_PAIR%%|*}"; MCH_TASK="${MCH_PAIR#*|}"
 (cd "$MCH_ROOT" && git add lib/ui/dot.dart)
-expect_rc_grep "check-commit micro_task high risk 合同被拦" 2 "high-risk|risk=low" env TASK_JSON_PATH="$MCH_TASK/task.json" bash -c "cd '$MCH_ROOT' && python3 '$GATE' check-commit '$MCH_TASK'"
+expect_rc_grep "check-commit micro_task high risk 缺 override audit 被拦" 2 "route_selection|override" env TASK_JSON_PATH="$MCH_TASK/task.json" bash -c "cd '$MCH_ROOT' && python3 '$GATE' check-commit '$MCH_TASK'"
 
 MCD_PAIR=$(mk_micro_contract_case micro-allowed-degradation "lib/ui/dot.dart" "allowed-degradation")
 MCD_ROOT="${MCD_PAIR%%|*}"; MCD_TASK="${MCD_PAIR#*|}"
@@ -2075,6 +2142,11 @@ MCP_PAIR=$(mk_micro_contract_case micro-gate-path-signal "packages/cli/src/templ
 MCP_ROOT="${MCP_PAIR%%|*}"; MCP_TASK="${MCP_PAIR#*|}"
 (cd "$MCP_ROOT" && git add packages/cli/src/templates/guru/overlay/verify/guru_gate.py)
 expect_rc_grep "check-commit micro_task staged gate 高风险路径被拦" 2 "high-risk signals" env TASK_JSON_PATH="$MCP_TASK/task.json" bash -c "cd '$MCP_ROOT' && python3 '$GATE' check-commit '$MCP_TASK'"
+
+MCO_PAIR=$(mk_micro_contract_case micro-high-override-gate-path "packages/cli/src/templates/guru/overlay/verify/guru_gate.py" "high-path-override")
+MCO_ROOT="${MCO_PAIR%%|*}"; MCO_TASK="${MCO_PAIR#*|}"
+(cd "$MCO_ROOT" && git add packages/cli/src/templates/guru/overlay/verify/guru_gate.py)
+expect "check-commit micro_task high-risk path 带用户 override 不因路径信号阻断" 0 env TASK_JSON_PATH="$MCO_TASK/task.json" bash -c "cd '$MCO_ROOT' && python3 '$GATE' check-commit '$MCO_TASK'"
 
 MCO_PAIR=$(mk_micro_contract_case micro-out-of-scope "src/x.dart")
 MCO_ROOT="${MCO_PAIR%%|*}"; MCO_TASK="${MCO_PAIR#*|}"
@@ -4055,7 +4127,44 @@ then pass=$((pass+1)); echo "PASS  init-contract 生成 micro_task 合同"
 else failn=$((failn+1)); echo "FAIL  init-contract 生成 micro_task 合同 (rc=$rc)"; echo "$out" | head -8; fi
 
 IC_BAD="$TMP/init-contract-bad"; mkdir -p "$IC_BAD"
-expect_rc_grep "init-contract 拒绝 high-risk downgrade" 2 "high-risk|full_chain" python3 "$GATE" init-contract "$IC_BAD" --route lite_task --risk high
+expect_rc_grep "init-contract high/lite 缺显式风险确认被拦" 2 "risk_acknowledged" python3 "$GATE" init-contract "$IC_BAD" --route lite_task --risk high --recommended-route full_chain --user-override-quote "走 lite" --selected-by user
+
+IC_LITE="$TMP/init-contract-high-lite"; mkdir -p "$IC_LITE"
+out=$(python3 "$GATE" init-contract "$IC_LITE" --route lite_task --risk high --recommended-route full_chain --user-override-quote "走 lite" --risk-acknowledged true --selected-by user 2>&1); rc=$?
+if [ "$rc" = 0 ] && SUMMARY="$out" TASK="$IC_LITE" python3 - <<'PY'
+import json, os
+summary = json.loads(os.environ["SUMMARY"])
+contract = json.load(open(os.path.join(os.environ["TASK"], "gate-contract.json"), encoding="utf-8"))
+assert summary["new_route"] == "lite_task", summary
+assert summary["recommended_route"] == "full_chain", summary
+assert summary["route_selection_source"] == "user_override", summary
+assert contract["risk"] == "high", contract
+assert contract["route"] == "lite_task", contract
+assert contract["assessment"]["recommended_route"] == "full_chain", contract
+assert contract["route_selection"]["risk_acknowledged"] is True, contract
+assert contract["route_selection"]["user_quote"] == "走 lite", contract
+PY
+then pass=$((pass+1)); echo "PASS  init-contract high/lite 用户 override 合同可写入"
+else failn=$((failn+1)); echo "FAIL  init-contract high/lite 用户 override 合同 (rc=$rc)"; echo "$out" | head -8; fi
+
+IC_MICRO_BAD="$TMP/init-contract-high-micro-bad"; mkdir -p "$IC_MICRO_BAD"
+expect_rc_grep "init-contract high/micro 缺 scope 仍被拦" 2 "scope.allowed_paths|scope.max_files" python3 "$GATE" init-contract "$IC_MICRO_BAD" --route micro_task --risk high --recommended-route full_chain --user-override-quote "走 micro" --risk-acknowledged true --selected-by user
+
+IC_MICRO="$TMP/init-contract-high-micro"; mkdir -p "$IC_MICRO"
+out=$(python3 "$GATE" init-contract "$IC_MICRO" --route micro_task --risk high --recommended-route full_chain --user-override-quote "走 micro" --risk-acknowledged true --selected-by user --allowed-path packages/cli/src/templates/guru/overlay/verify/guru_gate.py --max-files 3 2>&1); rc=$?
+if [ "$rc" = 0 ] && SUMMARY="$out" TASK="$IC_MICRO" python3 - <<'PY'
+import json, os
+summary = json.loads(os.environ["SUMMARY"])
+contract = json.load(open(os.path.join(os.environ["TASK"], "gate-contract.json"), encoding="utf-8"))
+assert summary["new_route"] == "micro_task", summary
+assert contract["risk"] == "high", contract
+assert contract["route"] == "micro_task", contract
+assert contract["route_selection"]["recommended_route"] == "full_chain", contract
+assert contract["route_selection"]["selected_by"] == "user", contract
+assert contract["scope"]["max_files"] == 3, contract
+PY
+then pass=$((pass+1)); echo "PASS  init-contract high/micro 用户 override + scope 合同可写入"
+else failn=$((failn+1)); echo "FAIL  init-contract high/micro 用户 override + scope 合同 (rc=$rc)"; echo "$out" | head -8; fi
 
 LC_HIGH=$(make_gate_case accel-high-full)
 write_new_gate_ready "$LC_HIGH"
@@ -4078,6 +4187,29 @@ assert "PACKET_REQUIRED_BEFORE_IMPLEMENT" in plan["blocking_reasons"], plan
 PY
 then pass=$((pass+1)); echo "PASS  slice-plan high/full 无 packet 输出阻断 JSON"
 else failn=$((failn+1)); echo "FAIL  slice-plan high/full 无 packet JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+LC_HIGH_LITE=$(make_gate_case accel-high-lite-override)
+write_new_gate_ready "$LC_HIGH_LITE"
+write_user_override_contract "$LC_HIGH_LITE" lite_task high full_chain "用户确认 high 风险仍走 lite"
+python3 - "$LC_HIGH_LITE/task.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d["status"] = "in_progress"
+open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+PY
+expect "check-implementation high/lite override 不要求 slice packet" 0 python3 "$GATE" check-implementation "$LC_HIGH_LITE"
+out=$(python3 "$GATE" slice-plan "$LC_HIGH_LITE" 2>&1); rc=$?
+if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["route"] == "lite_task", plan
+assert plan["risk"] == "high", plan
+assert plan["packet_required"] is False, plan
+assert "PACKET_REQUIRED_BEFORE_IMPLEMENT" not in plan["blocking_reasons"], plan
+PY
+then pass=$((pass+1)); echo "PASS  slice-plan high/lite override 不要求 packet"
+else failn=$((failn+1)); echo "FAIL  slice-plan high/lite override JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
 
 LC_PKT=$(make_gate_case accel-one-packet)
 write_new_gate_ready "$LC_PKT"

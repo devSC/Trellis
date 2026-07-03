@@ -2035,8 +2035,6 @@ def _contract_route_for_review_policy(task_dir: str = None) -> str:
     risk = guru_contract.contract_risk(contract)
     if risk == guru_contract.RISK_UNKNOWN:
         return ""
-    if risk == guru_contract.RISK_HIGH and route != guru_contract.ROUTE_FULL_CHAIN:
-        return ""
     validation_problems = guru_contract.validate_contract(contract)
     if route == guru_contract.ROUTE_SMALL_INLINE:
         validation_problems = [
@@ -3231,7 +3229,7 @@ def _micro_commit_contract_problem(contract: dict, staged_paths: list, task_dir:
     high_path_signals = set(guru_contract.high_risk_path_signals(code_paths))
     if guru_risk.has_cross_layer_or_storage(code_paths):
         high_path_signals.add("cross-layer/storage path signal")
-    if high_path_signals:
+    if high_path_signals and not guru_contract.has_user_route_override(contract):
         return "micro_task staged paths contain high-risk signals: " + ", ".join(sorted(high_path_signals)[:5])
     return ""
 
@@ -3423,6 +3421,14 @@ def _parse_confidence(value: str, problems: list):
     return parsed
 
 
+def _contract_bool(value) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
 def cmd_init_contract(task_dir_arg, options: dict) -> int:
     task_dir = resolve_task_dir(task_dir_arg, allow_unique_planning_fallback=False)
     if not task_dir and task_dir_arg and os.path.isdir(task_dir_arg):
@@ -3454,6 +3460,24 @@ def cmd_init_contract(task_dir_arg, options: dict) -> int:
     assessment["confidence"] = confidence
     assessment["reasons"] = options.get("reasons") or []
     assessment["risk_flags"] = options.get("risk_flags") or []
+    recommended_route = guru_contract.normalize_route(options.get("recommended_route"))
+    if not recommended_route:
+        recommended_route = guru_contract.recommended_route_for_risk(risk)
+    assessment["recommended_route"] = recommended_route
+    selected_route = guru_contract.normalize_route(route)
+    user_quote = str(options.get("user_override_quote") or "").strip()
+    selected_by = str(options.get("selected_by") or "").strip() or ("user" if user_quote else "system")
+    risk_acknowledged = _contract_bool(options.get("risk_acknowledged"))
+    selection_source = "user_override" if user_quote or risk_acknowledged or selected_by == "user" else "recommended"
+    contract["route_selection"] = {
+        "selected_route": selected_route,
+        "source": selection_source,
+        "recommended_route": recommended_route,
+        "risk_acknowledged": risk_acknowledged,
+        "user_quote": user_quote,
+        "selected_by": selected_by,
+        "selected_at": _now_iso(),
+    }
 
     problems.extend(guru_contract.validate_contract(contract))
     if problems:
@@ -3474,6 +3498,8 @@ def cmd_init_contract(task_dir_arg, options: dict) -> int:
         "written_path": _display_task_dir(guru_contract.contract_path(task_dir), _repo_root()),
         "old_route": old_route or None,
         "new_route": contract["route"],
+        "recommended_route": guru_contract.contract_recommended_route(contract) or None,
+        "route_selection_source": contract.get("route_selection", {}).get("source"),
         "risk": contract["risk"],
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
@@ -3486,7 +3512,7 @@ def _implementation_packet_preflight_problem(task_dir: str) -> str:
         return ""
     packets = guru_review_record.list_packets(task_dir)
     if not packets:
-        return f"PACKET_REQUIRED_BEFORE_IMPLEMENT: {reason}; create slice-packets/<unit>.json or lower risk only by confirmed contract change"
+        return f"PACKET_REQUIRED_BEFORE_IMPLEMENT: {reason}; create slice-packets/<unit>.json or choose/update the selected route with user override audit"
     return ""
 
 
@@ -3616,7 +3642,7 @@ def _contract_commit_stage_paths(contract: dict, staged_paths: list, task_dir: s
     if isinstance(max_files, int) and max_files > 0 and len(staged_paths) > max_files:
         forbidden.extend(staged_paths[max_files:])
     route = guru_contract.contract_route(contract)
-    if route and route != guru_contract.ROUTE_FULL_CHAIN:
+    if route and route != guru_contract.ROUTE_FULL_CHAIN and not guru_contract.has_user_route_override(contract):
         high_risk_paths = set(guru_contract.high_risk_path_signals(code_paths))
         if guru_risk.has_cross_layer_or_storage(code_paths):
             high_risk_paths.update(code_paths)
@@ -3915,6 +3941,10 @@ def main() -> int:
         "forbidden_patterns": _pop_all_value_options(argv, "--forbidden-pattern"),
         "reasons": _pop_all_value_options(argv, "--reason"),
         "risk_flags": _pop_all_value_options(argv, "--risk-flag"),
+        "recommended_route": _pop_value_option(argv, "--recommended-route"),
+        "user_override_quote": _pop_value_option(argv, "--user-override-quote"),
+        "risk_acknowledged": _pop_value_option(argv, "--risk-acknowledged"),
+        "selected_by": _pop_value_option(argv, "--selected-by"),
     }
     rest = [a for a in argv if not a.startswith("--")]
     flags = {a for a in argv if a.startswith("--")}
