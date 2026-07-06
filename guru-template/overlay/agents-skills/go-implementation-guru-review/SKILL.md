@@ -16,6 +16,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
 3. 读取目标仓库 `.trellis/spec/conventions/project-conventions.md`，先跑校验清单 C1~C5；**重点装载 SLOT-17 存量违例清单**（存量豁免判定的唯一数据源）与本服务的 SLOT-01~SLOT-16 取值（DI/ORM/日志/测试框架/API 风格/DB 驱动/lint/配置/文档生成/会话鉴权/分层目录/迁移/错误风格/生命周期/接口抽象/枚举表达），并确认项目 logger / logging helper / 日志门面和字段约定。槽位缺失或待定超限 → 前置失败。
 4. 定位审核对象：被审改动（diff/分支）、本任务承接的详细设计单元（full 链 `design_package/chapters/*.md` 的 `UNIT-<slug>`；light 链 `design.md` §详细）、`implement.md`（trace）。trace 缺失 → 前置失败（实现 Gate 的证据载体不存在，不进入符合性判断）。
 5. 命中需要项目级取值才能判定的项（如 lint 是否真按 `golangci-lint` 跑、DB 驱动是否落在 repository/app 层、会话鉴权是否 HMAC-SHA256 签名 cookie + bcrypt），其取值只能来自 project-conventions 槽位与仓库真实代码，不得从详细设计正文或参考工程习惯推断。
+6. **装载 slice packet / invariant matrix**（P1，high-risk slice 必做）：supervisor 经 `build_run_plan` 把 resolved `slice-packets/<unit_id>.json` 注入为 `--file`，brief 含 `active_slice=<unit_id>`。读 packet 的 `invariants[]`（唯一机器 SSOT）、`target_paths`、`semantic_review_provider`。packet/matrix 缺失而 brief 标记 high-risk → 输出 `DETAIL_DEFECT` / `PROCESS_DEFECT`，不得 clean。
 
 前置全部通过后，才进入下面的执行流程。
 
@@ -33,6 +34,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
    - 测试映射（八问⑦）：见 D4。
    - 不得补造（八问⑧）：实现是否猜测/发明了详细设计未定义的合同（如 handler 擅自决定 SQL、service 擅自决定路由）= P1。
    - trace §4 是否记录与计划的偏差与处置；上游合同错漏是否回退详细阶段修订而非就地改设计（八问缺错误枚举、签名与 domain 不符、测试映射漏失败路径 → 应回退，trace 留回退记录）。
+   - **slice packet / invariant 核查（P1 high-risk slice 必做）**：有 packet 时，diff 必须与 packet `invariants[]` 逐条对照，每条输出 `invariant_status.<id>=pass|fail|not_applicable`；`pass` 必附证据，`not_applicable` 必附理由。invariant 违反按其 `route_if_missing` / `IMPLEMENT_DEFECT` 路由。注入的正式 requirement/design 包与 packet invariants 是行级权威基线；任何 reviewer 建议（含自身判断或外部审查器如 OCR）与 SSOT 行级约束冲突时一律否决、不得采纳。
 
 2. **D2 分层依赖律与 canonical**（对应 golden-path 锁定项 + Gate 4 G5 + 统一红线，逐项检查改动代码）：
    - **import 方向**：`transport(handler) → service → repository → domain` 严格单向无环；除 `domain` 外不跨 `internal` 包互相导入；`repository` 反向 import `service`、`handler` 直接 import `repository`/驱动跳过 service = P1。
@@ -54,6 +56,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
    - **编译证据**（G2）：`go build ./...` 或 `go build ./services/<svc>/...` 贴命令 + 退出态；只写「通过」无命令/退出态 = 证据不可信（P2 起步）。引入的失败未收口 = P1。
    - **静态检查证据**（G3）：`go vet ./...` + `golangci-lint run ./...`（按 SLOT-07）逐条通过/失败 + 处理；`nolint` 豁免须写理由并指向 `[SLOT-17]`。
    - **测试证据**（G4）：测试名级别结果（如 `--- PASS: TestUserService_Login/bad_credential`），不只写「全部通过」；覆盖承接 UNIT/BHV 的成功路径 + **全部失败路径**；新增测试清单可追溯到 `UNIT-<slug>`/`BHV-NNN`。漏失败路径用例 = P2 起步；高风险链路（鉴权/迁移/契约/并发超时）漏测 = P1。竞态敏感切片应附 `go test -race`。
+   - **invariant 证据**（P1 high-risk slice）：每条 high-risk invariant 至少一个正向或负向测试、命令或代码路径作为 `invariant_evidence`；`pass` 无证据按 `invariant_coverage=missing` 阻断。负向语义（排除/遗漏/不得绕过鉴权/不得破坏错误链或迁移兼容）缺测试或等价确定性检查按 P1/P2 判级。
    - **可复跑抽查**：抽至少 1 条 trace 中声明的命令实际复跑，结果与记录不符 = 证据造假（P1）。
    - **代码生成执行记录**：启用了生成型槽位（wire DI / sqlc / ent / mockgen / stringer 等，依 project-conventions 选型）且触发条件满足时，须有生成命令与产物清单记录（如 `wire_gen.go`/`db/*.sql.go` 是否变更）；当前 golden-path 默认无代码生成（原生 SQL + 标准库）则 trace 须写「N/A：无代码生成槽位启用」，不得留空。
    - **依赖整洁**：`go.mod`/`go.sum` 变更须 `go mod tidy` 并记 diff；新增第三方库须落在 project-conventions 已批准槽位（禁被锁框架）。
@@ -85,7 +88,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
    - **可进入 PR**：D1~D7 全过；trace 四节齐全、`go build`/`go vet`/`golangci-lint`/`go test` 有命令级证据且全绿、承接 UNIT 的成功 + 全部失败路径有测试、注释/日志/文档路径追溯可审计、无 P1、无清单外新增违例、无未闭合偏差。
    - **修复 P2 后可进入**：无 P1，但存在 P2（证据不完整、偏差未全闭合、非高风险漏测、绕行未挂编号等）；列出 P2 修复项。
    - **不可进入 PR**：存在任一 P1（合同未实现 / 八问断链 / 分层反向 / 轻框架破坏 / 丢 `%w` / 生命周期破坏 / 硬编码 secret / 清单外新增违例 / 高风险漏测 / 编译未收口 / 证据造假 / 就地改设计）；逐条列阻塞 P1。验证因环境/凭据/DB/网络阻塞无法完成时，结论为 blocked，记录命令、错误摘要、缺失依赖与恢复条件，不得降级为 pass。
-   - 机器可读收口字段必须同步输出：clean 且可进入 PR 时写 `review_result=clean/final-verification-ready`、`route_class=none`、`validation_summary=<命令与证据摘要>`；有 finding 或阻塞时写 `review_result=findings|blocked` 与最高优先级 `route_class`。
+   - 机器可读收口字段必须同步输出：clean 且可进入 PR 时写 `review_result=clean/final-verification-ready`、`route_class=none`、`review_target=slice:<unit_id>`、`review_provider=<本 check worker 的 provider>`、`deterministic_checks=passed|failed|missing`、`dirty_scope=clean|isolated|invalid`、`invariant_coverage=all_passed|failed|missing`、`validation_summary=<命令与证据摘要>`。有 slice packet 时还须逐条输出 per-invariant：`invariant_status.<id>=pass|fail|not_applicable`；`pass` 必随 `invariant_evidence.<id>=<非空证据：测试名/命令/代码路径>`；`not_applicable` 必随 `invariant_reason.<id>=<理由>`。缺任一 gating 字段、或取非通过值却声明 clean、或 provider 不满足 packet `semantic_review_provider` → supervisor 判 `MALFORMED_REVIEW_OUTPUT` 阻断。有 finding 或阻塞时写 `review_result=findings|blocked` 与最高优先级 `route_class`。
    - route class 只能取：`IMPLEMENT_DEFECT`（代码/测试/验证/注释/日志/脱敏缺陷）、`PROCESS_DEFECT`（trace/证据/流程执行缺陷）、`DETAIL_DEFECT`（详细设计合同错误或缺失）、`OVERVIEW_DEFECT`（概要归属/承接错误）、`REQ_BLOCKER`（需求行为/验收/边界缺陷）、`none`。
 
 2. **逐条 Findings**（按 `P1 → P2 → P3` 排序；无则写 `none`），每条字段：
@@ -101,8 +104,8 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
    ```
    同一轮多类缺陷按 `REQ_BLOCKER > OVERVIEW_DEFECT > DETAIL_DEFECT > PROCESS_DEFECT > IMPLEMENT_DEFECT` 给最高优先级路由，供 implement-check 自动回退。
    先证据后结论，严重度排序：
-   - **P1**：合同未实现 / 执行流程步骤缺失·改序·下沉·上移无设计依据 / 八问断链（幽灵 BHV·UNIT）/ 实现阶段猜测发明未定义合同 / 分层反向·越层 / 轻框架破坏 / 错误链丢 `%w`·吞错·panic 控制流 / 生命周期·context·优雅关闭破坏 / 配置不集中 / internal 越界 / 契约不走 `packages/contracts/` / 高风险核心 owner 完全无文档追溯 / 高风险路径不可观测 / 日志泄露 secret 或 PII / 硬编码 secret 或 config 存 secret value / 清单外新增违例（含扩大违例面）/ 高风险链路漏测 / 编译未收口 / 证据与复跑不符 / 就地改设计而非回退。
-   - **P2**：编译/静态/测试证据不完整（无命令·无退出态·无测试名）/ 非高风险失败路径漏测 / 新增核心定义缺 Go doc 或设计锚点 / 非显然分支缺"为什么"注释 / 关键流程日志缺入口或失败上下文 / 偏差未全闭合靠 reviewer 发现 / 触碰存量绕行未挂编号 / 计划与验证命令轻微不一致但未绕过实现 / 因环境阻塞验证未完成。
+   - **P1**：合同未实现 / 执行流程步骤缺失·改序·下沉·上移无设计依据 / 八问断链（幽灵 BHV·UNIT）/ 实现阶段猜测发明未定义合同 / high-risk slice 缺 packet 或 invariant 失败 / 分层反向·越层 / 轻框架破坏 / 错误链丢 `%w`·吞错·panic 控制流 / 生命周期·context·优雅关闭破坏 / 配置不集中 / internal 越界 / 契约不走 `packages/contracts/` / 高风险核心 owner 完全无文档追溯 / 高风险路径不可观测 / 日志泄露 secret 或 PII / 硬编码 secret 或 config 存 secret value / 清单外新增违例（含扩大违例面）/ 高风险链路漏测 / 编译未收口 / 证据与复跑不符 / 就地改设计而非回退。
+   - **P2**：编译/静态/测试证据不完整（无命令·无退出态·无测试名）/ 非高风险失败路径漏测 / invariant 证据字段不完整但未影响 high-risk 阻断语义 / 新增核心定义缺 Go doc 或设计锚点 / 非显然分支缺"为什么"注释 / 关键流程日志缺入口或失败上下文 / 偏差未全闭合靠 reviewer 发现 / 触碰存量绕行未挂编号 / 计划与验证命令轻微不一致但未绕过实现 / 因环境阻塞验证未完成。
    - **P3**：命名、包/文件组织、注释措辞、验证记录可读性问题，不影响合同闭合与红线。
 
 3. **存量豁免清单**：本次触碰的 SLOT-17 条目 + 分类结果（记债不阻塞 / 新增阻塞 / 可移除）+ 对应 `[SLOT-NN]` 编号。
@@ -126,6 +129,15 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
 - 规则正文不在本 skill 复写——分层依赖律、迷你路径、禁止清单以 `.trellis/spec/guides/golden-path.md` 为准；trace 四节、Gate G1~G6 以 `.trellis/spec/harness/implementation/implementation-trace-contract.md` 为准；BHV/UNIT 编号纪律、doc_type 七类、统一红线以 `.trellis/spec/harness/index.md` 为准；槽位取值与 SLOT-17 以 project-conventions 为准。
 - 未执行的验证不得写成通过；测试失败/证据缺失/环境阻塞如实输出，不降级结论。
 - 新增测试不能替代设计或实现证据；通过业务流程/集成/e2e/mock/fake 测试反向定义业务语义、测试补写详细设计 = P1，应回退详细或测试计划阶段。
+- 不得要求 OCR 作为默认完成条件；OCR 仅 optional bounded provider（用户显式触发 / 高风险抽检），记 `channel=ocr_optional`，第一版不满足 required provider。
+- manual provider 审查留痕（非 channel spawn，第一版 supplemental 补充审计、不满足 required provider）必须经验证型 append：
+  ```bash
+  python3 .trellis/scripts/guru/guru_review_record.py append --task-dir <task> --packet <packet> \
+    --provider manual --reviewer <name> --run-id <run_id> --result clean --route-class none \
+    --review-target slice:<unit_id> --deterministic-checks passed --dirty-scope isolated \
+    --invariant-coverage all_passed --evidence-file <task>/review-records/manual-review-<run_id>.md
+  ```
+  `--run-id` 必须与 `--evidence-file` 名一致；`channel` / `worker` 由命令派生。
 
 ## 与官方 Trellis skill 的边界
 

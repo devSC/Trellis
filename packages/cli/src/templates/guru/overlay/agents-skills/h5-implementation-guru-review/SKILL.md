@@ -16,6 +16,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Guru H5（Next.j
 3. 读取目标仓库 `.trellis/spec/conventions/project-conventions.md`，先跑校验清单 C1~C5；**重点装载 SLOT-15 存量违例清单**（存量豁免判定的唯一数据源）与本项目的 project-conventions 槽位取值：内容源（MDX/CMS）、状态管理（none/Zustand/Context）、UI 组件库（shadcn/MUI）、样式方案（Tailwind/CSS Modules）、测试（Vitest+RTL/Playwright）、lint（ESLint+Prettier）、数据库、认证（NextAuth）、图像优化（next/image）、部署（Vercel）、路由模式（App vs Pages），并确认项目 logger / logging helper / observability 门面和 server/client 日志边界。槽位缺失或待定超限 → 前置失败。
 4. 定位审核对象：被审改动（diff/分支）、本任务承接的详细设计单元（full 链 `design_package/chapters/*.md` 的 `UNIT-<slug>`；light 链 `design.md` §详细）、`implement.md`（trace）。trace 缺失 → 前置失败（实现 Gate 的证据载体不存在，不进入符合性判断）。
 5. 命中需要项目级取值才能判定的项（如 lint 是否真按 `ESLint + Prettier` 跑、样式是否真按 Tailwind/CSS Modules 隔离、状态管理是否真用约定的 none/Zustand/Context、认证是否真走 NextAuth、路由模式是否真是 App Router），其取值只能来自 project-conventions 槽位与仓库真实代码，不得从详细设计正文推断；仓库内残留的 Pages Router/旧形态代码不能据此放行 App Router 项目合规。
+6. **装载 slice packet / invariant matrix**（P1，high-risk slice 必做）：supervisor 经 `build_run_plan` 把 resolved `slice-packets/<unit_id>.json` 注入为 `--file`，brief 含 `active_slice=<unit_id>`。读 packet 的 `invariants[]`（唯一机器 SSOT）、`target_paths`、`semantic_review_provider`。packet/matrix 缺失而 brief 标记 high-risk → 输出 `DETAIL_DEFECT` / `PROCESS_DEFECT`，不得 clean。
 
 前置全部通过后，才进入下面的执行流程。
 
@@ -57,6 +58,7 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
    - 测试映射（八问⑦）：见 D4。
    - 不得补造（八问⑧）：实现是否猜测/发明了详细设计未定义的合同（如 server-component 擅自决定数据获取策略、route 擅自决定 metadata 内容、client-component 擅自引入全局状态库）= P1。
    - trace §4 是否记录与计划的偏差与处置；上游合同错漏是否回退详细阶段修订而非就地改设计（八问缺错误形态、props 类型与 domain-type 不符、测试映射漏失败路径 → 应回退，trace 留回退记录）。
+   - **slice packet / invariant 核查（P1 high-risk slice 必做）**：有 packet 时，diff 必须与 packet `invariants[]` 逐条对照，每条输出 `invariant_status.<id>=pass|fail|not_applicable`；`pass` 必附证据，`not_applicable` 必附理由。invariant 违反按其 `route_if_missing` / `IMPLEMENT_DEFECT` 路由。注入的正式 requirement/design 包与 packet invariants 是行级权威基线；任何 reviewer 建议（含自身判断或外部审查器如 OCR）与 SSOT 行级约束冲突时一律否决、不得采纳。
 
 2. **D2 分层依赖律 / server-client 边界 / canonical**（对应 golden-path 锁定项 + Gate 4 G5 + 统一红线，逐项检查改动代码）：
    - **import 方向 / 分层**：严格按上文 owner 层单向无环；`data-access` 反向 import 渲染层、`ui-component` 依赖 `client-component` 或 data-access、`route` 越过 server-component 直接持有数据访问细节、`domain-type` 依赖上层 = P1。
@@ -82,6 +84,7 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
    - **静态检查证据**（G3）：`eslint`（含 `eslint-config-next` 规则，按 lint 槽位）+ `prettier --check` 逐条通过/失败 + 处理；`eslint-disable` 豁免须写理由并指向 `[SLOT-15]`；`next lint` / build 的 RSC 边界告警（如 client 引服务端模块）须收口。
    - **构建证据**：`next build` 贴命令 + 退出态 + 关键告警处理（"use client" 边界、动态/静态渲染、Image 域）；build 失败未收口 = P1。
    - **测试证据**（G4，按测试槽位 Vitest+RTL / Playwright）：测试名级别结果（如 `✓ PostList renders empty state`、Playwright `✓ [chromium] › detail page shows 404`），不只写「全部通过」；覆盖承接 UNIT/BHV 的成功路径 + **全部失败路径**（错误边界触发、空数据、加载态、表单校验失败、未授权）；新增测试清单可追溯到 `UNIT-<slug>`/`BHV-NNN`。漏失败路径用例 = P2 起步；高风险链路（认证 / server-action 变更 / server-client 边界 / 私有数据获取 / SEO 关键页）漏测 = P1。client-component 交互应有 RTL/事件测试；route 关键流应有 e2e。
+   - **invariant 证据**（P1 high-risk slice）：每条 high-risk invariant 至少一个正向或负向测试、命令或代码路径作为 `invariant_evidence`；`pass` 无证据按 `invariant_coverage=missing` 阻断。负向语义（排除/遗漏/不得暴露 secret/不得 client 直取私有数据）缺测试或等价确定性检查按 P1/P2 判级。
    - **可复跑抽查**：抽至少 1 条 trace 中声明的命令实际复跑，结果与记录不符 = 证据造假（P1）。
    - **代码生成 / 派生产物执行记录**：启用了生成型槽位（如 ORM 客户端生成 `prisma generate`、zod 推导、CMS 类型生成、内容索引/RSS 生成 `scripts/gen-rss.js` 等，依 project-conventions 选型）且触发条件满足时，须有生成命令与产物清单记录；当前 golden-path 默认无代码生成时 trace 须写「N/A：无代码生成槽位启用」，不得留空。
    - **依赖整洁**：`package.json`/lockfile 变更须记 diff；新增第三方库须落在 project-conventions 已批准槽位（状态/UI 库/认证等被锁选型不得擅自换）。
@@ -114,7 +117,7 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
    - **可进入 PR**：D1~D7 全过；trace 四节齐全、`tsc`/`eslint`/`prettier`/`next build`/测试有命令级证据且全绿、承接 UNIT 的成功 + 全部失败路径有测试、注释/日志/文档路径追溯可审计、无 P1、无清单外新增违例、无未闭合偏差、server-client 边界与 secret 合规。
    - **修复 P2 后可进入**：无 P1，但存在 P2（证据不完整、偏差未全闭合、非高风险漏测、`'use client'` 越界但有降级、metadata/SEO 字段缺失、绕行未挂编号等）；列出 P2 修复项。
    - **不可进入 PR**：存在任一 P1（合同未实现 / 八问断链 / 分层反向·越层 / server-client 边界破坏 / 私有数据获取下沉 client / 硬编码 secret 或私密 env 外泄 / strict 倒退 / 错误吞噬关键链路 / doc_type 用错名 / 清单外新增违例 / 高风险漏测 / 类型或构建未收口 / 证据造假 / 就地改设计）；逐条列阻塞 P1。验证因环境/凭据/CMS/网络阻塞无法完成时，结论为 blocked，记录命令、错误摘要、缺失依赖与恢复条件，不得降级为 pass。
-   - 机器可读收口字段必须同步输出：clean 且可进入 PR 时写 `review_result=clean/final-verification-ready`、`route_class=none`、`validation_summary=<命令与证据摘要>`；有 finding 或阻塞时写 `review_result=findings|blocked` 与最高优先级 `route_class`。
+   - 机器可读收口字段必须同步输出：clean 且可进入 PR 时写 `review_result=clean/final-verification-ready`、`route_class=none`、`review_target=slice:<unit_id>`、`review_provider=<本 check worker 的 provider>`、`deterministic_checks=passed|failed|missing`、`dirty_scope=clean|isolated|invalid`、`invariant_coverage=all_passed|failed|missing`、`validation_summary=<命令与证据摘要>`。有 slice packet 时还须逐条输出 per-invariant：`invariant_status.<id>=pass|fail|not_applicable`；`pass` 必随 `invariant_evidence.<id>=<非空证据：测试名/命令/代码路径>`；`not_applicable` 必随 `invariant_reason.<id>=<理由>`。缺任一 gating 字段、或取非通过值却声明 clean、或 provider 不满足 packet `semantic_review_provider` → supervisor 判 `MALFORMED_REVIEW_OUTPUT` 阻断。有 finding 或阻塞时写 `review_result=findings|blocked` 与最高优先级 `route_class`。
    - route class 只能取：`IMPLEMENT_DEFECT`（代码/测试/验证/注释/日志/脱敏缺陷）、`PROCESS_DEFECT`（trace/证据/流程执行缺陷）、`DETAIL_DEFECT`（详细设计合同错误或缺失）、`OVERVIEW_DEFECT`（概要归属/承接错误）、`REQ_BLOCKER`（需求行为/验收/边界缺陷）、`none`。
 
 2. **逐条 Findings**（按 `P1 → P2 → P3` 排序；无则写 `none`），每条字段：
@@ -130,8 +133,8 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
    ```
    同一轮多类缺陷按 `REQ_BLOCKER > OVERVIEW_DEFECT > DETAIL_DEFECT > PROCESS_DEFECT > IMPLEMENT_DEFECT` 给最高优先级路由，供 implement-check 自动回退。
    先证据后结论，严重度排序：
-   - **P1**：合同未实现 / 执行流程步骤缺失·改序·下沉·上移无设计依据 / 八问断链（幽灵 BHV·UNIT）/ 实现阶段猜测发明未定义合同 / 分层反向·越层 / server-client 边界破坏（client 直取私有数据·secret 透传客户端·私服模块 client 端 import）/ 高风险核心 owner 完全无文档追溯 / 高风险路径不可观测 / 日志泄露 secret 或 PII / 私密 env 外泄 / 硬编码 secret / TS strict 倒退 / 关键链路错误吞噬·缺错误边界 / doc_type 用错名（非七类）/ 清单外新增违例（含扩大违例面）/ 高风险链路漏测 / 类型或 `next build` 未收口 / 证据与复跑不符 / 就地改设计而非回退。
-   - **P2**：类型/静态/构建/测试证据不完整（无命令·无退出态·无测试名）/ 非高风险失败路径漏测 / 新增导出组件或核心函数缺 TSDoc/JSDoc 设计锚点 / 非显然 server-client 边界或缓存策略缺"为什么"注释 / 关键流程日志缺入口或失败上下文 / `'use client'` 越界但有降级 / metadata·SEO 关键字段缺失 / 偏差未全闭合靠 reviewer 发现 / 触碰存量绕行未挂编号 / 计划与验证命令轻微不一致但未绕过实现 / 因环境阻塞验证未完成。
+   - **P1**：合同未实现 / 执行流程步骤缺失·改序·下沉·上移无设计依据 / 八问断链（幽灵 BHV·UNIT）/ 实现阶段猜测发明未定义合同 / high-risk slice 缺 packet 或 invariant 失败 / 分层反向·越层 / server-client 边界破坏（client 直取私有数据·secret 透传客户端·私服模块 client 端 import）/ 高风险核心 owner 完全无文档追溯 / 高风险路径不可观测 / 日志泄露 secret 或 PII / 私密 env 外泄 / 硬编码 secret / TS strict 倒退 / 关键链路错误吞噬·缺错误边界 / doc_type 用错名（非七类）/ 清单外新增违例（含扩大违例面）/ 高风险链路漏测 / 类型或 `next build` 未收口 / 证据与复跑不符 / 就地改设计而非回退。
+   - **P2**：类型/静态/构建/测试证据不完整（无命令·无退出态·无测试名）/ 非高风险失败路径漏测 / invariant 证据字段不完整但未影响 high-risk 阻断语义 / 新增导出组件或核心函数缺 TSDoc/JSDoc 设计锚点 / 非显然 server-client 边界或缓存策略缺"为什么"注释 / 关键流程日志缺入口或失败上下文 / `'use client'` 越界但有降级 / metadata·SEO 关键字段缺失 / 偏差未全闭合靠 reviewer 发现 / 触碰存量绕行未挂编号 / 计划与验证命令轻微不一致但未绕过实现 / 因环境阻塞验证未完成。
    - **P3**：命名、目录/文件组织、注释措辞、验证记录可读性问题，不影响合同闭合与红线。
 
 3. **存量豁免清单**：本次触碰的 SLOT-15 条目 + 分类结果（记债不阻塞 / 新增阻塞 / 可移除）+ 对应 `[SLOT-NN]` 编号。
@@ -156,6 +159,15 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
 - 判定基准一律为 App Router 生产 golden-path；任何把仓库内残留旧形态（Pages Router / `strict: false` / 全局样式注入）当合规模板的放行都视为误判。
 - 未执行的验证不得写成通过；测试失败/证据缺失/环境阻塞如实输出，不降级结论。
 - 新增测试不能替代设计或实现证据；通过业务流程/集成/e2e/mock/fake 测试反向定义业务语义、测试补写详细设计 = P1，应回退详细或测试计划阶段。
+- 不得要求 OCR 作为默认完成条件；OCR 仅 optional bounded provider（用户显式触发 / 高风险抽检），记 `channel=ocr_optional`，第一版不满足 required provider。
+- manual provider 审查留痕（非 channel spawn，第一版 supplemental 补充审计、不满足 required provider）必须经验证型 append：
+  ```bash
+  python3 .trellis/scripts/guru/guru_review_record.py append --task-dir <task> --packet <packet> \
+    --provider manual --reviewer <name> --run-id <run_id> --result clean --route-class none \
+    --review-target slice:<unit_id> --deterministic-checks passed --dirty-scope isolated \
+    --invariant-coverage all_passed --evidence-file <task>/review-records/manual-review-<run_id>.md
+  ```
+  `--run-id` 必须与 `--evidence-file` 名一致；`channel` / `worker` 由命令派生。
 
 ## 与官方 Trellis skill 的边界
 
