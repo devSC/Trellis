@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/cli/backend/guru-overlay-gates.md", "reason": "SSOT for Guru overlay commit gates, mutable evidence boundary, route-aware review evidence, and required tests."}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Python script conventions for .trellis/guru overlay runtime scripts."}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "CLI/backend quality expectations and validation commands."}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Vitest regression test conventions for CLI package changes."}

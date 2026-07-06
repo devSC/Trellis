@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/cli/backend/guru-overlay-gates.md", "reason": "Review gate behavior must preserve fail-closed commit semantics and mutable evidence boundaries."}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Check regression tests for meaningful behavior, no tautological assertions, and isolation."}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Review Python CLI implementation for standard-library-only, typed, path-safe script patterns."}

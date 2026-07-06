@@ -1,0 +1,88 @@
+{
+  "id": "07-06-guru-check-only-implementation-review",
+  "name": "07-06-guru-check-only-implementation-review",
+  "title": "Fix Guru check-only implementation review record flow",
+  "description": "Root-cause fix for Guru commit gate requiring structured implementation review records without re-entering implement-check or mutating detail digest artifacts.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-07-06",
+  "completedAt": "2026-07-07",
+  "branch": null,
+  "base_branch": "codex/guru-0.6.0-ga-worktree",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {},
+  "guru_gates": {
+    "requirements": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-06T20:57:16+08:00",
+      "confirmation_scope": "requirements_gate_only",
+      "allowed_next_action": "overview_design",
+      "prompt_summary": "Requirements confirmation allows overview/detail planning only",
+      "artifact_digest": "3bb1f69c8fb6d444bd0625c264b38a32baba0ab2ea3855ea04284df9b0f45bfb"
+    },
+    "review_runs": {
+      "overview": [
+        {
+          "run_id": "codex-main-overview-20260706a",
+          "reviewer": "clean-context-codex-main",
+          "recorded_at": "2026-07-06T21:00:09+08:00",
+          "artifact_digest": "11edde9bdcd7a4a45f183d2ce224e5dce5bbe8627ab277f9afaca5d2e761f62c",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Reviewed PRD/design/implement for Guru check-only implementation review flow. Overview clean: BHV ownership, phase boundary, commit-gate recovery, and mutable-evidence boundary are explicit; no medium+ planning issue found."
+        },
+        {
+          "run_id": "codex-check-overview-20260706-2110",
+          "reviewer": "clean-context-codex-check",
+          "recorded_at": "2026-07-06T21:04:34+08:00",
+          "artifact_digest": "11edde9bdcd7a4a45f183d2ce224e5dce5bbe8627ab277f9afaca5d2e761f62c",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Independent trellis-check reviewed check.jsonl specs, PRD/design/implement, current Guru template/test diff, and gate outputs. Overview clean: BHV owners cover implementation-review, invalid-scope suppression, staged digest, and mutable-evidence boundary; no medium+ blocker found."
+        }
+      ],
+      "detail": [
+        {
+          "run_id": "codex-main-detail-20260706a",
+          "reviewer": "clean-context-codex-main",
+          "recorded_at": "2026-07-06T21:00:09+08:00",
+          "artifact_digest": "b488aa1a999c0e6f883954e36f8325dbe54a4231863c63eab75e3de834dde999",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Reviewed detailed units for target resolution, check-only supervision, and commit-gate planning. Detail clean: data contracts, failure handling, test strategy, and no-bypass constraints are covered; no medium+ detail issue found.",
+          "deletion_audit": "D9 deletion audit: no obsolete requirement/design facts were removed in this review pass; detail keeps implement.md digest-bearing and routes mutable execution evidence to append-only task-local records/commit-plan."
+        },
+        {
+          "run_id": "codex-check-detail-20260706-2110",
+          "reviewer": "clean-context-codex-check",
+          "recorded_at": "2026-07-06T21:04:45+08:00",
+          "artifact_digest": "b488aa1a999c0e6f883954e36f8325dbe54a4231863c63eab75e3de834dde999",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Independent trellis-check reviewed detailed units, implementation plan, and current Guru commit-gate diff. Detail clean: target resolution, check-only supervision, commit-plan guidance, record normalization, and tests align with specs; no medium+ blocker found.",
+          "deletion_audit": "D9 deletion audit: no obsolete requirement/design facts or behavior-owner contracts were deleted in this pass. Current detail keeps prd.md/design.md/implement.md digest-bearing, preserves implement-check compatibility, and routes post-detail execution/check/commit evidence to append-only task-local records or commit-plan.json."
+        }
+      ]
+    },
+    "detail": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-06T21:30:32+08:00",
+      "confirmation_scope": "detail_gate_only",
+      "allowed_next_action": "task_start",
+      "prompt_summary": "Detail confirmation allows task.py start only",
+      "artifact_digest": "b488aa1a999c0e6f883954e36f8325dbe54a4231863c63eab75e3de834dde999"
+    }
+  }
+}
