@@ -81,3 +81,42 @@ Implemented route-aware Guru execution acceleration: workflow defaults, contract
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Guru check-only implementation review gate
+
+**Date**: 2026-07-07
+**Task**: Guru check-only implementation review gate
+**Branch**: `codex/guru-0.6.0-ga-worktree`
+
+### Summary
+
+Added a commit-safe Guru implementation-review path, tightened provider evidence validation, and moved mutable implementation evidence away from digest-bearing planning artifacts.
+
+### Main Changes
+
+- Added check-only `implementation-review` flow for staged/slice implementation review records without launching the implement worker.
+- Updated commit gate recovery guidance to use `implementation-review --staged` instead of `implement-check` for missing, malformed, or stale implementation review records.
+- Hardened required opposite-provider evidence validation and provider selection for low-risk slices with semantic review contracts.
+- Moved execution/review evidence guidance to append-only task-local evidence files instead of `implement.md`.
+- Added micro-task split guidance and session-scoped commit guard task resolution tests.
+- Verified with py_compile, shell syntax checks, guru template sync check, TypeScript typecheck, Guru bundled Vitest suite, GitNexus staged detect-changes, and Guru commit gate check.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3c7878ff` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
