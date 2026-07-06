@@ -42,7 +42,7 @@ iOS 平台项目约定共 **16 个槽位**（SLOT-01~SLOT-16），均在 `projec
 | **SLOT-11 主题** | 主题与 design token 形态：`ThemeManager` 单例如何被 `view` 消费？是否禁止硬编码尺寸/色值？ | **`ThemeManager` 单例**消费；**`view` 禁硬编码尺寸/色值字面量**（通用硬规则） | token 命名与分组按项目；单例获取入口固定 | hooks（裸字符串/硬编码颜色检查）、`view` 合同、implementation-review |
 | **SLOT-12 i18n / 本地化** | 多语言源文件位置、key 引用入口（裸 `String(localized:)` / 封装）、与共享表同步脚本名？ | 同步脚本人工受控（**agent 禁止自动执行**）；`view` 文案禁裸字符串 | 源文件路径与 key 风格按项目；脚本名因 App 而异 | `view`/`viewmodel` 合同、hooks（脚本拦截）、figma-l10n-sync |
 | **SLOT-13 feature 模块结构** | 新 feature 的目录骨架（`UI/Features/<Feature>/` 下 View/ViewModel 组织）？新旧谱系分界？ | feature 自包含：`UI/Features/<Feature>/{Views,ViewModels}` | 子目录命名按项目；禁在旧目录新建 feature | hooks（目录拦截）、implementation-review、`coordinator` 装配 |
-| **SLOT-14 测试约定 + mock 生成** | 单测用 `XCTest` 还是 `Quick`/`Nimble`？测试目录是否镜像源码结构？mock 用手写还是 `Mockolo`？ | **`XCTest`→`Quick`/`Nimble`**、**mock 手写→`Mockolo`**（未落地前一律 XCTest + 手写 mock）；目录镜像源码 | `XCTest`（存量）/ `Quick`+`Nimble`（新）；mock 工具与生成顺序按项目 | 合同八问之 7（测试映射）、implementation 证据节、`repository`/`external` 测试映射 |
+| **SLOT-14 测试约定 + mock 生成** | 单测用 `XCTest` 还是 `Quick`/`Nimble`？测试目录是否镜像源码结构？mock 用手写还是 `Mockolo`？ | **`XCTest`→`Quick`/`Nimble`**、**mock 手写→`Mockolo`**（未落地前一律 XCTest + 手写 mock）；目录镜像源码 | `XCTest`（存量）/ `Quick`+`Nimble`（新）；mock 工具与生成顺序按项目 | 合同八问之 7（测试映射）、`verification-evidence.jsonl`、`repository`/`external` 测试映射 |
 | **SLOT-15 构建自动化（Fastlane）** | 构建/签名/发布是否用 `Fastlane`？lane 定义与触发方式？是否禁止 agent 自动执行发布？ | **构建 `Fastlane`**；任何发布/签名 lane 人工执行（**agent 禁自动触发**，默认待定候选） | lane 名与触发方式按项目 | implementation-writing（待定阻塞判定）、CI 接入评审 |
 | **SLOT-16 存量违例清单** | 已知存量架构违例有哪些（供 review 存量豁免判定：触碰记债不阻塞、新增违例阻塞）？ | —（数据源，逐条登记） | 逐条：违例描述 + 文件路径；可为空但须显式声明「无」 | 所有 review 的存量豁免判定 |
 
@@ -92,7 +92,7 @@ iOS 平台项目约定共 **16 个槽位**（SLOT-01~SLOT-16），均在 `projec
 详细(design §详细)   ← .trellis/spec/harness/detail/detail-structure-single-source.md
                        + 涉及类型的 .trellis/spec/harness/detail/detail-type-{viewmodel,usecase,repository}.md
 实现(implement)      ← .trellis/spec/guides/golden-path.md
-                       + .trellis/spec/harness/implementation/implementation-trace-contract.md（trace 四节）
+                       + .trellis/spec/harness/implementation/implementation-trace-contract.md（trace 计划合同与 mutable evidence）
 审核(check)          ← 各 SSOT 审核基线 + 本目录 project-conventions.md 的 SLOT-16 存量豁免
 ```
 
@@ -103,7 +103,7 @@ iOS 平台项目约定共 **16 个槽位**（SLOT-01~SLOT-16），均在 `projec
 | 需求 Gate | **需求五要素**齐全：每条行为有 前置条件 / 触发 / 状态变化 / 失败路径 / 验收场景 | C1~C6 通过（项目约定就绪是任何阶段前置） |
 | 概要 Gate | **归属判定表**（行为→唯一 owner 层+三问理由，无分层依赖律违例）+ **承接索引**（`chapter_target → detail_doc_type`，覆盖全部 owner）+ `technology_decision_handoff[]` 字段完整 | owner 层取 iOS 七类对应层（见 §5）；SLOT-01/02/07/13 影响归属与命名 |
 | 详细 Gate | **合同八问**逐单元完整（承接 BHV / 输入输出错误 / 读写状态 / 依赖正反面 / 失败收口 / 事件后置 / 测试映射 / 不得补造）+ 追溯到概要 owner + `UNIT-<slug>` 无断链 | SLOT-03/04/05/06/07/08/09/10/14 进入对应类型合同；pending L2 类型须 `L2豁免` 或先补 L2 |
-| 实现 Gate | **trace 四节**齐全（计划 / 执行 / 证据 / 阻塞与偏差）+ 静态检查与测试有命令级证据 | SLOT-09（日志）/ SLOT-14（测试框架 + mock 生成）/ SLOT-15（构建自动化）进入执行与证据节，与 `golden-path.md` §10 自检（SwiftLint + build/test）、§12 门禁映射共同定义实现合规基线；**超出槽位的硬规则（分层依赖律 / FactoryKit DI / Repository 模式）不在此取值、不可被槽位豁免**，见 `golden-path.md` §2 与 `harness/implementation/implementation-ios-standard.md` §1（LOCK-1~7） |
+| 实现 Gate | `implement.md` 计划合同 + mutable evidence 齐全，静态检查与测试有命令级证据 | SLOT-09（日志）/ SLOT-14（测试框架 + mock 生成）/ SLOT-15（构建自动化）进入 `implementation-evidence.jsonl` 与 `verification-evidence.jsonl`，与 `golden-path.md` §10 自检（SwiftLint + build/test）、§12 门禁映射共同定义实现合规基线；**超出槽位的硬规则（分层依赖律 / FactoryKit DI / Repository 模式）不在此取值、不可被槽位豁免**，见 `golden-path.md` §2 与 `harness/implementation/implementation-ios-standard.md` §1（LOCK-1~7） |
 | 审核 | 存量豁免判定：SLOT-16 内记债不阻塞，清单外新增违例阻塞 | SLOT-16 是存量豁免唯一数据源 |
 
 ### 4.2 编号与追溯（机器追溯依据）

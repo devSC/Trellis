@@ -148,14 +148,14 @@ domain-type → data-access → server-action → server-component → client-co
 正例（H5，server-component 链）：✅ `PostPage` 行为 `渲染文章`：① 调 `data-access` 的 `getPostBySlug(slug)`（承接 `BHV-012`）；② 命中 `null` → 调 `notFound()`（承接失败路径 `BHV-013`）；③ 把 `post` 透传给纯展示 `ui-component <Article/>`；④ 导出 `generateMetadata` 写 `title/description`（SEO 标准化）。
 反例：❌ `PostPage`：获取数据、渲染页面、处理 SEO（无调用对象、无失败分支、无 owner、把交互态也塞进 server-component）。
 
-### 4.4 实现：trace 四节（萃取实现类方法须覆盖）
+### 4.4 实现：trace 计划合同与 mutable evidence（萃取实现类方法须覆盖）
 
 1. **计划**（开工前）：任务切片承接 `UNIT-<slug>` + doc_type/文件范围 + 完成信号 + 验证方式；执行顺序按 §0.4 自底向上。
 2. **执行**（随做随记）：实际改动文件清单（相对路径）+ 与计划偏差及原因。
 3. **证据**（验证后）：`tsc --noEmit` / ESLint / Vitest / Playwright 命令 + 测试名级结果；`'use client'` 边界扫描结果；未验证项（如 SSR/CSR 真机表现）显式列出 + 留给哪个环节。
 4. **阻塞与偏差**：上游缺陷回退对应阶段（不就地改设计）；触碰 SLOT-18 存量违例列编号 + 处置；未决决策升级人工 Gate。
 
-> Gate 红线：详细八问缺项 / 追溯断链 / 私有数据进 client / 样式全局污染 / 缺 `error.tsx` 兜底 → 阻塞。trace 四节不全或证据节只写"全部通过" → 不进 commit。
+> Gate 红线：详细八问缺项 / 追溯断链 / 私有数据进 client / 样式全局污染 / 缺 `error.tsx` 兜底 → 阻塞。`implement.md` 计划合同证据链不全或 mutable evidence 只写"全部通过" → 不进 commit。
 
 ---
 

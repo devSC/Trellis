@@ -393,7 +393,7 @@ npx next build              # 生产构建：RSC 边界/序列化/'use client' �
 ### 9.3 详细合同八问（每个 UNIT 详细文档必答）
 1. **doc_type 是什么**（七类裸 token）与 owner 链位置；2. **正向生成动作**（建哪些文件、写什么，引 §对应迷你路径）；3. **依赖边界**（依赖哪些下层 token、禁止依赖哪些，对照 §2.1）；4. **server/client 归属**（是否 `'use client'`、secret 是否涉及）；5. **产物合同**（导出签名 / props 形态 / 返回类型，按 domain-type）；6. **缓存/数据语义**（仅 data-access/server-component/server-action 必答）或 **交互/状态语义**（仅 client-component 必答）；7. **可验证信号**（自检命令 + 期望：tsc 通过、lint 无边界违规、build 无 RSC 序列化报错、对应测试）；8. **好/坏例子 + 不适用场景**（引本文示例；标明何时**不**该用本类）。
 
-### 9.4 实现 trace 四节（实现阶段必填）
+### 9.4 实现 trace 计划合同与 mutable evidence（实现阶段必填）
 1. **变更文件清单**（绝对/仓内路径 → 对应 `UNIT-<slug>` 与 doc_type）；2. **合同对账**（逐条对回 §9.3 八问，特别是 server/client 边界与依赖方向）；3. **门禁结果**（§6 自检命令输出：tsc / lint / build / test 实际结果）；4. **偏差与豁免**（与本文/L2 的偏差，pending 四类的 `l2_status: pending` 豁免在此登记理由）。
 
 ---

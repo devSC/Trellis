@@ -177,7 +177,7 @@
 | SLOT-06 | `repository`/`external` 合同、implementation-review（持久化归属） | `repository` / `external` |
 | SLOT-09 / SLOT-11 / SLOT-12 | hooks（裸 print/裸字符串/硬编码颜色检查）、`view`/`viewmodel` writing | `view` / `viewmodel` |
 | SLOT-08 / SLOT-15 | implementation-writing（待定阻塞判定）、CI 接入评审 | `external` |
-| SLOT-14 | implementation trace 四节（测试章节）、implementation-review | 全部七类 |
+| SLOT-14 | implementation trace 计划合同与 mutable evidence（测试章节）、implementation-review | 全部七类 |
 | SLOT-16 | 所有 review 的存量豁免判定（触碰记债不阻塞 / 新增违例阻塞） | 全部七类 |
 
-> 编号纪律提醒：上游需求行为编号 `BHV-NNN`、详细设计单元编号 `UNIT-<slug>`、doc_type 引用裸 token；下游（implementation trace 四节、Gate 判定）一律以裸 token 回引，不得改写本文件锁定的七类 doc_type 名。
+> 编号纪律提醒：上游需求行为编号 `BHV-NNN`、详细设计单元编号 `UNIT-<slug>`、doc_type 引用裸 token；下游（implementation trace 计划合同与 mutable evidence、Gate 判定）一律以裸 token 回引，不得改写本文件锁定的七类 doc_type 名。

@@ -189,4 +189,4 @@
 | SLOT-15 / SLOT-16 | implementation-review（接口抽象/DIP 方向核查、枚举表达与非法值收口层核查） |
 | SLOT-17 | 所有 review 的存量豁免判定 |
 
-> 下游引用规范：行为引用裸 `BHV-NNN`（prd 标题）、设计单元引用裸 `UNIT-<slug>`（详细设计标题）、槽位引用裸 `SLOT-NN` token，便于 `guru_gate.py` 的结构检查（需求五要素、概要归属表 + 承接索引、详细合同八问、实现 trace 四节）跨文件追踪。
+> 下游引用规范：行为引用裸 `BHV-NNN`（prd 标题）、设计单元引用裸 `UNIT-<slug>`（详细设计标题）、槽位引用裸 `SLOT-NN` token，便于 `guru_gate.py` 的结构检查（需求五要素、概要归属表 + 承接索引、详细合同八问、实现 trace 计划合同与 mutable evidence）跨文件追踪。

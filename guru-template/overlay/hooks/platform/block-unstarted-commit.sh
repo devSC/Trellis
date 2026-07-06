@@ -902,35 +902,279 @@ fi
 cd "$ROOT_DIR" 2>/dev/null || { echo "BLOCKED: cannot enter Guru project root: $ROOT_DIR" >&2; exit 2; }
 [ -f ".trellis/scripts/guru/guru_gate.py" ] || { echo "BLOCKED: Guru commit guard cannot find .trellis/scripts/guru/guru_gate.py" >&2; exit 2; }
 
-# No active Guru task candidate means this hook has nothing to protect.
-# Keep this before check-commit so ordinary commits in freshly installed Guru
-# repos are not blocked just because there is no task yet.
-if ! python3 - <<'PY'
+# Resolve the session-scoped task before invoking check-commit. Calling
+# check-commit without a task_dir can fall back to direct_small_inline when the
+# hook process does not inherit the AI session id.
+TASK_RESOLUTION=$(HOOK_INPUT="$INPUT" COMMAND="$COMMAND" python3 - <<'PY'
 import json
 import os
+import re
+import shlex
 import sys
+from pathlib import Path
+from typing import Optional
 
-tasks_root = os.path.join(".trellis", "tasks")
-if not os.path.isdir(tasks_root):
-    sys.exit(1)
-for name in os.listdir(tasks_root):
-    task_json = os.path.join(tasks_root, name, "task.json")
-    if not os.path.isfile(task_json):
-        continue
+CONTEXT_ENV_KEYS = {
+    "TRELLIS_CONTEXT_ID",
+    "CLAUDE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ID",
+    "CODEX_SESSION_ID",
+    "CODEX_THREAD_ID",
+    "CURSOR_SESSION_ID",
+    "OPENCODE_SESSION_ID",
+    "OPENCODE_SESSIONID",
+    "OPENCODE_RUN_ID",
+    "GEMINI_SESSION_ID",
+    "FACTORY_SESSION_ID",
+    "DROID_SESSION_ID",
+    "QODER_SESSION_ID",
+    "CODEBUDDY_SESSION_ID",
+    "KIRO_SESSION_ID",
+    "COPILOT_SESSION_ID",
+    "COPILOT_SESSIONID",
+    "PI_SESSION_ID",
+    "PI_SESSIONID",
+    "CURSOR_CONVERSATION_ID",
+    "CURSOR_CONVERSATIONID",
+}
+ENV_ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+SEPS = {";", ";;", ";&", ";;&", "&&", "||", "|", "&", ")", ");", "}", "};"}
+GIT_VALUE_OPTIONS = {"-C", "--git-dir", "--work-tree", "--namespace", "-c"}
+ENV_VALUE_OPTIONS = {"-u", "--unset", "-C", "--chdir"}
+
+
+def _tokens(command: str) -> list[str]:
+    lexer = shlex.shlex(command.replace("\\\r\n", " ").replace("\\\n", " "), posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    return list(lexer)
+
+
+def _segments(tokens: list[str]) -> list[list[str]]:
+    segments = []
+    current = []
+    for token in tokens:
+        if token in SEPS:
+            if current:
+                segments.append(current)
+                current = []
+            continue
+        current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _safe_context_value(value: str) -> bool:
+    return bool(value) and len(value) <= 4096 and not any(ch in value for ch in ("\0", "\n", "\r", "$", chr(96)))
+
+
+def _store_context_assignment(token: str, values: dict[str, str]) -> None:
+    match = ENV_ASSIGN_RE.match(token)
+    if not match:
+        return
+    key, value = match.group(1), match.group(2)
+    if key in CONTEXT_ENV_KEYS and _safe_context_value(value):
+        values[key] = value
+
+
+def _skip_command_options(segment: list[str], index: int) -> int:
+    index += 1
+    while index < len(segment) and segment[index] == "-p":
+        index += 1
+    if index < len(segment) and segment[index] in {"-v", "-V"}:
+        return len(segment)
+    return index
+
+
+def _skip_env_options(segment: list[str], index: int) -> int:
+    index += 1
+    while index < len(segment):
+        token = segment[index]
+        if token == "--":
+            return index + 1
+        if token in ENV_VALUE_OPTIONS:
+            index += 2
+            continue
+        if token.startswith("--unset=") or token.startswith("--chdir="):
+            index += 1
+            continue
+        if token in {"-S", "--split-string"} or token.startswith("--split-string="):
+            return len(segment)
+        if token.startswith("-"):
+            index += 1
+            continue
+        break
+    return index
+
+
+def _git_subcommand_is_commit(segment: list[str], index: int) -> bool:
+    index += 1
+    while index < len(segment):
+        token = segment[index]
+        if token in GIT_VALUE_OPTIONS:
+            index += 2
+            continue
+        if token.startswith("--git-dir=") or token.startswith("--work-tree=") or token.startswith("--namespace="):
+            index += 1
+            continue
+        if token.startswith("-c") and len(token) > 2:
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return token == "commit"
+    return False
+
+
+def _safe_context_env_from_command(command: str) -> dict[str, str]:
     try:
-        with open(task_json, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
-        continue
-    if isinstance(data, dict) and data.get("status") in {"planning", "in_progress"}:
-        sys.exit(0)
-sys.exit(1)
+        token_segments = _segments(_tokens(command))
+    except ValueError:
+        return {}
+    for segment in token_segments:
+        values: dict[str, str] = {}
+        index = 0
+        while index < len(segment):
+            token = segment[index]
+            base = os.path.basename(token)
+            if ENV_ASSIGN_RE.match(token):
+                _store_context_assignment(token, values)
+                index += 1
+                continue
+            if base == "command":
+                index = _skip_command_options(segment, index)
+                continue
+            if base == "env":
+                index = _skip_env_options(segment, index)
+                while index < len(segment) and ENV_ASSIGN_RE.match(segment[index]):
+                    _store_context_assignment(segment[index], values)
+                    index += 1
+                continue
+            if base == "git" and _git_subcommand_is_commit(segment, index):
+                return values
+            break
+    return {}
+
+
+def _active_task_candidates() -> list[str]:
+    tasks_root = os.path.join(".trellis", "tasks")
+    if not os.path.isdir(tasks_root):
+        return []
+    candidates = []
+    for name in sorted(os.listdir(tasks_root)):
+        task_json = os.path.join(tasks_root, name, "task.json")
+        if not os.path.isfile(task_json):
+            continue
+        try:
+            with open(task_json, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict) and data.get("status") in {"planning", "in_progress"}:
+            candidates.append(os.path.join(".trellis", "tasks", name))
+    return candidates
+
+
+def _load_hook_input() -> dict:
+    raw = os.environ.get("HOOK_INPUT", "")
+    try:
+        data = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _detect_platform(data: dict) -> Optional[str]:
+    if isinstance(data.get("cursor_version"), str):
+        return "cursor"
+    explicit = data.get("_trellis_platform") or data.get("trellis_platform") or data.get("platform") or data.get("source")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    env_map = (
+        ("CLAUDE_PROJECT_DIR", "claude"),
+        ("CODEX_PROJECT_DIR", "codex"),
+        ("CURSOR_PROJECT_DIR", "cursor"),
+        ("OPENCODE_RUN_ID", "opencode"),
+        ("OPENCODE_SESSION_ID", "opencode"),
+        ("OPENCODE_SESSIONID", "opencode"),
+        ("CODEBUDDY_PROJECT_DIR", "codebuddy"),
+        ("FACTORY_PROJECT_DIR", "droid"),
+        ("DROID_PROJECT_DIR", "droid"),
+        ("GEMINI_PROJECT_DIR", "gemini"),
+        ("QODER_PROJECT_DIR", "qoder"),
+        ("KIRO_PROJECT_DIR", "kiro"),
+        ("COPILOT_PROJECT_DIR", "copilot"),
+        ("PI_SESSION_ID", "pi"),
+        ("PI_SESSIONID", "pi"),
+    )
+    for env_name, platform in env_map:
+        if os.environ.get(env_name):
+            return platform
+    if os.environ.get("CODEX_SESSION_ID") or os.environ.get("CODEX_THREAD_ID"):
+        return "codex"
+    if os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        return "claude"
+    return None
+
+
+try:
+    sys.path.insert(0, str(Path(".trellis/scripts").resolve()))
+    from common.active_task import resolve_active_task
+except Exception as exc:
+    candidates = _active_task_candidates()
+    if candidates:
+        print("unresolved\tactive-task resolver unavailable: " + str(exc))
+    else:
+        print("none\t")
+    raise SystemExit(0)
+
+hook_input = _load_hook_input()
+for key, value in _safe_context_env_from_command(os.environ.get("COMMAND", "")).items():
+    os.environ[key] = value
+active = resolve_active_task(Path.cwd(), platform_input=hook_input, platform=_detect_platform(hook_input))
+if active.task_path and not active.stale:
+    print(f"active\t{active.task_path}")
+    raise SystemExit(0)
+if active.task_path and active.stale:
+    print(f"stale\t{active.task_path}")
+    raise SystemExit(0)
+
+candidates = _active_task_candidates()
+if candidates:
+    suffix = ", ".join(candidates[:5])
+    if len(candidates) > 5:
+        suffix += f", ... (+{len(candidates) - 5} more)"
+    print(f"unresolved\t{suffix}")
+else:
+    print("none\t")
 PY
-then
+)
+
+TASK_STATE=${TASK_RESOLUTION%%$'\t'*}
+TASK_DETAIL=${TASK_RESOLUTION#*$'\t'}
+
+if [ "$TASK_STATE" = "none" ]; then
   exit 0
 fi
+if [ "$TASK_STATE" = "stale" ]; then
+  echo "BLOCKED: Guru commit guard resolved a stale active task: $TASK_DETAIL" >&2
+  echo "Run task.py current --source and refresh or finish the stale Trellis task before committing." >&2
+  exit 2
+fi
+if [ "$TASK_STATE" = "unresolved" ]; then
+  echo "BLOCKED: Guru active task context unavailable for git commit." >&2
+  echo "The commit guard cannot resolve the current Trellis task for this hook process." >&2
+  echo "Active/planning Guru task candidates: $TASK_DETAIL" >&2
+  echo "Ensure the hook JSON, platform session env, or TRELLIS_CONTEXT_ID is available, then rerun git commit." >&2
+  exit 2
+fi
+if [ "$TASK_STATE" != "active" ] || [ -z "$TASK_DETAIL" ]; then
+  echo "BLOCKED: Guru commit guard received an invalid active-task resolution: $TASK_RESOLUTION" >&2
+  exit 2
+fi
 
-if ! python3 .trellis/scripts/guru/guru_gate.py check-commit >&2; then
+if ! python3 .trellis/scripts/guru/guru_gate.py check-commit "$TASK_DETAIL" >&2; then
   echo "BLOCKED: Guru task is not ready to commit." >&2
   echo "Run guru_gate.py status <task-dir>; if START_READY, run task.py start first." >&2
   exit 2

@@ -50,7 +50,7 @@ writing/review skill 与 Gate 在硬前置中按下列**安装后路径**装载�
 | SLOT-04 测试框架 | 标准 `testing`（当前）还是 `testify` / `ginkgo`？表驱动测试约定、mock 生成方式、集成测试是否连真实 DB。 | detail 合同测试映射、implement Gate |
 | SLOT-05 API 风格 | REST + JSON（当前 `net/http` 手写 JSON 编解码）还是 gRPC？路由注册位置（`transport/http/router.go`）、版本前缀、统一错误体形态。 | entry-api、overview 承接索引 |
 | SLOT-06 DB 驱动 / 连接形态 | 驱动包（`lib/pq` / `pgx`）、连接池参数、`*sql.DB` 注入位置、驱动 import 落点（仅 repository/app）。 | config.Load 取值、repository 合同 |
-| SLOT-07 lint / 静态检查 | `golangci-lint` 配置文件路径与启用的 linters 集合、`go vet` / `gofmt` 在 Makefile 的目标名、CI 触发。 | implement Gate 证据节 |
+| SLOT-07 lint / 静态检查 | `golangci-lint` 配置文件路径与启用的 linters 集合、`go vet` / `gofmt` 在 Makefile 的目标名、CI 触发。 | `verification-evidence.jsonl` |
 | SLOT-08 配置加载 | `config.Load()` 文件路径、env 前缀（如 `CONTROL_API_*`）、默认值来源、必填项校验失败行为（fail-fast）。 | config 合同、启动序列检查 |
 | SLOT-09 文档生成 | OpenAPI/Swagger 是否启用（当前无）、契约文档来源（手写 / 注解生成 / `packages/contracts/`）。 | overview 承接索引、API 契约 review |
 | SLOT-10 会话 / 鉴权 | 当前自实现：HMAC-SHA256 签名 cookie + bcrypt 口令哈希，落在 `internal/auth`。是否迁移到标准库/第三方？签名密钥来源、cookie 属性。 | entry-api、合规红线 review |
@@ -82,7 +82,7 @@ writing/review skill 与 Gate 在硬前置中按下列**安装后路径**装载�
 - **需求 Gate（五要素）**：prd.md 需含行为编号（`### BHV-NNN <短名>`）、Given/When/Then 行为规格、P0/P1 优先级、失败路径、验收场景、未决问题六项。约定层的产出（如 SLOT-10 鉴权口径）会成为某些 BHV 的前置条件，但**约定文件本身不写 BHV**。
 - **概要 Gate（归属表 + 承接索引）**：概要产物的行为→owner 归属表逐条引用 BHV 编号 + 三问理由（为什么属于它/不属于别人/是否需独立存在），并给"承接索引"（`chapter_target → doc_type`）。Go 的 `doc_type` 取值集合见 harness（如 `transport` / `service` / `repository` / `domain` / `app` / `config` / `auth` / `api-network` / `db-migration`）。
 - **详细 Gate（合同八问）**：每个设计单元以 `### UNIT-<slug>` 标题定义，合同须显式覆盖：承接行为、输入/输出/错误、读写状态、依赖（遵守分层律）、失败收口（错误如何 `%w` 包装与 `errors.Is` 判定）、事件/后置、测试映射（哪些测试）、不得补造声明。约定槽位以裸编号 token 形式被引用（如"错误转换位置遵循 SLOT-13"）。
-- **实现 Gate（trace 四节）**：implement.md 须含计划（切片挂 `UNIT-<slug>`）、执行（改动文件 + 代码生成记录，如跑 `sqlc generate` 按 SLOT-02）、证据（`go vet` / `golangci-lint` / `go test` 命令与结果，按 SLOT-07 / SLOT-04）、阻塞与偏差（触碰的 SLOT-17 条目编号 + 处置）四节。
+- **实现 Gate（trace 计划合同与 mutable evidence）**：implement.md 须含计划（切片挂 `UNIT-<slug>`）、执行（改动文件 + 代码生成记录，如跑 `sqlc generate` 按 SLOT-02）、证据（`go vet` / `golangci-lint` / `go test` 命令与结果，按 SLOT-07 / SLOT-04）、阻塞与偏差（触碰的 SLOT-17 条目编号 + 处置）四节。
 
 **编号纪律**：行为用 `BHV-NNN`（prd 标题定义，不复用不重排，删除留洞）；设计单元用 `UNIT-<slug>`（详细设计标题定义，语义 slug）；下游引用一律写裸编号 token。约定文件引用槽位时同样写裸 token（`SLOT-NN`），不加链接包裹以便机器解析。
 

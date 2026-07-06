@@ -114,14 +114,14 @@
 - 本项目取值：
 - 代码证据：（`tsconfig.json`、`.eslintrc*`/`eslint.config.*`、`.prettierrc*`、`package.json` scripts）
 - 生效范围：
-- 备注：**生产级补充**——**生产基线强制 `tsconfig.strict:true`**。示例 blog 为 `strict:false`（证据 `next.js/examples/blog/tsconfig.json` 第 7 行 `"strict": false`），**与生产基线冲突，以生产基线为准**。实现 trace 四节要求 `tsc` 无 error 证据，本槽位提供其命令来源。
+- 备注：**生产级补充**——**生产基线强制 `tsconfig.strict:true`**。示例 blog 为 `strict:false`（证据 `next.js/examples/blog/tsconfig.json` 第 7 行 `"strict": false`），**与生产基线冲突，以生产基线为准**。实现 trace 计划合同与 mutable evidence 要求 `tsc` 无 error 证据，本槽位提供其命令来源。
 
 ### SLOT-14 测试约定（Vitest+RTL / Playwright）
 - 决策问题：单元/组件测试用 Vitest + React Testing Library 还是 Jest？E2E 用 Playwright 还是 Cypress？测试目录是否镜像源码结构？`server-component`/`server-action` 如何测（RSC 渲染/直接调用）？
 - 本项目取值：
 - 代码证据：（如 `vitest.config.ts`、`playwright.config.ts`、`__tests__/` 或 `*.test.tsx`）
 - 生效范围：
-- 备注：**生产级补充**——示例 blog 无测试。详细合同八问要求每个设计单元有测试映射、实现 trace 四节要求 test 证据；本槽位提供测试框架、目录约定与 RSC/Action 的测试手法基准。
+- 备注：**生产级补充**——示例 blog 无测试。详细合同八问要求每个设计单元有测试映射、实现 trace 计划合同与 mutable evidence 要求 test 证据；本槽位提供测试框架、目录约定与 RSC/Action 的测试手法基准。
 
 ### SLOT-15 代码生成 / 构建期内容派生脚本
 - 决策问题：构建/部署链路中有哪些自动生成或内容派生步骤（RSS/sitemap/搜索索引/类型生成）？脚本路径、触发命令、与 `next build` 的先后顺序？哪些 agent 禁止自动执行？
@@ -181,10 +181,10 @@
 | SLOT-01 / SLOT-02 / SLOT-16 | hooks（PreToolUse 路径/模式拦截）、概要归属表与承接索引、implementation-review |
 | SLOT-03 / SLOT-04 / SLOT-12 | `data-access` 合同八问、implementation-writing/review |
 | SLOT-05 | `route`/`server-component`/`server-action` 合同（失败路径与错误边界）、implementation-review |
-| SLOT-06 / SLOT-13 | `domain-type` 合同、实现 trace 四节（`tsc` 证据） |
+| SLOT-06 / SLOT-13 | `domain-type` 合同、实现 trace 计划合同与 mutable evidence（`tsc` 证据） |
 | SLOT-07 / SLOT-08 / SLOT-09 / SLOT-10 | `client-component`/`ui-component` 合同、样式/图像合规检查 |
 | SLOT-11 | `server-action`/`route`/`server-component` 鉴权合同、安全合规检查 |
-| SLOT-14 | 详细合同八问的测试映射、实现 trace 四节（test 证据） |
+| SLOT-14 | 详细合同八问的测试映射、实现 trace 计划合同与 mutable evidence（test 证据） |
 | SLOT-15 / SLOT-17 | hooks（脚本执行拦截）、`route` 的 metadata/SEO 合同、构建链检查 |
 | SLOT-18 | 所有 review 的存量豁免判定 |
 

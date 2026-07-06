@@ -172,7 +172,7 @@
 
 ---
 
-## 6. 实现 trace 四节（implementation-trace 承接）
+## 6. 实现 trace 计划合同与 mutable evidence（implementation-trace 承接）
 
 进入编码后，本类型在 `.trellis/spec/harness/implementation/implementation-trace-contract.md` 约束下逐 UNIT 回填四节：
 

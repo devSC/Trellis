@@ -136,7 +136,7 @@ light 链执行 WX-3/WX-4/WX-5/WX-6 的等价检查（索引在 `design.md` §1�
 - `未决问题与升级项`（如有，按强制约束 17 四类分类）
 - `下一目标推荐`：下一批建议与剩余目标清单
 
-全目录完成时追加：`完成判定`（L1 §5.5 / §8 G1~G8）+ `实现 trace 四节`指引（L1 §7：承接 trace / 依赖 trace / 边界 trace / 测试 trace）+ 送审与人工确认指引（强制约束 18）。
+全目录完成时追加：`完成判定`（L1 §5.5 / §8 G1~G8）+ `实现 trace 计划合同与 mutable evidence`指引（L1 §7：承接 trace / 依赖 trace / 边界 trace / 测试 trace）+ 送审与人工确认指引（强制约束 18）。
 
 前置失败输出：`writing_stage=draft_requires_overview_fix` + `draft_blockers`（缺口清单）+ `recommended_next_step`（概要修订动作），**不产出正文**。
 

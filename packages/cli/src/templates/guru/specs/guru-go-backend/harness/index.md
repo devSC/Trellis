@@ -98,10 +98,10 @@ Guru Gate、review_runs 证据、confirm 快照、累积 digest 与失配恢复�
 
 ### Gate 4 — 实现（`guru_gate.py implement`）
 
-trace 四节不全、切片未挂 UNIT、analyze/test/lints/compliance 任一无证据 → 不进 commit。脚本判定项：
+计划合同或 mutable evidence 不全、切片未挂 UNIT、analyze/test/lints/compliance 任一无证据 → 不进 commit。脚本判定项：
 
 - `implement.md` 不存在。
-- trace 四节缺任一：计划节（`计划` / `切片`）、执行节（`执行` / `改动文件`）、证据节（`证据` / `analyze` / `test`）、阻塞与偏差节（`阻塞` / `偏差`）。
+- 计划合同或 mutable evidence 缺任一：`implement.md` 计划节（`计划` / `切片`）、`implementation-evidence.jsonl` 执行/阻塞偏差记录、`verification-evidence.jsonl` 证据记录（`analyze` / `test`）。
 - 实现切片未引用任何 `UNIT-<slug>` 编号（切片必须挂设计单元）。
 - 切片引用幽灵单元（详细设计无此 UNIT）。
 - 项目级证据（由 worktree.yaml 其余 verify 条目执行）：`go build ./...` / `go vet ./...` / `golangci-lint run` / `go test ./...`（测试名级别，不只写「全部通过」）；config/secret 合规（密钥只写环境变量名引用，不落真实 key）。

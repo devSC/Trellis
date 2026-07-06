@@ -85,7 +85,7 @@ guru-ios-native/
 | `harness/detail/detail-type-viewmodel.md`（L2） | 详细 | `viewmodel` 类型特化：`ObservableObject`+`@Published` 三态（loading/数据/error）状态机；`@Injected` 注入 usecase 接口；只读暴露、不回写业务态；导航交 coordinator | viewmodel 章节八问 + 状态转移 + 订阅生命周期 | 命中 viewmodel 单元时 |
 | `harness/detail/detail-type-usecase.md`（L2） | 详细 | `usecase` 类型特化：Domain 业务编排，零 UI / 零具体实现依赖；协议签名级接口；`AsyncStream` 流 seed/时序；本域 `enum Error` 收口；`actor` 管可变共享状态；**测试密度最高层** | usecase 章节八问 + 状态写 owner 唯一 + 流生命周期闭合 | 命中 usecase 单元时 |
 | `harness/detail/detail-type-repository.md`（L2） | 详细 | `repository` 类型特化（**接口+实现合并一类**）：`IXxxRepository` 在 Domain（零依赖）、实现在 Infrastructure；WCDBSwift 持久化；底层异常→本域 `enum Error` 映射表（细到 `WCDBError.code`）；多写包**事务**；返回域模型不泄漏 Object | repository 章节八问 + 错误映射表 + 事务边界 + mapper 归属 | 命中 repository 单元时 |
-| `harness/implementation/implementation-trace-contract.md` | 实现 | **追踪合同**：trace 四节骨架——**计划**（切片承接 UNIT + doc_type + 文件范围 + 完成信号 + 验证方式，自底向上排序）/ **执行**（实际改动 + 偏差原因 + DI 装配登记 + 平台约定落地点）/ **证据**（命令 + 测试名级结果 + SwiftLint）/ **阻塞偏差**（上游缺陷回退 / 存量违例处置 / 未决升级） | 切片承接 `UNIT-<slug>` 无幽灵引用 + 命令级证据 | 实现期随做随记 |
+| `harness/implementation/implementation-trace-contract.md` | 实现 | **追踪合同**：`implement.md` 计划合同与 mutable evidence 边界——**计划**（切片承接 UNIT + doc_type + 文件范围 + 完成信号 + 验证方式，自底向上排序）/ **执行**（实际改动 + 偏差原因 + DI 装配登记 + 平台约定落地点）/ **证据**（命令 + 测试名级结果 + SwiftLint）/ **阻塞偏差**（上游缺陷回退 / 存量违例处置 / 未决升级） | 切片承接 `UNIT-<slug>` 无幽灵引用 + 命令级证据 | 计划进 detail digest；post-detail 写 mutable evidence |
 | `harness/implementation/implementation-ios-standard.md`（L1） | 实现 | **L1 编码标准与审核基线**（同源被代码编写与实现审核引用）：golden-path 锁定项 LOCK-1~7（DDD 分层依赖律 / FactoryKit DI / Repository 模式 / `enum Error` 分层 / WCDBSwift 持久化 / `ObservableObject`+`@Published`+Coordinator 导航 / `private extension`，均不可豁免）+ doc_type 权威七类 + 可编码合同八问 + 实现顺序（自底向上 Phase 0~6）+ 实现 Gate（编译/测试名级/SwiftLint 证据）+ 测试边界 allowlist + 存量豁免口径 | LOCK-1~7 零违反 + 合同八项有代码锚点或 `blocked` 依据 + 命令级证据 | 实现期与 trace-contract 同读 |
 | `harness/extraction-template.md` | 反向 | 从存量代码反向萃取设计单元（补建缺失的概要/详细文档时用） | — | 给存量补文档时 |
 
@@ -104,7 +104,7 @@ guru-client workflow 的每个阶段从本库装载规则（装载路径=安装�
 详细(design §详细)   ← .trellis/spec/harness/detail/detail-structure-single-source.md（L1）
                        + 命中类型的 .trellis/spec/harness/detail/detail-type-{viewmodel,usecase,repository}.md（L2）
 实现(implement)      ← .trellis/spec/guides/golden-path.md
-                       + .trellis/spec/harness/implementation/implementation-trace-contract.md（trace 四节）
+                       + .trellis/spec/harness/implementation/implementation-trace-contract.md（trace 计划合同与 mutable evidence）
 审核(check)          ← 各 SSOT 审核基线章节 + .trellis/spec/conventions/project-conventions.md 的 SLOT-16 存量豁免
 ```
 
@@ -179,7 +179,7 @@ domain-model  →  repository  →  usecase  →  viewmodel  →  view + coordin
 | **G-需求** | 需求 | **需求五要素**齐全：每条 `BHV-NNN` 行为有 前置条件 / 触发 / 状态变化 / 失败路径 / 验收场景；行为粒度可直接实现、有触发者与候选 owner、链路无断链、同文档粒度一致 | 缺要素回需求阶段补；禁下游补造业务规则 |
 | **G-概要** | 概要 | **归属判定表**（每行为唯一 owner 层 + 三问理由，无分层依赖律违例）+ **承接索引**（`chapter_target → detail_doc_type` 覆盖全部 owner，full 链逐条落 `chapters/<slug>.md`）+ **架构总览六件套**（一句话架构 / 分层图 / 页面流图或 N/A / 核心 UC 表 / UC 承接表 / 时序图策略表，图中组件与归属表一致）+ `technology_decision_handoff[]` 字段完整、无「未选定但已被下游引用」 | 归属错/名词倒推/索引脱节 → 重做对应章节；上游缺陷回需求 |
 | **G-详细** | 详细 | **合同八问**逐 `UNIT-<slug>` 完整（承接 BHV / 输入输出错误 / 读写状态 / 依赖正反面 / 失败收口 / 事件后置 / 测试映射 / 不得补造）+ 追溯到概要 owner + `BHV-NNN`/`UNIT-<slug>` 无断链；命中类型对齐其 L2；**pending L2 类型须 `L2豁免` 声明或先补 L2**；doc_type 纯净（七类内、无串台） | 八问缺项/越界补造 → 回 chapter_loop 审修；doc_type 串台 → 改回七类 |
-| **G-实现** | 实现 | **trace 四节**齐全（计划/执行/证据/阻塞偏差，无空章节、无 TODO）+ 切片承接 UNIT 无幽灵引用、文件范围落在该 doc_type owner 层 + **命令级证据**（编译 + 测试名级结果 + SwiftLint，无「全部通过」式空证据）+ golden-path 锁定项逐项落地（H1~H10）+ 分层依赖律零违反 + DI 装配闭合（新增单元在 `Container+*.swift` 有 `Factory` 注册、`@Injected` 可解析） | 任一不满足不进 commit；结构性缺陷回拥有该决策的阶段，禁下游就地改设计 |
+| **G-实现** | 实现 | **trace 计划合同与 mutable evidence 齐全**（计划/执行/证据/阻塞偏差，无空记录、无 TODO）+ 切片承接 UNIT 无幽灵引用、文件范围落在该 doc_type owner 层 + **命令级证据**（编译 + 测试名级结果 + SwiftLint，无「全部通过」式空证据）+ golden-path 锁定项逐项落地（H1~H10）+ 分层依赖律零违反 + DI 装配闭合（新增单元在 `Container+*.swift` 有 `Factory` 注册、`@Injected` 可解析） | 任一不满足不进 commit；结构性缺陷回拥有该决策的阶段，禁下游就地改设计 |
 | **G-审核** | 审核 | 先证据后结论（每 finding 带章节锚点/缺失对象）；severity 分级 P1（违硬约束/Gate 项缺失，阻塞）/ P2（理由不足、索引不全、图表不一致）/ P3（表述建议）；**存量豁免**仅适用实现期代码违例——SLOT-16 清单内触碰记债不阻塞、清单外新增违例阻塞；概要/详细文档本身无存量豁免 | 局部修订（补行为/理由/索引/图）就地改；结构性错误（owner 大面积错位、名词倒推、口径分裂）重做章节 |
 
 > Gate 互斥分支：前置失败只输出前置缺口与修复动作，不展开逐章判定；前置通过才逐条 findings + 结构概况 + 互斥结论。缺陷只能回上游修——审核发现 doc_type 串台、归属错、合同越界，回到拥有该决策的阶段修订，禁止在下游补造。

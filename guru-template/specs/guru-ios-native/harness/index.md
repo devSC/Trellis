@@ -31,7 +31,7 @@
 | 需求 | 正式需求包（requirement-writing 撰写 + requirement-review 门禁）+ `prd.md` 行为规格抽取 / 仅 `prd.md` | guru-ai-guides `requirement-writing`、`requirement-review` skill 及其标准包 `requirement-doc-standard`（**硬前置：未安装即停**）；jsonl 引用安装路径 |
 | 概要设计 | `design_package/design-main.md`（含归属判定表 + `chapter_target → ios doc_type` 承接索引 + `technology_decision_handoff[]`）/ `design.md` §概要 | `.trellis/spec/harness/overview/overview-structure-single-source.md` |
 | 详细设计 | `design_package/chapters/*.md`（逐章）/ `design.md` §详细 | `.trellis/spec/harness/detail/detail-structure-single-source.md` + 涉及类型的 §3 七类 L2（v1 提供 `detail-type-viewmodel.md` / `detail-type-usecase.md` / `detail-type-repository.md`；其余四类 `domain-model / view / coordinator / external` 为 pending） |
-| 实现 | Swift 代码 + `implement.md`（trace 四节）/ 同 | `.trellis/spec/guides/golden-path.md` + `.trellis/spec/harness/implementation/implementation-trace-contract.md`（追踪合同：trace 四节）+ `.trellis/spec/harness/implementation/implementation-ios-standard.md`（L1 编码标准：golden-path 锁定项 LOCK-1~7 / doc_type 权威七类 / 可编码合同八问基线）。两文件职责分工：**trace-contract = 追踪合同**（钉 `implement.md` 四节骨架与切片挂 `UNIT` 编号）；**ios-standard = 编码标准与审核基线**（钉 LOCK 锁定项、合同八问、实现 Gate 与存量豁免口径），同源被代码编写与实现审核引用 |
+| 实现 | Swift 代码 + `implement.md`（trace 计划合同与 mutable evidence）/ 同 | `.trellis/spec/guides/golden-path.md` + `.trellis/spec/harness/implementation/implementation-trace-contract.md`（追踪合同：trace 计划合同与 mutable evidence）+ `.trellis/spec/harness/implementation/implementation-ios-standard.md`（L1 编码标准：golden-path 锁定项 LOCK-1~7 / doc_type 权威七类 / 可编码合同八问基线）。两文件职责分工：**trace-contract = 追踪合同**（钉 `implement.md` 计划合同、mutable evidence 边界与切片挂 `UNIT` 编号）；**ios-standard = 编码标准与审核基线**（钉 LOCK 锁定项、合同八问、实现 Gate 与存量豁免口径），同源被代码编写与实现审核引用 |
 | 审核 / 复盘 | findings + spec 回写 / 同 | 各 SSOT 审核基线章节 + `.trellis/spec/harness/extraction-template.md` |
 
 Guru Gate、review_runs 证据、confirm 快照、累积 digest 与失配恢复流程见 `.trellis/spec/harness/gate/gate-confirmation-model.md`。摘要：requirements 结构通过后先运行 opposite-provider adversarial requirements review，clean/requirements-ready 后由用户确认；overview/detail 由当前 digest 下两个不同 run-id 的 clean review 记录驱动；detail 双 clean 后再由用户确认。
@@ -112,11 +112,11 @@ Guru Gate、review_runs 证据、confirm 快照、累积 digest 与失配恢复�
 
 写作顺序（自底向上）：`domain-model` → `repository` → `usecase` → `viewmodel` → `view` + `coordinator`/`external` 横切。full 链每批 1~3 章，生成后立即自动 review，无未修复 finding 才记 `chapter_status=passed_by_method_evidence`。
 
-### 4.4 实现：trace 四节
+### 4.4 实现：trace 计划合同与 mutable evidence
 
-实现阶段装载两份 SSOT，职责分工：`.trellis/spec/harness/implementation/implementation-trace-contract.md`（**追踪合同**，钉本节四节骨架与切片挂 `UNIT` 编号）+ `.trellis/spec/harness/implementation/implementation-ios-standard.md`（**L1 编码标准**，钉 golden-path 锁定项 LOCK-1~7、doc_type 权威七类、可编码合同八问与编码合同基线，同源被代码编写与实现审核引用）。
+实现阶段装载两份 SSOT，职责分工：`.trellis/spec/harness/implementation/implementation-trace-contract.md`（**追踪合同**，钉 `implement.md` 计划合同、mutable evidence 边界与切片挂 `UNIT` 编号）+ `.trellis/spec/harness/implementation/implementation-ios-standard.md`（**L1 编码标准**，钉 golden-path 锁定项 LOCK-1~7、doc_type 权威七类、可编码合同八问与编码合同基线，同源被代码编写与实现审核引用）。
 
-`implement.md` 必含四节，切片挂 `UNIT` 编号（`slice_ghost_unit` 拦截幽灵单元）：
+`implement.md` 必含计划合同，mutable evidence 必含执行/验证/阻塞偏差记录；切片挂 `UNIT` 编号（`slice_ghost_unit` 拦截幽灵单元）：
 
 1. **计划**：每片承接 `UNIT-<slug>` + doc_type/文件范围 + 完成信号 + 验证方式；执行顺序按依赖自底向上。
 2. **执行**：实际改动文件清单（相对路径）+ 与计划偏差原因 + 代码生成记录（Mockolo 生成 mock 等，按 `[SLOT-mock]`）。
@@ -160,7 +160,7 @@ iOS 平台必须在目标仓库 `project-conventions.md` 填齐以下槽位（�
 - **需求 Gate**（`requirements`）：缺行为编号（`BHV-NNN` 标题）/ 缺行为规格（Given/When/Then 三段式）/ 缺核心能力清单（P0/P1 标记）/ 缺失败路径章 / 缺验收场景章 / 缺未决问题章（无未决也须显式声明）→ 任一缺即不进概要。**iOS 五要素**：行为 + 前置条件 + 状态变化 + 失败路径 + 验收场景。
 - **概要 Gate**（`overview`）：缺行为→owner 归属表 / 归属表未引用 BHV 编号（追溯断点）/ 归属表缺三问理由 / 缺承接索引（`chapter_target → ios doc_type`）/ full 链承接索引未落 `chapters/<file>.md`；语义层另查归属违反 Domain→App→Infrastructure→UI 单向律（违反直接 fail）、状态非唯一写 owner、架构总览六件套缺项 → 任一缺即不进详细。
 - **详细 Gate**（`detail`）：缺 `UNIT-<slug>` 编号 / 缺承接行为（八问之1）/ 缺失败收口（八问之5）/ 缺测试映射（八问之7）/ 缺不得补造声明（八问之8）/ `implement.md`（trace §1 计划）不存在 / 单元引用幽灵行为（`unit_ghost_bhv`）/ 行为无设计单元承接（`bhv_no_unit`）；full 链另查设计包骨架 + 章节闭合（索引↔`chapters/` 双向）+ pending L2 豁免（`domain-model/view/coordinator/external` 命中无 `L2豁免` → 拦截）→ 任一缺即不进实现。
-- **实现 Gate**（`implement`）：`implement.md` trace 四节齐全（计划/切片 · 执行/改动文件 · 证据/analyze·test · 阻塞/偏差）/ 切片挂 `UNIT` 编号 / 无幽灵单元（`slice_ghost_unit`）；项目级 `swift build`/SwiftLint/test/compliance 由 worktree.yaml 其余 verify 条目执行，任一无证据 → 不进 commit。
+- **实现 Gate**（`implement`）：`implement.md` 计划合同齐全（计划/切片）+ mutable evidence 齐全（执行/改动文件 · 证据/analyze·test · 阻塞/偏差）/ 切片挂 `UNIT` 编号 / 无幽灵单元（`slice_ghost_unit`）；项目级 `swift build`/SwiftLint/test/compliance 由 worktree.yaml 其余 verify 条目执行，任一无证据 → 不进 commit。
 - **审核 / 复盘 Gate**：存量豁免判定（SLOT-16 内记债不阻塞；清单外新增违例阻塞）；设计文档本身无存量豁免（新文档全量合规）。复盘按 `extraction-template.md` 九段萃取，只沉淀"这类任务如何被做好"，不沉淀本次需求事实。
 
 **追溯与缺陷回流**：`guru_gate.py trace-matrix <task_dir> --write` 生成追溯矩阵，`--strict` 在断链时 exit 2。缺陷只能回上游修——审核发现归属错/合同越界，回到拥有该决策的阶段修订，禁止下游补造。

@@ -1,7 +1,7 @@
 # implementation-trace 合同（Guru H5 / Next.js Web）
 
-> 实现阶段的过程记录合同。trace 是实现 Gate 的证据载体——交付判定看的不是"做完感"，而是"证据感"：每条改动都能追溯到设计单元、每个完成信号都有可复现的命令输出。
-> 建议路径：目标仓库 `docs/design/<feature>/implementation-trace.md`，随实现推进**持续更新**（禁止 PR 前一次性补写）。
+> `implement.md` / implementation-trace 是 detail Gate 的 digest-bearing planning contract。交付判定看的不是"做完感"，而是"证据感"：每条改动都能追溯到设计单元、每个完成信号都有可复现的命令输出。
+> 建议路径：目标仓库 `docs/design/<feature>/implementation-trace.md`。detail 确认后的执行、验证、packet、review、commit 证据写入 task-local mutable evidence：`implementation-evidence.jsonl`、`verification-evidence.jsonl`、`review-records/implementation-reviews.jsonl`、`commit-plan.json`；若必须修改已确认 trace，必须回退 detail Gate 并重新 review/confirm。
 > 平台基线：Next.js（App Router 生产形态为目标）+ React + TypeScript(strict)。参考示例 `/Users/devSC/Documents/MyProject/next.js/examples/blog` 是 Pages Router + Nextra + MDX + gray-matter 的轻量 blog starter（故意简化），本合同的 golden-path 以 **App Router 生产最佳实践**为准，把该示例作为**内容模型基线**，并在涉及之处明确区分 "next.js blog 示例实证" 与 "App Router 生产级补充"。
 > 层级契约：本文承载实现 trace 的过程记录规则与 Gate 判定口径；与详细设计合同（L1/L2）冲突时以详细设计为准——本文不重定义 doc_type、不重定义分层依赖律，只规定"实现如何留证"。
 
@@ -42,7 +42,7 @@ v1 的 L2（render/interactive/data 三元组，对应 flutter 的 controller/us
 
 ## 1. 计划（开工前写）
 
-开工前把任务拆成切片并登记，**每片小到可独立 review**。切片落表，证据节回填时逐片对应。
+开工前把任务拆成切片并登记，**每片小到可独立 review**。切片落表，post-detail mutable evidence 回填时逐片对应。
 
 | 字段 | 要求 |
 |------|------|
@@ -84,9 +84,9 @@ v1 的 L2（render/interactive/data 三元组，对应 flutter 的 controller/us
 
 ---
 
-## 2. 执行（随做随记）
+## 2. 执行（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
 
-每个切片完成时即时记录（禁止事后补写）：
+每个切片完成时即时记录下列字段（禁止事后补写）：
 
 - **实际改动文件清单**（相对路径，逐个列）。
 - **与计划的偏差**：改了计划外文件 / 没改计划内文件 → **必须写原因**。H5 常见偏差与必记原因：
@@ -100,9 +100,9 @@ v1 的 L2（render/interactive/data 三元组，对应 flutter 的 controller/us
 
 ---
 
-## 3. 证据（验证后记）
+## 3. 证据（字段合同，post-detail 记录进 `verification-evidence.jsonl`）
 
-证据节是 Gate 取证的核心。**只写"全部通过"无效**——必须给命令、给关键输出、给测试名。所有切片的完成信号都要在此回填为可复现命令。
+`verification-evidence.jsonl` 是 Gate 取证的核心。**只写"全部通过"无效**——必须给命令、给关键输出、给测试名。所有切片的完成信号都要在此回填为可复现命令。
 
 | 类型 | 命令（统一口径） | 要求 |
 |------|------|------|
@@ -113,7 +113,7 @@ v1 的 L2（render/interactive/data 三元组，对应 flutter 的 controller/us
 
 ### 3.1 切片粒度的测试挂载（UNIT → 测试）
 
-每个 `UNIT-<slug>` 的测试在证据节挂 **`UNIT`** 标识（与详细设计合同八问第 7 问"哪些测试验证它"对齐），并标注测试分层。H5 测试分层与 doc_type 的对应：
+每个 `UNIT-<slug>` 的测试在 `verification-evidence.jsonl` 挂 **`UNIT`** 标识（与详细设计合同八问第 7 问"哪些测试验证它"对齐），并标注测试分层。H5 测试分层与 doc_type 的对应：
 
 | doc_type | 主测试手段（项目约定槽位见 §6） | 测试分层标记 |
 |----------|------|------|
@@ -125,7 +125,7 @@ v1 的 L2（render/interactive/data 三元组，对应 flutter 的 controller/us
 | `ui-component` | 纯展示快照/可访问性（RTL） | UNIT |
 | `route` | 段约定与 metadata（`generateMetadata` 返回、错误边界存在性）；端到端归 Playwright | UNIT（段单元）/ E2E（标注留给 Playwright 环节） |
 
-证据节模板（逐切片）：
+`verification-evidence.jsonl` 模板（逐切片）：
 
 ```
 [UNIT-posts-data-access] data-access
@@ -152,7 +152,7 @@ v1 的 L2（render/interactive/data 三元组，对应 flutter 的 controller/us
 
 ## 4. 阻塞与偏差（发生时记）
 
-- **上游缺陷**：详细设计合同错/漏（八问缺项、归属违反分层依赖律、UNIT 追溯不到概要 owner、server/client 归属判错）→ 记录后**回退详细阶段修订**，不在实现阶段就地改设计（trace 里留回退记录：回退到哪个文件、改了什么、Gate 重过的状态）。
+- **上游缺陷**：详细设计合同错/漏（八问缺项、归属违反分层依赖律、UNIT 追溯不到概要 owner、server/client 归属判错）→ 记录后**回退详细阶段修订**，不在实现阶段就地改设计（`implementation-evidence.jsonl` 留回退记录：回退到哪个文件、改了什么、Gate 重过的状态）。
 - **pending L2 触碰**：切片落在 `route` / `ui-component` / `domain-type` / `server-action`（v1 无 L2）且 L1 八问展开不足以指导实现 → 不私自补造 L2，记录缺口并升级（full 链须先有 `L2豁免` 声明或先补 L2）。
 - **存量违例触碰**：列出触碰的存量违例条目编号 + 处置（绕行 / 顺手修复 / 记债）。H5 常见存量违例：全局 CSS 污染、Pages Router 残留与 App Router 混存、过大的 `'use client'` 边界、未隔离的 secret 读取。
 - **未决决策**：实现中冒出的新决策点（如内容源从 MDX 切到 CMS、状态管理引入 Zustand、是否启用 ISR）→ **不私自拍板**，记录并升级给人工 Gate。决策落定后回写到详细设计 / 项目约定，再继续实现。
@@ -178,7 +178,7 @@ v1 的 L2（render/interactive/data 三元组，对应 flutter 的 controller/us
 
 ## 6. 项目约定槽位（project-conventions，trace 引用）
 
-trace 的命令与判定依赖项目约定的实际取值。开工前在 `.trellis/spec/conventions/project-conventions.md` 确认下列槽位，证据节命令以约定取值为准（下方为槽位与本合同默认口径）：
+trace 的命令与判定依赖项目约定的实际取值。开工前在 `.trellis/spec/conventions/project-conventions.md` 确认下列槽位，`verification-evidence.jsonl` 命令以约定取值为准（下方为槽位与本合同默认口径）：
 
 | 槽位 | 说明 / 本合同默认 |
 |------|------|
@@ -200,7 +200,7 @@ trace 的命令与判定依赖项目约定的实际取值。开工前在 `.trell
 
 实现 Gate 通过的充要条件，任一不满足即"不进 commit"：
 
-1. **trace 四节齐全**：§1 计划 / §2 执行 / §3 证据 / §4 阻塞与偏差均非空且实质（无 TODO/占位/空章节）。
+1. **计划合同与 mutable evidence 齐全**：`implement.md` §1 计划、`implementation-evidence.jsonl` 执行/阻塞偏差、`verification-evidence.jsonl` 证据均非空且实质（无 TODO/占位/空记录）。
 2. **证据可复现**：`tsc --noEmit`（strict，0 error）、`next build`（成功 + route 形态对照）、`eslint`（0 error）、`vitest run`（测试名级别，成功 + 全部失败路径）四类证据齐备且有命令与输出；只写"通过"判 fail。
 3. **切片挂 UNIT 闭合**：每个切片挂裸 `UNIT-<slug>` 且 trace-matrix 无断链；幽灵引用 / 无承接行为 fail。
 4. **分层依赖律未违反**：server/client 边界正确（私有数据/secret 不入 `client-component`）、`'use client'` 最小化、`route → server-component → data-access → domain-type` 与交互链/变更链无反向。
@@ -210,7 +210,7 @@ trace 的命令与判定依赖项目约定的实际取值。开工前在 `.trell
 ### 反模式（命中即 fail）
 
 - ❌ trace 在 PR 前一次性补写（失去过程证据意义）。
-- ❌ 证据节只写"全部通过"（无命令、无测试名、无 route 形态对照）。
+- ❌ mutable evidence 只写"全部通过"（无命令、无测试名、无 route 形态对照）。
 - ❌ 偏差不记录，PR diff 与计划对不上靠 reviewer 自己发现。
 - ❌ 为过 `tsc` 临时关 `strict` 或撒 `// @ts-ignore`、`any` 绕过类型（不记入偏差）。
 - ❌ 把私有数据获取 / secret 写进 `'use client'` 组件（边界泄露）。

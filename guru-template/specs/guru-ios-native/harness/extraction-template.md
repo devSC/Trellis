@@ -79,7 +79,7 @@ kebab-case 方法名，体现"一类 iOS 任务"而非组件名。动词或动�
 - **若方法影响需求阶段产出** → 产物须含行为五要素：行为（`BHV-NNN` 标题）/ 前置条件 / 状态变化 / 失败路径 / 验收场景。
 - **若方法影响概要阶段产出** → 产物须含归属判定表（行为 → owner 层 → 三问理由）+ 详细设计承接索引（`chapter_target → detail_doc_type`），owner 取 UI / App / Domain / Infrastructure，`detail_doc_type` 取七类之一，且每个 owner 被至少一个索引条目覆盖。
 - **若方法影响详细阶段产出** → 产物须满足合同八问（承接哪些 `BHV` / 输入·输出·错误 / 读写哪些状态（含 `@Published`）/ 调用与不调用哪些依赖（含 `@Injected` 的协议）/ 失败如何收口（哪个 `enum Error`、向上如何映射）/ 产生哪些事件后置（导航 / 通知 / 持久化副作用）/ 哪些测试验证 / 哪些不得补造），单元以 `UNIT-<slug>` 标题定义；`l2_status` 标注 `full` 或 `pending`。
-- **若方法影响实现阶段产出** → 产物须落实现 trace 四节：计划（切片承接 `UNIT`、自底向上执行顺序、风险点）/ 执行（实际改动文件、与计划偏差、代码生成记录）/ 证据（`xcodebuild build` 或 Fastlane 脚本、测试命令与测试名级结果、未验证项）/ 阻塞与偏差（上游缺陷回退、存量违例处置、未决决策升级）。
+- **若方法影响实现阶段产出** → 产物须落实现 trace 计划合同与 mutable evidence：计划（切片承接 `UNIT`、自底向上执行顺序、风险点）/ 执行（实际改动文件、与计划偏差、代码生成记录）/ 证据（`xcodebuild build` 或 Fastlane 脚本、测试命令与测试名级结果、未验证项）/ 阻塞与偏差（上游缺陷回退、存量违例处置、未决决策升级）。
 - **Swift 代码骨架合同**（涉及代码生成的方法必含）：接口 / 实现的 doc_type 归属（接口在 `Domain`、实现在 `Infrastructure`）；依赖是否经 `@Injected`（禁手动 `init`）；错误是否走分层 `enum Error` 并定义向上映射；ViewModel 是否 `ObservableObject` + `@Published`、私有方法是否在 `private extension`；持久化是否 WCDBSwift；`Domain` 是否零依赖。
 
 ### 7. 可验证信号

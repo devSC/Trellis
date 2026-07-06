@@ -188,9 +188,9 @@ domain-type → data-access → server-action → server-component → client-co
 | **需求 Gate** | 需求五要素齐全：行为 / 前置条件 / 状态变化 / 失败路径 / 验收场景 | 缺任一要素 → 不进概要 |
 | **概要 Gate** | 行为有唯一 owner + 三问理由（为什么属于它/为什么不属别人/为什么独立存在）；归属符合分层依赖律；承接索引非空且覆盖全部 owner，`detail_doc_type` 取值落在七类内；架构总览（一句话架构 + 分层图 + 页面流 + UC 表 + UC 承接表 + 时序图策略）齐全 | 无唯一 owner、归属违反分层律（如 client-component 持数据获取）、承接索引缺失、`detail_doc_type` 用了七类外的名 → 不进详细 |
 | **详细 Gate** | 合同八问无缺项；追溯到概要 owner；每行为有测试映射（成功 + 全部失败路径）；涉鉴权/私有数据/secret 的单元附合规与边界依据；八问之 8 逐单元存在；full 链章节闭合（索引↔chapters 双向）+ pending L2 命中项豁免齐全 | 合同八问缺项、追溯断链、无测试映射、client-component 直取私有数据/读 secret、secret 落文档、`l2_status: pending` 无豁免 → 不进实现 |
-| **实现 Gate** | trace 四节齐全（计划 / 执行 / 证据 / 阻塞偏差）；analyze（`tsc --noEmit`）/ test（Vitest+RTL/Playwright，测试名级）/ lint（ESLint+Prettier）/ 边界合规 均有证据 | 任一无证据、trace 四节不全、`'use client'` 滥用、全局样式污染、`any` 兜底 → 不进 commit |
+| **实现 Gate** | `implement.md` 计划合同齐全；mutable evidence 中执行 / 证据 / 阻塞偏差、analyze（`tsc --noEmit`）/ test（Vitest+RTL/Playwright，测试名级）/ lint（ESLint+Prettier）/ 边界合规 均有证据 | 任一无证据、计划合同或 mutable evidence 不全、`'use client'` 滥用、全局样式污染、`any` 兜底 → 不进 commit |
 | **审核 / 复盘 Gate** | 存量豁免判定：清单内（SLOT-18）记债不阻塞；清单外新增违例阻塞；findings 带文档/章节锚点；缺陷回上游修 | 清单外新增违例、就地补造掩盖上游缺陷 → 阻塞 |
 
-**实现 trace 四节**（实现 Gate 证据载体，对标 `implementation-trace-contract.md`）：① 计划（任务切片 → `UNIT-<slug>` + doc_type/文件范围/完成信号/验证方式，按写作顺序自底向上）；② 执行（实际改动文件清单 + 与计划偏差 + 原因）；③ 证据（`tsc --noEmit`/lint/测试命令与结果，测试名级；未验证项显式列出留给 Manual QA）；④ 阻塞与偏差（上游缺陷回退详细阶段、SLOT-18 存量违例处置、未决决策升级人工，不私自拍板）。
+**实现 trace 计划合同与 mutable evidence**（实现 Gate 证据链，对标 `implementation-trace-contract.md`）：① 计划（`implement.md`，任务切片 → `UNIT-<slug>` + doc_type/文件范围/完成信号/验证方式，按写作顺序自底向上）；② 执行（`implementation-evidence.jsonl`，实际改动文件清单 + 与计划偏差 + 原因）；③ 证据（`verification-evidence.jsonl`，`tsc --noEmit`/lint/测试命令与结果，测试名级；未验证项显式列出留给 Manual QA）；④ 阻塞与偏差（`implementation-evidence.jsonl`，上游缺陷回退详细阶段、SLOT-18 存量违例处置、未决决策升级人工，不私自拍板）。
 
 **互斥分支（审核）**：前置失败 → 只输出前置缺口与修复动作，不展开逐章审核；前置通过 → findings（severity/location/problem/suggestion）+ 概况 + 三选一结论（可进入下一阶段 / 带假设可进入 / 不可进入）。严重度：P1（违反硬规则/红线、八问缺项、追溯断链、边界缺失、doc_type 越界——阻塞）；P2（合同不完整但可局部补）；P3（表述建议）。

@@ -92,8 +92,8 @@ def _validate_semantic_review_provider(obj) -> dict:
     required=true ∧ provider∈{manual,ocr_optional} → ReviewRecordError(R5-F1:第一版 required 只 channel-spawnable)。
     第一版边界(R6):supervisor 总 spawn opposite(check_config=_opposite_provider),未接线具体 provider pin →
     normalize 仅 provider=opposite 作 required clean(codex/claude 具体 pin 与 manual/ocr 一样 deferred);
-    `required` 字段第一版仅约束 provider 类别(manual/ocr 不得 required),**不作独立性下限**——独立性由
-    guru_risk 风险判定 / §4.5.9 low-risk slice override 决定(low-risk slice 即便 required=true 也放行同 provider 自检)。"""
+    `required=true` 是 required clean record 的独立性下限：provider=opposite 时不得被 low-risk
+    self-check 覆盖；非 required 的同 provider 自检必须显式写 required=false。"""
     if obj is None:
         return {"required": True, "provider": "opposite", "ocr": "optional"}
     if not isinstance(obj, dict):
@@ -654,7 +654,7 @@ def append_record(task_dir: str, record: dict) -> None:
         fh.write(line + "\n")
 
 
-def preflight_failure_record(kind: str, run_id: str, unit_id: str = None, candidates=None) -> dict:
+def preflight_failure_record(kind: str, run_id: str, unit_id: str | None = None, candidates=None) -> dict:
     """supervisor-only 硬停 canonical record(R2-F1+F6/R5):**route_class=none**(非 PROCESS_DEFECT——
     它在 REPAIRABLE_IMPLEMENT_ROUTES 里会被误进 repair loop)、repairable=false。
     kind ∈ {PACKET_MISSING,PACKET_INVALID,PACKET_AMBIGUOUS,SCOPE_INVALID}。
@@ -825,8 +825,21 @@ def parse_verdict_block(text: str) -> dict:
     invariants = {}
     if not isinstance(text, str):  # R4-SF(穷尽):非 str 输入返回空 fields,交 validate_verdict_values 判 MALFORMED
         return fields
+    lines = []
     for raw in text.splitlines():
         line = raw.strip()
+        if line.startswith("{"):
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                event = None
+            if isinstance(event, dict):
+                event_text = event.get("text")
+                if isinstance(event_text, str):
+                    lines.extend(event_text.splitlines())
+                    continue
+        lines.append(line)
+    for line in lines:
         if "=" not in line:
             continue
         key, _, val = line.partition("=")
@@ -924,8 +937,14 @@ def normalize_review_record(fields, context):
         # 故仅 provider=opposite 受支持作 required clean,具体 codex/claude pin 与 manual/ocr 一样第一版 deferred。
         if want != "opposite":
             return blocked("MALFORMED_REVIEW_OUTPUT")
-        # 对立要求默认强制(fail-closed);仅 low-risk override(SSOT §4.5.9)显式 independent_required=False
-        # 时放行同 provider 自检(P0 行为,check_config=config)。
+        required = srp.get("required", True)
+        if not isinstance(required, bool):
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        # Required opposite-provider evidence is fail-closed. Low-risk self-checks
+        # must be explicit non-required records, otherwise commit evidence can
+        # advertise opposite(required=True) while accepting same-provider review.
+        if want == "opposite" and required and actual == impl:
+            return blocked("MALFORMED_REVIEW_OUTPUT")
         if context.get("independent_required", True) and actual == impl:
             return blocked("MALFORMED_REVIEW_OUTPUT")
         if context.get("supervisor_deterministic_status") != "passed" or f["deterministic_checks"] != "passed":

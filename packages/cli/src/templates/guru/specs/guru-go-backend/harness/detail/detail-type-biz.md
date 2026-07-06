@@ -99,7 +99,7 @@
 - **概要归属 + 承接索引**：单元出现在概要归属表与第 6 章 `chapter_target → detail_doc_type=biz` 承接索引中，双向闭合；写 owner 与概要一致。
 - **合同八问完整**：上列八问逐问有实质内容（含错误 sentinel 全集、依赖正反面、失败收口逐路径、不得补造清单），缺一为 P1。
 - **粒度（L1 §3.1）**：行为步骤可直接编码——指明调用的具体下层方法与参数、本单元内部判定、错误返回与状态写入点；同文档粒度一致。
-- **实现 trace 四节对齐**：go-guru profile 命中时正文只放 `framework_reference_ref`，生成命令/`retrieve_trace_id`/`pack_id`/`source_uri` 延后到 `implementation-trace.md`；MCP 不可用写 `status=blocked_by_knowledge_unavailable`。
+- **实现 trace 计划合同与 mutable evidence 对齐**：go-guru profile 命中时正文只放 `framework_reference_ref`，生成命令/`retrieve_trace_id`/`pack_id`/`source_uri` 延后到 `implementation-trace.md`；MCP 不可用写 `status=blocked_by_knowledge_unavailable`。
 - **测试映射**：每条行为成功 + 全部失败路径各有 unit test 行，引用 `BHV-NNN`/`UNIT-<slug>`。
 
 判级口径沿用 L1 §8：违反本文硬规则、八问缺项、追溯断链、状态双写、越层依赖 = P1（阻塞）；错误枚举不全、粒度局部不达标、事务三分法缺结论 = P2；表述建议 = P3。

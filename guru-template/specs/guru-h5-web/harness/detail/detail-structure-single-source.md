@@ -313,7 +313,7 @@ export async function submitComment(formData: FormData): Promise<ActionResult>;
 
 ## §7 实现 trace（四节，进入编码前落盘）
 
-详细设计交付前须为每个 `chapter_target` 落实现 trace 四节，作为编码与回归基线：
+详细设计交付前须为每个 `chapter_target` 落实现 trace 计划合同与 mutable evidence，作为编码与回归基线：
 
 1. **承接 trace**：`BHV-NNN ↔ UNIT-<slug> ↔ chapter_target ↔ doc_type` 的四元闭合表（无幽灵、无悬空，§3.2）。
 2. **依赖 trace**：每个 `UNIT-<slug>` 的下游依赖（doc_type + 单元）与方向校验（符合 §2.1 服务端链/交互链/变更链）。

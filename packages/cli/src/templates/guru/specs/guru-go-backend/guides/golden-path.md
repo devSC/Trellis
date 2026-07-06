@@ -466,7 +466,7 @@ gofmt -l .              # 格式（输出非空即未格式化，须为空）
 ## 13. 派生关系（给 build 用）
 - **脚手架模板** ← §2.6 + §3/§4/§5/§6/§7/§8 的代码块参数化（参数 = project-conventions 槽位）；按 §1 入口决策树条件组合生成对应层文件。
 - **`golangci-lint` 规则集** ← §2.1（depguard：禁重型框架 + import 方向）+ §2.3（errcheck/errorlint/wrapcheck）+ §5（sqlclosecheck/rowserrcheck）+ §11（槽位类规则运行时读目标仓库 project-conventions）。
-- **配置包 Skill（概要/详细/实现三件套）** ← 全文 + 各自 references；所有 agent 适配层**指向本文**，不各写一份。概要归属表把每条需求映射到 §3–§8 层与 `BHV-NNN`；详细合同回答八问；实现 trace 四节回链到 `UNIT-<slug>`。
+- **配置包 Skill（概要/详细/实现三件套）** ← 全文 + 各自 references；所有 agent 适配层**指向本文**，不各写一份。概要归属表把每条需求映射到 §3–§8 层与 `BHV-NNN`；详细合同回答八问；实现 trace 计划合同与 mutable evidence 回链到 `UNIT-<slug>`。
 - **hooks** ← §8 迁移成对/序号校验 + §10 自检回灌（提交前跑 `go build`/`go vet`/`gofmt -l`/`golangci-lint run`）+ §11 老目录/裸 `os.Getenv` 拦截（读 `[SLOT-08]`）。
 
 ---

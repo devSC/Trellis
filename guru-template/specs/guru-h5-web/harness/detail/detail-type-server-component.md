@@ -194,7 +194,7 @@ export default function PostDetailPage({ params }: any) { // ❌ params 用 any�
 
 **详细合同八问**：八问逐条非空且满足 §"合同八问的类型特化"；输入/输出/props 透传有逐项列表；错误引用 `data-access`/`domain-type` 既有类型（对应 G2/G5）。
 
-**实现 trace 四节**（实现阶段回填，验证 trace 闭合）：
+**实现 trace 计划合同与 mutable evidence**（实现阶段回填，验证 trace 闭合）：
 1. **组件签名**：`(async )function <Name>(props): (Promise<)JSX.Element` 与合同输入/输出一致，文件无 `'use client'`。
 2. **取数调用点**：逐处 `await` 的 `data-access` 函数与八问 4 的"可调用"清单一致；无内联 fetch/ORM/fs（对应规则2）。
 3. **边界落点**：传向 `client-component` 的 props 全部可序列化、无 secret（对应规则5/6）；失败路径落到 `error.tsx`/`notFound()`（对应八问5）。

@@ -179,7 +179,7 @@ python3 .trellis/scripts/guru/guru_gate.py check-implementation <task_dir>
 python3 .trellis/scripts/guru/guru_supervise.py implement-check <task_dir>
 ```
 
-`guru_supervise.py implement|check|implement-check` 必须在启动 worker 前自动执行 `check-implementation`；若任务仍是 `planning`，fail-closed，不启动 worker。它复用实现 writing skill 与实现 review skill，干净后停在最终验证和 hard-boundary confirmation，不写新的 implementation `guru_gates`。实现 review record 由 `review-records/implementation-reviews.jsonl` 承载，commit gate 读取最新 clean record。
+`guru_supervise.py implement|check|implement-check|implementation-review` 必须在启动 worker 前自动执行 `check-implementation`；若任务仍是 `planning`，fail-closed，不启动 worker。`implement-check` 复用实现 writing skill 与实现 review skill，干净后停在最终验证和 hard-boundary confirmation，不写新的 implementation `guru_gates`。`implementation-review` 是 check-only 结构化记录入口，只跑 deterministic checks + check worker，不启动 implement worker。实现 review record 由 `review-records/implementation-reviews.jsonl` 承载，commit gate 读取最新 clean record。
 
 ## 8. Legacy design-grill 兼容
 
@@ -217,7 +217,7 @@ python3 .trellis/scripts/guru/guru_gate.py status <task_dir>
 5. detail 未确认或确认快照失配：双 clean（含 adversarial）后重新运行 `confirm detail`。
 6. `guru_gate.py check-start <task_dir>` 通过后只允许 `task.py start`；不得把 `START_READY` 当成实现、review worker、commit 或发布许可。
 7. 需要启动实现/质检 worker：确认 `task.py start` 已把 `task.json.status` 置为 `in_progress`，并运行 `guru_gate.py check-implementation <task_dir>`。
-8. 需要提交：只 stage 本任务实现范围内的文件，确保最新 `review-records/implementation-reviews.jsonl` 为 clean，并运行 `guru_gate.py check-commit <task_dir>`。
+8. 需要提交：只 stage 本任务实现范围内的文件，确保最新 `review-records/implementation-reviews.jsonl` 为 clean；若只缺提交候选的结构化 review record，先运行 `guru_supervise.py implementation-review <task_dir> --staged`，再运行 `guru_gate.py check-commit <task_dir>`。
 9. `guru_gate.py check <task_dir>` 仅为旧命令兼容 alias，语义等同 `check-start`。
 
 最终检查：

@@ -47,7 +47,7 @@
 - 设计产物按链型分轨：
   - **full**：目录级设计包（task.json `design_package` 指向，如 `docs/design/<feature>/`）= `README.md`（导航）+ `design-main.md`（概要主定义，含归属表/承接索引/架构就绪自检）+ `chapters/*.md`（详细设计逐章，directory_precheck + chapter_loop 生成）。任务内 `design.md` 退为指针+摘要。
   - **light**：任务内 `design.md` 两章：**§1 概要设计**（归属表+三问+承接索引）；**§2 详细设计**（逐 doc_type 合同八问）。
-- `implement.md` — **实现计划**（trace 合同 §1：任务切片/顺序/风险，见 `.trellis/spec/harness/implementation/implementation-trace-contract.md`）；实现期持续追加 §2 执行 / §3 证据（`swift build`/`swift test` 输出）/ §4 阻塞偏差。
+- `implement.md` — **实现计划**（trace 合同 §1：任务切片/顺序/风险，见 `.trellis/spec/harness/implementation/implementation-trace-contract.md`）；detail 确认后保持 digest-bearing，不作为执行/验证证据 sink；执行、验证、阻塞偏差写入 task-local mutable evidence（`implementation-evidence.jsonl` / `verification-evidence.jsonl` / `commit-plan.json` / `review-records/implementation-reviews.jsonl`）。
 - `implement.jsonl` / `check.jsonl` — spec/research 注入清单（见 1.5）。
 - **编号纪律** — 行为 `BHV-NNN`（prd 标题，不复用不重排）、设计单元 `UNIT-<slug>`（design §2 / chapters 标题）；跨产物引用一律写编号 token。`python3 .trellis/scripts/guru/guru_gate.py trace-matrix <task_dir> [--write]` 随时生成追溯矩阵（含「需求场景（REQ-UC）」列；--strict 断链拦截）。full 链 prd 的 BHV 标题可在短名前以 `[REQ-UC-XXX]`（多对多）承接正式需求包需求源场景（`### BHV-001 [REQ-UC-005] <短名>`），`trace-matrix --require-req-uc`（或 task.json `require_req_uc:true`）强制 BHV 须带 REQ-UC（旧 prd 默认不拦、列空、不断链）；版本级 `guru_gate.py trace-aggregate <version-dir> [--include-completed]` 反查指向某需求包版本目录的 task，把 `(REQ-UC, BHV, UNIT, Source Task)` 行展开聚合进 `traceability.md` 派生列（手维护 Code/Test/Status 按 key 回填保留；fail-closed：manifest `canonical_excludes` 须含 `traceability`）。**命名消歧**：`REQ-UC-XXX`（需求源场景）≠ overview `UC-<序号>`（架构核心用例），两套独立编号。
 - **产物语言** — task 产物（prd/design/implement/research、spec 回写、findings）一律**中文优先**；英文仅限 Swift 标识符、命令（`swift build`/`xcodebuild`）、文件路径、协议字段、外部专有名词（FactoryKit/WCDBSwift/RxSwift）、缩写与原文引用。commit message 跟随仓库历史风格。
@@ -137,7 +137,7 @@ Phase 3: Finish  → 验证（swift build/test）→ 萃取回写 spec → commi
 [/workflow-state:in_progress-sub-agent]
 
 [workflow-state:in_progress-inline]
-实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 iOS spec，编辑后 trellis-check（guru iOS 口径）；swift build/test 证据记 implement.md，无证据不 commit；设计缺陷回 Phase1。
+实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 iOS spec，编辑后 trellis-check（guru iOS 口径）；swift build/test 证据记 `verification-evidence.jsonl` 等 task-local mutable evidence，无证据不 commit；设计缺陷回 Phase1。
 [/workflow-state:in_progress-inline]
 
 ### Phase 3: Finish（审核与收尾）
@@ -282,7 +282,7 @@ prd 草稿成形后执行 Domain Grill：对照 golden-path/项目约定/既有 
 
 进入本节的最低硬条件是 `python3 .trellis/scripts/guru/guru_gate.py check-implementation <task-dir>` 通过；`guru_supervise.py implement|check|implement-check` 会在启动 worker 前自动执行该 gate，`planning` 状态一律 fail-closed。
 
-channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.py implement <task-dir>`（或等价官方 `trellis channel create/spawn/send/wait/messages`），helper 只注入存在的 `implement.jsonl`、任务产物和 `ios-implementation-guru-writing` skill，等待 `done/error/killed`。legacy sub-agent 平台 dispatch `trellis-implement`；inline 平台先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT（含命中的 `detail-type-*.md`）。编码按 `ios-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，**按自底向上顺序**（`domain-model` → `repository` → `usecase` → `viewmodel` → `view`，`coordinator`/`external` 横切）逐片实现并持续更新 `implement.md` 的执行/证据/阻塞偏差。
+channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.py implement <task-dir>`（或等价官方 `trellis channel create/spawn/send/wait/messages`），helper 只注入存在的 `implement.jsonl`、任务产物和 `ios-implementation-guru-writing` skill，等待 `done/error/killed`。legacy sub-agent 平台 dispatch `trellis-implement`；inline 平台先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT（含命中的 `detail-type-*.md`）。编码按 `ios-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，**按自底向上顺序**（`domain-model` → `repository` → `usecase` → `viewmodel` → `view`，`coordinator`/`external` 横切）逐片实现；执行/验证证据写入 task-local mutable evidence，不把 `implement.md` 当作 detail 确认后的可变证据文件。
 golden-path 硬约束逐片落实：FactoryKit `@Injected` 注入（禁手动 init 依赖）、Repository 接口在 Domain 实现在 Infrastructure、`enum Error` 分层、ViewModel `ObservableObject`+`@Published`、private 方法置于 `private extension`、持久化只走 WCDBSwift。发现设计缺口停下回 Phase 1 修订，不在代码里绕过设计语义。
 
 #### 2.2 质检 `[required · repeatable]`
@@ -295,7 +295,7 @@ channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.p
 
 #### 3.1 质量验证 `[required · repeatable]`
 
-复跑与变更范围匹配的验证命令（`swift build`、`swift test` 或 `xcodebuild -scheme <Scheme> test`，按需 SwiftLint），确认 `implement.md` §3 已记录命令、结果与说明。验证失败回 2.1/2.2；验证缺失不得进入 3.3。
+复跑与变更范围匹配的验证命令（`swift build`、`swift test` 或 `xcodebuild -scheme <Scheme> test`，按需 SwiftLint），确认 `verification-evidence.jsonl`（或等价 task-local mutable evidence）已记录命令、结果与说明。若必须修改 `implement.md`，视为主动返回 detail Gate。验证失败回 2.1/2.2；验证缺失不得进入 3.3。
 
 #### 3.2 Debug 复盘 `[on demand]`
 

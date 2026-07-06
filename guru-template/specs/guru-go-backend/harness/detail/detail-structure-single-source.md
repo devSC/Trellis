@@ -265,7 +265,7 @@ repository-data 类此节写表/事务传播；entry-api/domain/config/external/
 - **索引↔文件双向闭合（full 链）**：承接索引每条 `chapter_target` 必须有对应 `chapters/<slug>.md`；每个 `chapters/<slug>.md` 必须被索引引用——引用缺文件、孤儿章节文件均拦截。
 - **归属一致断链**：UNIT 回指的归属表行 owner 必须与该 UNIT 的 `detail_doc_type` 落点层一致（如 `detail_doc_type=biz` 的 UNIT 不能回指归属表中 owner=repository 的行）。
 - **分层方向断链**：八问 4 声明的依赖方向违反 §6.0 分层依赖律（反向、跨层、循环）即拦截。
-- **trace 四节齐全**：每个 UNIT 必须可被追溯矩阵串起——① 需求五要素（prd BHV 的触发/输入/处理/输出/异常）→ ② 概要归属表 + 第 7 节承接索引 → ③ 详细合同八问 → ④ 实现 trace（实现阶段 `implementation-trace.md` 回指本 UNIT）。任一节缺失或断链即拦截。
+- **trace 计划合同与 mutable evidence 齐全**：每个 UNIT 必须可被追溯矩阵串起——① 需求五要素（prd BHV 的触发/输入/处理/输出/异常）→ ② 概要归属表 + 第 7 节承接索引 → ③ 详细合同八问 → ④ 实现 trace（实现阶段 `implementation-trace.md` 回指本 UNIT）。任一节缺失或断链即拦截。
 - **编号纪律**：行为引用必须是裸 `BHV-NNN` token，设计单元必须是 `UNIT-<slug>` 标题 token；不得写自然语言指代（如"上面那个登录行为"）替代编号 token，否则追溯矩阵无法建链，按断链拦截。
 
 ## 8. 审核基线

@@ -61,7 +61,7 @@ UI 框架（SwiftUI 主 + RxSwift 遗留 → 纯 SwiftUI）、网络层（URLSes
 - **vs `trellis-brainstorm`（需求/构思阶段）**：brainstorm 负责把模糊意图收敛成 `prd.md` 的 `BHV-NNN` 行为规格、P0/P1 核心能力与失败路径。本 skill **消费** prd 已定义的 `BHV-NNN` 与已被概要承接的 owner/技术决策，**不重造需求**、不补造业务规则——需求语义缺口一律记 `requirement_to_overview_gap_findings` 并回退概要，不在详细阶段新增 P0/P1 或失败路径。
 - **vs `trellis-check`（代码质检）**：`trellis-check`（对应实现/审核 Gate）查的是**代码层**质量——`xcodebuild` / SwiftLint / `xcodebuild test`（XCTest 或迁移后的 Quick/Nimble）证据、secret 合规、存量违例豁免。本 skill **不做代码质检**：不产 Swift 代码（只到方法签名 / `struct`/`enum`/`protocol` 声明级），不跑构建测试，详细阶段不输出任何编译/测试证据，只写「哪些测试验证它」的测试映射合同（八问之 7）。
 - **vs `ios-design-detail-review`（姊妹 skill，写侧 vs 审侧）**：本 skill 是**写侧**——生成 `chapters/<slug>.md` 合同正文并做批内自动审修闭环（自检不替代 Gate）。`ios-design-detail-review` 是**审侧**——做 Phase 1 详细 Gate 的人工判定「能否进入实现编码」，给分级 finding 与三选一结论，**审而不写**。两者共享同一组 SSOT（L1 `detail-structure-single-source.md` + v1 三类 L2 + golden-path + project-conventions），本 skill 只产正文与自检证据，最终放行结论由 review skill 出、由用户终端 confirm 收口。
-- **vs `ios-implementation-guru-writing`（下游实现写，不编码）**：那一支在 Phase 2 承接已通过详细 Gate 的合同，生成 Swift 实现代码 + trace 四节。本 skill **不编码**——产出的是「可编码合同」而非实现体；写实现代码/伪代码超过签名级（方法体、>15 行实现）即越界（见「强制约束 4」），实现由 `ios-implementation-guru-writing` 在详细 Gate 通过后承接。
+- **vs `ios-implementation-guru-writing`（下游实现写，不编码）**：那一支在 Phase 2 承接已通过详细 Gate 的合同，生成 Swift 实现代码 + trace 计划合同与 mutable evidence。本 skill **不编码**——产出的是「可编码合同」而非实现体；写实现代码/伪代码超过签名级（方法体、>15 行实现）即越界（见「强制约束 4」），实现由 `ios-implementation-guru-writing` 在详细 Gate 通过后承接。
 - 一句话定位：**brainstorm 定「做什么」→ 概要 writing 定「分给哪层、边界在哪、谁承接展开」→ overview review evidence 判「能否进详细」→ 本 skill（详细 writing）写「可编码合同」→ ios-design-detail-review 人工判「能否进编码」→ ios-implementation-guru-writing 写 Swift 实现 → trellis-check 判「代码达标」**。本 skill 只占「详细 writing」一格，越界即停。
 
 ## 最小输入与自动补全
@@ -182,7 +182,7 @@ light 链执行 WX-3/WX-4/WX-5/WX-6 的等价检查（索引在 `design.md` §1�
 - **需求五要素**（承接概要、详细阶段反向校验，不新增）：行为 `BHV-NNN`、触发、输入/输出、边界、异常语义；详细阶段只用于反向校验概要是否收口，不改要素。
 - **概要归属表 + 承接索引**（WX-3/WX-5 前置）：第 7 节 `chapter_target → detail_doc_type → 目标文件 → owner_layer` 必须完整非空且分层合法。
 - **详细合同八问**（本文件「合同八问」）：每个 `UNIT-<slug>` 八问全答，是「可编码」判定硬基准。
-- **实现 trace 四节**（供下游实现/review 闭环对齐）：① 签名级接口 → ② 逐行为输入输出 + 调用链 → ③ enum Error 与异常表 → ④ 测试映射（成功 + 全部失败路径）；四节齐全且互相闭合，才记 `chapter_status=passed_by_method_evidence`。
+- **实现 trace 计划合同与 mutable evidence**（供下游实现/review 闭环对齐）：① 签名级接口 → ② 逐行为输入输出 + 调用链 → ③ enum Error 与异常表 → ④ 测试映射（成功 + 全部失败路径）；四节齐全且互相闭合，才记 `chapter_status=passed_by_method_evidence`。
 
 ## 输出要求（writing 专属）
 

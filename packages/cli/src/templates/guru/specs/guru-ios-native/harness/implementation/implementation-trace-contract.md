@@ -1,8 +1,8 @@
 # implementation-trace 合同（Guru iOS 原生平台）
 
-> 实现阶段的过程记录合同。trace 是实现 Gate 的证据载体——「不是做完感，而是证据感」。
-> 装载顺序：先读 `.trellis/spec/guides/golden-path.md`（分层依赖律 + golden-path 锁定），再读本任务详细设计的章节合同（`.trellis/spec/harness/detail/detail-structure-single-source.md` + 命中的 L2），最后随实现持续更新本 trace。
-> 建议落盘路径：目标仓库 `docs/design/<feature>/implementation-trace.md`，随实现推进**随做随记**（禁止 PR 前一次性补写）。
+> `implement.md` / implementation-trace 是 detail Gate 的 digest-bearing planning contract——「不是做完感，而是证据感」。
+> 装载顺序：先读 `.trellis/spec/guides/golden-path.md`（分层依赖律 + golden-path 锁定），再读本任务详细设计的章节合同（`.trellis/spec/harness/detail/detail-structure-single-source.md` + 命中的 L2），最后把 detail 确认后的执行/验证证据写入 mutable evidence。
+> 建议落盘路径：目标仓库 `docs/design/<feature>/implementation-trace.md`。detail 确认后的执行、验证、packet、review、commit 证据写入 task-local mutable evidence：`implementation-evidence.jsonl`、`verification-evidence.jsonl`、`review-records/implementation-reviews.jsonl`、`commit-plan.json`；若必须修改已确认 trace，必须回退 detail Gate 并重新 review/confirm。
 > 平台基准：DDD 四层 Domain → App → Infrastructure → UI（Domain 零依赖）；SwiftUI 主 + RxSwift 遗留；FactoryKit DI（`@Injected`）；Repository 模式（接口在 Domain、实现在 Infrastructure）；`enum Error` per domain；AppCoordinator 导航；WCDBSwift 持久化；ViewModel = `ObservableObject` + `@Published`。
 > doc_type 一律用 iOS 权威七类：`viewmodel` / `usecase` / `repository` / `domain-model` / `view` / `coordinator` / `external`。**禁止自创 `transport-handler` / `service` / `controller` / `data-source` 之类的类型名。**
 
@@ -42,9 +42,9 @@
 
 > 横切说明：`coordinator` 切片同时覆盖 FactoryKit DI 装配（`Container+ViewModels.swift` / `Container+UseCases.swift` / `Container+Coordinators.swift`）——新增单元必须有对应 `Factory<I...>` 注册，否则 `@Injected` 运行期解析失败（属可验证完成信号之一）。
 
-### 2. 执行（随做随记）
+### 2. 执行（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
 
-每个任务切片完成时记录：
+每个任务切片完成时记录下列字段：
 
 - **实际改动文件清单**（相对路径，逐文件）。区分新增 / 修改 / 删除。
 - **与计划的偏差**：改了计划外文件 / 没改计划内文件 → **必须写原因**（例如「`Container+UseCases.swift` 计划外修改：新 UseCase 需注册 `Factory`，属 DI 装配必经」）。
@@ -58,9 +58,9 @@
   - `private` 方法置于 `private extension`。
 - **代码生成 / 脚手架记录**：若使用 mock 生成（project-conventions 槽位：手写 → Mockolo）或 R.swift 资源生成，记录跑了哪个命令、产物文件。无代码生成则显式写「本切片无生成步骤（手写实现 + 手写 mock）」。
 
-### 3. 证据（验证后记）
+### 3. 证据（字段合同，post-detail 记录进 `verification-evidence.jsonl`）
 
-> 证据节只写「全部通过」= 反模式。每条必须带**命令 + 结果（测试名级别）**。
+> `verification-evidence.jsonl` 只写「全部通过」= 反模式。每条必须带**命令 + 结果（测试名级别）**。
 > 构建系统基准：本平台为 CocoaPods 工作区（`Podfile` 依赖 SwiftLint 0.31.0 / RxSwift / Moya / SwiftyBeaver 等），主用 `xcodebuild`；纯 SPM 包（Domain 抽离为独立 package 时）可用 `swift build` / `swift test`。两套命令按目标仓库实际构建形态二选一，trace 记录实际所用那套。
 
 | 类型 | 要求 | iOS 命令基线（按实际仓库填实参） |
@@ -98,9 +98,9 @@
 - 未验证项：无（纯 domain 编排，本地全覆盖）
 ```
 
-### 4. 阻塞与偏差（发生时记）
+### 4. 阻塞与偏差（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
 
-- **上游缺陷（详细设计错/漏）**：详细设计合同写错或漏（如 UNIT 的错误枚举不全、依赖方向写反、签名与实现对不上）→ 记录后**回退详细阶段修订**，不在 trace / 代码里就地改设计。trace 留回退记录（哪个 UNIT、缺什么、回退动作）。
+- **上游缺陷（详细设计错/漏）**：详细设计合同写错或漏（如 UNIT 的错误枚举不全、依赖方向写反、签名与实现对不上）→ 记录后**回退详细阶段修订**，不在 trace / 代码里就地改设计。`implementation-evidence.jsonl` 留回退记录（哪个 UNIT、缺什么、回退动作）。
   - 示例：「`UNIT-voice-repository` 合同未声明 remote 失败回落策略，实现无据可依 → 回退详细设计补编排策略，trace 暂挂该切片。」
 - **存量违例触碰**：列出触碰的存量违例条目编号（golden-path / 详细设计的存量豁免清单中登记的违例）+ 处置（绕行 / 顺手修复 / 记债）。iOS 典型存量违例域：
   - SwiftUI 主 + **RxSwift 遗留**桥接代码（迁移中的双轨）；
@@ -122,9 +122,9 @@
 
 实现切片可进入 commit，当且仅当：
 
-- **GI-1** trace 四节齐全（计划 / 执行 / 证据 / 阻塞偏差），无空章节、无 TODO 占位。
+- **GI-1** `implement.md` 计划合同与 mutable evidence 齐全（计划 / 执行 / 证据 / 阻塞偏差），无空记录、无 TODO 占位。
 - **GI-2** 每个切片承接的 `UNIT-<slug>` 均存在于详细设计（无幽灵引用）；`doc_type` 为 iOS 七类之一且文件范围落在该 doc_type owner 层内。
-- **GI-3** 证据节：每切片有编译命令结果 + 测试命令结果（**测试名级别**）+ SwiftLint 结果；无「全部通过」式无命令证据。
+- **GI-3** `verification-evidence.jsonl`：每切片有编译命令结果 + 测试命令结果（**测试名级别**）+ SwiftLint 结果；无「全部通过」式无命令证据。
 - **GI-4** golden-path 锁定项逐项落地（FactoryKit `@Injected` 无手动初始化 / Repository 模式 / `enum Error` 分层 / WCDBSwift 无 CoreData·SwiftData / ViewModel=`ObservableObject`+`@Published` / `private` 在 `private extension`）。
 - **GI-5** 分层依赖律零违反（Domain 零依赖；Domain→App→Infrastructure→UI 单向；View 不直连持久化、不互相导航）。
 - **GI-6** 偏差与存量违例均有记录与处置；未决决策已升级（无私自拍板）。
@@ -137,7 +137,7 @@
 ## 反模式
 
 - ❌ trace 在 PR 前一次性补写（失去过程证据意义）。
-- ❌ 证据节只写「全部通过」/「编译 OK」（无命令、无测试名、无 SwiftLint 结果）。
+- ❌ mutable evidence 只写「全部通过」/「编译 OK」（无命令、无测试名、无 SwiftLint 结果）。
 - ❌ 偏差不记录，PR diff 与计划对不上靠 reviewer 自己发现。
 - ❌ doc_type 自创（写成 `service` / `controller` / `data-source` / `transport-handler`——必须用 iOS 权威七类）。
 - ❌ 切片不承接 UNIT 或承接不存在的 UNIT（幽灵引用）。

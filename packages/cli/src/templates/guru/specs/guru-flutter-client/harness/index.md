@@ -29,7 +29,7 @@ Guru Gate、review_runs 证据、confirm 快照、累积 digest 与失配恢复�
 - 需求 Gate：无行为/前置条件/状态变化/失败路径/验收场景 → 不进概要。
 - 概要 Gate：行为无唯一 owner+三问理由、归属违反分层依赖律、承接索引缺失 → 不进详细。
 - 详细 Gate：合同八问缺项、追溯不到概要 owner、无测试映射、涉权限无合规依据 → 不进实现。
-- 实现 Gate：analyze/test/lints/compliance 任一无证据、trace 四节不全 → 不进 commit。
+- 实现 Gate：analyze/test/lints/compliance 任一无证据、计划合同或 mutable evidence 不全 → 不进 commit。
 - 审核：存量豁免判定（SLOT-15 内记债不阻塞；清单外新增违例阻塞）。
 
 - 编号与追溯：行为以 `BHV-NNN`、单元以 `UNIT-<slug>` 标题定义，引用写编号 token；`guru_gate.py trace-matrix <task_dir> --write` 生成追溯矩阵（含「需求场景（REQ-UC）」列），断链进不了详细/实现 Gate。

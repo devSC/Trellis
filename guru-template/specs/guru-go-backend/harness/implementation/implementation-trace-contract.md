@@ -1,7 +1,7 @@
 # implementation-trace 合同（Go 后端）
 
-> 实现阶段的过程记录合同。trace 是实现 Gate 的证据载体——核心命题是"不是做完感，而是证据感"：每一步落地都要有可复跑命令与可比对产物，而非主观的"已完成"叙述。
-> 建议路径：目标仓库 `docs/design/<feature>/implementation-trace.md`（light 链可并入任务内 `implement.md`），随实现推进**持续更新**，禁止 PR 前一次性补写。
+> `implement.md` / implementation-trace 是 detail Gate 的 digest-bearing planning contract。核心命题仍是"不是做完感，而是证据感"：每一步落地都要有可复跑命令与可比对产物，而非主观的"已完成"叙述。
+> 建议路径：目标仓库 `docs/design/<feature>/implementation-trace.md`（light 链可并入任务内 `implement.md`）。detail 确认后的执行、验证、packet、review、commit 证据写入 task-local mutable evidence：`implementation-evidence.jsonl`、`verification-evidence.jsonl`、`review-records/implementation-reviews.jsonl`、`commit-plan.json`；若必须修改已确认 trace，必须回退 detail Gate 并重新 review/confirm。
 > 上游硬输入：详细设计的 `UNIT-<slug>` 单元清单 + 合同八问 + 测试映射；通用约束 `.trellis/spec/guides/golden-path.md`（分层依赖律与禁止清单）+ `.trellis/spec/conventions/project-conventions.md`（槽位选型）。
 > 平台形态：Go monorepo，服务在 `services/<svc>/internal/{app,config,transport,service,repository,domain,auth}`，`cmd/<svc>/main.go` 单一入口；契约在 `packages/contracts/`。
 
@@ -17,7 +17,7 @@
 
 ## 必含四节
 
-实现 trace 必须包含以下四节且每节非空；缺任一节或证据节无命令/无测试名，实现 Gate 不予放行（详见 §5）。
+实现 trace 必须包含以下四节且每节非空；缺任一节，实现 Gate 不予放行（详见 §5）。detail 确认后的命令、测试名、偏差和阻塞记录写入 mutable evidence，并与 trace 字段合同合并恢复。
 
 ### 1. 计划（开工前写）
 
@@ -43,9 +43,9 @@
 
 ❌ 不合格切片登记：「实现用户模块，改 service 和 repository，写完跑测试」——无 UNIT 编号、无文件范围、无完成信号、跨多层无法独立 review。
 
-### 2. 执行（随做随记）
+### 2. 执行（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
 
-每个任务切片完成时**立即**记录（不积压到批末），保证 PR diff 与计划逐行可对：
+每个任务切片完成时**立即**记录下列字段（不积压到批末），保证 PR diff 与计划逐行可对：
 
 - **实际改动文件清单**（相对路径，标层）：如 `services/control-api/internal/service/user_service.go`（service 层）、`packages/contracts/proxy_node_config.go`（跨服务契约）。
 - **与计划的偏差**：改了计划外文件 / 未改计划内文件 → **必须写原因**。例：「额外改 `internal/transport/http/router.go`：S2 暴露的新 repository 错误需要 handler 映射 HTTP 状态码，原计划遗漏，已并入 S4 范围」。
@@ -57,7 +57,7 @@
   - **当前 golden-path 默认无代码生成**（原生 SQL + 标准库）→ 本项写「N/A：无代码生成槽位启用」，不得留空。
 - **装配与启动改动**：触碰 `app.New()`/`app.Run()`/`app.Shutdown()`/`config.Load()`/`cmd/<svc>/main.go` 时单独标注（这些是跨切片共享面，影响所有服务实例）。
 
-### 3. 证据（验证后记）
+### 3. 证据（字段合同，post-detail 记录进 `verification-evidence.jsonl`）
 
 | 类型 | 要求 |
 |------|------|
@@ -67,7 +67,7 @@
 | 依赖整洁 | 涉及 `go.mod`/`go.sum` 变更或导入调整时跑 `go mod tidy` 并记录 diff；新增第三方库须落在 project-conventions 已批准槽位内（禁 gin/echo 等被锁框架）。 |
 | 未验证项 | 无法本地验证的显式列出 + 指明留给哪个环节：真实 PostgreSQL 集成行为（→ CI 集成测试 / 容器化 DB）、生产负载下的 `context` 超时与连接池表现（→ 压测/灰度）、跨服务契约在另一服务的运行时兼容（→ 集成环境）、信号驱动的优雅关闭实测（→ Manual QA / staging）。 |
 
-**证据节正反例**：
+**`verification-evidence.jsonl` 正反例**：
 
 ✅ 合格：
 ```
@@ -83,9 +83,9 @@
 
 ❌ 不合格：「全部编译通过，测试通过，vet 无问题」——无命令、无退出态、无测试名、无新增测试映射、未声明任何未验证项。
 
-### 4. 阻塞与偏差（发生时记）
+### 4. 阻塞与偏差（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
 
-- **上游缺陷**：详细设计合同错/漏（如 `UNIT-<slug>` 八问缺错误枚举、签名与 domain 实体不符、测试映射漏失败路径）→ 记录后**回退详细阶段修订**，不在实现里就地改设计；trace 留回退记录（指向被修订的 UNIT 与修订动作）。例：「UNIT-user-service 八问 2 未定义 `ErrSessionExpired`，实现需要 → 回退详细补错误类型表，本切片暂挂」。
+- **上游缺陷**：详细设计合同错/漏（如 `UNIT-<slug>` 八问缺错误枚举、签名与 domain 实体不符、测试映射漏失败路径）→ 记录后**回退详细阶段修订**，不在实现里就地改设计；`implementation-evidence.jsonl` 留回退记录（指向被修订的 UNIT 与修订动作）。例：「UNIT-user-service 八问 2 未定义 `ErrSessionExpired`，实现需要 → 回退详细补错误类型表，本切片暂挂」。
 - **存量违例触碰**：列出触碰的 `[SLOT-17]` 条目编号 + 处置（绕行 / 顺手修复 / 记债）。Go 常见存量违例：跨层反向导入（repository 导入 service）、handler 直接拼裸字符串错误未走 sentinel、`gin`/`echo` 历史残留、`fmt.Errorf` 丢失 `%w` 导致 `errors.Is` 失效、`app.Shutdown()` 未释放某资源。绕行须写"为何不修"，记债须给清单编号。
 - **未决决策**：实现中冒出的新决策点（DI 容器引入与否、是否切 sqlc、新增 env 前缀命名、连接池大小默认值）→ **不私自拍板**，记录并升级人工 Gate；落到 project-conventions 槽位或 `technology_decision_handoff` 后再继续。
 - **分层依赖律违反**：发现必须违反单向依赖才能完成的需求 → 这是设计缺陷信号，不得用接口逆转之外的手段强行打通；回退详细评估归属。
@@ -94,7 +94,7 @@
 
 实现切片可进入 commit/PR，当且仅当：
 
-- G1 trace 四节齐全且非空：计划有 `UNIT-<slug>` 承接与完成信号、执行有改动清单与偏差说明、证据有命令级记录、阻塞节如无则显式写「无」。
+- G1 trace 合同与 mutable evidence 齐全：`implement.md` 计划有 `UNIT-<slug>` 承接与完成信号；执行/偏差/验证证据在 `implementation-evidence.jsonl` 与 `verification-evidence.jsonl` 中可按切片恢复；阻塞如无则显式记录「无」。
 - G2 编译证据：`go build` 全绿（贴命令 + 退出 0）；引入的失败已全部收口。
 - G3 静态检查证据：`go vet` + `golangci-lint` 通过或豁免有理由且记债（`[SLOT-17]`）。
 - G4 测试证据：每个切片有测试名级别结果，覆盖承接 UNIT/BHV 的成功路径 + 全部失败路径；新增测试清单可追溯到 UNIT。
@@ -106,7 +106,7 @@
 ## 6. 反模式
 
 - ❌ trace 在 PR 前一次性补写（失去过程证据意义，偏差与回退已不可追溯）。
-- ❌ 证据节只写"全部通过"（无命令、无退出态、无测试名）；`go build` 当成隐含步骤不记录。
+- ❌ mutable evidence 只写"全部通过"（无命令、无退出态、无测试名）；`go build` 当成隐含步骤不记录。
 - ❌ 偏差不记录，PR diff 与计划对不上靠 reviewer 自己发现。
 - ❌ 触碰存量违例不挂 `[SLOT-17]` 编号，把绕行/顺手修复混入业务 diff。
 - ❌ 用 `_ = err` 吞错或 `fmt.Errorf("...: " + err.Error())` 拼接（丢 `%w`），破坏 `errors.Is` 链。

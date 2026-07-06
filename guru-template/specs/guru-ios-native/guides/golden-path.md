@@ -346,7 +346,7 @@ xcodebuild test -scheme StoryVerse     # 测试框架按 [SLOT-test]（XCTest �
 - **需求五要素**：行为 / 前置条件 / 状态变化 / 失败路径 / 验收场景五项齐 → 才进概要（缺任一不进）。行为以 `BHV-NNN` 为 PRD 标题编号，下游引用裸 token。
 - **概要归属表 + 承接索引**：每个 `BHV-NNN` 落唯一 owner doc_type（七类之一）+ 三问理由（为何归此层、依赖谁、谁依赖它），违反 §2.1 分层依赖律或承接索引缺失 → 不进详细。owner 层映射：`view`/`viewmodel`→UI，`coordinator`→App，`usecase`/`repository` 接口/`domain-model`→Domain，`repository` 实现/`external`→Infrastructure。
 - **详细合同八问**：设计单元以 `UNIT-<slug>` 为详细标题编号；八问 = ①职责边界 ②输入/依赖（注入什么）③输出/产物合同 ④抛错（哪个 `enum Error` 的哪些 case）⑤分层归属与 import 约束 ⑥可验证信号 ⑦测试映射（`[SLOT-test]` 用例）⑧不适用场景。缺项 / 追溯不到概要 owner / 无测试映射 → 不进实现。
-- **实现 trace 四节**：①对照的 `UNIT-<slug>`/`BHV-NNN` ②实现文件与 DI 注册点 ③自检证据（§10 输出）④偏差与豁免（存量违例记债，清单外新增违例阻塞）。四节不全 → 不进 commit。
+- **实现 trace 计划合同与 mutable evidence**：①对照的 `UNIT-<slug>`/`BHV-NNN` ②实现文件与 DI 注册点 ③自检证据（§10 输出）④偏差与豁免（存量违例记债，清单外新增违例阻塞）。证据链不全 → 不进 commit。
 
 ## 14. v1 详细设计交付状态（L2 映射）
 

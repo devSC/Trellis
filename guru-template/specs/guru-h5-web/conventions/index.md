@@ -39,8 +39,8 @@
 | **SLOT-06 数据库 / ORM** | 是否有 DB？用 Prisma / Drizzle / 直连？schema 与 client 实例放哪？迁移工具？ | DB/secret 访问**只在** `data-access`/`server-action`（server-only），禁 `client-component` 触达（通用硬规则） | 无 DB（纯 MDX/CMS）/ Prisma / Drizzle；client 单例注入点固定，迁移目录组织钉死 | `data-access` 合同、`server-action` 合同、implementation-review |
 | **SLOT-07 认证** | 是否启用认证？NextAuth(Auth.js) / 自建 session？session 读取与校验落在哪一层？ | secret/session 读取**只在** server 侧（`server-component`/`data-access`/`server-action`）；`client-component` 只拿脱敏后的最小态 | 无认证 / `NextAuth`(Auth.js) / 自建；middleware 鉴权落点、回调 URL 钉死 | `server-action`/`data-access`/`route`(middleware) 合同、合规红线 review |
 | **SLOT-08 图像优化** | 图像统一走 `next/image` 还是允许裸 `<img>`？远程图域白名单？静态资源目录？ | 优先 `next/image`（LCP/CLS 优化）；远程图须 `next.config` `images.remotePatterns` 白名单（通用硬规则） | `next/image` 全量 / 局部豁免（须注明理由）；blog 示例用 `public/images/*`（**示例实证**），生产远程图域名白名单为（**生产级补充**） | `ui-component`/`server-component` 合同、implementation-review |
-| **SLOT-09 测试** | 单测/组件测试用 Vitest+RTL 还是 Jest+RTL？E2E 用 Playwright？测试目录是否镜像 `app/` 结构？ | **新代码 Vitest + React Testing Library**（单测/组件）；E2E 用 **Playwright**；目录镜像源码 | `Vitest`+RTL（推荐）/ `Jest`+RTL；E2E `Playwright`（推荐）/ Cypress；server-component 测试策略钉死 | 合同八问之 7（测试映射）、implementation 证据节 |
-| **SLOT-10 lint / 格式化** | ESLint 配置（`next/core-web-vitals`?）+ Prettier？`tsconfig` strict 档位？类型检查命令？ | **TS strict 必开**（`strict: true`，通用硬规则）；ESLint 启 `next/core-web-vitals`；Prettier 统一格式 | 具体 rule 集与 Prettier 配置按项目；注意 blog 示例 `tsconfig` 为 `strict:false`（**示例实证**），生产必须 `strict:true`（**生产级补充**） | implement Gate 证据节、code-logging/comments skill |
+| **SLOT-09 测试** | 单测/组件测试用 Vitest+RTL 还是 Jest+RTL？E2E 用 Playwright？测试目录是否镜像 `app/` 结构？ | **新代码 Vitest + React Testing Library**（单测/组件）；E2E 用 **Playwright**；目录镜像源码 | `Vitest`+RTL（推荐）/ `Jest`+RTL；E2E `Playwright`（推荐）/ Cypress；server-component 测试策略钉死 | 合同八问之 7（测试映射）、`verification-evidence.jsonl` |
+| **SLOT-10 lint / 格式化** | ESLint 配置（`next/core-web-vitals`?）+ Prettier？`tsconfig` strict 档位？类型检查命令？ | **TS strict 必开**（`strict: true`，通用硬规则）；ESLint 启 `next/core-web-vitals`；Prettier 统一格式 | 具体 rule 集与 Prettier 配置按项目；注意 blog 示例 `tsconfig` 为 `strict:false`（**示例实证**），生产必须 `strict:true`（**生产级补充**） | `verification-evidence.jsonl`、code-logging/comments skill |
 | **SLOT-11 部署 / 运行时** | 部署到 Vercel 还是自托管（Node/Edge runtime）？环境变量来源与 `NEXT_PUBLIC_` 边界？构建命令？ | secret 环境变量**禁带** `NEXT_PUBLIC_` 前缀（会泄漏到客户端，通用硬规则）；构建/产出命令钉死 | `Vercel`（默认）/ 自托管（`next start` / Docker）；runtime（`nodejs`/`edge`）按 route 段；blog 示例 build 前跑 `gen-rss.js`（**示例实证**） | implement 执行节、`route` 运行时声明、合规红线 review |
 | **SLOT-12 存量违例清单** | 已知存量架构违例有哪些（供 review 存量豁免判定：触碰记债不阻塞、新增违例阻塞）？ | —（数据源，逐条登记） | 逐条：违例描述 + 文件路径；可为空但须显式声明「无」 | 所有 review 的存量豁免判定 |
 
@@ -92,7 +92,7 @@
 详细(design §详细)   ← .trellis/spec/harness/detail/detail-structure-single-source.md
                        + 涉及类型的 .trellis/spec/harness/detail/detail-type-{server-component,client-component,data-access}.md
 实现(implement)      ← .trellis/spec/guides/golden-path.md
-                       + .trellis/spec/harness/implementation/implementation-trace-contract.md（trace 四节）
+                       + .trellis/spec/harness/implementation/implementation-trace-contract.md（trace 计划合同与 mutable evidence）
 审核(check)          ← 各 SSOT 审核基线 + 本目录 project-conventions.md 的 SLOT-18 存量豁免
 ```
 
@@ -103,7 +103,7 @@
 | 需求 Gate | **需求五要素**齐全：每条行为有 前置条件 / 触发 / 状态变化 / 失败路径 / 验收场景 | C1~C6 通过（项目约定就绪是任何阶段前置） |
 | 概要 Gate | **归属判定表**（行为→唯一 owner 层+三问理由，无分层依赖律违例）+ **承接索引**（`chapter_target → detail_doc_type`，覆盖全部 owner）+ `technology_decision_handoff[]` 字段完整 | owner 层取 H5 七类对应层（见 §6）；SLOT-01/02/03/04/07 影响归属与命名 |
 | 详细 Gate | **合同八问**逐单元完整（承接 BHV / 输入输出错误 / 读写状态 / 依赖正反面 / 失败收口 / 事件后置 / 测试映射 / 不得补造）+ 追溯到概要 owner + `UNIT-<slug>` 无断链 | SLOT-02/03/05/06/07/09 进入对应类型合同；pending L2 类型须 `L2豁免` 或先补 L2（见 §6） |
-| 实现 Gate | **trace 四节**齐全（计划 / 执行 / 证据 / 阻塞与偏差）+ 静态检查与测试有命令级证据 | SLOT-09（测试）、SLOT-10（lint/strict）、SLOT-11（构建/部署）进入执行与证据节 |
+| 实现 Gate | `implement.md` 计划合同 + mutable evidence 齐全，静态检查与测试有命令级证据 | SLOT-09（测试）、SLOT-10（lint/strict）、SLOT-11（构建/部署）进入 `implementation-evidence.jsonl` 与 `verification-evidence.jsonl` |
 | 审核 | 存量豁免判定：SLOT-18 内记债不阻塞，清单外新增违例阻塞 | SLOT-18 是存量豁免唯一数据源 |
 
 ### 4.2 编号与追溯（机器追溯依据）

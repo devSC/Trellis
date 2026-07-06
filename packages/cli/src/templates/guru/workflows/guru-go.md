@@ -46,7 +46,7 @@
 - 设计产物按链型分轨：
   - **full**：目录级设计包（task.json `design_package` 指向，如 `docs/design/<feature>/`）= `README.md`（导航）+ `design-main.md`（概要主定义，含行为→owner 归属表/三问理由/承接索引/架构就绪自检 G1~G8 + mermaid 架构图 + 时序图）+ `chapters/*.md`（详细设计逐章，directory_precheck + chapter_loop 生成）。任务内 `design.md` 退为指针+摘要。
   - **light**：任务内 `design.md` 两章：**§1 概要设计**（归属表+三问+承接索引）；**§2 详细设计**（逐 doc_type 合同八问）。
-- `implement.md` — **实现计划**（trace 合同 §1：任务切片/执行顺序/风险，见 `.trellis/spec/harness/implementation/implementation-trace-contract.md`）；实现期持续追加 §2 执行 / §3 证据 / §4 阻塞偏差。执行顺序自下而上：`domain → repository → service → transport → app/config/main`。
+- `implement.md` — **实现计划**（trace 合同 §1：任务切片/执行顺序/风险，见 `.trellis/spec/harness/implementation/implementation-trace-contract.md`）；detail 确认后保持 digest-bearing，不作为执行/验证证据 sink；执行、验证、阻塞偏差写入 task-local mutable evidence（`implementation-evidence.jsonl` / `verification-evidence.jsonl` / `commit-plan.json` / `review-records/implementation-reviews.jsonl`）。执行顺序自下而上：`domain → repository → service → transport → app/config/main`。
 - `implement.jsonl` / `check.jsonl` — spec/research 注入清单（见 1.5）。
 - **编号纪律** — 行为 `BHV-NNN`（prd 标题，不复用不重排，删除留洞）、设计单元 `UNIT-<slug>`（design §2 标题，slug 体现服务+层角色，如 `UNIT-user-service`/`UNIT-users-handler`/`UNIT-session-manager`）；跨产物引用一律写裸编号 token。`python3 .trellis/scripts/guru/guru_gate.py trace-matrix <task_dir> [--write]` 随时生成追溯矩阵（含「需求场景（REQ-UC）」列；--strict 断链拦截）。full 链 prd 的 BHV 标题可在短名前以 `[REQ-UC-XXX]`（多对多）承接正式需求包需求源场景（`### BHV-001 [REQ-UC-005] <短名>`），`trace-matrix --require-req-uc`（或 task.json `require_req_uc:true`）强制 BHV 须带 REQ-UC（旧 prd 默认不拦、列空、不断链）；版本级 `guru_gate.py trace-aggregate <version-dir> [--include-completed]` 反查指向某需求包版本目录的 task，把 `(REQ-UC, BHV, UNIT, Source Task)` 行展开聚合进 `traceability.md` 派生列（手维护 Code/Test/Status 按 key 回填保留；fail-closed：manifest `canonical_excludes` 须含 `traceability`）。**命名消歧**：`REQ-UC-XXX`（需求源场景）≠ overview `UC-<序号>`（架构核心用例），两套独立编号。
 - **产物语言** — task 产物（prd/design/implement/research、spec 回写、findings）一律**中文优先**；英文仅限代码标识符、命令、文件路径、协议字段（如 `application_account_id`）、框架/库名（`net/http`、`lib/pq`）、缩写（HMAC-SHA256）、原文引用。commit message 跟随仓库历史风格（3.4 步已有学习机制）。
@@ -118,7 +118,7 @@ Phase 3: Finish  → 验证（go build/vet/test + golangci-lint）→ 萃取回�
 [/workflow-state:in_progress-sub-agent]
 
 [workflow-state:in_progress-inline]
-实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 golden-path/约定/harness，编辑后 trellis-check（guru 口径）；go build/vet/test 证据记 implement.md，无证据不 commit；设计缺陷回 Phase1。
+实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 golden-path/约定/harness，编辑后 trellis-check（guru 口径）；go build/vet/test 证据记 `verification-evidence.jsonl` 等 task-local mutable evidence，无证据不 commit；设计缺陷回 Phase1。
 [/workflow-state:in_progress-inline]
 
 ### Phase 3: Finish（审核与收尾）
@@ -130,7 +130,7 @@ Phase 3: Finish  → 验证（go build/vet/test + golangci-lint）→ 萃取回�
 - 3.5 收尾提醒
 
 [workflow-state:completed]
-代码已提交。运行 /trellis:finish-work；工作区不净先回 3.4。go build/vet/test 与 golangci-lint 证据须已落 implement.md §3。
+代码已提交。运行 /trellis:finish-work；工作区不净先回 3.4。go build/vet/test 与 golangci-lint 证据须已落 `verification-evidence.jsonl` 或等价 task-local mutable evidence。
 [/workflow-state:completed]
 
 ### Rules
@@ -252,7 +252,7 @@ prd 草稿成形后执行 Domain Grill：对照 golden-path/项目约定/既有 
 
 进入本节的最低硬条件是 `python3 .trellis/scripts/guru/guru_gate.py check-implementation <task-dir>` 通过；`guru_supervise.py implement|check|implement-check` 会在启动 worker 前自动执行该 gate，`planning` 状态一律 fail-closed。
 
-channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.py implement <task-dir>`（或等价官方 `trellis channel create/spawn/send/wait/messages`），helper 只注入存在的 `implement.jsonl`、任务产物和 `go-implementation-guru-writing` skill，等待 `done/error/killed`。legacy sub-agent 平台 dispatch `trellis-implement`；inline 平台先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT。编码按 `go-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，按执行顺序自下而上（`domain → repository → service → transport → app/config/main`）逐切片实现，每片挂 `UNIT-<slug>` 编号 + 所属 `services/<svc>/internal/<layer>` + 完成信号 + 验证方式（一片不跨两个 internal 层），并持续更新 `implement.md` 的执行/证据/阻塞偏差。守住硬规则：`net/http ServeMux`（禁 gin/echo）、分层单向无环、sentinel + `%w` + `errors.Is`、`app.New/Run/Shutdown` 生命周期、`config.Load()` 集中配置、secret 只引用 env 名。发现设计缺口停下回 Phase 1 修订（不在代码里补造 owner/合同）。
+channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.py implement <task-dir>`（或等价官方 `trellis channel create/spawn/send/wait/messages`），helper 只注入存在的 `implement.jsonl`、任务产物和 `go-implementation-guru-writing` skill，等待 `done/error/killed`。legacy sub-agent 平台 dispatch `trellis-implement`；inline 平台先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT。编码按 `go-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，按执行顺序自下而上（`domain → repository → service → transport → app/config/main`）逐切片实现，每片挂 `UNIT-<slug>` 编号 + 所属 `services/<svc>/internal/<layer>` + 完成信号 + 验证方式（一片不跨两个 internal 层）；执行/验证证据写入 task-local mutable evidence，不把 `implement.md` 当作 detail 确认后的可变证据文件。守住硬规则：`net/http ServeMux`（禁 gin/echo）、分层单向无环、sentinel + `%w` + `errors.Is`、`app.New/Run/Shutdown` 生命周期、`config.Load()` 集中配置、secret 只引用 env 名。发现设计缺口停下回 Phase 1 修订（不在代码里补造 owner/合同）。
 
 #### 2.2 质检 `[required · repeatable]`
 
@@ -264,7 +264,7 @@ channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.p
 
 #### 3.1 质量验证 `[required · repeatable]`
 
-复跑与变更范围匹配的验证命令（`go build ./...` 或 `go build ./services/<svc>/...` + `go vet ./...` + `golangci-lint run ./...` + `go test ./services/<svc>/internal/<pkg>/ -run <Test> -v`，竞态切片附 `-race`），确认 `implement.md` §3 已记录命令、退出态、测试名级结果与未验证项（真实 PostgreSQL 集成、生产负载下 `context` 超时/连接池、跨服务契约运行时兼容、信号驱动优雅关闭）。验证失败回 2.1/2.2；验证缺失不得进入 3.3。
+复跑与变更范围匹配的验证命令（`go build ./...` 或 `go build ./services/<svc>/...` + `go vet ./...` + `golangci-lint run ./...` + `go test ./services/<svc>/internal/<pkg>/ -run <Test> -v`，竞态切片附 `-race`），确认 `verification-evidence.jsonl`（或等价 task-local mutable evidence）已记录命令、退出态、测试名级结果与未验证项（真实 PostgreSQL 集成、生产负载下 `context` 超时/连接池、跨服务契约运行时兼容、信号驱动优雅关闭）。若必须修改 `implement.md`，视为主动返回 detail Gate。验证失败回 2.1/2.2；验证缺失不得进入 3.3。
 
 #### 3.2 Debug 复盘 `[on demand]`
 

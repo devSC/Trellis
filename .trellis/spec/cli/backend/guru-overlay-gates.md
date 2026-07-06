@@ -49,6 +49,10 @@ This is an executable gate surface. Changes must be fail-closed by default, mirr
 - Commit gate:
   - `python3 guru_gate.py check-commit [task_dir]`
 
+- Check-only required implementation review:
+  - `python3 guru_supervise.py implementation-review <task_dir> [--slice <unit_id>] [--staged]`
+  - This command is the commit-safe producer of required structured implementation review records. It must run deterministic checks plus the check worker, must not launch an implement worker, and must not edit confirmed detail artifacts.
+
 - Commit plan:
   - `python3 guru_gate.py commit-plan [task_dir] [--write]`
   - Without `--write`, the command is read-only stdout JSON.
@@ -305,6 +309,8 @@ Preferred task-local files:
 
 Appending these files must not change requirements, overview, or detail digest. Editing `design.md`, `implement.md`, or other planning contract files must still change digest and invalidate stale confirmations/reviews.
 
+When a task has passed detail confirmation, `implement.md` is a digest-bearing planning contract. Implementation/check workers must record post-detail execution evidence in mutable evidence files rather than treating `implement.md` as the default evidence sink. If `implement.md` must change, the task is intentionally returning to detail Gate.
+
 ### 4. Commit Plan Schema
 
 Commit decisions must be available through a machine-readable plan before staging or committing.
@@ -393,8 +399,10 @@ It should not reload full skills, full memory, or large spec files unless commit
 
 - Good: a `lite_task` finishes focused tests and `detect_changes`, records spec update as `deferred` because no reusable contract was created, emits a commit-plan, then stops before staging.
 - Good: a `full_chain` changes gate runtime behavior, requires Phase 3.3 spec update, then emits split-required commit-plan if task/spec/tooling files are mixed with implementation files.
+- Good: `check-commit` reports a missing or stale required implementation review record and recommends `guru_supervise.py implementation-review <task_dir> --staged`, which writes a structured record without launching an implement worker.
 - Base: existing full-chain tasks without the new mutable evidence files continue to use current strict review and commit gates.
 - Bad: a worker appends Phase 3.3 extraction notes to `implement.md`, causing detail digest mismatch after quality is already green.
+- Bad: `check-commit` tells the operator to rerun `implement-check` only to repair a missing commit-time review record.
 - Bad: agent reads `guru_gate.py` source at commit time to infer allowed stage paths instead of using commit-plan.
 - Bad: terminal done workers trigger multiple `pgrep` / `kill` loops before commit.
 
@@ -404,6 +412,9 @@ Guru verify tests must cover:
 
 - `commit-plan` JSON for direct small_inline, micro_task, lite_task, and full_chain.
 - `commit-plan` and `check-commit` agree on representative pass/block fixtures.
+- `implementation-review --staged` writes a required clean record whose `reviewed_target_digest` matches the staged index digest consumed by `check-commit`.
+- `implementation-review --slice <unit_id> --staged` uses the slice packet target without launching an implement worker.
+- Missing/malformed/stale required implementation review records make `commit-plan` recommend `implementation-review --staged`, not `implement-check`.
 - task/spec/journal/tooling files mixed into implementation commit produce `split_required`.
 - `micro_task` missing spec update does not block by itself.
 - `lite_task` spec update can be `deferred` when no reusable contract exists.

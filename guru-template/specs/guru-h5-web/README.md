@@ -50,7 +50,7 @@
    │  ├─ detail-type-client-component.md       # L2：client-component（interactive） [已交付·full]
    │  └─ detail-type-data-access.md            # L2：data-access（data 端）          [已交付·full]
    ├─ implementation/
-   │  └─ implementation-trace-contract.md      # 实现 trace 合同：四节证据载体        [已交付]
+   │  └─ implementation-trace-contract.md      # 实现 trace 合同：计划合同 + mutable evidence [已交付]
    └─ extraction-template.md          # 复盘萃取模板（九段结构，spec 回写）         [已交付]
 ```
 
@@ -91,7 +91,7 @@
 | `harness/detail/detail-type-server-component.md` | 详细 L2 | `server-component` 类型特化：服务端取数 + 组件树组装 + 把交互下沉给 client-component；props 序列化边界、metadata/SEO 衔接 route、null→`notFound()` 分支。三元组 render 端（位同 flutter controller 渲染面） | 命中该 doc_type 时 | 已交付·full |
 | `harness/detail/detail-type-client-component.md` | 详细 L2 | `client-component` 类型特化：`'use client'` 交互态/事件/hooks、组合 ui-component、**禁直取私有数据/读 secret**（走 server-action）。三元组 interactive 端 | 命中该 doc_type 时 | 已交付·full |
 | `harness/detail/detail-type-data-access.md` | 详细 L2 | `data-access` 类型特化：fetch/缓存(`cache`/`next.revalidate`/tag) / 内容源(MDX·CMS) / ORM 查询封装；返回 domain-type、不新造类型；不被 client-component 直调。三元组 data 端（位同 flutter repository-datasource） | 命中该 doc_type 时 | 已交付·full |
-| `harness/implementation/implementation-trace-contract.md` | 实现 SSOT | trace 四节（计划/执行/证据/阻塞偏差）、证据口径（`tsc --noEmit`/Vitest+RTL/Playwright/lint，测试名级）、裸 token 引用与断链拦截。不重定义 doc_type/分层 | 实现阶段 | 已交付 |
+| `harness/implementation/implementation-trace-contract.md` | 实现 SSOT | trace 计划合同与 mutable evidence（计划/执行/证据/阻塞偏差）、证据口径（`tsc --noEmit`/Vitest+RTL/Playwright/lint，测试名级）、裸 token 引用与断链拦截。不重定义 doc_type/分层 | 实现阶段 | 已交付 |
 | `harness/extraction-template.md` | 复盘 SSOT | 九段萃取结构、「只沉淀这类任务如何做好、不沉淀本次需求事实」原则、回写 doc_type 对齐七类。Phase 3.3 由 `trellis-update-spec` 执行 | 审核/复盘阶段 | 已交付 |
 
 ---
@@ -121,7 +121,7 @@
 - 需求**五要素**：行为 / 前置条件 / 状态变化 / 失败路径 / 验收场景（缺任一不进概要）。
 - 概要**归属表 + 承接索引**：每行为唯一 owner + 三问理由；承接索引 `chapter_target → detail_doc_type` 非空且覆盖全部 owner，`detail_doc_type` 取值只能落在七类内（§4）。
 - 详细**合同八问**：每个 `UNIT-<slug>` 逐问回答（见下）。
-- 实现 **trace 四节**：① 计划（切片→`UNIT-<slug>` + doc_type/文件范围/完成信号/验证方式，按写作顺序自底向上）；② 执行（实际改动文件 + 偏差 + 原因）；③ 证据（`tsc --noEmit`/Vitest+RTL/Playwright/lint 命令与结果，测试名级；未验证项显式留 Manual QA）；④ 阻塞与偏差（上游缺陷回退、SLOT-18 处置、未决升级人工）。
+- 实现 **trace 计划合同与 mutable evidence**：① 计划（切片→`UNIT-<slug>` + doc_type/文件范围/完成信号/验证方式，按写作顺序自底向上）；② 执行（实际改动文件 + 偏差 + 原因）；③ 证据（`tsc --noEmit`/Vitest+RTL/Playwright/lint 命令与结果，测试名级；未验证项显式留 Manual QA）；④ 阻塞与偏差（上游缺陷回退、SLOT-18 处置、未决升级人工）。
 
 **详细合同八问（七类通用骨架，缺一不可）**：① 承接哪些行为（裸 `BHV-NNN`）；② 输入/输出/错误结果（TS 类型/取值域/错误枚举）；③ 读写哪些状态（读写分离，client 列交互态表，server 多为 N/A）；④ 调用/不调用哪些依赖（正反两面防越层）；⑤ 失败如何收口（error.tsx/Suspense/重试/上抛/提示，server 不泄漏内部细节）；⑥ 产生哪些事件/后置（导航/`revalidatePath`·`revalidateTag`/埋点/副作用）；⑦ 哪些测试验证它（Vitest/RTL/Playwright/manual，成功 + 全部失败路径）；⑧ 哪些内容不得在此补造（显式列出本单元不拥有的决策）。
 
@@ -198,7 +198,7 @@ domain-type → data-access → server-action → server-component → client-co
 | **需求 Gate** | 需求五要素齐全：行为 / 前置条件 / 状态变化 / 失败路径 / 验收场景 | 缺任一要素 → 不进概要 |
 | **概要 Gate** | 行为有唯一 owner + 三问理由（为何属它/为何不属别人/为何独立存在）；归属符合分层依赖律；承接索引非空且覆盖全部 owner，`detail_doc_type` 落在七类内；架构总览（一句话架构 + 分层图 + 页面流 + UC 表 + UC 承接表 + 时序图策略）齐全 | 无唯一 owner、归属违反分层律（如 client-component 持数据获取）、承接索引缺失、`detail_doc_type` 用了七类外的名 → 不进详细 |
 | **详细 Gate** | 合同八问无缺项；追溯到概要 owner；每行为有测试映射（成功 + 全部失败路径）；涉鉴权/私有数据/secret 的单元附合规与边界依据；八问之 8 逐单元存在；full 链章节闭合（索引↔chapters 双向）+ pending L2 命中项豁免齐全 | 合同八问缺项、追溯断链、无测试映射、client-component 直取私有数据/读 secret、secret 落文档、`l2_status: pending` 无豁免 → 不进实现 |
-| **实现 Gate** | trace 四节齐全；analyze（`tsc --noEmit`）/ test（Vitest+RTL / Playwright，测试名级）/ lint（ESLint+Prettier）/ 边界合规 均有证据 | 任一无证据、trace 四节不全、`'use client'` 滥用、全局样式污染、`any` 兜底 → 不进 commit |
+| **实现 Gate** | `implement.md` 计划合同齐全；mutable evidence 中 analyze（`tsc --noEmit`）/ test（Vitest+RTL / Playwright，测试名级）/ lint（ESLint+Prettier）/ 边界合规 均有证据 | 任一无证据、计划合同或 mutable evidence 不全、`'use client'` 滥用、全局样式污染、`any` 兜底 → 不进 commit |
 | **审核/复盘 Gate** | 存量豁免判定：清单内（SLOT-18）记债不阻塞；清单外新增违例阻塞；findings 带文档/章节锚点；缺陷回上游修 | 清单外新增违例、就地补造掩盖上游缺陷 → 阻塞 |
 
 **严重度**：P1（违反硬规则/红线、八问缺项、追溯断链、边界缺失、doc_type 越界——阻塞）；P2（合同不完整但可局部补）；P3（表述建议）。**审核互斥分支**：前置失败 → 只输出前置缺口与修复动作，不展开逐章审核；前置通过 → findings（severity/location/problem/suggestion）+ 概况 + 三选一结论（可进入下一阶段 / 带假设可进入 / 不可进入）。

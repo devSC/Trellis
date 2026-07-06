@@ -66,7 +66,7 @@
 | `harness/detail/detail-type-entry-api.md` | L2 类型规范（doc_type `entry-api`）：`internal/transport/http` handler 入口的合同八问特化——逐 route+method 行为、五类输入来源分列、错误响应三态收口、无状态适配层约束 | 详细阶段命中 entry-api 单元时 | 合同八问的 entry-api 特化；冲突以 L1 为准 |
 | `harness/detail/detail-type-biz.md` | L2 类型规范（doc_type `biz`）：`internal/service` 业务流程的合同八问特化——方法签名级输入输出、sentinel error 全集、业务状态唯一写 owner、依赖正反面（service 调 repository 不反向） | 详细阶段命中 biz 单元时 | 合同八问的 biz 特化；冲突以 L1 为准 |
 | `harness/detail/detail-type-repository-data.md` | L2 类型规范（doc_type `repository-data`）：`internal/repository` 数据访问合同 + `db/migrations` canonical 表/迁移的合同八问特化 | 详细阶段命中 repository-data 单元时 | 合同八问的 repository-data 特化；冲突以 L1 为准 |
-| `harness/implementation/implementation-trace-contract.md` | 实现 trace 合同：必含四节（计划/执行/证据/阻塞偏差）、自下而上执行顺序、切片挂 `UNIT-<slug>`、证据节须有可复跑命令与测试名 | 进实现阶段前 | 实现 Gate 的 trace 四节判定基线 |
+| `harness/implementation/implementation-trace-contract.md` | 实现 trace 合同：`implement.md` 计划合同、mutable evidence 边界、自下而上执行顺序、切片挂 `UNIT-<slug>`、`verification-evidence.jsonl` 须有可复跑命令与测试名 | 进实现阶段前 | 实现 Gate 的计划合同与 mutable evidence 判定基线 |
 | `harness/extraction-template.md` | 复盘/萃取九段模板：只沉淀「这类任务如何被做好」（可复用方法），不沉淀本次需求事实 | 审核/复盘阶段 | 萃取产物结构基线 |
 
 `*/index.md` 三个导航文件（`harness/index.md`、`guides/index.md`、`conventions/index.md`）只做目录导航与边界声明，不承载规则正文——避免双真源漂移。
@@ -143,10 +143,10 @@ guru-go-backend workflow 的每个阶段从本库装载规则。**双轨制**：
 | 需求 | `guru_gate.py requirements` | `prd.md` 缺五要素任一：行为编号 `### BHV-NNN`、`Given/When/Then` 行为规格、`P0`/`P1` 优先级、失败路径章节、验收场景章节、未决问题章节（无未决也须显式声明「无未决」） |
 | 概要 | `guru_gate.py overview` | 缺行为→owner 归属表 / 归属表未引用 `BHV-NNN` / 缺三问理由（为什么属于它·不属于别人·需独立存在）/ 缺承接索引（`doc_type`）/ 归属违反分层依赖律；full 链另查设计包骨架、架构就绪自检 G1~G8、mermaid 架构图、时序图 |
 | 详细 | `guru_gate.py detail` | 缺 `### UNIT-<slug>` 标题 / 合同八问四个机检标记缺任一（承接行为·失败收口·测试映射·不得补造声明）/ `implement.md` 不存在 / 承接断链；full 链另查章节闭合与 pending L2 拦截（命中非 v1 doc_type 须 `L2豁免：<doc_type> 理由：…`） |
-| 实现 | `guru_gate.py implement` | `implement.md` 不存在 / trace 四节缺任一（计划·执行·证据·阻塞偏差）/ 切片未挂 `UNIT-<slug>` / 切片引用幽灵单元 / 项目级证据缺失（`go build ./...`、`go vet ./...`、`golangci-lint run`、`go test ./...` 须到测试名级别；secret 只写环境变量名引用，不落真实 key） |
+| 实现 | `guru_gate.py implement` | `implement.md` 不存在 / 计划合同或 mutable evidence 缺任一（计划·执行·证据·阻塞偏差）/ 切片未挂 `UNIT-<slug>` / 切片引用幽灵单元 / 项目级证据缺失（`go build ./...`、`go vet ./...`、`golangci-lint run`、`go test ./...` 须到测试名级别；secret 只写环境变量名引用，不落真实 key） |
 | 审核/复盘 | 人工 + 存量豁免判定 | SLOT-17 存量违例清单内记债不阻塞；清单外新增违例阻塞（新代码绕过 service 让 handler 直连 DB、新增 gin/echo 依赖、新写 secret 字面量、单元跟随名词而非行为）；结构性缺陷只能回上游修，禁止下游补造 |
 
-**结构兼容底线**（让 `guru_gate.py` 结构检查通过的最小骨架）：需求五要素齐全；概要含归属表（逐行 `BHV-NNN` + 三问理由）+ 承接索引（`chapter_target → doc_type`）；详细每单元含合同八问（承接行为 / 输入输出错误 / 读写状态 / 依赖正反面 / 失败收口 / 事件后置 / 测试映射 / 不得补造）；实现 trace 含四节且证据节有可复跑命令与测试名。
+**结构兼容底线**（让 `guru_gate.py` 结构检查通过的最小骨架）：需求五要素齐全；概要含归属表（逐行 `BHV-NNN` + 三问理由）+ 承接索引（`chapter_target → doc_type`）；详细每单元含合同八问（承接行为 / 输入输出错误 / 读写状态 / 依赖正反面 / 失败收口 / 事件后置 / 测试映射 / 不得补造）；实现阶段 `implement.md` 计划合同齐全，mutable evidence 有可复跑命令与测试名。
 
 ---
 

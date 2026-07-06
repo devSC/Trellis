@@ -154,8 +154,8 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 ```
 
 阶段共同规则：
-- 每个 Phase 开工前把对应切片在 `implement.md` 置 `in_progress`（同一时间最多一个 `in_progress`）；代码落地后置 `implemented`；通过对应验证命令后才置 `verified`。
-- 每个 Phase 结束执行阶段自检，逐项回放该 `UNIT-<slug>` 的合同八项与 LOCK 锁定项，结果写回 `implement.md`。
+- Phase 0 在 detail 确认前创建或更新 `implement.md` 计划合同；detail 确认后 `implement.md` 不再作为执行状态写入点。
+- Phase 1~6 的切片状态、改动文件、偏差、阶段自检和恢复条件追加到 `implementation-evidence.jsonl`；验证命令和测试名级证据追加到 `verification-evidence.jsonl`。
 - Phase 0 未通过不得写生产代码；Phase 1~5 只能按依赖方向推进；发现下层合同缺失，当前生产路径必须 `blocked`。
 
 各 Phase 的产物合同与出入口条件见 §4。
@@ -169,7 +169,7 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 输入：概要承接索引（`chapter_target → doc_type`）、目标详细设计单元、`golden-path.md`、`project-conventions.md`、现有代码骨架。
 
 代码前硬门禁：
-- 必须先创建或更新 `implement.md` 的计划节；小迭代可缩小范围，但不得跳过计划，也不得"先写代码再补 trace"。
+- 必须先创建或更新 `implement.md` 的计划节；小迭代可缩小范围，但不得跳过计划，也不得"先写代码再补 trace"。若 detail 已确认而计划缺失或需改变，必须回退 detail Gate，不在实现阶段静默补写。
 - 完成 `UNIT-<slug> → 代码资产` 映射；识别 LOCK 锁定面与 Secret/Credential 检查面；为每个切片写明 `checkpoint` 与 `validation_commands`。
 
 出口条件：
@@ -275,7 +275,7 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 
 ## 5. 实现 Gate（go build / vet / test + lint + 证据）
 
-实现 Gate 是"证据感，不是做完感"。每次实现闭环至少运行下列命令，并把命令与结果（命令 + 测试名级别，非"全部通过"）回填 `implement.md` 证据节。
+实现 Gate 是"证据感，不是做完感"。每次实现闭环至少运行下列命令，并把命令与结果（命令 + 测试名级别，非"全部通过"）追加到 `verification-evidence.jsonl`；implementation review verdict 进入 `review-records/implementation-reviews.jsonl`。
 
 ### 5.1 必跑验证命令（既有命令优先）
 
@@ -286,19 +286,19 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 | 测试 | `go test ./...`（或 `project-conventions.md` 指定的等价命令） | 退出码 0；记录受影响包的测试名 |
 | lint | `golangci-lint run`（lint 取值见 `project-conventions.md`） | 退出码 0，无新增告警 |
 | 启动验证 | 最小真实启动 / 调用（`/healthz` 探活、关键 endpoint 冒烟） | 返回预期状态码与响应结构 |
-| Secret 残留 | 检查 `config.go` / yaml / fixture / 代码 / `implement.md` 无明文 secret | 仅出现 env var name / 引用，无真实 key/AK/SK/token |
+| Secret 残留 | 检查 `config.go` / yaml / fixture / 代码 / `implement.md` / mutable evidence 无明文 secret | 仅出现 env var name / 引用，无真实 key/AK/SK/token |
 
-证据节要求：
+`verification-evidence.jsonl` 要求：
 - 每个切片对应"命令 + 结果"；测试写到测试名级别（如 `ok internal/service 0.3s` + 具体 `Test_UserService_Create_...`）。
 - 无法本地验证项（真机表现、外部依赖联调）显式列出，标注留给哪个环节（Manual QA / 远程冒烟机，safa-land 见 `AGENTS.md` `safa-test`）。
 
 ### 5.2 Gate 结构判定（guru_gate.py 结构底线）
 
-实现 Gate 结构检查（`guru_gate.py implement`）要求 `implement.md` trace **四节齐全**且**切片挂 UNIT**：
+实现 Gate 结构检查（`guru_gate.py implement`）要求 `implement.md` 计划合同与 mutable evidence 齐全，且**切片挂 UNIT**：
 
 - 计划节（含"计划"或"切片"）
 - 执行节（含"执行"或"改动文件"）
-- 证据节（含"证据"或 analyze/test）
+- `verification-evidence.jsonl`（含"证据"或 analyze/test）
 - 阻塞与偏差节（含"阻塞"或"偏差"）
 - 若存在 `UNIT-<slug>`，trace 中必须出现 `UNIT-` 引用（裸编号 token，兼容未来双链包裹）。
 
@@ -313,7 +313,7 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 - `blocked`：详细设计缺失 / 冲突 / 需确认且已按 §7 记录并回退，未写临时代码绕过；或环境 / 凭据 / 基础设施缺失导致验证无法继续，保留恢复条件。
 
 逐条核查清单：
-1. `implement.md` 存在且四节齐全，能恢复实现范围、计划状态、设计锚点、代码落点、阶段自检、验证状态、阻塞原因。
+1. `implement.md` 存在且计划合同齐全，能恢复实现范围、计划状态、设计锚点；代码落点、阶段自检、验证状态、阻塞原因可由 `implement.md` 字段合同与 mutable evidence 合并恢复。
 2. 每个切片挂 `UNIT-<slug>`，无幽灵引用（prd 无此 `BHV`）。
 3. 代码有 plan 先行证据；计划 `blocked` 但代码继续绕过 → 不得 `pass`。
 4. 合同八项每项有代码锚点或 `blocked` 依据；执行流程每步骤有落点。
@@ -321,7 +321,7 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 6. 错误 / 事务 / 幂等 / 配置 / 可观测字段未弱化。
 7. 生产路径无 fake / 占位 / 硬编码结果 / 内存模拟。
 8. 默认只跑既有验证命令；新增测试仅限 §6 allowlist 并回指切片与 `test_target`。
-9. Secret 合同闭合：代码 / config / yaml / fixture / trace 无 secret value；`.env` 未当线上合同。
+9. Secret 合同闭合：代码 / config / yaml / fixture / trace / mutable evidence 无 secret value；`.env` 未当线上合同。
 10. handler 不直访 DB；service 不读 HTTP/env；repository 无业务判定。
 
 ---
@@ -330,10 +330,10 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 
 - 默认只运行既有验证命令（§5.1），**不默认新增测试用例**，不采用 TDD / RED-GREEN，不先写测试再反向收敛生产代码。
 - 新增测试用例不是详细设计承接来源，也不得牵引代码结构。
-- allowlist（唯一允许新增的测试）：**无状态、幂等、输入输出明确的纯函数 / 算法 / 静态技术函数**最小单元测试。例如 safa-land 中可对 `validateMonthPlanRange`、`decodeStringArray` 这类纯函数补最小单测；新增前必须写入 `implement.md` 计划与 `test_target`。
+- allowlist（唯一允许新增的测试）：**无状态、幂等、输入输出明确的纯函数 / 算法 / 静态技术函数**最小单元测试。例如 safa-land 中可对 `validateMonthPlanRange`、`decodeStringArray` 这类纯函数补最小单测；新增前必须已有 `implement.md` 计划或 slice packet 的 `test_target`，detail 确认后新增测试证据写入 `verification-evidence.jsonl`。
 - 禁止：新增业务流程测试 / 集成测试 / e2e 测试 / repository-DB 测试 / 外部系统 mock-fake 测试来定义业务语义；为测试通过新增 fake repo/store/adapter、内存模拟、硬编码结果或放宽断言。
 - 测试框架取值见 `project-conventions.md`（当前标准 `testing`，可调 testify/ginkgo）；不在本文件硬编码。
-- 不适用场景：详细设计已附带独立测试计划 / 业务验收用例时，按该计划执行属于既有验证，不受 allowlist 限制——但仍需 `implement.md` 登记。
+- 不适用场景：详细设计已附带独立测试计划 / 业务验收用例时，按该计划执行属于既有验证，不受 allowlist 限制；detail 确认后的执行结果登记到 `verification-evidence.jsonl`。
 
 ---
 
@@ -345,9 +345,9 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 
 - 豁免对象：仓库内已存在、不符合当前 golden-path / 合同但在本次切片范围**外**的代码（典型：旧服务里残留的大方法、未收敛的错误、横向导入）。
 - 不可豁免：LOCK-1~6 锁定项（任何代码都不可违反）；本次切片**新增 / 修改**的代码（必须符合全部合同与 LOCK）。
-- 触碰即修 vs 记债：本次切片为完成目标**必须**改动到的存量违例 → 顺手修复并在证据节记录；本次切片**不必**改动、改动会扩散影响面的存量违例 → 记债（列出位置 + 原因），不在本次扩大范围（呼应 `AGENTS.md` 外科手术式改动原则）。
+- 触碰即修 vs 记债：本次切片为完成目标**必须**改动到的存量违例 → 顺手修复并在 mutable evidence 记录；本次切片**不必**改动、改动会扩散影响面的存量违例 → 记债（列出位置 + 原因），不在本次扩大范围（呼应 `AGENTS.md` 外科手术式改动原则）。
 
-### 7.2 处置记录（写入 `implement.md` 阻塞与偏差节）
+### 7.2 处置记录（写入 mutable evidence）
 
 每条触碰的存量违例记录：
 - 违例位置（相对路径 + 符号）。
@@ -363,11 +363,11 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 
 ---
 
-## 8. `implement.md`（trace）主文档合同
+## 8. `implement.md`（trace）主文档合同与 mutable evidence 边界
 
-实现阶段的过程记录主文档，是实现 Gate 的证据载体。建议路径：目标仓库 `docs/design/<feature>/implement.md`（或服务内 `docs/implementation/<module_slug>/implement.md`），随实现推进持续更新——**不在 PR 前一次性补写**。
+`implement.md` 是 detail Gate 的 digest-bearing planning/trace contract。建议路径：目标仓库 `docs/design/<feature>/implement.md`（或服务内 `docs/implementation/<module_slug>/implement.md`）。它在 detail 确认前完成并进入 digest；detail 确认后不得作为执行证据默认写入点。实现阶段的执行、验证、packet、review、commit 证据写入 task-local mutable evidence：`implementation-evidence.jsonl`、`verification-evidence.jsonl`、`review-records/implementation-reviews.jsonl`、`commit-plan.json`。若必须修改 `implement.md`，必须回退 detail Gate 并重新 review/confirm。
 
-### 8.1 必含四节（实现 Gate 结构底线）
+### 8.1 必含四节（计划合同结构底线）
 
 #### 1. 计划（开工前写）
 
@@ -377,14 +377,14 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 | 执行顺序 | 按依赖排序（§3 自下而上：domain → repository → service → transport → app），从最小切片开始 |
 | 风险点 | 预判高风险改动（migration、跨服务契约、共享状态），逐条写验证手段 |
 
-#### 2. 执行（随做随记）
+#### 2. 执行（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
 
 每个切片完成时记录：
 - 实际改动文件清单（相对路径）。
 - 与计划的偏差（改了计划外文件 / 没改计划内文件 → 必须写原因）。
 - 代码生成 / 迁移执行记录（跑了哪个脚本 / migration）。
 
-#### 3. 证据（验证后记）
+#### 3. 证据（字段合同，post-detail 记录进 `verification-evidence.jsonl`）
 
 | 类型 | 要求 |
 |------|------|
@@ -395,16 +395,16 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 | Secret | Secret 残留检查结果 |
 | 未验证项 | 无法本地验证的（真机、外部联调）→ 显式列出 + 留给哪个环节 |
 
-#### 4. 阻塞与偏差（发生时记）
+#### 4. 阻塞与偏差（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
 
-- 上游缺陷：详细设计合同错 / 漏 → 记录后**回退详细阶段修订**，不就地改设计（trace 里留回退记录与恢复条件）。
+- 上游缺陷：详细设计合同错 / 漏 → 记录后**回退详细阶段修订**，不就地改设计（`implementation-evidence.jsonl` 留回退记录与恢复条件）。
 - 存量违例触碰：列出位置 + 处置（绕行 / 顺手修复 / 记债，见 §7）。
 - 未决决策：实现中冒出的新决策点 → 不私自拍板，记录并升级给人工 Gate。
 
 ### 8.2 切片状态机
 
 - 固定枚举：`pending` / `in_progress` / `implemented` / `verified` / `blocked` / `skipped_with_reason`。
-- 同一时间最多一个切片 `in_progress`。
+- 同一时间最多一个切片 `in_progress`；detail 确认后该状态写入 `implementation-evidence.jsonl`。
 - `implemented` 只表示代码落地；未通过 `checkpoint` 与 `validation_commands` 的切片不得 `verified`。
 - `blocked` 必须写明恢复条件与回指（详细设计回修 / 凭据 / 基础设施）。
 - `skipped_with_reason` 必须说明设计范围 / 用户范围为何不需要；不得用来隐藏未实现的 required 切片。
@@ -412,9 +412,9 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 ### 8.3 反模式
 
 - trace 在 PR 前一次性补写（失去过程证据意义）。
-- 证据节只写"全部通过"（无命令、无测试名）。
+- mutable evidence 只写"全部通过"（无命令、无测试名）。
 - 偏差不记录，PR diff 与计划对不上靠 reviewer 自己发现。
-- 把 `implement.md` 当设计补写位置（只能记录缺陷 / 决策 / 阻塞 / 恢复条件 / 代码承接证据）。
+- 把 `implement.md` 当设计补写位置；detail 确认后又把它当执行证据写入点。
 
 ---
 
@@ -432,4 +432,4 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 - 默认 TDD / 先写测试牵引实现，或新增业务流程 / 集成 / e2e / mock-fake 测试定义业务语义（违 §6）。
 - 把 API key / 长期 AK/SK / token / password 写进 `config.go` / yaml / fixture / 测试 / 代码 / 日志 / `implement.md`（违 Secret 合同）。
 - 用"存量豁免"绕过 LOCK 锁定项或本次新增代码的合同（违 §7）。
-- `implement.md` 在 PR 前补写、证据节只写"全部通过"、切片不挂 `UNIT-<slug>`（违 §8 与实现 Gate 结构底线）。
+- trace 在 PR 前补写、mutable evidence 只写"全部通过"、切片不挂 `UNIT-<slug>`（违 §8 与实现 Gate 结构底线）。

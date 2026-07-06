@@ -162,11 +162,11 @@ Phase 7  route：page/layout/loading/error/not-found.tsx + metadata/SEO + genera
 Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回填
 ```
 
-> 说明：`ui-component`（Phase 6）虽是叶子，但通常在 `client-component`/`server-component` 之后落地以便对齐其消费契约；若详细设计显式声明纯展示组件先行，可在 `implement.md` 调整并记录。`route`（Phase 7）最后落地，因为它装配全部下层。
+> 说明：`ui-component`（Phase 6）虽是叶子，但通常在 `client-component`/`server-component` 之后落地以便对齐其消费契约；若详细设计显式声明纯展示组件先行，可在 detail 确认前调整 `implement.md`；detail 确认后只能记录到 mutable evidence，需改变计划则回退 detail Gate。`route`（Phase 7）最后落地，因为它装配全部下层。
 
 阶段共同规则：
-- 每个 Phase 开工前把对应切片在 `implement.md` 置 `in_progress`（同一时间最多一个 `in_progress`）；代码落地后置 `implemented`；通过对应验证命令后才置 `verified`。
-- 每个 Phase 结束执行阶段自检，逐项回放该 `UNIT-<slug>` 的合同八项与 LOCK 锁定项，结果写回 `implement.md`。
+- Phase 0 在 detail 确认前创建或更新 `implement.md` 计划合同；detail 确认后 `implement.md` 不再作为执行状态写入点。
+- Phase 1~8 的切片状态、改动文件、偏差、阶段自检和恢复条件追加到 `implementation-evidence.jsonl`；验证命令和测试名级证据追加到 `verification-evidence.jsonl`。
 - Phase 0 未通过不得写生产代码；Phase 1~7 只能按依赖方向推进；发现下层合同缺失，当前生产路径必须 `blocked`。
 
 各 Phase 的产物合同与出入口条件见 §4。
@@ -180,7 +180,7 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 输入：概要承接索引（`chapter_target → doc_type`，七类）、目标详细设计单元、`golden-path.md`、`project-conventions.md`、现有代码骨架。
 
 代码前硬门禁：
-- 必须先创建或更新 `implement.md` 的计划节；小迭代可缩小范围，但不得跳过计划，也不得"先写代码再补 trace"。
+- 必须先创建或更新 `implement.md` 的计划节；小迭代可缩小范围，但不得跳过计划，也不得"先写代码再补 trace"。若 detail 已确认而计划缺失或需改变，必须回退 detail Gate，不在实现阶段静默补写。
 - 完成 `UNIT-<slug> → 代码资产`（文件路径 + owner 层）映射；识别 LOCK 锁定面（strict / server-client 边界 / secret 边界 / route 约定 / 样式隔离 / 错误边界 / 分层依赖）与 Secret/Credential 检查面；为每个切片写明 `checkpoint` 与 `validation_commands`。
 - 对 `route`/`ui-component`/`domain-type`/`server-action`（L2 `pending`）四类，确认已按 §2 八问展开或已登记 L2 豁免。
 
@@ -385,7 +385,7 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 
 ## 5. 实现 Gate（tsc / next build / eslint / test + 证据）
 
-实现 Gate 是"证据感，不是做完感"。每次实现闭环至少运行下列命令，并把命令与结果（命令 + 失败项/测试名级别，非"全部通过"）回填 `implement.md` 证据节。
+实现 Gate 是"证据感，不是做完感"。每次实现闭环至少运行下列命令，并把命令与结果（命令 + 失败项/测试名级别，非"全部通过"）追加到 `verification-evidence.jsonl`；implementation review verdict 进入 `review-records/implementation-reviews.jsonl`。
 
 ### 5.1 必跑验证命令（既有命令优先）
 
@@ -396,21 +396,21 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 | lint | `npx eslint .`（lint 取值见 `project-conventions.md`，含 ESLint + Prettier） | 退出码 0，无新增告警；`next lint` 的 RSC/`'use client'` 相关规则不报错 |
 | 测试 | `project-conventions.md` 指定命令（Vitest+RTL / Playwright） | 退出码 0；记录受影响用例名 |
 | 启动/冒烟 | 最小真实启动（`next dev` / `next start`）+ 关键 route 渲染冒烟 | 关键页面 200、首屏由 server 渲染、交互可用 |
-| Secret 残留 | 检查代码 / `.env.example` / fixture / `implement.md` 无明文 secret，且无 `NEXT_PUBLIC_` 前缀承载 secret | 仅出现 env var 名 / 引用，无真实 key/AK/SK/token |
+| Secret 残留 | 检查代码 / `.env.example` / fixture / `implement.md` / mutable evidence 无明文 secret，且无 `NEXT_PUBLIC_` 前缀承载 secret | 仅出现 env var 名 / 引用，无真实 key/AK/SK/token |
 
 > 示例对照：`next.js/examples/blog` 的 `package.json` 仅有 `dev`/`build`/`start`，且 `build` 为 `node ./scripts/gen-rss.js && next build`（示例实证），**无 typecheck/eslint/test 脚本**（示例简化）。生产工程必须补齐 `typecheck`/`lint`/`test`（生产级补充），不照抄示例缺省。
 
-证据节要求：
+`verification-evidence.jsonl` 要求：
 - 每个切片对应"命令 + 结果"；类型/构建写到具体失败文件或"无错误"，测试写到用例名级别（如 `Article.test.tsx > renders title`）。
 - 无法本地验证项（真机表现、外部 CMS/DB 联调、视觉回归）显式列出，标注留给哪个环节（Manual QA / 远程冒烟 / 视觉走查）。
 
 ### 5.2 Gate 结构判定（guru_gate.py 结构底线）
 
-实现 Gate 结构检查（`guru_gate.py implement`）要求 `implement.md` trace **四节齐全**且**切片挂 UNIT**：
+实现 Gate 结构检查（`guru_gate.py implement`）要求 `implement.md` 计划合同与 mutable evidence 齐全，且**切片挂 UNIT**：
 
 - 计划节（含"计划"或"切片"）
 - 执行节（含"执行"或"改动文件"）
-- 证据节（含"证据"或 analyze/test/build）
+- `verification-evidence.jsonl`（含"证据"或 analyze/test/build）
 - 阻塞与偏差节（含"阻塞"或"偏差"）
 - 若存在 `UNIT-<slug>`，trace 中必须出现 `UNIT-` 引用（裸编号 token，兼容未来双链包裹）。
 
@@ -425,7 +425,7 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 - `blocked`：详细设计缺失 / 冲突 / 需确认且已按 §7 记录并回退，未写临时代码绕过；或环境 / 凭据 / CMS/DB 基础设施缺失导致验证无法继续，保留恢复条件；或四类 `pending` doc_type 无 L2 且未取豁免。
 
 逐条核查清单：
-1. `implement.md` 存在且四节齐全，能恢复实现范围、计划状态、设计锚点、代码落点、阶段自检、验证状态、阻塞原因。
+1. `implement.md` 存在且计划合同齐全，能恢复实现范围、计划状态、设计锚点；代码落点、阶段自检、验证状态、阻塞原因可由 `implement.md` 字段合同与 mutable evidence 合并恢复。
 2. 每个切片挂 `UNIT-<slug>`，无幽灵引用（prd 无此 `BHV`）；doc_type 落在七类内。
 3. 代码有 plan 先行证据；计划 `blocked` 但代码继续绕过 → 不得 `pass`。
 4. 合同八项每项有代码锚点或 `blocked` 依据；执行流程每步骤有落点。
@@ -433,7 +433,7 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 6. 数据获取/缓存/重验/错误/SEO/metadata 字段未弱化；render/client 边界与设计一致。
 7. 生产路径无 fake / 占位 / 硬编码结果 / 内存 mock；无 `any` 逃逸。
 8. 默认只跑既有验证命令；新增测试仅限 §6 allowlist 并回指切片与 `test_target`。
-9. Secret 合同闭合：代码 / `.env.example` / fixture / trace 无 secret value；`NEXT_PUBLIC_` 不承载 secret。
+9. Secret 合同闭合：代码 / `.env.example` / fixture / trace / mutable evidence 无 secret value；`NEXT_PUBLIC_` 不承载 secret。
 10. `client-component` 不持 secret/不直连 DB/不取首屏私有数据；`server-component` 无交互状态；`ui-component` 不取数；`data-access` 不被 client 误导入。
 
 ---
@@ -442,9 +442,9 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 
 - 默认只运行既有验证命令（§5.1），**不默认新增测试用例**，不采用 TDD / RED-GREEN，不先写测试再反向收敛生产代码。
 - 新增测试用例不是详细设计承接来源，也不得牵引代码结构。
-- allowlist（唯一允许新增的测试）：**无状态、幂等、输入输出明确的纯函数 / 纯展示 `ui-component`（无副作用、无取数）/ `domain-type` zod schema** 最小单测（Vitest + RTL，取值见 `project-conventions.md`）。例如可对 `tag.split(', ')` 解析函数、`PostFrontmatterSchema.parse` 成功/失败分支、`<Article post={...}/>` 渲染输出补最小单测；新增前必须写入 `implement.md` 计划与 `test_target`。
+- allowlist（唯一允许新增的测试）：**无状态、幂等、输入输出明确的纯函数 / 纯展示 `ui-component`（无副作用、无取数）/ `domain-type` zod schema** 最小单测（Vitest + RTL，取值见 `project-conventions.md`）。例如可对 `tag.split(', ')` 解析函数、`PostFrontmatterSchema.parse` 成功/失败分支、`<Article post={...}/>` 渲染输出补最小单测；新增前必须已有 `implement.md` 计划或 slice packet 的 `test_target`，detail 确认后新增测试证据写入 `verification-evidence.jsonl`。
 - 禁止：新增业务流程测试 / 集成测试 / e2e（Playwright）/ `data-access`-真实源测试 / `server-action`-DB 测试 / 外部系统 mock-fake 测试来定义业务语义；为测试通过新增 fake `data-access`/mock 数据/硬编码结果或放宽断言。
-- 不适用场景：详细设计已附带独立测试计划 / 业务验收用例（如关键交互的 RTL 用例、关键流程的 Playwright e2e）时，按该计划执行属于既有验证，不受 allowlist 限制——但仍需 `implement.md` 登记。
+- 不适用场景：详细设计已附带独立测试计划 / 业务验收用例（如关键交互的 RTL 用例、关键流程的 Playwright e2e）时，按该计划执行属于既有验证，不受 allowlist 限制；detail 确认后的执行结果登记到 `verification-evidence.jsonl`。
 
 ---
 
@@ -456,9 +456,9 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 
 - 豁免对象：仓库内已存在、不符合当前 golden-path / 合同但在本次切片范围**外**的代码（典型：旧的 Pages Router 残页、客户端取首屏数据的旧组件、未收窄的 `any`、全局样式污染、缺 metadata 的旧路由）。
 - 不可豁免：LOCK-1~7 锁定项（任何代码都不可违反）；本次切片**新增 / 修改**的代码（必须符合全部合同与 LOCK）。
-- 触碰即修 vs 记债：本次切片为完成目标**必须**改动到的存量违例 → 顺手修复并在证据节记录；本次切片**不必**改动、改动会扩散影响面的存量违例 → 记债（列出位置 + 原因），不在本次扩大范围（外科手术式改动原则）。
+- 触碰即修 vs 记债：本次切片为完成目标**必须**改动到的存量违例 → 顺手修复并在 `implementation-evidence.jsonl` 记录；本次切片**不必**改动、改动会扩散影响面的存量违例 → 记债（列出位置 + 原因），不在本次扩大范围（外科手术式改动原则）。
 
-### 7.2 处置记录（写入 `implement.md` 阻塞与偏差节）
+### 7.2 处置记录（写入 mutable evidence）
 
 每条触碰的存量违例记录：
 - 违例位置（相对路径 + 符号/组件名）。
@@ -474,11 +474,11 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 
 ---
 
-## 8. `implement.md`（trace）主文档合同
+## 8. `implement.md`（trace）主文档合同与 mutable evidence 边界
 
-实现阶段的过程记录主文档，是实现 Gate 的证据载体。建议路径：目标仓库 `docs/design/<feature>/implement.md`（或 `docs/implementation/<module_slug>/implement.md`），随实现推进持续更新——**不在 PR 前一次性补写**。
+`implement.md` 是 detail Gate 的 digest-bearing planning/trace contract。建议路径：目标仓库 `docs/design/<feature>/implement.md`（或 `docs/implementation/<module_slug>/implement.md`）。它在 detail 确认前完成并进入 digest；detail 确认后不得作为执行证据默认写入点。实现阶段的执行、验证、packet、review、commit 证据写入 task-local mutable evidence：`implementation-evidence.jsonl`、`verification-evidence.jsonl`、`review-records/implementation-reviews.jsonl`、`commit-plan.json`。若必须修改 `implement.md`，必须回退 detail Gate 并重新 review/confirm。
 
-### 8.1 必含四节（实现 Gate 结构底线）
+### 8.1 必含四节（计划合同结构底线）
 
 #### 1. 计划（开工前写）
 
@@ -488,14 +488,14 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 | 执行顺序 | 按依赖排序（§3 自下而上：domain-type → data-access → server-action → server-component → client-component → ui-component → route），从最小切片开始 |
 | 风险点 | 预判高风险改动（server/client 边界变更、缓存/重验策略、动态 SEO、旧 Pages Router 迁移、secret 边界），逐条写验证手段 |
 
-#### 2. 执行（随做随记）
+#### 2. 执行（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
 
-每个切片完成时记录：
+每个切片完成时记录下列字段：
 - 实际改动文件清单（相对路径）。
 - 与计划的偏差（改了计划外文件 / 没改计划内文件 → 必须写原因）。
 - 代码生成 / 内容源/迁移执行记录（跑了哪个脚本 / migration / codegen）。
 
-#### 3. 证据（验证后记）
+#### 3. 证据（字段合同，post-detail 记录进 `verification-evidence.jsonl`）
 
 | 类型 | 要求 |
 |------|------|
@@ -507,16 +507,16 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 | Secret | Secret 残留检查结果（含 `NEXT_PUBLIC_` 审查） |
 | 未验证项 | 无法本地验证的（真机、外部 CMS/DB 联调、视觉回归）→ 显式列出 + 留给哪个环节 |
 
-#### 4. 阻塞与偏差（发生时记）
+#### 4. 阻塞与偏差（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
 
-- 上游缺陷：详细设计合同错 / 漏 / doc_type 错 → 记录后**回退详细阶段修订**，不就地改设计（trace 里留回退记录与恢复条件）。
+- 上游缺陷：详细设计合同错 / 漏 / doc_type 错 → 记录后**回退详细阶段修订**，不就地改设计（`implementation-evidence.jsonl` 留回退记录与恢复条件）。
 - 存量违例触碰：列出位置 + 处置（绕行 / 顺手修复 / 记债，见 §7）。
 - 未决决策：实现中冒出的新决策点（如新缓存策略、新状态管理引入）→ 不私自拍板，记录并升级给人工 Gate。
 
 ### 8.2 切片状态机
 
 - 固定枚举：`pending` / `in_progress` / `implemented` / `verified` / `blocked` / `skipped_with_reason`。
-- 同一时间最多一个切片 `in_progress`。
+- 同一时间最多一个切片 `in_progress`；detail 确认后该状态写入 `implementation-evidence.jsonl`。
 - `implemented` 只表示代码落地；未通过 `checkpoint` 与 `validation_commands` 的切片不得 `verified`。
 - `blocked` 必须写明恢复条件与回指（详细设计回修 / L2 豁免待批 / 凭据 / 基础设施）。
 - `skipped_with_reason` 必须说明设计范围 / 用户范围为何不需要；不得用来隐藏未实现的 required 切片。
@@ -524,9 +524,9 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 ### 8.3 反模式
 
 - trace 在 PR 前一次性补写（失去过程证据意义）。
-- 证据节只写"全部通过"（无命令、无失败文件/测试名）。
+- mutable evidence 只写"全部通过"（无命令、无失败文件/测试名）。
 - 偏差不记录，PR diff 与计划对不上靠 reviewer 自己发现。
-- 把 `implement.md` 当设计补写位置（只能记录缺陷 / 决策 / 阻塞 / 恢复条件 / 代码承接证据）。
+- 把 `implement.md` 当设计补写位置；detail 确认后又把它当执行证据写入点。
 
 ---
 
@@ -548,4 +548,4 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 | 12 | 把 `next.js/examples/blog` 的简化写法（Pages Router / `gray-matter` 裸 `any` / `<style jsx>` / 非 strict / 手动字体 preload）当生产合同照抄 | §0.0 示例 vs 生产区分 |
 | 13 | doc_type 改名 / 增减 / 换数（如照抄 flutter controller / Go handler 命名）或越 owner 层归属 | §0.1 / LOCK-7 |
 | 14 | 用"存量豁免"绕过 LOCK 锁定项或本次新增代码的合同 | §7 |
-| 15 | `implement.md` 在 PR 前补写、证据节只写"全部通过"、切片不挂 `UNIT-<slug>`、四类 `pending` doc_type 无 L2 又未取豁免 | §8 / §5.2 |
+| 15 | trace 在 PR 前补写、mutable evidence 只写"全部通过"、切片不挂 `UNIT-<slug>`、四类 `pending` doc_type 无 L2 又未取豁免 | §8 / §5.2 |

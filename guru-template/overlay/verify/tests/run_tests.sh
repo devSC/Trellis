@@ -2243,12 +2243,28 @@ else failn=$((failn+1)); echo "FAIL  commit-plan 无 staged JSON 错误 (rc=$rc)
 	COMMIT_HOOK="$HERE/../../hooks/platform/block-unstarted-commit.sh"
 	install_hook_runtime() {
 	  local root="$1"
-	  mkdir -p "$root/.trellis/scripts/guru"
+	  local active_task_src
+	  mkdir -p "$root/.trellis/scripts/guru" "$root/.trellis/scripts/common"
 	  cp "$HERE/../guru_gate.py" \
 	     "$HERE/../guru_risk.py" \
 	     "$HERE/../guru_contract.py" \
 	     "$HERE/../guru_review_record.py" \
 	     "$root/.trellis/scripts/guru/"
+	  for active_task_src in \
+	    "$HERE/../../../../trellis/scripts/common/active_task.py" \
+	    "$HERE/../../../../packages/cli/src/templates/trellis/scripts/common/active_task.py"; do
+	    if [ -f "$active_task_src" ]; then
+	      cp "$active_task_src" "$root/.trellis/scripts/common/active_task.py"
+	      return 0
+	    fi
+	  done
+	  echo "missing active_task.py fixture source" >&2
+	  return 1
+	}
+	write_hook_session() {
+	  local root="$1" task="$2" key="${3:-hook-session}"
+	  mkdir -p "$root/.trellis/.runtime/sessions"
+	  printf '{"current_task":".trellis/tasks/%s"}\n' "$(basename "$task")" > "$root/.trellis/.runtime/sessions/$key.json"
 	}
 	HN_ROOT="$TMP/hook-no-active-root"; mkdir -p "$HN_ROOT/.trellis/scripts/guru"
 	: > "$HN_ROOT/.trellis/scripts/guru/guru_gate.py"
@@ -2261,15 +2277,15 @@ else failn=$((failn+1)); echo "FAIL  commit-plan 无 staged JSON 错误 (rc=$rc)
 	HD_ROOT=$(mk_direct_commit_case hook-direct-low-risk "lib/ui/character_chat_ai_bubble.dart" "test/ui/character_chat_message_list_test.dart")
 	install_hook_runtime "$HD_ROOT"
 	out=$(printf '{"tool_input":{"command":"git commit -m test"},"cwd":"%s"}' "$HD_ROOT" | CLAUDE_PROJECT_DIR="$HD_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
-	if [ "$rc" = 0 ] && printf '%s' "$out" | grep -q "direct small_inline scoped low-risk commit"; then
-	  pass=$((pass+1)); echo "PASS  commit hook 存在旧任务但无当前 task 时放行 direct low-risk"
+	if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "active task context unavailable"; then
+	  pass=$((pass+1)); echo "PASS  commit hook 存在 planning/in_progress 任务但无 active context 时 fail-closed"
 	else
-	  failn=$((failn+1)); echo "FAIL  commit hook direct low-risk 应放行 (rc=$rc)"; echo "$out" | head -4
+	  failn=$((failn+1)); echo "FAIL  commit hook 缺 active context 不应退回 direct small_inline (rc=$rc)"; echo "$out" | head -4
 	fi
 	HC_PAIR=$(mk_commit_gate_case hook-commit-planning planning "lib/x.dart")
 	HC_ROOT="${HC_PAIR%%|*}"; HC_TASK="${HC_PAIR#*|}"
-	mkdir -p "$HC_ROOT/.trellis/scripts/guru"
-	ln -sf "$GATE" "$HC_ROOT/.trellis/scripts/guru/guru_gate.py"
+	install_hook_runtime "$HC_ROOT"
+	write_hook_session "$HC_ROOT" "$HC_TASK"
 printf 'code\n' > "$HC_ROOT/lib/x.dart"
 (cd "$HC_ROOT" && git add lib/x.dart)
 out=$(printf '{"tool_input":{"command":"git commit -m test"},"cwd":"%s"}' "$HC_ROOT" | TASK_JSON_PATH="$HC_TASK/task.json" CLAUDE_PROJECT_DIR="$HC_ROOT" bash "$COMMIT_HOOK" 2>&1); rc=$?
@@ -3783,6 +3799,10 @@ pf = R.parse_verdict_block(txt)
 ok("P1c parse 7 字段 + invariant_status/evidence",
    pf.get("review_result") == "clean" and pf["_invariants"].get("INV-1", {}).get("status") == "pass"
    and pf["_invariants"]["INV-1"].get("evidence") == "test x")
+raw_jsonl = json.dumps({"kind": "message", "text": txt}, ensure_ascii=False)
+pf_jsonl = R.parse_verdict_block(raw_jsonl)
+ok("P1c parse channel raw JSONL text verdict",
+   pf_jsonl.get("review_target") == "slice:U" and pf_jsonl["_invariants"].get("INV-1", {}).get("evidence") == "test x")
 
 # --- normalize_review_record(两层)---
 ctx = {"mode": "supervisor", "packet": {"invariants": invs, "semantic_review_provider": {"provider": "opposite"}},
@@ -3825,6 +3845,15 @@ def run_ic(tdir, root):
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         return gs.run_implement_check(args)
 
+def run_ir(tdir, root):
+    args = argparse.Namespace(task_dir=tdir, root=root, platform="flutter", provider="codex",
+                              trellis_bin="trellis", run_id="RID", dry_run=True,
+                              slice="U", staged=True, contract=False)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        rc = gs.run_implementation_review(args)
+    return rc, out.getvalue(), err.getvalue()
+
 real_exec, real_det = gs._execute_plan, R.run_deterministic_checks
 try:
     R.run_deterministic_checks = lambda c, r: ("passed", [{"command": "x", "exit_code": 0}])
@@ -3840,6 +3869,16 @@ try:
        rc == 2 and rec and rec["supervisor_failure"] == "MALFORMED_REVIEW_OUTPUT")
 finally:
     gs._execute_plan, R.run_deterministic_checks = real_exec, real_det
+
+root, tdir = mkgit("high"); write_packet(tdir, "U", risk="high")
+os.makedirs(os.path.join(root, "lib"), exist_ok=True)
+open(os.path.join(root, "lib/x.dart"), "w", encoding="utf-8").write("target")
+open(os.path.join(root, "lib/extra.dart"), "w", encoding="utf-8").write("extra")
+subprocess.run(["git", "-C", root, "add", "lib/x.dart", "lib/extra.dart"], check=True)
+rc, _o, e = run_ir(tdir, root); rec = jsonl_last(tdir)
+ok("P1c implementation-review --slice --staged staged 超出 target_paths→worker 前 SCOPE_INVALID",
+   rc == 2 and rec and rec["supervisor_failure"] == "SCOPE_INVALID"
+   and "staged changes outside review target paths" in e)
 
 # ============ R1 (codex P1-impl 对抗审查) 修复回归 ============
 def err(fn):  # 捕获 ReviewRecordError → True(packet/append 非法负例)
@@ -3864,7 +3903,11 @@ _, f = R.normalize_review_record(vf(rp="codex"), ctxO)
 ok("R1-F1 normalize 自报 provider≠实际 spawn(check_provider)→MALFORMED", f == "MALFORMED_REVIEW_OUTPUT")
 rec, f = R.normalize_review_record({**vf(rp="codex"), **INVOK},
     {**ctxO, "independent_required": False, "check_provider": "codex", "implement_provider": "codex"})
-ok("R1-F1 low-risk override 同 provider 自检 clean→放行(不 blocked)", f is None and rec["review_result"] == "clean")
+ok("R1-F1 required opposite 即使 low-risk override 也拒同 provider clean", f == "MALFORMED_REVIEW_OUTPUT" and rec["review_result"] == "blocked")
+optional_ctx = {**ctxO, "packet": {"invariants": invs, "semantic_review_provider": {"provider": "opposite", "required": False}},
+                "independent_required": False, "check_provider": "codex", "implement_provider": "codex"}
+rec, f = R.normalize_review_record({**vf(rp="codex"), **INVOK}, optional_ctx)
+ok("R1-F1 非 required low-risk 同 provider 自检仍可留痕", f is None and rec["review_result"] == "clean")
 
 # R1-F2 review_target 绑定:worker 自报 target≠当前 slice→MALFORMED
 _, f = R.normalize_review_record(vf(rt="slice:OTHER"), ctxO)

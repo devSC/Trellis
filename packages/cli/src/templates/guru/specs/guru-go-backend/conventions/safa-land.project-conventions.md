@@ -158,7 +158,7 @@
 | SLOT-01 / SLOT-14 | runtime-deployment 详细合同、implementation-trace（装配与启动改动）、implementation-review |
 | SLOT-02 / SLOT-12 / SLOT-11 | repository 详细合同、迁移检查 hooks、跨服务契约变更 review |
 | SLOT-03 / SLOT-13 | service / entry-api 详细合同（合同八问之依赖与失败收口）、implementation-review |
-| SLOT-07 | implementation-trace 证据节（`go vet`/`golangci-lint`/日志）、implementation-review |
+| SLOT-07 | `verification-evidence.jsonl`（`go vet`/`golangci-lint`/日志）、implementation-review |
 | SLOT-08 / SLOT-10 | config-runtime-contract、entry-api 鉴权链路、implementation-review |
 | SLOT-05 / SLOT-16 | entry-api 详细合同（路由/枚举 owner）、API 风格 review |
 | SLOT-04 / SLOT-15 | 各阶段测试映射校验、implementation-trace G4（测试名级别证据）、接口抽象/DIP review |

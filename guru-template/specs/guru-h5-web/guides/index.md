@@ -60,7 +60,7 @@ domain-type → data-access → server-action → server-component → client-co
 | 需求 | —（走需求三件套 SSOT，经 jsonl 引用） | 需求五要素：无行为 / 前置条件 / 状态变化 / 失败路径 / 验收场景 → 不进概要 |
 | 概要 | `harness/overview/*` | 行为无唯一 owner+三问理由、归属违反上方分层依赖律、承接索引缺失 → 不进详细 |
 | 详细 | `harness/detail/*` + 上表七类 `doc_type` | 合同八问缺项、追溯不到概要 owner、无测试映射、`pending` 类未标 `l2_status`/full 链未 `L2豁免` → 不进实现 |
-| 实现 | `golden-path.md` + `harness/implementation/*` | trace 四节不全、`tsc`/test/lint/compliance 任一无证据 → 不进 commit |
+| 实现 | `golden-path.md` + `harness/implementation/*` | 计划合同或 mutable evidence 不全、`tsc`/test/lint/compliance 任一无证据 → 不进 commit |
 | 审核 | 各 SSOT 审核基线 + `harness/extraction-template.md` | 存量豁免判定；清单外新增违例阻塞 |
 
 - 编号纪律：行为以 `BHV-NNN` 标题定义，设计单元以 `UNIT-<slug>` 标题定义；下游引用写裸 token（不带前后缀解释），断链进不了详细/实现 Gate。

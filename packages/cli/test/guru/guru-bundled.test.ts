@@ -209,6 +209,142 @@ describe("bundled multi-platform guru workflows", () => {
       expect(inlineRoute).toContain("trellis-before-dev");
     }
   });
+
+  it("keeps post-detail execution evidence out of implement.md", async () => {
+    const staleEvidenceSinks = [
+      "验证证据记 implement.md",
+      "证据记 implement.md",
+      "证据须已落 implement.md",
+      "确认 `implement.md` §3",
+      "实现期持续追加 §2 执行",
+    ];
+
+    for (const id of [GURU_CLIENT_WORKFLOW_ID, ...PLATFORMS]) {
+      const resolved = await resolveWorkflowTemplate(id);
+      expect(resolved.content).toContain("verification-evidence.jsonl");
+      expect(resolved.content).toContain("task-local mutable evidence");
+      for (const staleText of staleEvidenceSinks) {
+        expect(resolved.content).not.toContain(staleText);
+      }
+    }
+  });
+
+  it("keeps post-detail implementation evidence in mutable files", () => {
+    const implementationSkillFiles = listFilesRecursive(
+      path.join(GURU_TEMPLATE_ROOT, "overlay", "agents-skills"),
+    ).filter((file) =>
+      /implementation-guru-(writing|review)\/SKILL\.md$/.test(file),
+    );
+    expect(implementationSkillFiles).toHaveLength(8);
+
+    const requiredMutableEvidenceFiles = [
+      ...implementationSkillFiles,
+      path.join(
+        GURU_TEMPLATE_ROOT,
+        "specs",
+        "guru-flutter-client",
+        "harness",
+        "implementation",
+        "implementation-trace-contract.md",
+      ),
+      path.join(
+        GURU_TEMPLATE_ROOT,
+        "specs",
+        "guru-go-backend",
+        "harness",
+        "implementation",
+        "implementation-trace-contract.md",
+      ),
+      path.join(
+        GURU_TEMPLATE_ROOT,
+        "specs",
+        "guru-go-backend",
+        "harness",
+        "implementation",
+        "implementation-go-guru-standard.md",
+      ),
+      path.join(
+        GURU_TEMPLATE_ROOT,
+        "specs",
+        "guru-h5-web",
+        "harness",
+        "implementation",
+        "implementation-trace-contract.md",
+      ),
+      path.join(
+        GURU_TEMPLATE_ROOT,
+        "specs",
+        "guru-h5-web",
+        "harness",
+        "implementation",
+        "implementation-h5-standard.md",
+      ),
+      path.join(
+        GURU_TEMPLATE_ROOT,
+        "specs",
+        "guru-ios-native",
+        "harness",
+        "implementation",
+        "implementation-trace-contract.md",
+      ),
+      path.join(
+        GURU_TEMPLATE_ROOT,
+        "specs",
+        "guru-ios-native",
+        "harness",
+        "implementation",
+        "implementation-ios-standard.md",
+      ),
+    ];
+    const stalePatterns = [
+      /在 `implement\.md` 摘要 `slice_packet`/,
+      /更新 trace §2/,
+      /记入 trace §3/,
+      /回填 `implement\.md` 证据节/,
+      /写回 `implement\.md`/,
+      /在 `implement\.md` 置 `in_progress`/,
+      /随实现推进持续更新/,
+      /trace 里留回退记录/,
+      /trace 留回退记录/,
+      /trace §4 写/,
+      /证据节只写/,
+      /证据节贴/,
+      /证据节有命令级记录/,
+      /实现 Gate 的证据载体/,
+      /trace 四节不全/,
+      /trace 四节齐全/,
+      /实现 trace 四节/,
+      /四节证据载体/,
+    ];
+
+    for (const file of requiredMutableEvidenceFiles) {
+      const content = fs.readFileSync(file, "utf8");
+      expect(content).toContain("implementation-evidence.jsonl");
+      expect(content).toContain("verification-evidence.jsonl");
+      expect(content).toMatch(/task-local mutable evidence|mutable evidence/);
+    }
+
+    const markdownFiles = [
+      ...listFilesRecursive(path.join(GURU_TEMPLATE_ROOT, "overlay", "agents-skills")),
+      ...listFilesRecursive(path.join(GURU_TEMPLATE_ROOT, "specs", "guru-flutter-client")),
+      ...listFilesRecursive(path.join(GURU_TEMPLATE_ROOT, "specs", "guru-go-backend")),
+      ...listFilesRecursive(path.join(GURU_TEMPLATE_ROOT, "specs", "guru-h5-web")),
+      ...listFilesRecursive(path.join(GURU_TEMPLATE_ROOT, "specs", "guru-ios-native")),
+    ].filter((file) => file.endsWith(".md"));
+
+    const staleMatches: string[] = [];
+    for (const file of markdownFiles) {
+      const content = fs.readFileSync(file, "utf8");
+      for (const pattern of stalePatterns) {
+        if (pattern.test(content)) {
+          staleMatches.push(
+            `${path.relative(GURU_TEMPLATE_ROOT, file)} matched ${pattern.source}`,
+          );
+        }
+      }
+    }
+    expect(staleMatches).toEqual([]);
+  });
 });
 
 describe("bundled multi-platform guru spec packages", () => {
@@ -1029,6 +1165,25 @@ describe("guru_supervise.py", () => {
   const python = process.env.PYTHON ?? "python3";
   const supervisor = overlayPath("verify", "guru_supervise.py");
   const gate = overlayPath("verify", "guru_gate.py");
+  const commitGuard = overlayPath("hooks", "platform", "block-unstarted-commit.sh");
+  interface SplitSuggestion {
+    layer?: string;
+    paths?: string[];
+    paired_tests?: string[];
+    stage_command?: string;
+  }
+
+  interface CommitPlanPayload {
+    route?: string;
+    commit_mode?: string;
+    can_commit_now?: boolean;
+    split_required?: boolean;
+    blocking_reasons?: string[];
+    required_commands?: string[];
+    allowed_stage_paths?: string[];
+    forbidden_stage_paths?: string[];
+    split_suggestions?: SplitSuggestion[];
+  }
 
   beforeEach(() => {
     tmpDir = fs.realpathSync(
@@ -1304,6 +1459,207 @@ Input task_dir and run_id; output dry-run command lines.
     });
   }
 
+  function runCommitPlan(taskDir: string): CommitPlanPayload {
+    const output = execFileSync(python, [gate, "commit-plan", taskDir], {
+      cwd: tmpDir,
+      encoding: "utf8",
+      env: PYTHON_NO_BYTECODE_ENV,
+      stdio: "pipe",
+    });
+    return JSON.parse(output) as CommitPlanPayload;
+  }
+
+  function initGitRepo(): void {
+    execFileSync("git", ["init"], {
+      cwd: tmpDir,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+  }
+
+  function hookEnv(): NodeJS.ProcessEnv {
+    const env = { ...PYTHON_NO_BYTECODE_ENV };
+    delete env.CODEX_SESSION_ID;
+    delete env.CODEX_THREAD_ID;
+    delete env.CODEX_PROJECT_DIR;
+    delete env.CLAUDE_SESSION_ID;
+    delete env.CLAUDE_CODE_SESSION_ID;
+    delete env.CLAUDE_PROJECT_DIR;
+    delete env.TRELLIS_CONTEXT_ID;
+    return env;
+  }
+
+  function writeCommitGuardFixture(taskName = "task-alpha"): string {
+    const scriptsDir = path.join(tmpDir, ".trellis", "scripts");
+    const commonDir = path.join(scriptsDir, "common");
+    const guruDir = path.join(scriptsDir, "guru");
+    fs.mkdirSync(commonDir, { recursive: true });
+    fs.mkdirSync(guruDir, { recursive: true });
+    fs.copyFileSync(
+      path.join(TRELLIS_TEMPLATE_SCRIPTS_ROOT, "common", "active_task.py"),
+      path.join(commonDir, "active_task.py"),
+    );
+    fs.writeFileSync(path.join(commonDir, "__init__.py"), "", "utf8");
+    fs.writeFileSync(
+      path.join(guruDir, "guru_gate.py"),
+      `#!/usr/bin/env python3
+from pathlib import Path
+import os
+import sys
+
+Path(".gate-args").write_text("\\n".join(sys.argv[1:]), encoding="utf-8")
+Path(".gate-env").write_text(os.environ.get("TRELLIS_CONTEXT_ID", ""), encoding="utf-8")
+if len(sys.argv) >= 3 and sys.argv[1] == "check-commit" and sys.argv[2] == ".trellis/tasks/${taskName}":
+    print("[fake-gate] COMMIT_READY")
+    raise SystemExit(0)
+print("[fake-gate] wrong args: " + repr(sys.argv), file=sys.stderr)
+raise SystemExit(2)
+`,
+      "utf8",
+    );
+    const taskDir = path.join(tmpDir, ".trellis", "tasks", taskName);
+    fs.mkdirSync(taskDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(taskDir, "task.json"),
+      JSON.stringify({ status: "in_progress" }, null, 2) + "\n",
+      "utf8",
+    );
+    return `.trellis/tasks/${taskName}`;
+  }
+
+  function stageFile(relativePath: string, content: string): void {
+    const fullPath = path.join(tmpDir, relativePath);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, content, "utf8");
+    execFileSync("git", ["add", "--", relativePath], {
+      cwd: tmpDir,
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+  }
+
+  function writeLiteContract(taskDir: string, allowedPaths: string[]): void {
+    const args = [
+      gate,
+      "init-contract",
+      taskDir,
+      "--route",
+      "lite_task",
+      "--risk",
+      "low",
+      "--max-files",
+      "5",
+      ...allowedPaths.flatMap((allowedPath) => ["--allowed-path", allowedPath]),
+    ];
+    execFileSync(python, args, {
+      cwd: tmpDir,
+      encoding: "utf8",
+      env: PYTHON_NO_BYTECODE_ENV,
+      stdio: "pipe",
+    });
+  }
+
+  function writeMicroContract(taskDir: string, allowedPaths: string[]): void {
+    const args = [
+      gate,
+      "init-contract",
+      taskDir,
+      "--route",
+      "micro_task",
+      "--risk",
+      "low",
+      "--max-files",
+      "5",
+      ...allowedPaths.flatMap((allowedPath) => ["--allowed-path", allowedPath]),
+    ];
+    execFileSync(python, args, {
+      cwd: tmpDir,
+      encoding: "utf8",
+      env: PYTHON_NO_BYTECODE_ENV,
+      stdio: "pipe",
+    });
+  }
+
+  function writeSlicePacket(
+    taskDir: string,
+    unitId: string,
+    targetPaths: string[],
+    deterministicChecks: string[],
+  ): void {
+    const packetDir = path.join(taskDir, "slice-packets");
+    fs.mkdirSync(packetDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(packetDir, `${unitId}.json`),
+      JSON.stringify(
+        {
+          schema_version: 1,
+          slice_id: unitId,
+          owner_unit: "UNIT-supervisor-routing",
+          target_kind: "implementation",
+          target_paths: targetPaths,
+          risk: "low",
+          risk_reasons: [],
+          deterministic_checks: deterministicChecks,
+          invariants: [
+            {
+              invariant_id: "slice_scope_reviewed",
+              rule:
+                "The implementation review must cover the exact slice scope without launching an implement worker.",
+              source: "test fixture",
+              owner: "UNIT-supervisor-routing",
+              positive_case:
+                "Dry-run prints the check-only review plan and does not create the deterministic marker.",
+              negative_case:
+                "If an implement worker is launched or deterministic marker is written during dry-run, fail the invariant.",
+              route_if_missing: "PROCESS_DEFECT",
+              description:
+                "The check worker reviewed the exact slice scope without implementation changes.",
+              test_evidence: [],
+            },
+          ],
+          semantic_review_provider: {
+            provider: "opposite",
+            required: true,
+            ocr: "optional",
+          },
+          dirty_state: {
+            unrelated: [],
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+      "utf8",
+    );
+  }
+
+  function readLatestImplementationReview(taskDir: string): Record<string, unknown> {
+    const reviewPath = path.join(
+      taskDir,
+      "review-records",
+      "implementation-reviews.jsonl",
+    );
+    const lines = fs
+      .readFileSync(reviewPath, "utf8")
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0);
+    return JSON.parse(lines.at(-1) ?? "{}") as Record<string, unknown>;
+  }
+
+  function appendImplementationReviewRecord(
+    taskDir: string,
+    record: Record<string, unknown>,
+  ): void {
+    const reviewPath = path.join(
+      taskDir,
+      "review-records",
+      "implementation-reviews.jsonl",
+    );
+    fs.mkdirSync(path.dirname(reviewPath), { recursive: true });
+    fs.appendFileSync(reviewPath, JSON.stringify(record) + "\n", "utf8");
+  }
+
   function writeFakeTrellis(taskDir: string): string {
     const fake = path.join(tmpDir, "fake-trellis.sh");
     fs.writeFileSync(
@@ -1330,7 +1686,9 @@ fi
     return fake;
   }
 
-  function writeLoopFakeTrellis(): { fake: string; log: string } {
+  function writeLoopFakeTrellis(
+    cleanVerdict = "review_result=clean/final-verification-ready route_class=none validation_summary=ok",
+  ): { fake: string; log: string } {
     const fake = path.join(tmpDir, "fake-loop-trellis.sh");
     const log = path.join(tmpDir, "loop.log");
     const count = path.join(tmpDir, "check-count.txt");
@@ -1380,11 +1738,63 @@ elif [ "$1" = "channel" ] && [ "$2" = "messages" ]; then
     if [ "$n" = "1" ]; then
       echo '{"kind":"message","by":"check","text":"review_result=findings route_class=IMPLEMENT_DEFECT validation_summary=fix code"}'
     else
-      echo '{"kind":"message","by":"check","text":"review_result=clean/final-verification-ready route_class=none validation_summary=ok"}'
+      echo ${shellSingleQuote(JSON.stringify({ kind: "message", by: "check", text: cleanVerdict }))}
     fi
   else
     echo '{"kind":"message","by":"implement","text":"done"}'
   fi
+else
+  echo "unexpected fake trellis args: $*" >&2
+  exit 2
+fi
+`,
+      "utf8",
+    );
+    fs.chmodSync(fake, 0o755);
+    return { fake, log };
+  }
+
+  function writeImplementationReviewFakeTrellis(
+    verdictText: string,
+  ): { fake: string; log: string } {
+    const fake = path.join(tmpDir, "fake-implementation-review-trellis.sh");
+    const log = path.join(tmpDir, "implementation-review.log");
+    const message = JSON.stringify({
+      kind: "message",
+      by: "check-reviewer",
+      text: verdictText,
+    });
+    fs.writeFileSync(
+      fake,
+      `#!/usr/bin/env bash
+set -euo pipefail
+LOG=${shellSingleQuote(log)}
+if [ "$1" = "channel" ] && [ "$2" = "create" ]; then
+  exit 0
+elif [ "$1" = "channel" ] && [ "$2" = "spawn" ]; then
+  agent=""
+  worker=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --agent) agent="$2"; shift 2 ;;
+      --as) worker="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  printf '%s %s\\n' "$agent" "$worker" >> "$LOG"
+elif [ "$1" = "channel" ] && [ "$2" = "send" ]; then
+  cat >/dev/null
+elif [ "$1" = "channel" ] && [ "$2" = "wait" ]; then
+  worker="worker"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --from) worker="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  printf '{"kind":"done","by":"%s"}\\n' "$worker"
+elif [ "$1" = "channel" ] && [ "$2" = "messages" ]; then
+  printf '%s\\n' ${shellSingleQuote(message)}
 else
   echo "unexpected fake trellis args: $*" >&2
   exit 2
@@ -2170,6 +2580,638 @@ fi
     expect(output).toContain("final validation plus hard boundary");
   });
 
+  it("dry-runs implementation-review --staged as a check-only evidence producer", () => {
+    writeConfig("flutter");
+    const reviewSkill = writeSkill(
+      ".agents/skills/flutter-implementation-guru-review/SKILL.md",
+    );
+    const taskDir = writeTask("task-implementation-review-dry");
+    initGitRepo();
+    writeLiteContract(taskDir, ["src/review-target.txt"]);
+    stageFile("src/review-target.txt", "export const reviewed = true;\n");
+
+    const output = runSupervisor([
+      "--provider",
+      "codex",
+      "implementation-review",
+      taskDir,
+      "--run-id",
+      "ir1",
+      "--staged",
+      "--dry-run",
+    ]);
+
+    expect(output).toContain("IMPLEMENTATION-REVIEW CHECK-ONLY");
+    expect(output).toContain(
+      "run: deterministic checks -> check -> append structured record",
+    );
+    expect(output).toContain("no implement worker is launched");
+    expect(output).toContain(
+      "CHANNEL=guru-task-implementation-review-dry-check-ir1-review-1",
+    );
+    expect(output).toContain("WORKER=check-claude-ir1-review-1");
+    expect(output).toContain(
+      "trellis channel spawn guru-task-implementation-review-dry-check-ir1-review-1 --agent check --provider claude --as check-claude-ir1-review-1",
+    );
+    expect(output).toContain(`--file ${reviewSkill}`);
+    expect(output).toContain("review_target=staged:index");
+    expect(output).toContain("target_digest_source=index");
+    expect(output).not.toContain("WORKER=implement-");
+    expect(output).not.toContain("IMPLEMENT-CHECK LOOP");
+  });
+
+  it("does not run deterministic checks during implementation-review dry-run", () => {
+    writeConfig("flutter");
+    writeSkill(".agents/skills/flutter-implementation-guru-review/SKILL.md");
+    const taskDir = writeTask("task-implementation-review-dry-slice");
+    initGitRepo();
+    const marker = path.join(tmpDir, "dry-run-deterministic-marker.txt");
+    const markerScript = `from pathlib import Path; Path(${JSON.stringify(marker)}).write_text("ran", encoding="utf-8")`;
+    writeSlicePacket(taskDir, "UNIT-dry", ["src/slice-target.txt"], [
+      `python3 -c ${shellSingleQuote(markerScript)}`,
+    ]);
+    fs.mkdirSync(path.join(tmpDir, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "src", "slice-target.txt"),
+      "slice worktree content\n",
+      "utf8",
+    );
+
+    const output = runSupervisor([
+      "--provider",
+      "codex",
+      "implementation-review",
+      taskDir,
+      "--run-id",
+      "ir-dry",
+      "--slice",
+      "UNIT-dry",
+      "--dry-run",
+    ]);
+
+    expect(output).toContain("IMPLEMENTATION-REVIEW CHECK-ONLY");
+    expect(output).toContain("review_target=slice:UNIT-dry");
+    expect(output).not.toContain("WORKER=implement-");
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it("uses the opposite provider for low-risk slices with required opposite review evidence", () => {
+    writeConfig("flutter");
+    writeSkill(".agents/skills/flutter-implementation-guru-review/SKILL.md");
+    const taskDir = writeTask("task-implementation-review-low-required-opposite");
+    initGitRepo();
+    writeSlicePacket(taskDir, "UNIT-low", ["src/slice-target.txt"], [
+      "git diff --cached --check",
+    ]);
+    stageFile("src/slice-target.txt", "slice staged content\n");
+    const verdict = [
+      "review_result=clean",
+      "route_class=none",
+      "review_target=slice:UNIT-low",
+      "review_provider=claude",
+      "deterministic_checks=passed",
+      "dirty_scope=isolated",
+      "invariant_coverage=all_passed",
+      "invariant_status.slice_scope_reviewed=pass",
+      "invariant_evidence.slice_scope_reviewed=reviewed exact low-risk slice scope",
+    ].join("\n");
+    const { fake, log } = writeImplementationReviewFakeTrellis(verdict);
+
+    const output = runSupervisor([
+      "--trellis-bin",
+      fake,
+      "--provider",
+      "codex",
+      "implementation-review",
+      taskDir,
+      "--run-id",
+      "ir-low",
+      "--slice",
+      "UNIT-low",
+      "--staged",
+    ]);
+
+    expect(output).toContain("implementation-review clean");
+    expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+      "check check-claude-ir-low-review-1",
+    ]);
+    expect(readLatestImplementationReview(taskDir)).toMatchObject({
+      run_id: "ir-low-review-1",
+      slice_id: "UNIT-low",
+      review_target: "slice:UNIT-low",
+      review_provider: "claude",
+      review_result: "clean",
+      required_satisfied: true,
+      supervisor_failure: "none",
+    });
+  });
+
+  it("writes a staged implementation-review record that check-commit accepts", () => {
+    writeConfig("flutter");
+    writeSkill(".agents/skills/flutter-implementation-guru-review/SKILL.md");
+    const taskDir = writeTask("task-implementation-review-staged");
+    initGitRepo();
+    writeLiteContract(taskDir, ["src/review-target.txt"]);
+    stageFile("src/review-target.txt", "export const reviewed = true;\n");
+    const verdict = [
+      "review_result=clean",
+      "route_class=none",
+      "review_target=staged:index",
+      "review_provider=claude",
+      "deterministic_checks=passed",
+      "dirty_scope=isolated",
+      "invariant_coverage=all_passed",
+      "invariant_status.staged_scope_reviewed=pass",
+      "invariant_evidence.staged_scope_reviewed=reviewed exact staged index scope",
+    ].join("\n");
+    const { fake, log } = writeImplementationReviewFakeTrellis(verdict);
+
+    const output = runSupervisor([
+      "--trellis-bin",
+      fake,
+      "--provider",
+      "codex",
+      "implementation-review",
+      taskDir,
+      "--run-id",
+      "ir2",
+      "--staged",
+    ]);
+
+    expect(output).toContain("implementation-review clean");
+    expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+      "check check-claude-ir2-review-1",
+    ]);
+    const record = readLatestImplementationReview(taskDir);
+    expect(record).toMatchObject({
+      run_id: "ir2-review-1",
+      slice_id: "staged",
+      review_target: "staged:index",
+      target_paths: ["src/review-target.txt"],
+      review_provider: "claude",
+      review_result: "clean",
+      route_class: "none",
+      deterministic_checks: "passed",
+      dirty_scope: "isolated",
+      invariant_coverage: "all_passed",
+      required_satisfied: true,
+      supervisor_failure: "none",
+    });
+    expect(record.reviewed_target_digest).toMatch(/^[a-f0-9]{64}$/);
+
+    const checkCommitOutput = execFileSync(
+      python,
+      [gate, "check-commit", taskDir],
+      {
+        cwd: tmpDir,
+        encoding: "utf8",
+        env: PYTHON_NO_BYTECODE_ENV,
+        stdio: "pipe",
+      },
+    );
+    expect(checkCommitOutput).toContain(
+      "COMMIT_READY: staged scope matches latest clean implementation review",
+    );
+  });
+
+  it("blocks implementation-review --staged when target paths have unstaged drift", () => {
+    writeConfig("flutter");
+    writeSkill(".agents/skills/flutter-implementation-guru-review/SKILL.md");
+    const taskDir = writeTask("task-implementation-review-staged-drift");
+    initGitRepo();
+    writeLiteContract(taskDir, ["src/review-target.txt"]);
+    stageFile("src/review-target.txt", "export const reviewed = true;\n");
+    fs.writeFileSync(
+      path.join(tmpDir, "src", "review-target.txt"),
+      "export const reviewed = false;\n",
+      "utf8",
+    );
+    const verdict = [
+      "review_result=clean",
+      "route_class=none",
+      "review_target=staged:index",
+      "review_provider=claude",
+      "deterministic_checks=passed",
+      "dirty_scope=isolated",
+      "invariant_coverage=all_passed",
+      "invariant_status.staged_scope_reviewed=pass",
+      "invariant_evidence.staged_scope_reviewed=reviewed exact staged index scope",
+    ].join("\n");
+    const { fake, log } = writeImplementationReviewFakeTrellis(verdict);
+
+    expect(() =>
+      runSupervisor([
+        "--trellis-bin",
+        fake,
+        "--provider",
+        "codex",
+        "implementation-review",
+        taskDir,
+        "--run-id",
+        "ir-drift",
+        "--staged",
+      ]),
+    ).toThrow();
+    expect(fs.existsSync(log)).toBe(false);
+    expect(readLatestImplementationReview(taskDir)).toMatchObject({
+      run_id: "ir-drift-review-1",
+      slice_id: "staged",
+      review_target: "slice:staged",
+      review_result: "blocked",
+      route_class: "none",
+      supervisor_failure: "SCOPE_INVALID",
+      repairable: false,
+    });
+  });
+
+  it("blocks implementation-review --slice --staged when directory target has unstaged drift", () => {
+    writeConfig("flutter");
+    writeSkill(".agents/skills/flutter-implementation-guru-review/SKILL.md");
+    const taskDir = writeTask("task-implementation-review-slice-dir-drift");
+    initGitRepo();
+    writeSlicePacket(taskDir, "UNIT-dir", ["src"], ["git diff --cached --check"]);
+    stageFile("src/review-target.txt", "export const reviewed = true;\n");
+    stageFile("src/nested-drift.ts", "export const drift = false;\n");
+    fs.writeFileSync(
+      path.join(tmpDir, "src", "nested-drift.ts"),
+      "export const drift = true;\n",
+      "utf8",
+    );
+    const verdict = [
+      "review_result=clean",
+      "route_class=none",
+      "review_target=slice:UNIT-dir",
+      "review_provider=claude",
+      "deterministic_checks=passed",
+      "dirty_scope=isolated",
+      "invariant_coverage=all_passed",
+      "invariant_status.slice_scope_reviewed=pass",
+      "invariant_evidence.slice_scope_reviewed=reviewed exact staged index scope",
+    ].join("\n");
+    const { fake, log } = writeImplementationReviewFakeTrellis(verdict);
+
+    expect(() =>
+      runSupervisor([
+        "--trellis-bin",
+        fake,
+        "--provider",
+        "codex",
+        "implementation-review",
+        taskDir,
+        "--run-id",
+        "ir-dir-drift",
+        "--slice",
+        "UNIT-dir",
+        "--staged",
+      ]),
+    ).toThrow();
+    expect(fs.existsSync(log)).toBe(false);
+    expect(readLatestImplementationReview(taskDir)).toMatchObject({
+      run_id: "ir-dir-drift-review-1",
+      slice_id: "UNIT-dir",
+      review_target: "slice:UNIT-dir",
+      review_result: "blocked",
+      route_class: "none",
+      supervisor_failure: "SCOPE_INVALID",
+      repairable: false,
+    });
+  });
+
+  it("commit-plan recommends implementation-review --staged instead of implement-check for missing records", () => {
+    writeConfig("flutter");
+    const taskDir = writeTask("task-implementation-review-plan");
+    initGitRepo();
+    writeLiteContract(taskDir, ["src/review-target.txt"]);
+    stageFile("src/review-target.txt", "export const reviewed = true;\n");
+
+    const plan = runCommitPlan(taskDir);
+
+    expect(plan.route).toBe("lite_task");
+    expect(plan.can_commit_now).toBe(false);
+    expect(plan.allowed_stage_paths).toEqual(["src/review-target.txt"]);
+    expect(
+      (plan.blocking_reasons ?? []).some((reason) =>
+        /^implementation review record (missing|empty)$/.test(reason),
+      ),
+    ).toBe(true);
+    expect(plan.required_commands ?? []).toContain(
+      "python3 .trellis/scripts/guru/guru_supervise.py implementation-review .trellis/tasks/task-implementation-review-plan --staged",
+    );
+    expect(plan.required_commands ?? []).toContain(
+      "python3 .trellis/scripts/guru/guru_gate.py check-commit .trellis/tasks/task-implementation-review-plan",
+    );
+    expect((plan.required_commands ?? []).join("\n")).not.toContain(
+      "implement-check",
+    );
+  });
+
+  it("commit-plan recommends implementation-review --staged for malformed implementation review records", () => {
+    writeConfig("flutter");
+    const taskDir = writeTask("task-implementation-review-malformed");
+    initGitRepo();
+    writeLiteContract(taskDir, ["src/review-target.txt"]);
+    stageFile("src/review-target.txt", "export const reviewed = true;\n");
+    appendImplementationReviewRecord(taskDir, {
+      run_id: "malformed-review",
+      review_result: "clean",
+      route_class: "none",
+      review_target: "staged:index",
+    });
+
+    const plan = runCommitPlan(taskDir);
+
+    expect(plan.can_commit_now).toBe(false);
+    expect(
+      (plan.blocking_reasons ?? []).some((reason) =>
+        reason.includes("malformed or incomplete"),
+      ),
+    ).toBe(true);
+    expect(plan.required_commands ?? []).toContain(
+      "python3 .trellis/scripts/guru/guru_supervise.py implementation-review .trellis/tasks/task-implementation-review-malformed --staged",
+    );
+    expect((plan.required_commands ?? []).join("\n")).not.toContain(
+      "implement-check",
+    );
+  });
+
+  it("commit-plan recommends implementation-review --staged for stale staged review digests", () => {
+    writeConfig("flutter");
+    const taskDir = writeTask("task-implementation-review-stale-digest");
+    initGitRepo();
+    writeLiteContract(taskDir, ["src/review-target.txt"]);
+    stageFile("src/review-target.txt", "export const reviewed = true;\n");
+    appendImplementationReviewRecord(taskDir, {
+      run_id: "stale-review",
+      slice_id: "staged",
+      review_target: "staged:index",
+      target_paths: ["src/review-target.txt"],
+      review_provider: "codex",
+      deterministic_checks: "passed",
+      dirty_scope: "isolated",
+      invariant_coverage: "all_passed",
+      review_result: "clean",
+      route_class: "none",
+      supervisor_failure: "none",
+      repairable: false,
+      required_satisfied: true,
+      reviewed_target_digest: "sha256:not-the-current-index",
+    });
+
+    const plan = runCommitPlan(taskDir);
+
+    expect(plan.can_commit_now).toBe(false);
+    expect(plan.allowed_stage_paths).toEqual(["src/review-target.txt"]);
+    expect(
+      (plan.blocking_reasons ?? []).some((reason) =>
+        reason.includes("staged target content differs"),
+      ),
+    ).toBe(true);
+    expect(plan.required_commands ?? []).toContain(
+      "python3 .trellis/scripts/guru/guru_supervise.py implementation-review .trellis/tasks/task-implementation-review-stale-digest --staged",
+    );
+    expect((plan.required_commands ?? []).join("\n")).not.toContain(
+      "implement-check",
+    );
+  });
+
+  it("commit-plan does not recommend implementation-review when staged scope violates the gate contract", () => {
+    writeConfig("flutter");
+    const taskDir = writeTask("task-implementation-review-scope-invalid");
+    initGitRepo();
+    writeLiteContract(taskDir, ["src/review-target.txt"]);
+    stageFile("src/outside-target.txt", "export const outside = true;\n");
+
+    const plan = runCommitPlan(taskDir);
+
+    expect(plan.route).toBe("lite_task");
+    expect(plan.can_commit_now).toBe(false);
+    expect(plan.allowed_stage_paths).toEqual([]);
+    expect(plan.forbidden_stage_paths).toEqual(["src/outside-target.txt"]);
+    expect(
+      (plan.blocking_reasons ?? []).some((reason) =>
+        reason.includes("staged paths outside gate contract scope"),
+      ),
+    ).toBe(true);
+    expect(plan.required_commands ?? []).toContain(
+      "python3 .trellis/scripts/guru/guru_gate.py check-commit .trellis/tasks/task-implementation-review-scope-invalid",
+    );
+    expect((plan.required_commands ?? []).join("\n")).not.toContain(
+      "guru_supervise.py implementation-review",
+    );
+    expect((plan.required_commands ?? []).join("\n")).not.toContain(
+      "implement-check",
+    );
+  });
+
+  it("commit-plan does not recommend implementation-review for mixed task artifacts without a contract", () => {
+    writeConfig("flutter");
+    const taskDir = writeTask("task-implementation-review-mixed-artifact");
+    initGitRepo();
+    stageFile("src/review-target.txt", "export const reviewed = true;\n");
+    stageFile(
+      ".trellis/tasks/task-implementation-review-mixed-artifact/verification-evidence.jsonl",
+      '{"status":"passed"}\n',
+    );
+
+    const plan = runCommitPlan(taskDir);
+
+    expect(plan.route).toBe("full_chain");
+    expect(plan.can_commit_now).toBe(false);
+    expect(plan.split_required).toBe(true);
+    expect(plan.commit_mode).toBe("split_required");
+    expect(plan.allowed_stage_paths).toEqual(["src/review-target.txt"]);
+    expect(plan.forbidden_stage_paths).toEqual([
+      ".trellis/tasks/task-implementation-review-mixed-artifact/verification-evidence.jsonl",
+    ]);
+    expect(
+      (plan.blocking_reasons ?? []).some((reason) =>
+        reason.includes("staged task/workspace artifacts must be split"),
+      ),
+    ).toBe(true);
+    expect(plan.required_commands ?? []).toContain(
+      "python3 .trellis/scripts/guru/guru_gate.py check-commit .trellis/tasks/task-implementation-review-mixed-artifact",
+    );
+    expect((plan.required_commands ?? []).join("\n")).not.toContain(
+      "guru_supervise.py implementation-review",
+    );
+    expect((plan.required_commands ?? []).join("\n")).not.toContain(
+      "implement-check",
+    );
+  });
+
+  it("commit-plan marks micro_task cross-layer storage signals as split-required with paired tests", () => {
+    writeConfig("flutter");
+    const taskDir = writeTask("task-micro-storage-split");
+    initGitRepo();
+    writeMicroContract(taskDir, ["lib", "test"]);
+    stageFile("lib/data/user_dao.dart", "class UserDao {}\n");
+    stageFile("lib/ui/user_page.dart", "class UserPage {}\n");
+    stageFile("test/data/user_dao_test.dart", "void main() {}\n");
+
+    const plan = runCommitPlan(taskDir);
+
+    expect(plan.route).toBe("micro_task");
+    expect(plan.can_commit_now).toBe(false);
+    expect(plan.split_required).toBe(true);
+    expect(plan.commit_mode).toBe("split_required");
+    expect(
+      (plan.blocking_reasons ?? []).some((reason) =>
+        reason.includes("cross-layer/storage path signal"),
+      ),
+    ).toBe(true);
+    expect(plan.required_commands ?? []).toContain(
+      "python3 .trellis/scripts/guru/guru_gate.py check-commit .trellis/tasks/task-micro-storage-split",
+    );
+    expect((plan.required_commands ?? []).join("\n")).not.toContain(
+      "implementation-review",
+    );
+
+    const storageSuggestion = (plan.split_suggestions ?? []).find(
+      (suggestion) => suggestion.layer === "storage",
+    );
+    expect(storageSuggestion).toEqual({
+      layer: "storage",
+      paths: ["lib/data/user_dao.dart"],
+      paired_tests: ["test/data/user_dao_test.dart"],
+      stage_command:
+        "git add -- lib/data/user_dao.dart test/data/user_dao_test.dart",
+    });
+    expect(
+      (plan.split_suggestions ?? []).some(
+        (suggestion) =>
+          suggestion.layer === "ui" &&
+          suggestion.stage_command === "git add -- lib/ui/user_page.dart",
+      ),
+    ).toBe(true);
+
+    const check = spawnSync(python, [gate, "check-commit", taskDir], {
+      cwd: tmpDir,
+      encoding: "utf8",
+      env: PYTHON_NO_BYTECODE_ENV,
+    });
+    expect(check.status).toBe(2);
+    expect(check.stderr).toContain("拆分 staged scope");
+    expect(check.stderr).toContain(
+      "git add -- lib/data/user_dao.dart test/data/user_dao_test.dart",
+    );
+    expect(check.stderr).not.toContain("补齐 gate-degradations.jsonl");
+  });
+
+  it("commit guard passes the resolved Codex session task to check-commit", () => {
+    const taskRef = writeCommitGuardFixture("task-alpha");
+    const sessionDir = path.join(tmpDir, ".trellis", ".runtime", "sessions");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDir, "codex_thread-a.json"),
+      JSON.stringify({ current_task: taskRef }, null, 2) + "\n",
+      "utf8",
+    );
+
+    const result = spawnSync("bash", [commitGuard], {
+      cwd: tmpDir,
+      input: JSON.stringify({
+        session_id: "thread-a",
+        tool_input: {
+          command: 'git commit -m "reviewed change"',
+          cwd: tmpDir,
+        },
+      }),
+      encoding: "utf8",
+      env: hookEnv(),
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("[fake-gate] COMMIT_READY");
+    expect(fs.readFileSync(path.join(tmpDir, ".gate-args"), "utf8")).toBe(
+      "check-commit\n.trellis/tasks/task-alpha",
+    );
+  });
+
+  it("commit guard resolves inline TRELLIS_CONTEXT_ID for the active task lookup", () => {
+    const taskRef = writeCommitGuardFixture("task-alpha");
+    const sessionDir = path.join(tmpDir, ".trellis", ".runtime", "sessions");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDir, "codex-foo.json"),
+      JSON.stringify({ current_task: taskRef }, null, 2) + "\n",
+      "utf8",
+    );
+
+    const result = spawnSync("bash", [commitGuard], {
+      cwd: tmpDir,
+      input: JSON.stringify({
+        tool_input: {
+          command:
+            'TRELLIS_CONTEXT_ID=codex-foo SKIP_AI_COMMIT_MSG=1 git commit -m "reviewed change"',
+          cwd: tmpDir,
+        },
+      }),
+      encoding: "utf8",
+      env: hookEnv(),
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("[fake-gate] COMMIT_READY");
+    expect(fs.readFileSync(path.join(tmpDir, ".gate-args"), "utf8")).toBe(
+      "check-commit\n.trellis/tasks/task-alpha",
+    );
+    expect(fs.readFileSync(path.join(tmpDir, ".gate-env"), "utf8")).toBe("");
+  });
+
+  it("commit guard passes the resolved Claude session task to check-commit", () => {
+    const taskRef = writeCommitGuardFixture("task-alpha");
+    const sessionDir = path.join(tmpDir, ".trellis", ".runtime", "sessions");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDir, "claude_thread-a.json"),
+      JSON.stringify({ current_task: taskRef }, null, 2) + "\n",
+      "utf8",
+    );
+
+    const result = spawnSync("bash", [commitGuard], {
+      cwd: tmpDir,
+      input: JSON.stringify({
+        session_id: "thread-a",
+        tool_input: {
+          command: 'git commit -m "reviewed change"',
+          cwd: tmpDir,
+        },
+      }),
+      encoding: "utf8",
+      env: { ...hookEnv(), CLAUDE_PROJECT_DIR: tmpDir },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("[fake-gate] COMMIT_READY");
+    expect(fs.readFileSync(path.join(tmpDir, ".gate-args"), "utf8")).toBe(
+      "check-commit\n.trellis/tasks/task-alpha",
+    );
+  });
+
+  it("commit guard fails closed when Guru tasks exist but session task is unavailable", () => {
+    writeCommitGuardFixture("task-alpha");
+
+    const result = spawnSync("bash", [commitGuard], {
+      cwd: tmpDir,
+      input: JSON.stringify({
+        tool_input: {
+          command: 'git commit -m "reviewed change"',
+          cwd: tmpDir,
+        },
+      }),
+      encoding: "utf8",
+      env: hookEnv(),
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain(
+      "cannot resolve the current Trellis task",
+    );
+    expect(result.stderr).toContain(".trellis/tasks/task-alpha");
+    expect(result.stderr).not.toContain("direct low-risk");
+    expect(fs.existsSync(path.join(tmpDir, ".gate-args"))).toBe(false);
+  });
+
   it("runs implement-check as implement/check loop and repeats repairable implementation findings", () => {
     writeConfig("h5");
     writeSkill(".agents/skills/h5-implementation-guru-writing/SKILL.md");
@@ -2188,6 +3230,35 @@ fi
 
     expect(output).toContain("route_class=IMPLEMENT_DEFECT");
     expect(output).toContain("review_result=clean/final-verification-ready");
+    expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
+      "implement implement-codex-loop-implement-1",
+      "check check-codex-loop-check-1",
+      "implement implement-codex-loop-implement-2",
+      "check check-codex-loop-check-2",
+    ]);
+  });
+
+  it("accepts route_class=none plus review_result=clean in legacy implement-check output", () => {
+    writeConfig("h5");
+    writeSkill(".agents/skills/h5-implementation-guru-writing/SKILL.md");
+    writeSkill(".agents/skills/h5-implementation-guru-review/SKILL.md");
+    const taskDir = writeTask("task-loop-clean-verdict");
+    const { fake, log } = writeLoopFakeTrellis(
+      "route_class=none review_result=clean validation_summary=ok",
+    );
+
+    const output = runSupervisor([
+      "--trellis-bin",
+      fake,
+      "implement-check",
+      taskDir,
+      "--run-id",
+      "loop",
+    ]);
+
+    expect(output).toContain("route_class=IMPLEMENT_DEFECT");
+    expect(output).toContain("review_result=clean");
+    expect(output).toContain("implement-check clean");
     expect(fs.readFileSync(log, "utf8").trim().split("\n")).toEqual([
       "implement implement-codex-loop-implement-1",
       "check check-codex-loop-check-1",
