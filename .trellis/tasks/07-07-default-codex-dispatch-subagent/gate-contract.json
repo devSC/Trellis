@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "risk": "low",
+  "route": "micro_task",
+  "assessment": {
+    "confidence": 0.95,
+    "reasons": [
+      "Default value and matching test assertion change only.",
+      "No runtime control-flow, schema, migration, payment, privacy, hook, workflow, or gate logic is modified."
+    ],
+    "risk_flags": []
+  },
+  "scope": {
+    "allowed_paths": [
+      "guru-template/overlay/verify/guru_config_patch.py",
+      "packages/cli/src/templates/guru/overlay/verify/guru_config_patch.py",
+      "packages/cli/test/guru/guru-bundled.test.ts"
+    ],
+    "forbidden_path_patterns": [],
+    "max_files": 3
+  },
+  "required_gates": [],
+  "optional_gates": [],
+  "allowed_degradations": [],
+  "commit_policy": {
+    "require_in_progress": false,
+    "require_clean_implementation_review": false,
+    "allow_task_artifacts_only": false
+  },
+  "created_by": "codex",
+  "created_at": "2026-07-07T00:00:00Z",
+  "policy_version": "guru-risk-contract-v1"
+}
