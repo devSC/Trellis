@@ -991,11 +991,11 @@ describe("guru_config_patch.py", () => {
     );
   }
 
-  it("fills fresh Guru projects with channel supervision defaults", () => {
+  it("fills fresh Guru projects with sub-agent dispatch defaults", () => {
     runPatch("go");
 
     expect(configText()).toContain(`codex:
-  dispatch_mode: channel`);
+  dispatch_mode: sub-agent`);
     expect(configText()).toContain(`channel:
   worker_guard:
     idle_timeout: 10m
