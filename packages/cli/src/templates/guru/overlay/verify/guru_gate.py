@@ -36,8 +36,12 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
   python3 guru_gate.py check-commit [task_dir]    # 提交前置：check-implementation + staged scope + implementation review clean
   python3 guru_gate.py commit-plan [task_dir] [--write]
                                                   # 输出提交计划 JSON；--write 同步写 task-local commit-plan.json mutable evidence
+  python3 guru_gate.py intake [task_dir] --description "<需求>" [--path <path> ...] [--commit-requested] [--write-contract]
+                                                  # 收到任务时风险分流；可将 micro/lite/full 合同写入任务目录
   python3 guru_gate.py init-contract <task_dir> --route <route> --risk <risk> [--allowed-path <path> ...] [--max-files <n>]
                                                   # 用 guru_contract.default_contract + validator 写 gate-contract.json
+  python3 guru_gate.py record-degradation <task_dir> --gate <gate> --reason <reason> --command <cmd> --check <name:status[:evidence]> ...
+                                                  # 追加 task-local gate-degradations.jsonl；写入前按合同验证
   python3 guru_gate.py slice-plan <task_dir>      # 只读输出 full-chain slice packet 执行计划 JSON
   python3 guru_gate.py digest <gate> [task_dir]   # 输出该阶段产物的确认快照摘要（排查快照失配用）
 
@@ -3228,7 +3232,7 @@ def _micro_commit_contract_problem(contract: dict, staged_paths: list, task_dir:
         task_dir,
         root,
     )
-    if high_path_signals and not guru_contract.has_user_route_override(contract):
+    if high_path_signals:
         return "micro_task staged paths contain high-risk signals: " + ", ".join(high_path_signals[:5])
     return ""
 
@@ -3358,7 +3362,7 @@ def _cmd_check_micro_commit(task_dir: str, contract: dict, staged_paths: list, r
             task_dir,
             root,
         )
-        if high_signal_problem and high_path_signals and not guru_contract.has_user_route_override(contract):
+        if high_signal_problem and high_path_signals:
             if cross_layer_or_storage:
                 _write_micro_split_guidance(staged_paths, task_dir, root)
             else:
@@ -3565,6 +3569,179 @@ def _contract_bool(value) -> bool:
     return False
 
 
+def _contract_for_intake(assessment: dict, paths: list, *, created_by: str = "intake") -> tuple[dict | None, list]:
+    route = guru_contract.normalize_route(assessment.get("route"))
+    risk = guru_contract.normalize_risk(assessment.get("risk"))
+    problems = []
+    if route == guru_contract.ROUTE_SMALL_INLINE:
+        return None, ["small_inline has no commit contract; use --commit-requested to route a commit through micro_task"]
+    contract = guru_contract.default_contract(route, risk, created_by=created_by)
+    contract["assessment"] = {
+        "confidence": assessment.get("confidence"),
+        "reasons": assessment.get("reasons") if isinstance(assessment.get("reasons"), list) else [],
+        "risk_flags": assessment.get("risk_flags") if isinstance(assessment.get("risk_flags"), list) else [],
+        "recommended_route": guru_contract.normalize_route(
+            assessment.get("recommended_contract") or guru_contract.recommended_route_for_risk(risk)
+        ),
+    }
+    contract["route_selection"] = {
+        "selected_route": route,
+        "source": "recommended",
+        "recommended_route": contract["assessment"]["recommended_route"],
+        "risk_acknowledged": False,
+        "user_quote": "",
+        "selected_by": "system",
+        "selected_at": _now_iso(),
+    }
+    clean_paths = [str(path).strip() for path in paths if str(path).strip()]
+    if clean_paths:
+        contract.setdefault("scope", {})["allowed_paths"] = clean_paths
+        contract.setdefault("scope", {})["max_files"] = len(clean_paths)
+    if route == guru_contract.ROUTE_MICRO_TASK and risk == guru_contract.RISK_LOW:
+        contract["allowed_degradations"] = [
+            {"gate": "gitnexus_impact", "fallback_checks": ["rg_callers", "git_diff_check"]},
+            {"gate": "gitnexus_detect_changes", "fallback_checks": ["git_diff_check"]},
+        ]
+    elif route == guru_contract.ROUTE_LITE_TASK and risk in {guru_contract.RISK_LOW, guru_contract.RISK_MEDIUM}:
+        contract["allowed_degradations"] = [
+            {"gate": "gitnexus_impact", "fallback_checks": ["rg_callers", "scoped_tests", "git_diff_check"]},
+            {"gate": "gitnexus_detect_changes", "fallback_checks": ["scoped_tests", "git_diff_check"]},
+        ]
+    problems.extend(guru_contract.validate_contract(contract))
+    return contract, problems
+
+
+def _update_task_route_metadata(task_dir: str, route: str, risk: str) -> None:
+    path = os.path.join(task_dir, "task.json")
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    if route == guru_contract.ROUTE_FULL_CHAIN:
+        data["guru_chain"] = "full"
+    elif route in {guru_contract.ROUTE_MICRO_TASK, guru_contract.ROUTE_LITE_TASK}:
+        data["guru_chain"] = "light"
+    meta = data.setdefault("meta", {})
+    if isinstance(meta, dict):
+        meta["route"] = route
+        meta["risk"] = risk
+    data["route"] = route
+    data["risk"] = risk
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
+def _intake_suggested_commands(assessment: dict, paths: list, task_dir: str | None, root: str) -> list:
+    route = guru_contract.normalize_route(assessment.get("route"))
+    risk = guru_contract.normalize_risk(assessment.get("risk"))
+    if route == guru_contract.ROUTE_SMALL_INLINE:
+        return ["inline implementation allowed; if commit is needed, rerun intake with --commit-requested and write a micro_task contract"]
+    display_task = _display_task_dir(task_dir, root) if task_dir else "<task-dir>"
+    commands = []
+    if not task_dir:
+        if route == guru_contract.ROUTE_MICRO_TASK:
+            commands.append('python3 .trellis/scripts/task.py create "<short task title>" --priority P2')
+        elif route == guru_contract.ROUTE_LITE_TASK:
+            commands.append('python3 .trellis/scripts/task.py create "<short task title>" --priority P2')
+        else:
+            commands.append('python3 .trellis/scripts/task.py create "<short task title>" --priority P1')
+    path_args = " ".join(f"--allowed-path {shlex.quote(path)}" for path in paths)
+    if path_args:
+        path_args = " " + path_args
+    max_files = len(paths) if paths and route == guru_contract.ROUTE_MICRO_TASK else None
+    max_arg = f" --max-files {max_files}" if max_files else ""
+    commands.append(
+        f"python3 .trellis/scripts/guru/guru_gate.py init-contract {shlex.quote(display_task)} "
+        f"--route {route} --risk {risk}{path_args}{max_arg}"
+    )
+    return commands
+
+
+def cmd_intake(task_dir_arg, options: dict) -> int:
+    root = _repo_root()
+    task_dir = resolve_task_dir(task_dir_arg, allow_unique_planning_fallback=False) if task_dir_arg else None
+    if not task_dir and task_dir_arg and os.path.isdir(task_dir_arg):
+        task_dir = os.path.abspath(task_dir_arg)
+    paths = [path for path in (options.get("paths") or []) if path]
+    if options.get("use_staged"):
+        staged_paths, staged_error = _git_staged_paths(root)
+        if staged_error:
+            payload = {
+                "schema_version": 1,
+                "error": staged_error,
+                "risk": "medium",
+                "route": guru_contract.ROUTE_LITE_TASK,
+                "needs_user_choice": True,
+            }
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+            return BLOCK
+        if not paths:
+            paths = staged_paths
+    description = str(options.get("description") or "")
+    commit_requested = bool(options.get("commit_requested"))
+    assessment = guru_risk.assess_intake(description, paths, commit_requested=commit_requested)
+    route = guru_contract.normalize_route(assessment.get("route"))
+    risk = guru_contract.normalize_risk(assessment.get("risk"))
+    payload = {
+        "schema_version": 1,
+        "task_dir": _display_task_dir(task_dir, root) if task_dir else "",
+        "input": {
+            "description": description,
+            "paths": paths,
+            "commit_requested": commit_requested,
+            "use_staged": bool(options.get("use_staged")),
+        },
+        "risk": risk,
+        "route": route,
+        "confidence": assessment.get("confidence"),
+        "reasons": assessment.get("reasons") if isinstance(assessment.get("reasons"), list) else [],
+        "risk_flags": assessment.get("risk_flags") if isinstance(assessment.get("risk_flags"), list) else [],
+        "needs_user_choice": bool(assessment.get("needs_user_choice")),
+        "recommended_contract": assessment.get("recommended_contract"),
+        "task_needed": route != guru_contract.ROUTE_SMALL_INLINE,
+        "commit_contract_required": route != guru_contract.ROUTE_SMALL_INLINE,
+        "suggested_commands": _intake_suggested_commands(assessment, paths, task_dir, root),
+        "contract_written": False,
+    }
+    if not options.get("write_contract"):
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return PASS
+    if not task_dir:
+        payload["blocking_reasons"] = ["--write-contract requires a task_dir for micro_task/lite_task/full_chain routes"]
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return BLOCK
+    contract, problems = _contract_for_intake(assessment, paths, created_by="intake")
+    if problems or not isinstance(contract, dict):
+        payload["blocking_reasons"] = problems or ["cannot build intake contract"]
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return BLOCK
+    previous, read_error = guru_contract.load_contract(task_dir)
+    if read_error:
+        payload["blocking_reasons"] = [f"existing contract unreadable: {read_error}"]
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return BLOCK
+    try:
+        guru_contract.write_contract(task_dir, contract)
+        _update_task_route_metadata(task_dir, route, risk)
+    except OSError as exc:
+        payload["blocking_reasons"] = [f"write gate-contract.json failed: {exc}"]
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return BLOCK
+    payload["contract_written"] = True
+    payload["written_path"] = _display_task_dir(guru_contract.contract_path(task_dir), root)
+    payload["old_route"] = guru_contract.contract_route(previous) if isinstance(previous, dict) else None
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    return PASS
+
+
 def cmd_init_contract(task_dir_arg, options: dict) -> int:
     task_dir = resolve_task_dir(task_dir_arg, allow_unique_planning_fallback=False)
     if not task_dir and task_dir_arg and os.path.isdir(task_dir_arg):
@@ -3637,6 +3814,101 @@ def cmd_init_contract(task_dir_arg, options: dict) -> int:
         "recommended_route": guru_contract.contract_recommended_route(contract) or None,
         "route_selection_source": contract.get("route_selection", {}).get("source"),
         "risk": contract["risk"],
+    }
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    return PASS
+
+
+def _parse_degradation_check(raw: str, problems: list) -> dict | None:
+    parts = raw.split(":", 2)
+    if len(parts) < 2:
+        problems.append("--check must use name:status[:evidence]")
+        return None
+    name = parts[0].strip()
+    status = parts[1].strip()
+    evidence = parts[2].strip() if len(parts) > 2 else ""
+    if not name or not status:
+        problems.append("--check must include non-empty name and status")
+        return None
+    check = {"name": name, "status": status}
+    if evidence:
+        check["evidence"] = evidence
+    return check
+
+
+def _default_allowed_by(contract: dict, gate: str) -> str:
+    rows = contract.get("allowed_degradations", []) if isinstance(contract, dict) else []
+    if not isinstance(rows, list):
+        return ""
+    for idx, row in enumerate(rows):
+        if isinstance(row, dict) and row.get("gate") == gate:
+            return f"gate-contract.json#/allowed_degradations/{idx}"
+    return ""
+
+
+def cmd_record_degradation(task_dir_arg, options: dict) -> int:
+    task_dir = resolve_task_dir(task_dir_arg, allow_unique_planning_fallback=False) if task_dir_arg else None
+    if not task_dir and task_dir_arg and os.path.isdir(task_dir_arg):
+        task_dir = os.path.abspath(task_dir_arg)
+    if not task_dir:
+        sys.stderr.write("[guru-gate:record-degradation] 无法定位任务目录，请显式传 task_dir\n")
+        return BLOCK
+    contract, read_error = guru_contract.load_contract(task_dir)
+    if read_error:
+        sys.stderr.write(f"[guru-gate:record-degradation] {read_error}\n")
+        return BLOCK
+    contract_problems = guru_contract.validate_contract(contract)
+    if contract_problems:
+        sys.stderr.write("[guru-gate:record-degradation] 当前 gate-contract.json 无效：\n")
+        for problem in contract_problems:
+            sys.stderr.write(f"  - {problem}\n")
+        return BLOCK
+    problems = []
+    gate = str(options.get("gate") or "").strip()
+    reason = str(options.get("reason") or "").strip()
+    command = str(options.get("command") or "").strip()
+    if not gate:
+        problems.append("--gate is required")
+    if not reason:
+        problems.append("--reason is required")
+    if not command:
+        problems.append("--command is required")
+    checks = []
+    for raw in options.get("checks") or []:
+        check = _parse_degradation_check(raw, problems)
+        if check:
+            checks.append(check)
+    row = {
+        "schema_version": guru_contract.SCHEMA_VERSION,
+        "gate": gate,
+        "reason": reason,
+        "command": command,
+        "stderr_excerpt": str(options.get("stderr_excerpt") or ""),
+        "allowed_by": str(options.get("allowed_by") or _default_allowed_by(contract, gate)),
+        "compensating_checks": checks,
+        "created_by": str(options.get("created_by") or "agent"),
+    }
+    rows, degradation_error = guru_contract.read_degradations(task_dir)
+    if degradation_error:
+        problems.append(degradation_error)
+    if not problems:
+        problems.extend(guru_contract.validate_degradations(contract, rows + [row]))
+    if problems:
+        sys.stderr.write("[guru-gate:record-degradation] 拒绝追加 gate-degradations.jsonl：\n")
+        for problem in problems:
+            sys.stderr.write(f"  - {problem}\n")
+        return BLOCK
+    try:
+        guru_contract.append_degradation(task_dir, row)
+    except guru_contract.ContractError as exc:
+        sys.stderr.write(f"[guru-gate:record-degradation] {exc}\n")
+        return BLOCK
+    summary = {
+        "schema_version": 1,
+        "task_dir": _display_task_dir(task_dir, _repo_root()),
+        "written_path": _display_task_dir(guru_contract.degradations_path(task_dir), _repo_root()),
+        "gate": gate,
+        "compensating_checks": [check.get("name") for check in checks],
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
     return PASS
@@ -3765,6 +4037,31 @@ def _direct_commit_stage_paths(staged_paths: list, root: str) -> tuple[list, lis
     return allowed, forbidden
 
 
+def _micro_recovery_commands(staged_paths: list, root: str) -> list:
+    allowed, _forbidden = _direct_commit_stage_paths(staged_paths, root)
+    max_files = len(allowed) if allowed else len(staged_paths)
+    path_args = " ".join(f"--allowed-path {shlex.quote(path)}" for path in allowed)
+    if path_args:
+        path_args = " " + path_args
+    return [
+        'python3 .trellis/scripts/task.py create "<short task title>" --priority P2',
+        (
+            "python3 .trellis/scripts/guru/guru_gate.py init-contract <new-task-dir> "
+            f"--route micro_task --risk low{path_args} --max-files {max_files}"
+        ),
+        "rerun commit-plan/check-commit with the new micro_task task_dir",
+    ]
+
+
+def _post_implementation_recovery_reason(prefix: str = "") -> str:
+    base = (
+        "post-implementation intake recovery required: scoped low-risk staged changes "
+        "need a micro_task gate-contract before commit; do not backfill full PRD/"
+        "overview/detail gates after implementation"
+    )
+    return f"{prefix}: {base}" if prefix else base
+
+
 def _contract_commit_stage_paths(contract: dict, staged_paths: list, task_dir: str, root: str) -> tuple[list, list]:
     scope = contract.get("scope", {}) if isinstance(contract, dict) else {}
     if not isinstance(scope, dict):
@@ -3785,7 +4082,7 @@ def _contract_commit_stage_paths(contract: dict, staged_paths: list, task_dir: s
     if isinstance(max_files, int) and max_files > 0 and len(staged_paths) > max_files:
         forbidden.extend(staged_paths[max_files:])
     route = guru_contract.contract_route(contract)
-    if route and route != guru_contract.ROUTE_FULL_CHAIN and not guru_contract.has_user_route_override(contract):
+    if route and route != guru_contract.ROUTE_FULL_CHAIN:
         high_risk_paths = set(guru_contract.high_risk_path_signals(code_paths))
         if guru_risk.has_cross_layer_or_storage(code_paths):
             high_risk_paths.update(code_paths)
@@ -3861,7 +4158,8 @@ def _commit_plan_payload(task_dir_arg) -> dict:
                 "create or select a micro_task/lite_task/full_chain task, then rerun commit-plan"
             )
         else:
-            plan["can_commit_now"] = True
+            block(_post_implementation_recovery_reason("no active task contract"))
+            plan["required_commands"].extend(_micro_recovery_commands(staged_paths, root))
         plan["suggested_stage_commands"] = _stage_command(plan["allowed_stage_paths"])
         return _finish_commit_plan(plan)
 
@@ -3888,6 +4186,17 @@ def _commit_plan_payload(task_dir_arg) -> dict:
         plan["forbidden_stage_paths"] = forbidden
     else:
         contract_problems = []
+        direct_recovery_problem = _direct_low_risk_commit_problem(staged_paths, root)
+        if not direct_recovery_problem and _task_status(task_dir) != "in_progress":
+            plan["route"] = guru_contract.ROUTE_MICRO_TASK
+            plan["commit_mode"] = "implementation"
+            allowed, forbidden = _direct_commit_stage_paths(staged_paths, root)
+            plan["allowed_stage_paths"] = allowed
+            plan["forbidden_stage_paths"] = forbidden
+            block(_post_implementation_recovery_reason("active task has no commit contract"))
+            plan["required_commands"].extend(_micro_recovery_commands(staged_paths, root))
+            plan["suggested_stage_commands"] = _stage_command(plan["allowed_stage_paths"])
+            return _finish_commit_plan(plan)
 
     if split_artifacts and split_code_paths:
         plan["split_required"] = True
@@ -3913,7 +4222,6 @@ def _commit_plan_payload(task_dir_arg) -> dict:
                 high_signal_problem
                 and high_path_signals
                 and cross_layer_or_storage
-                and not guru_contract.has_user_route_override(micro_contract)
             ):
                 plan["split_required"] = True
                 plan["split_suggestions"] = _micro_commit_split_suggestions(staged_paths, task_dir, root)
@@ -3931,13 +4239,14 @@ def _commit_plan_payload(task_dir_arg) -> dict:
     review_path = os.path.join(task_dir, "review-records", "implementation-reviews.jsonl")
     latest_record, read_error = _latest_jsonl_record(review_path)
     needs_implementation_review = False
+    implementation_review_problem = ""
     if read_error:
         block(read_error)
         needs_implementation_review = True
     else:
-        review_problem = _implementation_review_problem(latest_record, staged_paths, task_dir, root)
-        if review_problem:
-            block(review_problem)
+        implementation_review_problem = _implementation_review_problem(latest_record, staged_paths, task_dir, root)
+        if implementation_review_problem:
+            block(implementation_review_problem)
             needs_implementation_review = True
         allowed, forbidden = _review_commit_stage_paths(latest_record, staged_paths, task_dir, root)
         if allowed or forbidden:
@@ -3948,6 +4257,22 @@ def _commit_plan_payload(task_dir_arg) -> dict:
             plan["suggested_stage_commands"] = _stage_command(plan["allowed_stage_paths"])
             if not plan["suggested_stage_commands"]:
                 plan["suggested_stage_commands"] = _stage_command(staged_paths)
+
+    if not isinstance(contract, dict):
+        direct_recovery_problem = _direct_low_risk_commit_problem(staged_paths, root)
+        if direct_recovery_problem:
+            block(direct_recovery_problem)
+        elif plan["blocking_reasons"] and (
+            not isinstance(latest_record, dict)
+            or implementation_review_problem.startswith("staged paths outside latest reviewed target_paths:")
+        ):
+            plan["route"] = guru_contract.ROUTE_MICRO_TASK
+            plan["allowed_stage_paths"], plan["forbidden_stage_paths"] = _direct_commit_stage_paths(staged_paths, root)
+            plan["blocking_reasons"] = []
+            block(_post_implementation_recovery_reason("active task has no commit contract"))
+            plan["required_commands"] = _micro_recovery_commands(staged_paths, root)
+            plan["suggested_stage_commands"] = _stage_command(plan["allowed_stage_paths"])
+            return _finish_commit_plan(plan)
 
     if contract_problems:
         block("; ".join(contract_problems[:5]))
@@ -4123,18 +4448,34 @@ def main() -> int:
         "risk": _pop_value_option(argv, "--risk"),
         "max_files": _pop_value_option(argv, "--max-files"),
         "confidence": _pop_value_option(argv, "--confidence"),
-        "created_by": _pop_value_option(argv, "--created-by"),
+        "created_by": _pop_value_option(argv, "--created-by") if cmd == "init-contract" else None,
         "allowed_paths": _pop_all_value_options(argv, "--allowed-path"),
         "forbidden_patterns": _pop_all_value_options(argv, "--forbidden-pattern"),
-        "reasons": _pop_all_value_options(argv, "--reason"),
+        "reasons": _pop_all_value_options(argv, "--reason") if cmd == "init-contract" else [],
         "risk_flags": _pop_all_value_options(argv, "--risk-flag"),
         "recommended_route": _pop_value_option(argv, "--recommended-route"),
         "user_override_quote": _pop_value_option(argv, "--user-override-quote"),
         "risk_acknowledged": _pop_value_option(argv, "--risk-acknowledged"),
         "selected_by": _pop_value_option(argv, "--selected-by"),
     }
+    intake_options = {
+        "description": _pop_value_option(argv, "--description"),
+        "paths": _pop_all_value_options(argv, "--path"),
+    }
+    degradation_options = {
+        "gate": _pop_value_option(argv, "--gate"),
+        "reason": _pop_value_option(argv, "--reason"),
+        "command": _pop_value_option(argv, "--command"),
+        "stderr_excerpt": _pop_value_option(argv, "--stderr-excerpt"),
+        "allowed_by": _pop_value_option(argv, "--allowed-by"),
+        "created_by": _pop_value_option(argv, "--created-by"),
+        "checks": _pop_all_value_options(argv, "--check"),
+    }
     rest = [a for a in argv if not a.startswith("--")]
     flags = {a for a in argv if a.startswith("--")}
+    intake_options["commit_requested"] = "--commit-requested" in flags
+    intake_options["write_contract"] = "--write-contract" in flags
+    intake_options["use_staged"] = "--staged" in flags
     arg = rest[0] if rest else None
     table = {
         "requirements": check_requirements,
@@ -4190,8 +4531,12 @@ def main() -> int:
         return cmd_check_implementation(arg)
     if cmd == "commit-plan":
         return cmd_commit_plan(arg, write="--write" in flags)
+    if cmd == "intake":
+        return cmd_intake(arg, intake_options)
     if cmd == "init-contract":
         return cmd_init_contract(arg, init_contract_options)
+    if cmd == "record-degradation":
+        return cmd_record_degradation(arg, degradation_options)
     if cmd == "slice-plan":
         return cmd_slice_plan(arg)
     if cmd == "check-commit":

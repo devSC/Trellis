@@ -151,6 +151,8 @@ Phase 3: Finish  → verify, update spec, commit, and wrap up
 
 ### Request Triage
 
+- For implementation-like requests in a Guru-enabled project, run `python3 .trellis/scripts/guru/guru_gate.py intake --description "<request>" [--path <path> ...]` before asking the user to name `full/lite/micro`. Low risk can proceed inline; commit-intended low risk must rerun with `--commit-requested` and write a `micro_task` contract; medium writes `lite_task`; high writes `full_chain`.
+- If an active task exists but the new request may be unrelated, run `intake` without a `task_dir` first. Do not write `gate-contract.json` into the active task until task affinity is confirmed or a new task is created.
 - Simple conversation or small task: ask only whether this turn should create a Trellis task. If the user says no, skip Trellis for this session.
 - Complex task: ask whether you may create a Trellis task and enter planning. If the user says no, do not do broad inline implementation; explain, clarify scope, or suggest a smaller split.
 - User approval to create a task is not approval to start implementation. Planning still happens first.
@@ -175,8 +177,9 @@ Create new children with `task.py create "<title>" --slug <name> --parent <paren
 
 [workflow-state:no_task]
 No active task. First classify the current turn and ask for task-creation consent before creating any Trellis task.
-Simple conversation / small task: ask only whether this turn should create a Trellis task. If the user says no, skip Trellis for this session.
-Complex task: ask the user if you can create a Trellis task and enter the planning phase. If the user says no, explain, clarify scope, or suggest a smaller split.
+Guru request triage is executable: run `guru_gate.py intake --description "<request>" [--path <path> ...]` to recommend `small_inline|micro_task|lite_task|full_chain`; users may confirm or override, but they do not need to know the route names up front.
+Simple conversation / small task: low-risk discussion or inline work may skip Trellis for this session, but low-risk work that will be committed needs a micro task/contract before commit.
+Complex task: recommend the route before planning. Use micro for scoped low-risk commits, lite for medium local behavior work, and full for high-risk workflow/gate/schema/privacy/payment/cross-layer work; non-high-risk work may use an audited override, but high-risk work must stay full_chain even when the user asks for a lighter route.
 [/workflow-state:no_task]
 
 ### Phase 1: Plan
@@ -617,6 +620,8 @@ The AI drives a batched commit of this task's code changes so `/finish-work` can
    - **Unrecognized** — dirty files you did NOT touch this session (could be the user's manual edits, leftover WIP from a previous session, or unrelated work). Do NOT silently include these.
 
 4. **Draft a commit plan**. Group AI-edited files into logical commits (1 commit per coherent change unit, not 1 commit per file). Each entry: `<commit message>` + file list. List unrecognized files separately at the bottom.
+
+   If implementation is already staged but no valid task/commit contract exists, do not recover by retroactively demanding full PRD/design artifacts for scoped low-risk work. Create or switch to a micro task, record the minimal commit contract, and rerun the commit gate. Medium/high/unclear staged scope must be routed to lite/full or split before commit.
 
 5. **Present the plan once, ask for one-shot confirmation**. Format:
    ```

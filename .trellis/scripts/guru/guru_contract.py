@@ -21,6 +21,12 @@ ROUTE_MICRO_TASK = "micro_task"
 ROUTE_LITE_TASK = "lite_task"
 ROUTE_FULL_CHAIN = "full_chain"
 ROUTES = {ROUTE_SMALL_INLINE, ROUTE_MICRO_TASK, ROUTE_LITE_TASK, ROUTE_FULL_CHAIN}
+ROUTE_RANK = {
+    ROUTE_SMALL_INLINE: 0,
+    ROUTE_MICRO_TASK: 1,
+    ROUTE_LITE_TASK: 2,
+    ROUTE_FULL_CHAIN: 3,
+}
 
 RISK_LOW = "low"
 RISK_MEDIUM = "medium"
@@ -107,6 +113,33 @@ def normalize_route(value) -> str:
     return route if route in ROUTES else ""
 
 
+def recommended_route_for_risk(risk: str) -> str:
+    risk = normalize_risk(risk)
+    if risk == RISK_HIGH:
+        return ROUTE_FULL_CHAIN
+    if risk == RISK_MEDIUM:
+        return ROUTE_LITE_TASK
+    if risk == RISK_LOW:
+        return ROUTE_MICRO_TASK
+    return ROUTE_FULL_CHAIN
+
+
+def contract_recommended_route(contract: dict | None) -> str:
+    if not isinstance(contract, dict):
+        return ""
+    selection = contract.get("route_selection")
+    if isinstance(selection, dict):
+        route = normalize_route(selection.get("recommended_route") or selection.get("from_route"))
+        if route:
+            return route
+    assessment = contract.get("assessment")
+    if isinstance(assessment, dict):
+        route = normalize_route(assessment.get("recommended_route") or assessment.get("recommended_contract"))
+        if route:
+            return route
+    return normalize_route(contract.get("recommended_route"))
+
+
 def contract_path(task_dir: str) -> str:
     return os.path.join(task_dir, CONTRACT_FILE)
 
@@ -142,6 +175,7 @@ def write_contract(task_dir: str, contract: dict) -> None:
 def default_contract(route: str, risk: str, *, created_by: str = "intake") -> dict:
     route = normalize_route(route)
     risk = normalize_risk(risk)
+    recommended_route = recommended_route_for_risk(risk)
     if route == ROUTE_FULL_CHAIN:
         require_in_progress = True
         require_clean_review = True
@@ -158,7 +192,21 @@ def default_contract(route: str, risk: str, *, created_by: str = "intake") -> di
         "schema_version": SCHEMA_VERSION,
         "risk": risk,
         "route": route,
-        "assessment": {"confidence": None, "reasons": [], "risk_flags": []},
+        "assessment": {
+            "confidence": None,
+            "reasons": [],
+            "risk_flags": [],
+            "recommended_route": recommended_route,
+        },
+        "route_selection": {
+            "selected_route": route,
+            "source": "recommended",
+            "recommended_route": recommended_route,
+            "risk_acknowledged": False,
+            "user_quote": "",
+            "selected_by": "system",
+            "selected_at": _now_iso(),
+        },
         "scope": {
             "allowed_paths": [],
             "forbidden_path_patterns": [],
@@ -188,6 +236,60 @@ def contract_risk(contract: dict | None) -> str:
     if not isinstance(contract, dict):
         return RISK_UNKNOWN
     return normalize_risk(contract.get("risk"))
+
+
+def _route_rank(route: str) -> int:
+    return ROUTE_RANK.get(normalize_route(route), -1)
+
+
+def _route_override_required(contract: dict) -> bool:
+    route = contract_route(contract)
+    risk = contract_risk(contract)
+    recommended = contract_recommended_route(contract)
+    if recommended and _route_rank(route) < _route_rank(recommended):
+        return True
+    if risk == RISK_HIGH and route != ROUTE_FULL_CHAIN:
+        return True
+    if risk == RISK_MEDIUM and route in {ROUTE_SMALL_INLINE, ROUTE_MICRO_TASK}:
+        return True
+    return False
+
+
+def user_route_override_problems(contract: dict | None) -> list:
+    if not isinstance(contract, dict):
+        return ["gate contract missing or malformed"]
+    route = contract_route(contract)
+    selection = contract.get("route_selection")
+    if not isinstance(selection, dict):
+        return ["route_selection user override audit is required for lower-than-recommended route"]
+    problems = []
+    selected_route = normalize_route(selection.get("selected_route"))
+    if selected_route != route:
+        problems.append("route_selection.selected_route must match route")
+    source = str(selection.get("source") or "").strip().lower()
+    if source != "user_override":
+        problems.append("route_selection.source must be user_override")
+    selected_by = str(selection.get("selected_by") or selection.get("by") or "").strip().lower()
+    if selected_by != "user":
+        problems.append("route_selection.selected_by must be user")
+    if selection.get("risk_acknowledged") is not True:
+        problems.append("route_selection.risk_acknowledged must be true")
+    user_quote = selection.get("user_quote")
+    if not isinstance(user_quote, str) or not user_quote.strip():
+        problems.append("route_selection.user_quote must be non-empty")
+    selected_at = selection.get("selected_at")
+    if not isinstance(selected_at, str) or not selected_at.strip():
+        problems.append("route_selection.selected_at must be non-empty")
+    recommended = normalize_route(selection.get("recommended_route") or selection.get("from_route"))
+    if not recommended:
+        problems.append("route_selection.recommended_route must be valid")
+    elif _route_rank(route) >= _route_rank(recommended):
+        problems.append("route_selection must record a stricter recommended_route than route")
+    return problems
+
+
+def has_user_route_override(contract: dict | None) -> bool:
+    return not user_route_override_problems(contract)
 
 
 def _list_of_strings(value, field: str, problems: list) -> list:
@@ -253,12 +355,13 @@ def validate_contract(contract: dict | None) -> list:
         problems.append("risk must be low|medium|high|unknown")
     if route == ROUTE_SMALL_INLINE:
         problems.append("small_inline cannot be used as a commit contract; use micro_task when committing")
-    if risk == RISK_HIGH and route != ROUTE_FULL_CHAIN:
-        problems.append("high-risk task cannot be downgraded below full_chain")
-    if route == ROUTE_MICRO_TASK and risk != RISK_LOW:
-        problems.append("micro_task commit contract requires risk=low")
-    if route == ROUTE_LITE_TASK and risk == RISK_HIGH:
-        problems.append("lite_task cannot be used for high-risk work")
+    selection = contract.get("route_selection")
+    if selection is not None and not isinstance(selection, dict):
+        problems.append("route_selection must be object")
+    if risk == RISK_HIGH and route and route != ROUTE_FULL_CHAIN:
+        problems.append("high-risk gate contracts must use route=full_chain")
+    if route and _route_override_required(contract):
+        problems.extend(user_route_override_problems(contract))
     scope = contract.get("scope", {})
     if scope is not None and not isinstance(scope, dict):
         problems.append("scope must be object")

@@ -1322,11 +1322,11 @@ expect_rc_grep "high risk lite_task 缺 override audit 回退 strict requirement
 
 RV_HIGH_LITE=$(make_gate_case review-high-lite-user-override)
 write_user_override_contract "$RV_HIGH_LITE" lite_task high full_chain "用户确认 high 风险仍走 lite"
-expect "high risk lite_task 带用户 override 使用 bounded requirements policy" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_HIGH_LITE" --via-agent --user-quote "high 风险已确认，按 lite bounded policy 确认需求"
+expect_rc_grep "high risk lite_task 即使带用户 override 也回退 strict requirements review" 2 "requirements adversarial review" env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_HIGH_LITE" --via-agent --user-quote "high 风险不能降为 lite"
 write_plain_clean_reviews overview "$RV_HIGH_LITE"
 write_plain_clean_reviews detail "$RV_HIGH_LITE"
-expect "high risk lite_task override 双普通 clean 可确认 detail" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm detail "$RV_HIGH_LITE" --via-agent --user-quote "high 风险已确认，按 lite bounded policy 确认详细"
-expect "high risk lite_task override 双普通 clean 可 check-start" 0 python3 "$GATE" check-start "$RV_HIGH_LITE"
+expect_rc_grep "high risk lite_task override 双普通 clean 仍不能确认 detail" 2 "adversarial" env GURU_GATE_MODE=soft python3 "$GATE" confirm detail "$RV_HIGH_LITE" --via-agent --user-quote "high 风险不能降为 lite"
+expect_rc_grep "high risk lite_task override 不能 check-start" 2 "requirements" python3 "$GATE" check-start "$RV_HIGH_LITE"
 
 RV_OFF_ROOT="$TMP/adversarial-disabled-root"
 RV_OFF="$RV_OFF_ROOT/.trellis/tasks/review-adversarial-disabled"
@@ -1467,6 +1467,65 @@ CG_ROOT="${CG_PAIR%%|*}"; CG_TASK="${CG_PAIR#*|}"
 printf 'code\n' > "$CG_ROOT/lib/x.dart"
 (cd "$CG_ROOT" && git add lib/x.dart)
 expect "check-commit planning 任务即使 staged/review clean 也被拦" 2 env TASK_JSON_PATH="$CG_TASK/task.json" bash -c "cd '$CG_ROOT' && python3 '$GATE' check-commit '$CG_TASK'"
+out=$(env TASK_JSON_PATH="$CG_TASK/task.json" bash -c "cd '$CG_ROOT' && python3 '$GATE' commit-plan '$CG_TASK'" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" micro_task implementation && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["can_commit_now"] is False, plan
+assert plan["contract_present"] is False, plan
+assert any("post-implementation intake recovery" in reason for reason in plan["blocking_reasons"]), plan
+assert not any("requirements" in command or "check-implementation" in command for command in plan["required_commands"]), plan
+assert any("init-contract <new-task-dir> --route micro_task --risk low" in command for command in plan["required_commands"]), plan
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan active planning low-risk diff 推荐 micro_task recovery 而非补 requirements"
+else failn=$((failn+1)); echo "FAIL  commit-plan active planning recovery JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+CG_NR_ROOT="$TMP/commit-nonready-in-progress-root"; CG_NR_TASK="$TMP/commit-nonready-in-progress-task"
+mkdir -p "$CG_NR_ROOT/lib" "$CG_NR_TASK"
+(cd "$CG_NR_ROOT" && git init -q)
+printf '{"status":"in_progress"}\n' > "$CG_NR_TASK/task.json"
+printf 'code\n' > "$CG_NR_ROOT/lib/x.dart"
+(cd "$CG_NR_ROOT" && git add lib/x.dart)
+out=$(bash -c "cd '$CG_NR_ROOT' && python3 '$GATE' commit-plan '$CG_NR_TASK'" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" micro_task implementation && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["can_commit_now"] is False, plan
+assert plan["contract_present"] is False, plan
+assert any("post-implementation intake recovery" in reason for reason in plan["blocking_reasons"]), plan
+joined_reasons = "\n".join(plan["blocking_reasons"])
+joined_commands = "\n".join(plan["required_commands"])
+assert "check-implementation failed" not in joined_reasons, plan
+assert "未通过" not in joined_reasons, plan
+for word in ("requirements", "overview", "detail", "check-implementation"):
+    assert word not in joined_commands, plan
+assert any("init-contract <new-task-dir> --route micro_task --risk low" in command for command in plan["required_commands"]), plan
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan in_progress/nonready low-risk diff 只推荐 micro_task recovery"
+else failn=$((failn+1)); echo "FAIL  commit-plan in_progress/nonready recovery JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+CG_STALE_PAIR=$(mk_commit_gate_case commit-stale-review in_progress "lib/old.dart")
+CG_STALE_ROOT="${CG_STALE_PAIR%%|*}"; CG_STALE_TASK="${CG_STALE_PAIR#*|}"
+printf 'code\n' > "$CG_STALE_ROOT/lib/x.dart"
+(cd "$CG_STALE_ROOT" && git add lib/x.dart)
+out=$(env TASK_JSON_PATH="$CG_STALE_TASK/task.json" bash -c "cd '$CG_STALE_ROOT' && python3 '$GATE' commit-plan '$CG_STALE_TASK'" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" micro_task implementation && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["can_commit_now"] is False, plan
+assert plan["contract_present"] is False, plan
+assert plan["allowed_stage_paths"] == ["lib/x.dart"], plan
+assert plan["forbidden_stage_paths"] == [], plan
+assert any("post-implementation intake recovery" in reason for reason in plan["blocking_reasons"]), plan
+joined_reasons = "\n".join(plan["blocking_reasons"])
+joined_commands = "\n".join(plan["required_commands"])
+assert "staged paths outside latest reviewed target_paths" not in joined_reasons, plan
+assert "implementation-review" not in joined_commands, plan
+assert "check-implementation" not in joined_commands, plan
+assert any("init-contract <new-task-dir> --route micro_task --risk low" in command for command in plan["required_commands"]), plan
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan 无合同低风险 diff 忽略 stale review 并推荐 micro_task recovery"
+else failn=$((failn+1)); echo "FAIL  commit-plan stale review/no-contract recovery JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
 
 CG2_PAIR=$(mk_commit_gate_case commit-ready in_progress "lib/x.dart")
 CG2_ROOT="${CG2_PAIR%%|*}"; CG2_TASK="${CG2_PAIR#*|}"
@@ -1976,7 +2035,7 @@ bad["route_selection"] = {
     "selected_at": "2026-07-02T00:00:00Z",
 }
 bad["scope"] = {"allowed_paths": ["packages"], "forbidden_path_patterns": [], "max_files": 3}
-assert guru_contract.validate_contract(bad) == []
+assert any("high-risk gate contracts" in p for p in guru_contract.validate_contract(bad))
 default_micro = guru_contract.default_contract("micro_task", "low")
 assert any("scope.allowed_paths" in p for p in guru_contract.validate_contract(default_micro))
 assert any("scope.max_files" in p for p in guru_contract.validate_contract(default_micro))
@@ -2009,7 +2068,7 @@ lite_high_path = {
     "commit_policy": {},
     "allowed_degradations": [],
 }
-assert not any("high-risk signals" in p for p in guru_contract.validate_commit_contract(
+assert any("high-risk gate contracts" in p for p in guru_contract.validate_commit_contract(
     lite_high_path,
     ["packages/cli/src/templates/guru/overlay/verify/guru_gate.py"],
     "/tmp/task",
@@ -2146,7 +2205,7 @@ expect_rc_grep "check-commit micro_task staged gate 高风险路径被拦" 2 "hi
 MCO_PAIR=$(mk_micro_contract_case micro-high-override-gate-path "packages/cli/src/templates/guru/overlay/verify/guru_gate.py" "high-path-override")
 MCO_ROOT="${MCO_PAIR%%|*}"; MCO_TASK="${MCO_PAIR#*|}"
 (cd "$MCO_ROOT" && git add packages/cli/src/templates/guru/overlay/verify/guru_gate.py)
-expect "check-commit micro_task high-risk path 带用户 override 不因路径信号阻断" 0 env TASK_JSON_PATH="$MCO_TASK/task.json" bash -c "cd '$MCO_ROOT' && python3 '$GATE' check-commit '$MCO_TASK'"
+expect_rc_grep "check-commit micro_task high-risk path 带用户 override 仍被拦" 2 "high-risk gate contracts.*full_chain" env TASK_JSON_PATH="$MCO_TASK/task.json" bash -c "cd '$MCO_ROOT' && python3 '$GATE' check-commit '$MCO_TASK'"
 
 MCO_PAIR=$(mk_micro_contract_case micro-out-of-scope "src/x.dart")
 MCO_ROOT="${MCO_PAIR%%|*}"; MCO_TASK="${MCO_PAIR#*|}"
@@ -2170,7 +2229,7 @@ mk_direct_commit_case() ( # mk_direct_commit_case <name> <paths...>
 )
 
 DC_ROOT=$(mk_direct_commit_case direct-low-risk "lib/ui/character_chat_ai_bubble.dart" "test/ui/character_chat_message_list_test.dart")
-expect_rc_grep "check-commit direct small_inline 无 task + scoped low-risk 放行" 0 "direct small_inline scoped low-risk commit" bash -c "cd '$DC_ROOT' && python3 '$GATE' check-commit"
+expect_rc_grep "check-commit direct small_inline 无 task + scoped low-risk 要求 micro_task recovery" 2 "post-implementation intake recovery|required|micro_task" bash -c "cd '$DC_ROOT' && python3 '$GATE' check-commit"
 
 DCH_ROOT=$(mk_direct_commit_case direct-high-risk ".trellis/config.yaml")
 expect_rc_grep "check-commit direct small_inline 高风险路径被拦" 2 "high-risk signals" bash -c "cd '$DCH_ROOT' && python3 '$GATE' check-commit"
@@ -2183,18 +2242,19 @@ if [ "$rc" = 0 ] && assert_commit_plan_json "$out" direct_small_inline direct &&
 import json, os
 plan = json.loads(os.environ["PLAN"])
 assert plan["route"] == "direct_small_inline", plan
-assert plan["can_commit_now"] is True, plan
-assert plan["blocking_reasons"] == [], plan
+assert plan["can_commit_now"] is False, plan
+assert any("post-implementation intake recovery" in reason for reason in plan["blocking_reasons"]), plan
 assert len(plan["staged_paths"]) == 2, plan
 assert plan["allowed_stage_paths"] == [
     "lib/ui/character_chat_ai_bubble.dart",
     "test/ui/character_chat_message_list_test.dart",
 ], plan
 assert plan["forbidden_stage_paths"] == [], plan
-assert plan["required_user_confirmations"] == ["confirm_commit"], plan
+assert plan["required_user_confirmations"] == [], plan
+assert any("init-contract <new-task-dir> --route micro_task --risk low" in command for command in plan["required_commands"]), plan
 PY
-then pass=$((pass+1)); echo "PASS  commit-plan direct small_inline 输出可提交 JSON"
-else failn=$((failn+1)); echo "FAIL  commit-plan direct small_inline JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+then pass=$((pass+1)); echo "PASS  commit-plan direct small_inline 输出 micro_task recovery JSON"
+else failn=$((failn+1)); echo "FAIL  commit-plan direct small_inline recovery JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
 
 out=$(bash -c "cd '$DCH_ROOT' && python3 '$GATE' commit-plan" 2>&1); rc=$?
 if [ "$rc" = 0 ] && assert_commit_plan_json "$out" direct_small_inline direct && PLAN="$out" python3 - <<'PY'
@@ -4169,45 +4229,83 @@ PY
 then pass=$((pass+1)); echo "PASS  init-contract 生成 micro_task 合同"
 else failn=$((failn+1)); echo "FAIL  init-contract 生成 micro_task 合同 (rc=$rc)"; echo "$out" | head -8; fi
 
+out=$(python3 "$GATE" intake --description "change unread dot color" --path lib/ui/unread_dot.dart 2>&1); rc=$?
+if [ "$rc" = 0 ] && SUMMARY="$out" python3 - <<'PY'
+import json, os
+summary = json.loads(os.environ["SUMMARY"])
+assert summary["route"] == "small_inline", summary
+assert summary["risk"] == "low", summary
+assert summary["task_needed"] is False, summary
+assert summary["commit_contract_required"] is False, summary
+assert summary["task_dir"] == "", summary
+PY
+then pass=$((pass+1)); echo "PASS  intake low/no-commit 输出 small_inline 且不绑定 active task"
+else failn=$((failn+1)); echo "FAIL  intake low/no-commit 输出 small_inline (rc=$rc)"; echo "$out" | head -8; fi
+
+IT_MICRO="$TMP/intake-micro-task"; mkdir -p "$IT_MICRO"; printf '{"status":"planning"}\n' > "$IT_MICRO/task.json"
+out=$(python3 "$GATE" intake "$IT_MICRO" --description "change unread dot color" --path lib/ui/unread_dot.dart --commit-requested --write-contract 2>&1); rc=$?
+if [ "$rc" = 0 ] && SUMMARY="$out" TASK="$IT_MICRO" python3 - <<'PY'
+import json, os
+summary = json.loads(os.environ["SUMMARY"])
+contract = json.load(open(os.path.join(os.environ["TASK"], "gate-contract.json"), encoding="utf-8"))
+task = json.load(open(os.path.join(os.environ["TASK"], "task.json"), encoding="utf-8"))
+assert summary["route"] == "micro_task", summary
+assert summary["contract_written"] is True, summary
+assert contract["route"] == "micro_task", contract
+assert contract["scope"]["allowed_paths"] == ["lib/ui/unread_dot.dart"], contract
+assert contract["scope"]["max_files"] == 1, contract
+assert {row["gate"] for row in contract["allowed_degradations"]} == {"gitnexus_impact", "gitnexus_detect_changes"}, contract
+assert task["guru_chain"] == "light" and task["meta"]["route"] == "micro_task", task
+PY
+then pass=$((pass+1)); echo "PASS  intake low/commit 写入 micro_task 合同和 task metadata"
+else failn=$((failn+1)); echo "FAIL  intake low/commit 写入 micro_task 合同 (rc=$rc)"; echo "$out" | head -8; fi
+
+IT_FULL="$TMP/intake-full-task"; mkdir -p "$IT_FULL"; printf '{"status":"planning"}\n' > "$IT_FULL/task.json"
+out=$(python3 "$GATE" intake "$IT_FULL" --description "change payment workflow gate" --path packages/cli/src/templates/guru/overlay/verify/guru_gate.py --write-contract 2>&1); rc=$?
+if [ "$rc" = 0 ] && SUMMARY="$out" TASK="$IT_FULL" python3 - <<'PY'
+import json, os
+summary = json.loads(os.environ["SUMMARY"])
+contract = json.load(open(os.path.join(os.environ["TASK"], "gate-contract.json"), encoding="utf-8"))
+task = json.load(open(os.path.join(os.environ["TASK"], "task.json"), encoding="utf-8"))
+assert summary["route"] == "full_chain" and summary["risk"] == "high", summary
+assert contract["route"] == "full_chain" and contract["risk"] == "high", contract
+assert contract["allowed_degradations"] == [], contract
+assert task["guru_chain"] == "full" and task["meta"]["route"] == "full_chain", task
+PY
+then pass=$((pass+1)); echo "PASS  intake high 写入 full_chain 合同且不允许降级"
+else failn=$((failn+1)); echo "FAIL  intake high 写入 full_chain 合同 (rc=$rc)"; echo "$out" | head -8; fi
+
+out=$(python3 "$GATE" record-degradation "$IT_MICRO" --gate gitnexus_impact --reason tool_unavailable --command "node .gitnexus/run.cjs impact assess_intake" --stderr-excerpt "native binary mismatch" --check rg_callers:passed:gate-evidence/rg-callers.txt --check git_diff_check:passed 2>&1); rc=$?
+if [ "$rc" = 0 ] && SUMMARY="$out" TASK="$IT_MICRO" python3 - <<'PY'
+import json, os
+summary = json.loads(os.environ["SUMMARY"])
+rows = [json.loads(line) for line in open(os.path.join(os.environ["TASK"], "gate-degradations.jsonl"), encoding="utf-8") if line.strip()]
+assert summary["gate"] == "gitnexus_impact", summary
+assert len(rows) == 1, rows
+assert rows[0]["gate"] == "gitnexus_impact", rows
+assert {check["name"] for check in rows[0]["compensating_checks"]} == {"rg_callers", "git_diff_check"}, rows
+PY
+then pass=$((pass+1)); echo "PASS  record-degradation 合同允许时追加事实记录"
+else failn=$((failn+1)); echo "FAIL  record-degradation 合同允许时追加事实记录 (rc=$rc)"; echo "$out" | head -8; fi
+
+before_count=$(wc -l < "$IT_MICRO/gate-degradations.jsonl")
+expect_rc_grep "record-degradation 缺补偿检查不得追加" 2 "missing passed compensating checks" python3 "$GATE" record-degradation "$IT_MICRO" --gate gitnexus_impact --reason tool_unavailable --command "node .gitnexus/run.cjs impact assess_intake" --check rg_callers:passed
+after_count=$(wc -l < "$IT_MICRO/gate-degradations.jsonl")
+if [ "$before_count" = "$after_count" ]; then
+  pass=$((pass+1)); echo "PASS  record-degradation 拒绝无效记录且保持 append-only 历史不变"
+else failn=$((failn+1)); echo "FAIL  record-degradation 无效记录不应追加"; fi
+
 IC_BAD="$TMP/init-contract-bad"; mkdir -p "$IC_BAD"
 expect_rc_grep "init-contract high/lite 缺显式风险确认被拦" 2 "risk_acknowledged" python3 "$GATE" init-contract "$IC_BAD" --route lite_task --risk high --recommended-route full_chain --user-override-quote "走 lite" --selected-by user
 
 IC_LITE="$TMP/init-contract-high-lite"; mkdir -p "$IC_LITE"
-out=$(python3 "$GATE" init-contract "$IC_LITE" --route lite_task --risk high --recommended-route full_chain --user-override-quote "走 lite" --risk-acknowledged true --selected-by user 2>&1); rc=$?
-if [ "$rc" = 0 ] && SUMMARY="$out" TASK="$IC_LITE" python3 - <<'PY'
-import json, os
-summary = json.loads(os.environ["SUMMARY"])
-contract = json.load(open(os.path.join(os.environ["TASK"], "gate-contract.json"), encoding="utf-8"))
-assert summary["new_route"] == "lite_task", summary
-assert summary["recommended_route"] == "full_chain", summary
-assert summary["route_selection_source"] == "user_override", summary
-assert contract["risk"] == "high", contract
-assert contract["route"] == "lite_task", contract
-assert contract["assessment"]["recommended_route"] == "full_chain", contract
-assert contract["route_selection"]["risk_acknowledged"] is True, contract
-assert contract["route_selection"]["user_quote"] == "走 lite", contract
-PY
-then pass=$((pass+1)); echo "PASS  init-contract high/lite 用户 override 合同可写入"
-else failn=$((failn+1)); echo "FAIL  init-contract high/lite 用户 override 合同 (rc=$rc)"; echo "$out" | head -8; fi
+expect_rc_grep "init-contract high/lite 即使用户 override 也被拦" 2 "high-risk gate contracts.*full_chain" python3 "$GATE" init-contract "$IC_LITE" --route lite_task --risk high --recommended-route full_chain --user-override-quote "走 lite" --risk-acknowledged true --selected-by user
 
 IC_MICRO_BAD="$TMP/init-contract-high-micro-bad"; mkdir -p "$IC_MICRO_BAD"
 expect_rc_grep "init-contract high/micro 缺 scope 仍被拦" 2 "scope.allowed_paths|scope.max_files" python3 "$GATE" init-contract "$IC_MICRO_BAD" --route micro_task --risk high --recommended-route full_chain --user-override-quote "走 micro" --risk-acknowledged true --selected-by user
 
 IC_MICRO="$TMP/init-contract-high-micro"; mkdir -p "$IC_MICRO"
-out=$(python3 "$GATE" init-contract "$IC_MICRO" --route micro_task --risk high --recommended-route full_chain --user-override-quote "走 micro" --risk-acknowledged true --selected-by user --allowed-path packages/cli/src/templates/guru/overlay/verify/guru_gate.py --max-files 3 2>&1); rc=$?
-if [ "$rc" = 0 ] && SUMMARY="$out" TASK="$IC_MICRO" python3 - <<'PY'
-import json, os
-summary = json.loads(os.environ["SUMMARY"])
-contract = json.load(open(os.path.join(os.environ["TASK"], "gate-contract.json"), encoding="utf-8"))
-assert summary["new_route"] == "micro_task", summary
-assert contract["risk"] == "high", contract
-assert contract["route"] == "micro_task", contract
-assert contract["route_selection"]["recommended_route"] == "full_chain", contract
-assert contract["route_selection"]["selected_by"] == "user", contract
-assert contract["scope"]["max_files"] == 3, contract
-PY
-then pass=$((pass+1)); echo "PASS  init-contract high/micro 用户 override + scope 合同可写入"
-else failn=$((failn+1)); echo "FAIL  init-contract high/micro 用户 override + scope 合同 (rc=$rc)"; echo "$out" | head -8; fi
+expect_rc_grep "init-contract high/micro 即使用户 override + scope 也被拦" 2 "high-risk gate contracts.*full_chain" python3 "$GATE" init-contract "$IC_MICRO" --route micro_task --risk high --recommended-route full_chain --user-override-quote "走 micro" --risk-acknowledged true --selected-by user --allowed-path packages/cli/src/templates/guru/overlay/verify/guru_gate.py --max-files 3
 
 LC_HIGH=$(make_gate_case accel-high-full)
 write_new_gate_ready "$LC_HIGH"
@@ -4241,17 +4339,17 @@ d = json.load(open(p, encoding="utf-8"))
 d["status"] = "in_progress"
 open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
 PY
-expect "check-implementation high/lite override 不要求 slice packet" 0 python3 "$GATE" check-implementation "$LC_HIGH_LITE"
+expect_rc_grep "check-implementation high/lite override 强制 full_chain packet" 2 "PACKET_REQUIRED_BEFORE_IMPLEMENT" python3 "$GATE" check-implementation "$LC_HIGH_LITE"
 out=$(python3 "$GATE" slice-plan "$LC_HIGH_LITE" 2>&1); rc=$?
 if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
 import json, os
 plan = json.loads(os.environ["PLAN"])
-assert plan["route"] == "lite_task", plan
+assert plan["route"] == "full_chain", plan
 assert plan["risk"] == "high", plan
-assert plan["packet_required"] is False, plan
-assert "PACKET_REQUIRED_BEFORE_IMPLEMENT" not in plan["blocking_reasons"], plan
+assert plan["packet_required"] is True, plan
+assert "PACKET_REQUIRED_BEFORE_IMPLEMENT" in plan["blocking_reasons"], plan
 PY
-then pass=$((pass+1)); echo "PASS  slice-plan high/lite override 不要求 packet"
+then pass=$((pass+1)); echo "PASS  slice-plan high/lite override 强制 full_chain packet"
 else failn=$((failn+1)); echo "FAIL  slice-plan high/lite override JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
 
 LC_PKT=$(make_gate_case accel-one-packet)

@@ -124,10 +124,13 @@ def task_route_and_risk(task_dir: str) -> tuple[str, str, str]:
     requirements unless they explicitly declare high/full risk.
     """
     contract, read_error = guru_contract.load_contract(task_dir)
-    if isinstance(contract, dict) and not read_error and not guru_contract.validate_contract(contract):
+    if isinstance(contract, dict) and not read_error:
         route = guru_contract.contract_route(contract)
         risk = guru_contract.contract_risk(contract)
-        return route, risk, "gate-contract.json"
+        if not guru_contract.validate_contract(contract):
+            return route, risk, "gate-contract.json"
+        if risk == "high" and route != ROUTE_FULL_CHAIN:
+            return ROUTE_FULL_CHAIN, "high", "invalid gate-contract.json"
 
     data = _task_json(task_dir)
     meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}

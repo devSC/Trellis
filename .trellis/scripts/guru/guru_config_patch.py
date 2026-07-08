@@ -13,7 +13,7 @@ from typing import Sequence
 
 VALID_PLATFORMS = {"flutter", "go", "ios", "h5"}
 DEFAULTS: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("codex", "dispatch_mode"), "channel"),
+    (("codex", "dispatch_mode"), "sub-agent"),
     (("channel", "worker_guard", "idle_timeout"), "10m"),
     (("channel", "worker_guard", "max_live_workers"), "4"),
     (("guru", "supervision", "provider"), "codex"),
@@ -311,7 +311,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     ensure = sub.add_parser(
         "ensure-supervision-defaults",
-        help="fill missing Guru channel supervision defaults",
+        help="fill missing Guru supervision defaults",
     )
     ensure.add_argument("--root", default=".", help="Trellis project root")
     ensure.add_argument("--config", help="explicit config.yaml path")

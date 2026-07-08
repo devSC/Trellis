@@ -8,7 +8,8 @@ Usage:
     python3 guru_supervise.py [--adversarial] implement <task-dir> [--dry-run]
     python3 guru_supervise.py [--adversarial] check <task-dir> [--dry-run]
     python3 guru_supervise.py [--adversarial] implement-check <task-dir> [--dry-run]
-    python3 guru_supervise.py status <task-dir>
+    python3 guru_supervise.py implementation-review <task-dir> [--slice <UNIT>] [--staged] [--same-provider --user-quote <quote>]
+    python3 guru_supervise.py status <task-dir> [--json]
     python3 guru_supervise.py kill <task-dir> --channel <name> --worker <name>
 """
 
@@ -36,12 +37,22 @@ from guru_gate import (  # noqa: E402
     collect_gate_artifacts as _guru_gate_collect_artifacts,
     GateArtifactError as _GateArtifactError,
     cmd_check_implementation as _guru_gate_check_implementation,
+    _is_task_artifact_path as _guru_gate_is_task_artifact_path,
 )
+import guru_contract  # noqa: E402  commit contract reader for staged implementation-review targets
 import guru_risk  # noqa: E402  共享风险 helper（③ 独立 check 触发判定）
 import guru_review_record  # noqa: E402  P1 packet reader / 单一 writer / verdict 校验
 
 
-VALID_ACTIONS = {"requirements", "overview", "detail", "implement", "check", "implement-check"}
+VALID_ACTIONS = {
+    "requirements",
+    "overview",
+    "detail",
+    "implement",
+    "check",
+    "implement-check",
+    "implementation-review",
+}
 VALID_PLATFORMS = {"flutter", "go", "ios", "h5"}
 
 DEFAULT_PROVIDER = "codex"
@@ -68,6 +79,10 @@ ROUTE_RE = re.compile(
     r"\broute_class\s*[:=：]\s*`?(REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|PROCESS_DEFECT|IMPLEMENT_DEFECT|none)`?",
     re.IGNORECASE,
 )
+REVIEW_RESULT_RE = re.compile(
+    r"\breview_result\s*[:=：]\s*`?([A-Za-z0-9_/-]+)`?",
+    re.IGNORECASE,
+)
 SEVERITY_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 MAX_SEVERITY_RE = re.compile(
     r"\bmax_severity\s*[:=：]\s*`?(none|low|medium|high|critical)`?",
@@ -87,6 +102,7 @@ SKILL_BY_PLATFORM: dict[str, dict[str, list[str]]] = {
         ],
         "implement": [".agents/skills/flutter-implementation-guru-writing/SKILL.md"],
         "check": [".agents/skills/flutter-implementation-guru-review/SKILL.md"],
+        "implementation-review": [".agents/skills/flutter-implementation-guru-review/SKILL.md"],
         "implement-check": [
             ".agents/skills/flutter-implementation-guru-writing/SKILL.md",
             ".agents/skills/flutter-implementation-guru-review/SKILL.md",
@@ -104,6 +120,7 @@ SKILL_BY_PLATFORM: dict[str, dict[str, list[str]]] = {
         ],
         "implement": [".agents/skills/go-implementation-guru-writing/SKILL.md"],
         "check": [".agents/skills/go-implementation-guru-review/SKILL.md"],
+        "implementation-review": [".agents/skills/go-implementation-guru-review/SKILL.md"],
         "implement-check": [
             ".agents/skills/go-implementation-guru-writing/SKILL.md",
             ".agents/skills/go-implementation-guru-review/SKILL.md",
@@ -121,6 +138,7 @@ SKILL_BY_PLATFORM: dict[str, dict[str, list[str]]] = {
         ],
         "implement": [".agents/skills/ios-implementation-guru-writing/SKILL.md"],
         "check": [".agents/skills/ios-implementation-guru-review/SKILL.md"],
+        "implementation-review": [".agents/skills/ios-implementation-guru-review/SKILL.md"],
         "implement-check": [
             ".agents/skills/ios-implementation-guru-writing/SKILL.md",
             ".agents/skills/ios-implementation-guru-review/SKILL.md",
@@ -138,6 +156,7 @@ SKILL_BY_PLATFORM: dict[str, dict[str, list[str]]] = {
         ],
         "implement": [".agents/skills/h5-implementation-guru-writing/SKILL.md"],
         "check": [".agents/skills/h5-implementation-guru-review/SKILL.md"],
+        "implementation-review": [".agents/skills/h5-implementation-guru-review/SKILL.md"],
         "implement-check": [
             ".agents/skills/h5-implementation-guru-writing/SKILL.md",
             ".agents/skills/h5-implementation-guru-review/SKILL.md",
@@ -186,6 +205,16 @@ class RunPlan:
     brief: str
     files: list[Path]
     jsonls: list[Path]
+
+
+@dataclass(frozen=True)
+class ReviewTarget:
+    unit_id: str | None
+    review_target: str
+    packet: dict
+    slice_packet_path: Path | None
+    digest_source: str
+    active_brief: str
 
 
 def _parse_key_line(line: str) -> tuple[int, str, str] | None:
@@ -355,12 +384,21 @@ def _clip_context(text: str, *, limit: int = 4000) -> str:
 
 
 def _route_from_output(text: str) -> str | None:
-    match = ROUTE_RE.search(text)
-    if match:
-        route = match.group(1).upper()
+    route_matches = list(ROUTE_RE.finditer(text))
+    verdict_region = text
+    if route_matches:
+        last_route = route_matches[-1]
+        route = last_route.group(1).upper()
         if route != "NONE":
             return route
-    if "review_result=clean/final-verification-ready" in text:
+        verdict_start = route_matches[-2].end() if len(route_matches) > 1 else 0
+        verdict_region = text[verdict_start:]
+    result_matches = list(REVIEW_RESULT_RE.finditer(verdict_region))
+    if result_matches:
+        result = result_matches[-1].group(1).strip().lower()
+        if result in {"clean", "final-verification-ready", "clean/final-verification-ready"}:
+            return "clean"
+    if "review_result=clean/final-verification-ready" in verdict_region:
         return "clean"
     return None
 
@@ -372,6 +410,38 @@ def _opposite_provider(provider: str) -> str:
     if current == "claude":
         return "codex"
     return DEFAULT_PROVIDER
+
+
+def _packet_requires_opposite_review(packet: dict | None) -> bool:
+    if not isinstance(packet, dict):
+        return False
+    semantic_provider = packet.get("semantic_review_provider")
+    if not isinstance(semantic_provider, dict):
+        return False
+    return (
+        semantic_provider.get("provider", "opposite") == "opposite"
+        and semantic_provider.get("required", True) is True
+    )
+
+
+def _implementation_review_check_config(
+    config: SupervisionConfig,
+    *,
+    packet: dict | None,
+    independent_required: bool,
+    independent_reason: str,
+) -> tuple[SupervisionConfig, str]:
+    reasons: list[str] = []
+    if independent_required:
+        reasons.append(independent_reason)
+    if _packet_requires_opposite_review(packet):
+        reasons.append("semantic_review_provider opposite(required=true)")
+    if not reasons:
+        return config, independent_reason
+    return (
+        replace(config, current_provider=config.provider, provider=_opposite_provider(config.provider)),
+        "; ".join(reasons),
+    )
 
 
 def _adversarial_model(root: Path, provider: str) -> str | None:
@@ -477,19 +547,24 @@ def build_run_plan(
     config: SupervisionConfig,
     run_id: str,
     extra_brief: str = "",
-    slice_packet_path: Path = None,
+    slice_packet_path: Path | None = None,
 ) -> RunPlan:
     if action not in VALID_ACTIONS:
         raise GuruSupervisionError(f"unknown action {action!r}")
     if not task_dir.is_dir():
         raise GuruSupervisionError(f"task directory not found: {task_dir}")
 
-    action_timeout = config.check_timeout if action in {"requirements", "check"} else config.implement_timeout
+    worker_action = "check" if action == "implementation-review" else action
+    action_timeout = (
+        config.check_timeout
+        if action in {"requirements", "check", "implementation-review"}
+        else config.implement_timeout
+    )
     run_slug = _sanitize(run_id, limit=40)
     provider_slug = _sanitize(config.provider, limit=24)
     task_slug = _sanitize(task_dir.name, limit=70)
-    channel = f"guru-{task_slug}-{action}-{run_slug}"
-    worker = f"{action}-{provider_slug}-{run_slug}"
+    channel = f"guru-{task_slug}-{worker_action}-{run_slug}"
+    worker = f"{worker_action}-{provider_slug}-{run_slug}"
 
     skill_rels = SKILL_BY_PLATFORM[config.platform][action]
     skill_paths = [config.root / rel for rel in skill_rels]
@@ -506,14 +581,19 @@ def build_run_plan(
                 *_requirements_reference_files(config.root, task_dir),
             ]
         )
-    if config.platform == "flutter" and action in {"implement", "check", "implement-check"}:
+    if config.platform == "flutter" and action in {
+        "implement",
+        "check",
+        "implement-check",
+        "implementation-review",
+    }:
         # ② 为 flutter 实现期 review 注入正式 requirement/design 包(SSOT 否决基线);
         # 声明却非法/缺失的包由 collect_review_artifacts → GuruSupervisionError 在 spawn 前 fail-closed
         artifact_candidates.extend(collect_review_artifacts(task_dir, "detail", config.root))
     if slice_packet_path is not None:  # P1c R4-F2:注入 resolved slice packet,worker 才能逐条 invariant/正确 provider
         artifact_candidates.append(slice_packet_path)
     artifact_files = _dedupe_paths(_existing_paths(artifact_candidates))
-    jsonl_names = [f"{action}.jsonl"]
+    jsonl_names = [f"{worker_action}.jsonl"]
     if action == "implement-check":
         jsonl_names = ["implement.jsonl", "check.jsonl"]
     if action == "requirements":
@@ -545,7 +625,7 @@ def build_run_plan(
             "spawn",
             channel,
             "--agent",
-            action,
+            worker_action,
             "--provider",
             config.provider,
             "--as",
@@ -681,15 +761,25 @@ def build_run_plan(
             "--finding-class REQ_BLOCKER|OVERVIEW_DEFECT|DETAIL_DEFECT|IMPLEMENT_DEFECT|PROCESS_DEFECT and stop."
         )
     elif action == "implement":
-        responsibility = "Implement according to the Guru workflow and keep implement.md evidence current."
+        responsibility = (
+            "Implement according to the Guru workflow. Record mutable execution evidence in task-local "
+            "evidence files; do not edit prd.md, design.md, or implement.md after detail confirmation "
+            "unless intentionally returning to the detail gate."
+        )
     elif action == "implement-check":
         responsibility = (
             "Implement the planned slices, then review the current diff under Guru quality rules, self-fixing only "
             "issues in scope. Route IMPLEMENT_DEFECT, DETAIL_DEFECT, OVERVIEW_DEFECT, REQ_BLOCKER, and "
             "PROCESS_DEFECT explicitly. A single clean implementation check is MVP review evidence only when the "
             "output includes review_result=clean/final-verification-ready, reviewed diff/artifact context, and "
-            "validation_summary. Do not create implementation guru_gates. Keep implement.md evidence current and "
-            "stop at final validation plus hard boundary."
+            "validation_summary. Do not create implementation guru_gates. Record mutable execution evidence in "
+            "task-local evidence files, do not mutate confirmed detail artifacts, and stop at final validation "
+            "plus hard boundary."
+        )
+    elif action == "implementation-review":
+        responsibility = (
+            "Review the exact implementation target under Guru quality rules without implementing or editing files. "
+            "Emit a complete required implementation review verdict for commit evidence and stop after one review pass."
         )
     else:
         responsibility = "Review the current diff under Guru quality rules and self-fix only mechanical issues."
@@ -1112,9 +1202,257 @@ def _scope_preflight(repo_root: str, packet: dict):
     return None
 
 
+def _staged_paths(repo_root: str) -> tuple[list[str], str]:
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--name-only", "--no-renames", "-z"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [], f"cannot read staged changes: {exc}"
+    if result.returncode != 0:
+        return [], f"git diff --cached failed: {result.stderr.strip()}"
+    return [path for path in result.stdout.split("\0") if path], ""
+
+
+def _unstaged_paths(repo_root: str) -> tuple[list[str], str]:
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "--no-renames", "-z"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [], f"cannot read unstaged changes: {exc}"
+    if result.returncode != 0:
+        return [], f"git diff failed: {result.stderr.strip()}"
+    return [path for path in result.stdout.split("\0") if path], ""
+
+
+def _path_covered_by_targets(path: str, targets: set[str]) -> bool:
+    return any(path == target or path.startswith(f"{target}/") for target in targets)
+
+
+def _staged_target_drift(repo_root: str, target_paths: list) -> str:
+    targets = {
+        str(path).strip().strip("/")
+        for path in target_paths
+        if str(path).strip().strip("/")
+    }
+    staged_paths, staged_error = _staged_paths(repo_root)
+    if staged_error:
+        return f"cannot verify staged review target drift: {staged_error}"
+    out_of_target = sorted(
+        path for path in staged_paths if not _path_covered_by_targets(path, targets)
+    )
+    if out_of_target:
+        return f"staged changes outside review target paths: {out_of_target}"
+    unstaged_paths, unstaged_error = _unstaged_paths(repo_root)
+    if unstaged_error:
+        return f"cannot verify staged review target drift: {unstaged_error}"
+    overlap = sorted(
+        path
+        for path in unstaged_paths
+        if _path_covered_by_targets(path, targets)
+    )
+    if overlap:
+        return f"unstaged changes overlap staged review target paths: {overlap}"
+    return ""
+
+
+def _active_review_brief(
+    *,
+    label: str,
+    review_target: str,
+    target_paths: list,
+    semantic_provider: dict,
+    digest_source: str,
+    slice_packet_path: Path | None = None,
+) -> str:
+    packet_line = f"slice_packet={slice_packet_path}\n" if slice_packet_path is not None else ""
+    return (
+        f"\nactive_review={label}\n"
+        f"{packet_line}"
+        f"review_target={review_target}\n"
+        f"target_paths={target_paths}\n"
+        f"target_digest_source={digest_source}\n"
+        f"semantic_review_provider={semantic_provider.get('provider')}(required={semantic_provider.get('required')})\n"
+        "置顶输出 7 字段 + 逐条 invariant_status.<id>=pass|fail|not_applicable"
+        "（pass 必随 invariant_evidence.<id>；not_applicable 必随 invariant_reason.<id>）。\n"
+    )
+
+
+def _slice_review_target(task_dir: Path, root: Path, unit_id: str, *, staged: bool) -> ReviewTarget:
+    try:
+        packet = guru_review_record.load_packet(str(task_dir), unit_id)
+    except guru_review_record.ReviewRecordError as exc:
+        kind = "PACKET_MISSING" if "不存在" in str(exc) else "PACKET_INVALID"
+        raise GuruSupervisionError(f"{kind}:{exc}") from exc
+    if not staged:
+        scope_failure = _scope_preflight(str(root), packet)
+        if scope_failure:
+            raise GuruSupervisionError(f"SCOPE_INVALID:{scope_failure}")
+    slice_packet_path = task_dir / "slice-packets" / f"{unit_id}.json"
+    semantic_provider = packet.get("semantic_review_provider", {})
+    digest_source = "index" if staged else "worktree"
+    return ReviewTarget(
+        unit_id=unit_id,
+        review_target=f"slice:{unit_id}",
+        packet=packet,
+        slice_packet_path=slice_packet_path,
+        digest_source=digest_source,
+        active_brief=_active_review_brief(
+            label=unit_id,
+            review_target=f"slice:{unit_id}",
+            target_paths=packet.get("target_paths", []),
+            semantic_provider=semantic_provider,
+            digest_source=digest_source,
+            slice_packet_path=slice_packet_path,
+        ),
+    )
+
+
+def _staged_review_target(task_dir: Path, root: Path) -> ReviewTarget:
+    staged_paths, staged_error = _staged_paths(str(root))
+    if staged_error:
+        raise GuruSupervisionError(f"SCOPE_INVALID:{staged_error}")
+    if not staged_paths:
+        raise GuruSupervisionError("SCOPE_INVALID:no staged code paths to review")
+    contract, contract_error = guru_contract.load_contract(str(task_dir))
+    if contract_error:
+        raise GuruSupervisionError(f"SCOPE_INVALID:{contract_error}")
+    if isinstance(contract, dict):
+        problems = guru_contract.validate_commit_contract(contract, staged_paths, str(task_dir), str(root))
+        if problems:
+            raise GuruSupervisionError(f"SCOPE_INVALID:{'; '.join(problems[:5])}")
+    code_paths = [
+        path for path in staged_paths
+        if not _guru_gate_is_task_artifact_path(path, str(task_dir), str(root))
+    ]
+    if not code_paths:
+        raise GuruSupervisionError("SCOPE_INVALID:staged changes contain only task/workspace artifacts")
+    packet = {
+        "target_paths": code_paths,
+        "deterministic_checks": ["git diff --cached --check"],
+        "invariants": [
+            {
+                "invariant_id": "staged_scope_reviewed",
+                "description": "The check worker reviewed the exact staged code paths against the task requirements, design, and implementation contract.",
+            }
+        ],
+        "semantic_review_provider": {"provider": "opposite", "required": True},
+    }
+    return ReviewTarget(
+        unit_id="staged",
+        review_target="staged:index",
+        packet=packet,
+        slice_packet_path=None,
+        digest_source="index",
+        active_brief=_active_review_brief(
+            label="staged:index",
+            review_target="staged:index",
+            target_paths=code_paths,
+            semantic_provider=packet["semantic_review_provider"],
+            digest_source="index",
+        ),
+    )
+
+
+def _with_same_provider_review(target: ReviewTarget, user_quote: str) -> ReviewTarget:
+    packet = dict(target.packet)
+    packet["semantic_review_provider"] = {
+        "provider": "opposite",
+        "required": False,
+        "user_quote": user_quote,
+    }
+    return replace(
+        target,
+        packet=packet,
+        active_brief=_active_review_brief(
+            label=target.unit_id or target.review_target,
+            review_target=target.review_target,
+            target_paths=packet.get("target_paths", []),
+            semantic_provider=packet["semantic_review_provider"],
+            digest_source=target.digest_source,
+        ),
+    )
+
+
+def _append_supervisor_review_record(
+    *,
+    task_dir: Path,
+    root: Path,
+    target: ReviewTarget,
+    run_id: str,
+    config: SupervisionConfig,
+    check_config: SupervisionConfig,
+    check_plan: RunPlan,
+    messages: str,
+    det_status: str,
+    det_results: list,
+    independent_required: bool,
+    same_provider_user_quote: str | None = None,
+) -> tuple[dict, str | None]:
+    verdict = guru_review_record.parse_verdict_block(messages)
+    try:
+        reviewed_target_digest = guru_review_record.target_snapshot_digest(
+            str(root), target.packet.get("target_paths", []), target.digest_source
+        )
+    except guru_review_record.ReviewRecordError as exc:
+        guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
+            "SCOPE_INVALID", run_id, unit_id=target.unit_id))
+        raise GuruSupervisionError(f"target snapshot digest failed,硬停(SCOPE_INVALID):{exc}") from exc
+    record, failure = guru_review_record.normalize_review_record(verdict, {
+        "mode": "supervisor", "packet": target.packet, "implement_provider": config.provider,
+        "supervisor_deterministic_status": det_status, "deterministic_results": det_results,
+        "run_id": run_id, "slice_id": target.unit_id,
+        "review_target": target.review_target, "target_paths": target.packet.get("target_paths", []),
+        "channel": check_plan.channel, "worker": check_plan.worker,
+        "check_provider": check_config.provider,
+        "independent_required": independent_required,
+        "reviewed_target_digest": reviewed_target_digest,
+    })
+    if same_provider_user_quote and failure is None:
+        record["message"] = (
+            "same-provider implementation-review authorized by user quote: "
+            + same_provider_user_quote
+        )
+    guru_review_record.append_record(str(task_dir), record)
+    return record, failure
+
+
+def _task_status(task_dir: Path) -> str:
+    try:
+        data = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "planning"
+    status = data.get("status", "planning") if isinstance(data, dict) else "planning"
+    return status if isinstance(status, str) and status else "planning"
+
+
 def run_implement_check(args: argparse.Namespace) -> int:
     task_dir = Path(args.task_dir).expanduser().resolve()
     root = _resolve_root(args.root, task_dir)
+    base_run_id = args.run_id or _default_run_id()
+    if _task_status(task_dir) == "in_progress":
+        required, reason = guru_risk.full_chain_packet_required(str(task_dir))
+        if required and not guru_review_record.list_packets(str(task_dir)):
+            guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
+                "PACKET_REQUIRED_BEFORE_IMPLEMENT", f"{base_run_id}-check-1"))
+            sys.stderr.write(
+                "[guru-supervise] high-risk full_chain requires slice packet before worker launch; "
+                f"硬停(PACKET_REQUIRED_BEFORE_IMPLEMENT):{reason}\n"
+            )
+            return 2
     if _guru_gate_check_implementation(str(task_dir)) != 0:
         print(
             "[guru-supervise] BLOCKED: implement-check requires "
@@ -1135,8 +1473,6 @@ def run_implement_check(args: argparse.Namespace) -> int:
         adversarial=False,
         trellis_bin=args.trellis_bin,
     )
-    base_run_id = args.run_id or _default_run_id()
-
     # P1b：resolve slice packet(--slice 显式 / 单 packet auto / 多 packet 未指定→PACKET_AMBIGUOUS 硬停 /
     # 无 packet→None 回落 P0)。preflight failure 全经 preflight_failure_record + append_record + exit2,
     # 绝不进 REPAIRABLE_IMPLEMENT_ROUTES、不启 implement worker(repairable=false,BHV-001/002)。
@@ -1168,7 +1504,8 @@ def run_implement_check(args: argparse.Namespace) -> int:
             return 2
 
     # ③ P0/P1：高风险触发独立(对立 provider)阻断 check;packet.risk 优先(unit_id,§4.5.8;packet 已 preflight 合法)。
-    # provider 隔离 + adversarial=False → 不走 advisory rc0,check 失败 rc≠0 阻断。
+    # provider 隔离还必须服从 packet semantic_review_provider 的 required evidence 合约；low-risk 只取消
+    # 风险强制独立，不得把 required opposite-provider evidence 降级成 same-provider self-check。
     try:
         independent_required, independent_reason = guru_risk.implement_check_independent_required(
             str(task_dir), config.platform, str(root), unit_id=unit_id
@@ -1179,14 +1516,15 @@ def run_implement_check(args: argparse.Namespace) -> int:
         sys.stderr.write(f"[guru-supervise] slice packet 非法,硬停(PACKET_INVALID):{exc}\n")
         return 2
 
-    check_config = (
-        replace(config, current_provider=config.provider, provider=_opposite_provider(config.provider))
-        if independent_required
-        else config
+    check_config, check_reason = _implementation_review_check_config(
+        config,
+        packet=packet,
+        independent_required=independent_required,
+        independent_reason=independent_reason,
     )
-    if independent_required:
+    if check_config.provider != config.provider:
         sys.stderr.write(
-            f"[guru-supervise] 独立实现期 review ON（{independent_reason}）："
+            f"[guru-supervise] 独立实现期 review ON（{check_reason}）："
             f"implement provider={config.provider} ≠ check provider={check_config.provider}\n"
         )
 
@@ -1195,13 +1533,20 @@ def run_implement_check(args: argparse.Namespace) -> int:
     slice_packet_path = (task_dir / "slice-packets" / f"{unit_id}.json") if unit_id else None
     active_slice_brief = ""
     if packet is not None:
-        _sp = packet.get("semantic_review_provider", {})
-        active_slice_brief = (
-            f"\nactive_slice={unit_id}\nslice_packet={slice_packet_path}\n"
-            f"review_target=slice:{unit_id}\ntarget_paths={packet.get('target_paths')}\n"
-            f"semantic_review_provider={_sp.get('provider')}(required={_sp.get('required')})\n"
-            "置顶输出 7 字段 + 逐条 invariant_status.<id>=pass|fail|not_applicable"
-            "（pass 必随 invariant_evidence.<id>；not_applicable 必随 invariant_reason.<id>）。\n"
+        slice_id = str(unit_id)
+        packet_target_paths = packet.get("target_paths", [])
+        if not isinstance(packet_target_paths, list):
+            packet_target_paths = []
+        packet_semantic_provider = packet.get("semantic_review_provider", {})
+        if not isinstance(packet_semantic_provider, dict):
+            packet_semantic_provider = {}
+        active_slice_brief = _active_review_brief(
+            label=slice_id,
+            review_target=f"slice:{slice_id}",
+            target_paths=packet_target_paths,
+            semantic_provider=packet_semantic_provider,
+            digest_source="worktree",
+            slice_packet_path=slice_packet_path,
         )
 
     if args.dry_run:
@@ -1280,27 +1625,30 @@ def run_implement_check(args: argparse.Namespace) -> int:
         if packet is not None:
             # P1c 结构化 verdict gating（有 packet）：parse + normalize（单一入口,层①取值 + 层②provider/
             # deterministic 双过/聚合重算）+ append（单一 writer）。malformed/不通过 → 硬停 exit2。
-            verdict = guru_review_record.parse_verdict_block(messages)
             try:
-                reviewed_target_digest = guru_review_record.target_snapshot_digest(
-                    str(root), packet.get("target_paths", []), "worktree"
+                record, failure = _append_supervisor_review_record(
+                    task_dir=task_dir,
+                    root=root,
+                    target=ReviewTarget(
+                        unit_id=unit_id,
+                        review_target=f"slice:{unit_id}",
+                        packet=packet,
+                        slice_packet_path=slice_packet_path,
+                        digest_source="worktree",
+                        active_brief=active_slice_brief,
+                    ),
+                    run_id=f"{base_run_id}-check-{iteration}",
+                    config=config,
+                    check_config=check_config,
+                    check_plan=check_plan,
+                    messages=messages,
+                    det_status=det_status,
+                    det_results=det_results,
+                    independent_required=independent_required,
                 )
-            except guru_review_record.ReviewRecordError as exc:
-                guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
-                    "SCOPE_INVALID", f"{base_run_id}-check-{iteration}", unit_id=unit_id))
-                sys.stderr.write(f"[guru-supervise] target snapshot digest failed,硬停(SCOPE_INVALID):{exc}\n")
+            except GuruSupervisionError as exc:
+                sys.stderr.write(f"[guru-supervise] {exc}\n")
                 return 2
-            record, failure = guru_review_record.normalize_review_record(verdict, {
-                "mode": "supervisor", "packet": packet, "implement_provider": config.provider,
-                "supervisor_deterministic_status": det_status, "deterministic_results": det_results,
-                "run_id": f"{base_run_id}-check-{iteration}", "slice_id": unit_id,
-                "review_target": f"slice:{unit_id}", "target_paths": packet.get("target_paths", []),
-                "channel": check_plan.channel, "worker": check_plan.worker,
-                "check_provider": check_config.provider,  # R1-F1:worker 自报 review_provider 须 == 实际 spawn
-                "independent_required": independent_required,  # R1-F1:对立要求仅独立期强制(low-risk override 不要求)
-                "reviewed_target_digest": reviewed_target_digest,
-            })
-            guru_review_record.append_record(str(task_dir), record)
             if failure:
                 sys.stderr.write(f"[guru-supervise] check verdict {failure}; 硬停(不空转修复审查格式)\n")
                 return 2
@@ -1344,6 +1692,147 @@ def run_implement_check(args: argparse.Namespace) -> int:
     return 1
 
 
+def run_implementation_review(args: argparse.Namespace) -> int:
+    task_dir = Path(args.task_dir).expanduser().resolve()
+    root = _resolve_root(args.root, task_dir)
+    base_run_id = args.run_id or _default_run_id()
+    if _guru_gate_check_implementation(str(task_dir)) != 0:
+        print(
+            "[guru-supervise] BLOCKED: implementation-review requires "
+            "task.json.status == in_progress. Run task.py start after START_READY.",
+            file=sys.stderr,
+        )
+        return 2
+    same_provider_quote = ""
+    if getattr(args, "same_provider", False):
+        same_provider_quote = str(getattr(args, "user_quote", "") or "").strip()
+        if not same_provider_quote:
+            sys.stderr.write(
+                "[guru-supervise] --same-provider requires --user-quote for audit; "
+                "do not skip opposite-provider review without explicit user authorization.\n"
+            )
+            return 2
+    config = _load_config(
+        root,
+        platform=args.platform,
+        provider=args.provider,
+        adversarial=False,
+        trellis_bin=args.trellis_bin,
+    )
+    unit_id = getattr(args, "slice", None)
+    record_unit_id = unit_id
+    try:
+        if unit_id:
+            target = _slice_review_target(task_dir, root, unit_id, staged=bool(args.staged))
+        elif args.staged or args.contract:
+            target = _staged_review_target(task_dir, root)
+        else:
+            resolved_unit, ambiguous = _resolve_slice_packet(str(task_dir), None)
+            if ambiguous:
+                guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
+                    "PACKET_AMBIGUOUS", f"{base_run_id}-review-1", candidates=ambiguous))
+                sys.stderr.write(f"[guru-supervise] 多 slice packet 未用 --slice 指定:{ambiguous};硬停(PACKET_AMBIGUOUS)\n")
+                return 2
+            if not resolved_unit:
+                sys.stderr.write("[guru-supervise] implementation-review requires --staged when no slice packet exists\n")
+                return 2
+            target = _slice_review_target(task_dir, root, resolved_unit, staged=False)
+        if same_provider_quote:
+            target = _with_same_provider_review(target, same_provider_quote)
+        record_unit_id = target.unit_id
+        if target.digest_source == "index":
+            drift_failure = _staged_target_drift(str(root), target.packet.get("target_paths", []))
+            if drift_failure:
+                raise GuruSupervisionError(f"SCOPE_INVALID:{drift_failure}")
+    except GuruSupervisionError as exc:
+        kind = "SCOPE_INVALID"
+        if str(exc).startswith("PACKET_MISSING:"):
+            kind = "PACKET_MISSING"
+        elif str(exc).startswith("PACKET_INVALID:"):
+            kind = "PACKET_INVALID"
+        guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
+            kind, f"{base_run_id}-review-1", unit_id=record_unit_id))
+        sys.stderr.write(f"[guru-supervise] implementation-review preflight failed({kind}):{exc}\n")
+        return 2
+
+    try:
+        independent_required, independent_reason = guru_risk.implement_check_independent_required(
+            str(task_dir), config.platform, str(root), unit_id=(target.unit_id if target.review_target.startswith("slice:") else None)
+        )
+    except guru_review_record.ReviewRecordError as exc:
+        guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
+            "PACKET_INVALID", f"{base_run_id}-review-1", unit_id=target.unit_id))
+        sys.stderr.write(f"[guru-supervise] implementation-review target invalid,硬停(PACKET_INVALID):{exc}\n")
+        return 2
+
+    check_config, check_reason = _implementation_review_check_config(
+        config,
+        packet=target.packet,
+        independent_required=independent_required,
+        independent_reason=independent_reason,
+    )
+    if check_config.provider != config.provider:
+        sys.stderr.write(
+            f"[guru-supervise] 独立实现期 review ON（{check_reason}）："
+            f"implement provider={config.provider} ≠ check provider={check_config.provider}\n"
+        )
+
+    check_plan = build_run_plan(
+        "implementation-review",
+        task_dir,
+        check_config,
+        f"{base_run_id}-review-1",
+        "Implementation-review check-only required evidence path. Do not implement or edit files; "
+        "emit exactly one route_class and review_result for required commit evidence." + target.active_brief,
+        slice_packet_path=target.slice_packet_path,
+    )
+
+    if args.dry_run:
+        print("IMPLEMENTATION-REVIEW CHECK-ONLY")
+        print("run: deterministic checks -> check -> append structured record")
+        print("no implement worker is launched")
+        print("")
+        _print_dry_run(check_plan)
+        return 0
+
+    det_status, det_results = guru_review_record.run_deterministic_checks(
+        target.packet.get("deterministic_checks", []), str(root)
+    )
+    rc, _terminal, messages = _execute_plan(check_plan, check_config)
+    if rc != 0:
+        return rc
+    try:
+        record, failure = _append_supervisor_review_record(
+            task_dir=task_dir,
+            root=root,
+            target=target,
+            run_id=f"{base_run_id}-review-1",
+            config=config,
+            check_config=check_config,
+            check_plan=check_plan,
+            messages=messages,
+            det_status=det_status,
+            det_results=det_results,
+            independent_required=independent_required,
+            same_provider_user_quote=same_provider_quote or None,
+        )
+    except GuruSupervisionError as exc:
+        sys.stderr.write(f"[guru-supervise] {exc}\n")
+        return 2
+    if failure:
+        sys.stderr.write(f"[guru-supervise] implementation-review verdict {failure}; 硬停\n")
+        return 2
+    if record["review_result"] == "clean":
+        print("[guru-supervise] implementation-review clean（structured verdict）; commit evidence ready.")
+        return 0
+    if record.get("route_class") in UPSTREAM_ROUTE_TARGETS:
+        target_step = UPSTREAM_ROUTE_TARGETS[record["route_class"]]
+        print(f"[guru-supervise] implementation-review routed upstream: {record['route_class']} -> {target_step}")
+    else:
+        print(f"[guru-supervise] implementation-review not clean: {record['review_result']}/{record['route_class']}")
+    return 2
+
+
 def _load_channel_events(config: SupervisionConfig, channel: str) -> list[dict]:
     result = subprocess.run(
         _trellis_cmd(
@@ -1367,6 +1856,18 @@ def _load_channel_events(config: SupervisionConfig, channel: str) -> list[dict]:
         if isinstance(event, dict):
             events.append(event)
     return events
+
+
+def _terminal_worker_name(event: dict) -> str:
+    worker = str(event.get("worker") or "").strip()
+    if worker:
+        return worker
+    by = str(event.get("by") or "").strip()
+    if by.startswith("supervisor:"):
+        return by.split(":", 1)[1].strip()
+    if by.startswith("cli:"):
+        return ""
+    return by
 
 
 def status_action(args: argparse.Namespace) -> int:
@@ -1419,15 +1920,32 @@ def status_action(args: argparse.Namespace) -> int:
         )
     ]
     if not matched:
+        if args.json:
+            print(json.dumps({
+                "schema_version": 1,
+                "task_dir": str(task_dir),
+                "channels": [],
+                "live_workers": 0,
+                "terminal_workers": 0,
+                "cleanup_available": False,
+                "blocking": False,
+                "cleanup_command": "",
+            }, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
         print(f"No Guru supervision channels found for {task_dir}")
         return 0
 
+    json_channels = []
+    live_workers = 0
+    terminal_workers = 0
+    cleanup_candidates = []
     for item in matched:
         channel = str(item.get("name"))
-        print(f"channel: {channel}")
-        print(f"  task: {item.get('task', '-')}")
-        print(f"  workers: {item.get('workersAlive', 0)}/{item.get('workersTotal', 0)}")
-        print(f"  last: {item.get('lastEventKind', '-')}")
+        if not args.json:
+            print(f"channel: {channel}")
+            print(f"  task: {item.get('task', '-')}")
+            print(f"  workers: {item.get('workersAlive', 0)}/{item.get('workersTotal', 0)}")
+            print(f"  last: {item.get('lastEventKind', '-')}")
         events = _load_channel_events(config, channel)
         workers: dict[str, dict[str, str]] = {}
         for event in events:
@@ -1439,27 +1957,71 @@ def status_action(args: argparse.Namespace) -> int:
                     "terminal": "running",
                 }
             elif kind in {"done", "error", "killed"}:
-                by = str(event.get("by") or "")
-                if by:
-                    workers.setdefault(by, {"provider": "-", "terminal": "running"})
-                    workers[by]["terminal"] = kind
+                worker_name = _terminal_worker_name(event)
+                if worker_name:
+                    workers.setdefault(worker_name, {"provider": "-", "terminal": "running"})
+                    workers[worker_name]["terminal"] = kind
+        channel_workers = []
         for worker, info in sorted(workers.items()):
-            print(
-                f"  worker: {worker} provider={info['provider']} "
-                f"terminal={info['terminal']}"
-            )
-            print(
-                "    kill: "
+            terminal = info["terminal"]
+            is_live = terminal == "running"
+            if is_live:
+                live_workers += 1
+            else:
+                terminal_workers += 1
+                cleanup_candidates.append({"channel": channel, "worker": worker, "terminal": terminal})
+            kill_command = (
                 "python3 .trellis/scripts/guru/guru_supervise.py kill "
                 f"{shlex.quote(str(task_dir))} --channel {shlex.quote(channel)} "
                 f"--worker {shlex.quote(worker)}"
             )
-        print(
-            "  messages: "
-            + shlex.join(
-                _trellis_cmd(config, ["channel", "messages", channel, "--raw", "--last", "20"])
-            )
+            channel_workers.append({
+                "worker": worker,
+                "provider": info["provider"],
+                "terminal": terminal,
+                "live": is_live,
+                "kill_command": kill_command,
+            })
+            if not args.json:
+                print(
+                    f"  worker: {worker} provider={info['provider']} "
+                    f"terminal={terminal}"
+                )
+                print(f"    kill: {kill_command}")
+        messages_command = shlex.join(
+            _trellis_cmd(config, ["channel", "messages", channel, "--raw", "--last", "20"])
         )
+        json_channels.append({
+            "channel": channel,
+            "task": item.get("task", "-"),
+            "workers_alive": item.get("workersAlive", 0),
+            "workers_total": item.get("workersTotal", 0),
+            "last_event_kind": item.get("lastEventKind", "-"),
+            "workers": channel_workers,
+            "messages_command": messages_command,
+        })
+        if not args.json:
+            print("  messages: " + messages_command)
+    if args.json:
+        cleanup_command = ""
+        if cleanup_candidates:
+            first = cleanup_candidates[0]
+            cleanup_command = (
+                "python3 .trellis/scripts/guru/guru_supervise.py kill "
+                f"{shlex.quote(str(task_dir))} --channel {shlex.quote(first['channel'])} "
+                f"--worker {shlex.quote(first['worker'])}"
+            )
+        print(json.dumps({
+            "schema_version": 1,
+            "task_dir": str(task_dir),
+            "channels": json_channels,
+            "live_workers": live_workers,
+            "terminal_workers": terminal_workers,
+            "cleanup_available": bool(cleanup_candidates),
+            "blocking": live_workers > 0,
+            "cleanup_command": cleanup_command,
+            "cleanup_candidates": cleanup_candidates,
+        }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
 
@@ -1515,9 +2077,21 @@ def build_parser() -> argparse.ArgumentParser:
     implement_check.add_argument("--slice", help="P1 slice packet unit_id（多 packet 时必填；单 packet 可省）")
     implement_check.set_defaults(func=run_implement_check)
 
+    implementation_review = sub.add_parser("implementation-review")
+    implementation_review.add_argument("task_dir")
+    implementation_review.add_argument("--run-id")
+    implementation_review.add_argument("--dry-run", action="store_true")
+    implementation_review.add_argument("--slice", help="Review an existing slice packet without running implement worker")
+    implementation_review.add_argument("--staged", action="store_true", help="Bind reviewed_target_digest to the staged index")
+    implementation_review.add_argument("--contract", action="store_true", help="Derive review target from gate-contract and staged code paths")
+    implementation_review.add_argument("--same-provider", action="store_true", help="Use the current provider for implementation-review when the user explicitly skips the opposite provider")
+    implementation_review.add_argument("--user-quote", help="Required audit quote when --same-provider is used")
+    implementation_review.set_defaults(func=run_implementation_review)
+
     status = sub.add_parser("status")
     status.add_argument("task_dir")
     status.add_argument("--dry-run", action="store_true")
+    status.add_argument("--json", action="store_true")
     status.set_defaults(func=status_action)
 
     kill = sub.add_parser("kill")

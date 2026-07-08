@@ -8,7 +8,7 @@ Usage:
     python3 guru_supervise.py [--adversarial] implement <task-dir> [--dry-run]
     python3 guru_supervise.py [--adversarial] check <task-dir> [--dry-run]
     python3 guru_supervise.py [--adversarial] implement-check <task-dir> [--dry-run]
-    python3 guru_supervise.py implementation-review <task-dir> [--slice <UNIT>] [--staged]
+    python3 guru_supervise.py implementation-review <task-dir> [--slice <UNIT>] [--staged] [--same-provider --user-quote <quote>]
     python3 guru_supervise.py status <task-dir> [--json]
     python3 guru_supervise.py kill <task-dir> --channel <name> --worker <name>
 """
@@ -1367,6 +1367,26 @@ def _staged_review_target(task_dir: Path, root: Path) -> ReviewTarget:
     )
 
 
+def _with_same_provider_review(target: ReviewTarget, user_quote: str) -> ReviewTarget:
+    packet = dict(target.packet)
+    packet["semantic_review_provider"] = {
+        "provider": "opposite",
+        "required": False,
+        "user_quote": user_quote,
+    }
+    return replace(
+        target,
+        packet=packet,
+        active_brief=_active_review_brief(
+            label=target.unit_id or target.review_target,
+            review_target=target.review_target,
+            target_paths=packet.get("target_paths", []),
+            semantic_provider=packet["semantic_review_provider"],
+            digest_source=target.digest_source,
+        ),
+    )
+
+
 def _append_supervisor_review_record(
     *,
     task_dir: Path,
@@ -1380,6 +1400,7 @@ def _append_supervisor_review_record(
     det_status: str,
     det_results: list,
     independent_required: bool,
+    same_provider_user_quote: str | None = None,
 ) -> tuple[dict, str | None]:
     verdict = guru_review_record.parse_verdict_block(messages)
     try:
@@ -1400,6 +1421,11 @@ def _append_supervisor_review_record(
         "independent_required": independent_required,
         "reviewed_target_digest": reviewed_target_digest,
     })
+    if same_provider_user_quote and failure is None:
+        record["message"] = (
+            "same-provider implementation-review authorized by user quote: "
+            + same_provider_user_quote
+        )
     guru_review_record.append_record(str(task_dir), record)
     return record, failure
 
@@ -1677,6 +1703,15 @@ def run_implementation_review(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    same_provider_quote = ""
+    if getattr(args, "same_provider", False):
+        same_provider_quote = str(getattr(args, "user_quote", "") or "").strip()
+        if not same_provider_quote:
+            sys.stderr.write(
+                "[guru-supervise] --same-provider requires --user-quote for audit; "
+                "do not skip opposite-provider review without explicit user authorization.\n"
+            )
+            return 2
     config = _load_config(
         root,
         platform=args.platform,
@@ -1702,6 +1737,8 @@ def run_implementation_review(args: argparse.Namespace) -> int:
                 sys.stderr.write("[guru-supervise] implementation-review requires --staged when no slice packet exists\n")
                 return 2
             target = _slice_review_target(task_dir, root, resolved_unit, staged=False)
+        if same_provider_quote:
+            target = _with_same_provider_review(target, same_provider_quote)
         record_unit_id = target.unit_id
         if target.digest_source == "index":
             drift_failure = _staged_target_drift(str(root), target.packet.get("target_paths", []))
@@ -1777,6 +1814,7 @@ def run_implementation_review(args: argparse.Namespace) -> int:
             det_status=det_status,
             det_results=det_results,
             independent_required=independent_required,
+            same_provider_user_quote=same_provider_quote or None,
         )
     except GuruSupervisionError as exc:
         sys.stderr.write(f"[guru-supervise] {exc}\n")
@@ -2046,6 +2084,8 @@ def build_parser() -> argparse.ArgumentParser:
     implementation_review.add_argument("--slice", help="Review an existing slice packet without running implement worker")
     implementation_review.add_argument("--staged", action="store_true", help="Bind reviewed_target_digest to the staged index")
     implementation_review.add_argument("--contract", action="store_true", help="Derive review target from gate-contract and staged code paths")
+    implementation_review.add_argument("--same-provider", action="store_true", help="Use the current provider for implementation-review when the user explicitly skips the opposite provider")
+    implementation_review.add_argument("--user-quote", help="Required audit quote when --same-provider is used")
     implementation_review.set_defaults(func=run_implementation_review)
 
     status = sub.add_parser("status")
