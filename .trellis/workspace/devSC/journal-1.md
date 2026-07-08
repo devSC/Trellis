@@ -120,3 +120,36 @@ Added a commit-safe Guru implementation-review path, tightened provider evidence
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Risk-based Guru gate contracts
+
+**Date**: 2026-07-08
+**Task**: Risk-based Guru gate contracts
+**Branch**: `codex/guru-0.6.0-ga-worktree`
+
+### Summary
+
+Implemented and committed Guru risk-based intake routing with task-local gate contracts, degradation recording, high-risk full-chain enforcement, commit-plan recovery, template/runtime mirror sync, and passing Guru verification.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b03951cd` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

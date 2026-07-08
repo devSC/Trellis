@@ -1,0 +1,7 @@
+{"file":".trellis/spec/cli/backend/guru-overlay-gates.md","reason":"Guru gate/runtime contract expectations for high-risk routing, implementation-review evidence, adversarial config, and required tests."}
+{"file":".trellis/spec/cli/backend/script-conventions.md","reason":"Python overlay/runtime scripts must follow project script conventions and standard-library constraints."}
+{"file":".trellis/spec/cli/backend/error-handling.md","reason":"Config and provider-policy failures must bubble with user-facing fail-closed errors."}
+{"file":".trellis/spec/cli/backend/logging-guidelines.md","reason":"CLI/runtime messages should use existing user-facing output conventions."}
+{"file":".trellis/spec/cli/unit-test/conventions.md","reason":"Provider policy and template-sync logic changes require focused regression tests."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"New config constants and mirrored template edits must avoid duplicated divergent logic."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Provider policy spans config, runtime dispatch, review-record evidence, templates, and docs."}

@@ -1,0 +1,80 @@
+{
+  "id": "high-risk-slice-review-provider",
+  "name": "high-risk-slice-review-provider",
+  "title": "Configure high-risk slice review provider",
+  "description": "Add a configurable provider policy for high-risk Guru slice implementation reviews: default to current LLM subagent/review worker, with explicit opt-in for other LLM providers.",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-07-08",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/guru-0.6.0-ga-worktree",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {},
+  "guru_gates": {
+    "review_runs": {
+      "overview": [
+        {
+          "run_id": "current-llm-russell-overview-final",
+          "reviewer": "clean-context-current-llm-russell",
+          "recorded_at": "2026-07-08T20:21:16+08:00",
+          "artifact_digest": "3e87bb3034f1674ec0fae63da0fe8eedcac0b10bb3067d17b2ff94af8e4a6ce0",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "只读审查当前 planning 包通过：JSONL manifests 合法，gate-contract high-risk/full_chain 可解析；dogfood parity gap 已纳入 PRD/design/implement 验收，provider policy 与 explicit semantic_review_provider 边界 fail-closed，staged synthetic packet 边界隔离，implement-check 与 implementation-review 测试映射闭合。"
+        },
+        {
+          "run_id": "current-llm-huygens-overview-final",
+          "reviewer": "clean-context-current-llm-huygens",
+          "recorded_at": "2026-07-08T20:21:16+08:00",
+          "artifact_digest": "3e87bb3034f1674ec0fae63da0fe8eedcac0b10bb3067d17b2ff94af8e4a6ce0",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "只读复查当前产物 clean：PRD 覆盖需求/事实/失败路径/验收，design 明确 current/opposite/codex/claude 配置合同、record 校验、staged 边界与不变量，implement 写清实现、GitNexus impact、验证与回滚；dogfood parity 缺口已 fail-closed 纳入计划。"
+        }
+      ],
+      "detail": [
+        {
+          "run_id": "current-llm-russell-detail-final",
+          "reviewer": "clean-context-current-llm-russell",
+          "recorded_at": "2026-07-08T20:21:17+08:00",
+          "artifact_digest": "65d86543ad024ea85224d20c4c3f60418a52e067982ef60a3495c6c5fec7b2ae",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "只读审查详细设计 clean：UNIT/行为/测试映射闭合，semantic_review_provider raw/explicit 合同、RequiredProviderPolicyConflict、staged synthetic packet、dogfood-template parity 与 HRP invariants 均有可实现收口；未发现阻塞 planning gate 缺陷。",
+          "deletion_audit": "本轮删除/替换的仅是 planning manifest 中错误的 source/artifact 条目与空占位验证片段；已替换为符合 workflow 的 spec/research JSONL 和真实验证命令清单，未移除合同义务。"
+        },
+        {
+          "run_id": "current-llm-huygens-detail-final",
+          "reviewer": "clean-context-current-llm-huygens",
+          "recorded_at": "2026-07-08T20:21:17+08:00",
+          "artifact_digest": "65d86543ad024ea85224d20c4c3f60418a52e067982ef60a3495c6c5fec7b2ae",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "只读复查详细设计 clean：BHV-001..007 到 UNIT 和测试点闭合；dogfood runtime parity 风险已在 PRD/design/implement 中作为 fail-closed blocker 收口；当前状态适合进入用户确认阶段，不得跳过确认直接实现。",
+          "deletion_audit": "本轮 detail 修订为补强 semantic provider、staged packet、dogfood parity 与验证边界；没有删除有效行为、测试映射或不变量，旧歧义表述已由明确 fail-closed 合同替代。"
+        }
+      ]
+    },
+    "detail": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-08T22:09:34+08:00",
+      "confirmation_scope": "detail_gate_only",
+      "allowed_next_action": "task_start",
+      "prompt_summary": "Detail confirmation allows task.py start only",
+      "artifact_digest": "65d86543ad024ea85224d20c4c3f60418a52e067982ef60a3495c6c5fec7b2ae"
+    }
+  }
+}

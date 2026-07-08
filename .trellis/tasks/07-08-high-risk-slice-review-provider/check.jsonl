@@ -1,0 +1,5 @@
+{"file":".trellis/spec/cli/backend/guru-overlay-gates.md","reason":"Review must verify Guru gate/runtime behavior, route policy, implementation-review records, and template-sync requirements."}
+{"file":".trellis/spec/cli/backend/quality-guidelines.md","reason":"Quality review should catch overbroad changes, unsafe dependencies, and maintainability issues."}
+{"file":".trellis/spec/cli/backend/error-handling.md","reason":"Review must verify invalid provider policy and provider conflicts fail closed with actionable errors."}
+{"file":".trellis/spec/cli/unit-test/conventions.md","reason":"Review must verify meaningful regression coverage rather than tautological or placeholder tests."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review must trace the config-to-runtime-to-record-to-template data flow across layers."}
