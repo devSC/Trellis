@@ -3,7 +3,7 @@
   "name": "risk-based-gate-contract-routing",
   "title": "Risk-based intake routing with gate contracts",
   "description": "Implement an intake risk classifier that routes low-risk work to automatic small-inline execution, medium-risk work to lite tasks, and high-risk work to full Guru/Trellis chains. Manage task-local gate-contract and gate-degradation records for scoped gate downgrades and commit checks.",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "devSC",
   "assignee": "devSC",
   "createdAt": "2026-07-01",
-  "completedAt": null,
+  "completedAt": "2026-07-08",
   "branch": null,
   "base_branch": "codex/guru-0.6.0-ga-worktree",
   "worktree_path": null,
@@ -26,11 +26,11 @@
   "guru_gates": {
     "requirements": {
       "confirmed_by": "devSC",
-      "confirmed_at": "2026-07-02T14:25:50+08:00",
+      "confirmed_at": "2026-07-08T20:40:30+08:00",
       "confirmation_scope": "requirements_gate_only",
       "allowed_next_action": "overview_design",
       "prompt_summary": "Requirements confirmation allows overview/detail planning only",
-      "artifact_digest": "ab293d665d031e4f86693cbbc4df56b481dade251a823a2717db11f3dfa97f6e"
+      "artifact_digest": "d768a943f68a7b67ce0d33d54dd451eecba178392e1dd39eaab8402038f76044"
     },
     "review_runs": {
       "overview": [
@@ -69,6 +69,24 @@
           "result": "clean",
           "max_severity": "low",
           "evidence": "second current-digest overview clean after sequential retry; no OCR used"
+        },
+        {
+          "run_id": "main-20260708-overview-clean",
+          "reviewer": "clean-context-main",
+          "recorded_at": "2026-07-08T20:47:29+08:00",
+          "artifact_digest": "9bf55b672b807087e4e29e10355179fdece2b5c0f70651c0b9aad3e8ba01ae86",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Main-session clean-context review: overview structure passes; BHV-001..BHV-013 map to current design units; route policy, mutable evidence, commit-plan recovery, and high-risk full_chain enforcement are represented."
+        },
+        {
+          "run_id": "trellis-check-20260708-overview-current-digest",
+          "reviewer": "clean-context-trellis-check",
+          "recorded_at": "2026-07-08T20:52:02+08:00",
+          "artifact_digest": "9bf55b672b807087e4e29e10355179fdece2b5c0f70651c0b9aad3e8ba01ae86",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Clean-context overview review: overview gate passes; BHV-001..BHV-013 are represented in architecture/unit ownership; no medium/high/critical blockers found; no OCR used."
         }
       ],
       "detail": [
@@ -131,16 +149,36 @@
           "max_severity": "low",
           "evidence": "second current detail digest clean; commit-plan runtime is read-only and no OCR used",
           "deletion_audit": "none"
+        },
+        {
+          "run_id": "main-20260708-detail-clean",
+          "reviewer": "clean-context-main",
+          "recorded_at": "2026-07-08T20:47:29+08:00",
+          "artifact_digest": "4aefbe493648c5622744969b8a36800e43102761d19364d72f98fd6686df5bdf",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Main-session clean-context review: detail gate passes; implement trace and strict trace matrix close; no medium/high/critical design blockers found for current digest.",
+          "deletion_audit": "D9 deletion audit: current detail preserves all BHV-001..BHV-013, UNIT-gate-contract-store, UNIT-intake-risk-router, UNIT-commit-contract-gate, UNIT-template-sync, UNIT-finish-route-policy, UNIT-commit-plan-gate, UNIT-mutable-evidence-store, and UNIT-worker-cleanup-and-compact-context coverage; no required behavior or design unit deleted."
+        },
+        {
+          "run_id": "trellis-check-20260708-detail-current-digest",
+          "reviewer": "clean-context-trellis-check",
+          "recorded_at": "2026-07-08T20:52:10+08:00",
+          "artifact_digest": "4aefbe493648c5622744969b8a36800e43102761d19364d72f98fd6686df5bdf",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Clean-context detail review: detail gate, implement gate, trace matrix, lint/typecheck, py_compile, diff checks, mirror checks, and Guru verify suite pass; no medium/high/critical blockers found; no OCR used.",
+          "deletion_audit": "D9 deletion audit: current detail preserves BHV-001..BHV-013, UNIT-gate-contract-store, UNIT-intake-risk-router, UNIT-commit-contract-gate, UNIT-template-sync, UNIT-finish-route-policy, UNIT-commit-plan-gate, UNIT-mutable-evidence-store, and UNIT-worker-cleanup-and-compact-context; no required behavior or design unit deleted."
         }
       ]
     },
     "detail": {
       "confirmed_by": "devSC",
-      "confirmed_at": "2026-07-02T14:29:36+08:00",
+      "confirmed_at": "2026-07-08T21:20:12+08:00",
       "confirmation_scope": "detail_gate_only",
       "allowed_next_action": "task_start",
       "prompt_summary": "Detail confirmation allows task.py start only",
-      "artifact_digest": "0e4a3b4e2cdffc62d4c451434780d08fbf2e3549a9c709f285d7d7d73eb53dde"
+      "artifact_digest": "4aefbe493648c5622744969b8a36800e43102761d19364d72f98fd6686df5bdf"
     }
   }
 }

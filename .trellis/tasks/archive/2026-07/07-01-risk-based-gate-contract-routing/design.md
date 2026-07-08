@@ -61,7 +61,7 @@ flowchart TD
 | `design.md#UNIT-template-sync` | template-sync | BHV-001, BHV-002, BHV-003, BHV-006 | `packages/cli/src/templates/guru/**` and `guru-template/**` |
 | `design.md#UNIT-finish-route-policy` | gate-runtime | BHV-007, BHV-011, BHV-012 | `guru_gate.py` finish/commit policy plus workflow text |
 | `design.md#UNIT-mutable-evidence-store` | evidence-contract | BHV-008 | detail digest builder plus task-local evidence JSONL |
-| `design.md#UNIT-commit-plan-gate` | gate-runtime | BHV-009, BHV-011 | `guru_gate.py commit-plan` |
+| `design.md#UNIT-commit-plan-gate` | gate-runtime | BHV-009, BHV-011, BHV-013 | `guru_gate.py commit-plan` |
 | `design.md#UNIT-worker-cleanup-and-compact-context` | runtime-context | BHV-010, BHV-012 | `guru_supervise.py` status/cleanup plus compact context loading |
 
 ### 1.5 Compatibility
@@ -121,7 +121,7 @@ flowchart TD
 
 #### 数据合同
 
-该单元只产生 assessment，不写文件。写文件由 UNIT-gate-contract-store 负责。
+`guru_risk.assess_intake()` 只产生 assessment，不写文件。`guru_gate.py intake` 是可执行入口：不带 `task_dir` 时只输出 recommendation，不绑定 active task；带显式 `task_dir --write-contract` 时调用 UNIT-gate-contract-store 写 `gate-contract.json` 并同步 task route metadata。
 
 #### 测试映射
 
@@ -221,6 +221,8 @@ Contract file can be replaced only by route selection before implementation star
 #### 数据合同
 
 Global policy is hard-coded in source template first. Future config can expose policy, but this task keeps policy local to the Guru overlay to avoid uncontrolled project overrides.
+
+`guru_gate.py record-degradation` 是 degradation JSONL 的唯一 CLI writer：先加载合同、构造拟追加 row、用 `validate_degradations(contract, existing_rows + [row])` 预检，只有通过后才 append。无效 row 不写入，保持 append-only 历史不被污染。
 
 #### 测试映射
 
@@ -463,7 +465,7 @@ Finish policy 不新增 Trellis status。它读取 `gate-contract.json`、task s
 
 #### 单元职责
 
-承接 BHV-009, BHV-011。负责在 commit 前输出机器可读 staged-scope 计划，并让 `check-commit` 后续复用同一 decision model。
+承接 BHV-009, BHV-011, BHV-013。负责在 commit 前输出机器可读 staged-scope 计划，并让 `check-commit` 后续复用同一 decision model。
 
 #### 行为定义
 
@@ -471,6 +473,7 @@ Finish policy 不新增 Trellis status。它读取 `gate-contract.json`、task s
 
 - BHV-009: commit 前输出 allowed / forbidden paths 和 suggested stage commands。
 - BHV-011: commit-plan 达到 ready 后停止等待用户确认。
+- BHV-013: 缺有效合同但 staged diff 已存在时，先做 post-implementation intake recovery；低风险 scoped diff 推荐 micro_task recovery，不倒逼 full planning。
 
 #### 核心数据结构
 
@@ -492,10 +495,11 @@ Finish policy 不新增 Trellis status。它读取 `gate-contract.json`、task s
 
 #### 逐行为设计
 
-- direct small_inline: allowed paths 等于当前 staged low-risk implementation files；forbidden 包含 task/workspace/high-risk paths。
+- direct small_inline: allowed paths 等于当前 staged low-risk implementation files；forbidden 包含 task/workspace/high-risk paths；若需要 commit 且没有有效 task contract，输出 micro_task recovery block，而不是 `can_commit_now=true`。
 - micro_task: allowed paths 来自 contract scope；requires compensating checks if degradation exists。
 - lite_task: allowed paths 来自 latest clean implementation review target paths；spec/task/journal/tooling 文件默认 split_required。
 - full_chain: 保持当前 staged scope + reviewed target digest strict checks；若 task/spec/tooling 混入 implementation commit，输出 split_required。
+- post-implementation recovery: 当 active task 为 planning / 缺 contract / 缺 implementation review，且 staged scope 可被 `_direct_low_risk_commit_problem` 判为 scoped low-risk 时，`required_commands` 只推荐创建或切换 micro_task 并运行 `init-contract --route micro_task --risk low`。中高风险或无法判定时继续 fail-closed 并要求用户选择 lite/full/split。
 
 #### 状态/边界
 
@@ -503,7 +507,8 @@ Finish policy 不新增 Trellis status。它读取 `gate-contract.json`、task s
 
 #### 测试映射
 
-- no-task low-risk staged 2 files -> `direct`, can commit。
+- no-task low-risk staged 2 files -> `direct_small_inline`, can_commit=false, blocking reason includes post-implementation intake recovery, required command includes `init-contract --route micro_task --risk low`。
+- active planning task + low-risk staged implementation diff + no contract -> `micro_task` recovery block, no requirements/check-implementation command.
 - task/spec/journal 混入 implementation commit -> `split_required`。
 - full-chain review digest mismatch -> blocking reason。
 - micro_task missing compensating checks -> blocking reason。

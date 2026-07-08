@@ -114,7 +114,8 @@ Tasks:
 
 Validation:
 
-- Direct small_inline fixture returns `commit_mode=direct` and `can_commit_now=true`.
+- Direct small_inline fixture returns `commit_mode=direct`, `can_commit_now=false`, and micro_task recovery commands when no valid commit contract exists.
+- Active planning/no-contract low-risk staged fixture returns micro_task recovery commands and does not point recovery at requirements or check-implementation.
 - Task/spec/journal mixed with implementation files returns `commit_mode=split_required`.
 - Full-chain review digest mismatch returns blocking reason.
 - `check-commit` and `commit-plan` agree on pass/block cases once integration is complete.
@@ -254,6 +255,12 @@ Evidence log:
 - 2026-07-02: `python3 -m py_compile packages/cli/src/templates/guru/overlay/verify/guru_gate.py guru-template/overlay/verify/guru_gate.py .trellis/scripts/guru/guru_gate.py` passed after adding `commit-plan`.
 - 2026-07-02: `bash packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh` passed after adding `commit-plan` fixtures. Result: 482 passed / 0 failed. New coverage includes direct `small_inline` commit-plan pass/block JSON, `micro_task` commit-plan pass JSON, no-staged-changes block JSON, and root `target_paths=["."]` fallback that must not suggest `git add -- .`.
 - 2026-07-02: Source/template/local runtime mirror checks passed for `guru_gate.py`; source/template mirror checks passed for `run_tests.sh` and all four workflow files (`guru-client`, `guru-go`, `guru-h5`, `guru-ios`).
+- 2026-07-08: Added post-implementation intake recovery to `commit-plan` / `check-commit`: low-risk staged implementation diffs without a valid active contract now block direct commit and recommend micro_task recovery (`task.py create` + `init-contract --route micro_task --risk low`) instead of requirements/overview/detail backfill. Added regression coverage for no-task direct low-risk and active planning/no-contract low-risk recovery. Synced source, `guru-template`, and local dogfood runtime.
+- 2026-07-08: Installed the refreshed Guru overlay into sibling repos `/Users/devSC/Documents/JobProject/guru_ai_himora` (`flutter`) and `/Users/devSC/Documents/MyProject/safe_land_web` (`h5`) via source `overlay/apply.sh`. Both installers passed built-in self-checks, target `guru_gate.py` py_compile passed, target `guru_gate.py` / workflow matched source templates, config dry-runs preserved existing supervision settings, and smoke `commit-plan` in temp repos produced `micro_task` post-implementation recovery instead of PRD/overview/detail backfill.
+- 2026-07-08: User challenged that post-implementation recovery was not a complete "received task" routing mechanism. Added executable `guru_gate.py intake [task_dir] --description ... [--path ...] [--commit-requested] [--write-contract]` so low/no-commit returns `small_inline`, low+commit writes `micro_task`, medium routes `lite_task`, and high writes `full_chain`. `intake` without an explicit `task_dir` no longer binds the active task, preventing unrelated new requests from polluting the current task.
+- 2026-07-08: Added executable `guru_gate.py record-degradation <task_dir> --gate ... --reason ... --command ... --check name:status[:evidence] ...`. The command validates the proposed degradation against `gate-contract.json` and existing `gate-degradations.jsonl` before append; invalid or under-compensated rows are rejected without modifying the JSONL.
+- 2026-07-08: Guru verify suite passed after the intake/degradation command additions: `bash packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh` -> `517 passed / 0 failed`. New coverage includes no-task `intake` not binding active task, low+commit contract generation, high/full contract generation, valid degradation append, and invalid degradation no-append.
+- 2026-07-08: Closed P0 high-risk override gap found in review. `guru_contract.validate_contract()` now rejects every `risk=high` contract whose selected route is not `full_chain`; staged high-risk path validation and micro commit guidance no longer exempt valid user override audits. High-risk `lite_task` / `micro_task` override attempts now fail in `init-contract`, `check-commit`, `check-implementation`, and `slice-plan`; source, `guru-template`, and local dogfood runtime were mirrored.
 
 ## §4 阻塞与偏差
 

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "risk": "high",
+  "route": "full_chain",
+  "assessment": {
+    "confidence": null,
+    "reasons": [],
+    "risk_flags": [],
+    "recommended_route": "full_chain"
+  },
+  "route_selection": {
+    "selected_route": "full_chain",
+    "source": "recommended",
+    "recommended_route": "full_chain",
+    "risk_acknowledged": false,
+    "user_quote": "",
+    "selected_by": "system",
+    "selected_at": "2026-07-08T22:06:36+08:00"
+  },
+  "scope": {
+    "allowed_paths": [],
+    "forbidden_path_patterns": [],
+    "max_files": null
+  },
+  "required_gates": [],
+  "optional_gates": [],
+  "allowed_degradations": [],
+  "commit_policy": {
+    "require_in_progress": true,
+    "require_clean_implementation_review": true,
+    "allow_task_artifacts_only": false
+  },
+  "created_by": "init-contract",
+  "created_at": "2026-07-08T14:06:36Z",
+  "policy_version": "guru-risk-contract-v1"
+}

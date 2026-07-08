@@ -162,6 +162,14 @@ Given 会话已经进入 Finish / Commit 尾部，且上下文较大。
 When agent 需要继续执行 commit 前检查。
 Then agent 只加载 task_dir、route、latest review digest、validation evidence、dirty scope 和 commit-plan 摘要；不得重新加载完整 skill、memory、spec 全文，除非 commit-plan 明确报告缺口。
 
+### BHV-013 commit gate 缺合同恢复不得倒逼 full planning
+
+Priority: P0
+
+Given 实现已经发生且存在 staged implementation diff，但当前没有可用 active task contract、active task 明显未 ready，或 active task 与 staged scope 无法建立提交合同。
+When `guru_gate.py commit-plan` / `check-commit` 在提交阶段复核 staged scope。
+Then gate 必须先做 post-implementation intake recovery：若 staged scope 是低风险、少量、非 task/workspace artifact 的实现文件，阻断提交并只推荐创建或切换 `micro_task`、写入 `gate-contract.json` 后重跑 commit gate；不得在提交阶段反向要求补 full PRD、overview、detail 或 `check-implementation`。若 staged scope 为中风险、高风险或无法判定，则阻断并要求用户选择 `lite_task` / `full_chain` / 拆分 scope。
+
 ## Requirements
 
 - REQ-001: intake classifier 必须输出结构化结果：`risk`、`route`、`confidence`、`reasons`、`risk_flags`、`recommended_contract`、`needs_user_choice`。
@@ -185,6 +193,8 @@ Then agent 只加载 task_dir、route、latest review digest、validation eviden
 - REQ-019: `adversarial_enabled=false` 和 route-aware bounded review policy 只能影响 adversarial 证据要求，不能绕过 current digest、double clean、blocked/medium+ finding、人工确认或 staged scope。
 - REQ-020: Finish 阶段的 terminal worker cleanup 必须区分 live worker 和 terminal worker；terminal worker 不能成为 commit 前阻塞项。
 - REQ-021: commit-ready 后必须触发 stop rule，只报告下一步确认项，不自动 stage、commit、TAPD update、archive 或额外 spec/journal rewrite。
+- REQ-022: `commit-plan` 在缺少有效合同但 staged diff 可判为低风险 scoped implementation 时，必须输出 post-implementation intake recovery，`required_commands` 指向 `task.py create` + `init-contract --route micro_task --risk low`，不得指向 requirements/overview/detail 补文档。
+- REQ-023: no-task `direct_small_inline` 不能作为最终 commit pass；它只能作为 commit-plan 的低风险恢复分类，最终提交必须通过 `micro_task` 或用户确认的更严格 route contract。
 
 ## Failure Paths
 
@@ -198,6 +208,7 @@ Then agent 只加载 task_dir、route、latest review digest、validation eviden
 - FP-008: commit-plan 显示 `split_required`，但 agent 仍把 task/spec/journal/tooling 文件混入 implementation commit：commit gate 必须阻断。
 - FP-009: terminal done worker 被 status 当成 live blocker，导致 agent 多轮等待/kill：应作为 worker cleanup 缺陷记录，不应继续推进普通 review。
 - FP-010: commit-ready 后 agent 未获用户确认却继续做 spec rewrite、journal rewrite、TAPD update 或 archive：违反 stop rule。
+- FP-011: 已实现的低风险 diff 到提交阶段才发现缺合同时，gate 要求补 full PRD / overview / detail 才能继续：违反 post-implementation recovery，应改为 micro_task recovery 或按风险升级。
 
 ## Acceptance Criteria
 
@@ -217,6 +228,7 @@ Then agent 只加载 task_dir、route、latest review digest、validation eviden
 - [ ] `guru_gate.py commit-plan` 能为 direct small_inline、micro_task、lite_task、full_chain 输出不同 stage plan，并标注 split-required 文件。
 - [ ] commit-ready 后 agent 停在用户确认边界，不自动 stage/commit/TAPD/archive。
 - [ ] Finish 尾部不重新加载完整 skill/memory/spec；只使用 compact commit context 和 commit-plan 摘要。
+- [ ] 已 staged 的低风险 scoped implementation diff 若缺 active contract，`commit-plan` 阻断 direct commit，但推荐 `micro_task` recovery，不要求补 full PRD / overview / detail。
 
 ## Open Questions
 

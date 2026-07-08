@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "slice_id": "UNIT-risk-contract-routing-full-scope",
+  "owner_unit": "UNIT-risk-contract-routing-full-scope",
+  "target_kind": "staged",
+  "target_paths": [
+    ".trellis/scripts/guru/guru_config_patch.py",
+    ".trellis/scripts/guru/guru_contract.py",
+    ".trellis/scripts/guru/guru_gate.py",
+    ".trellis/scripts/guru/guru_review_record.py",
+    ".trellis/scripts/guru/guru_risk.py",
+    ".trellis/scripts/guru/guru_supervise.py",
+    ".trellis/spec/cli/backend/guru-overlay-gates.md",
+    ".trellis/workflow.md",
+    "guru-template/overlay/agents-skills/client-small-iteration-dev/SKILL.md",
+    "guru-template/overlay/agents-skills/go-small-iteration-dev/SKILL.md",
+    "guru-template/overlay/agents-skills/h5-small-iteration-dev/SKILL.md",
+    "guru-template/overlay/verify/guru_contract.py",
+    "guru-template/overlay/verify/guru_gate.py",
+    "guru-template/overlay/verify/guru_risk.py",
+    "guru-template/overlay/verify/guru_supervise.py",
+    "guru-template/overlay/verify/tests/run_tests.sh",
+    "guru-template/workflows/guru-client-workflow.md",
+    "guru-template/workflows/guru-go-workflow.md",
+    "guru-template/workflows/guru-h5-workflow.md",
+    "guru-template/workflows/guru-ios-workflow.md",
+    "packages/cli/src/templates/guru/overlay/agents-skills/client-small-iteration-dev/SKILL.md",
+    "packages/cli/src/templates/guru/overlay/agents-skills/go-small-iteration-dev/SKILL.md",
+    "packages/cli/src/templates/guru/overlay/agents-skills/h5-small-iteration-dev/SKILL.md",
+    "packages/cli/src/templates/guru/overlay/verify/guru_contract.py",
+    "packages/cli/src/templates/guru/overlay/verify/guru_gate.py",
+    "packages/cli/src/templates/guru/overlay/verify/guru_risk.py",
+    "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py",
+    "packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh",
+    "packages/cli/src/templates/guru/workflows/guru-client.md",
+    "packages/cli/src/templates/guru/workflows/guru-go.md",
+    "packages/cli/src/templates/guru/workflows/guru-h5.md",
+    "packages/cli/src/templates/guru/workflows/guru-ios.md"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "gate",
+    "workflow",
+    "runtime",
+    "cross_layer"
+  ],
+  "deterministic_checks": [
+    "git diff --cached --check",
+    "PYTHONDONTWRITEBYTECODE=1 bash packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh",
+    "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile packages/cli/src/templates/guru/overlay/verify/guru_contract.py packages/cli/src/templates/guru/overlay/verify/guru_gate.py packages/cli/src/templates/guru/overlay/verify/guru_risk.py packages/cli/src/templates/guru/overlay/verify/guru_supervise.py guru-template/overlay/verify/guru_contract.py guru-template/overlay/verify/guru_gate.py guru-template/overlay/verify/guru_risk.py guru-template/overlay/verify/guru_supervise.py .trellis/scripts/guru/guru_contract.py .trellis/scripts/guru/guru_gate.py .trellis/scripts/guru/guru_risk.py .trellis/scripts/guru/guru_supervise.py .trellis/scripts/guru/guru_review_record.py .trellis/scripts/guru/guru_config_patch.py",
+    "node .gitnexus/run.cjs detect_changes --scope staged --repo /Users/devSC/Documents/MyProject/Trellis-guru-0.6.0-ga-worktree"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-01-risk-based-gate-contract-routing/review-records/implementation-reviews.jsonl",
+      ".trellis/tasks/07-08-high-risk-slice-review-provider/check.jsonl",
+      ".trellis/tasks/07-08-high-risk-slice-review-provider/implement.jsonl",
+      "marketplace"
+    ]
+  },
+  "semantic_review_provider": {
+    "required": false,
+    "provider": "codex",
+    "ocr": "optional"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-risk-routing-gate-contract",
+      "rule": "High-risk Guru gate/runtime/workflow changes must remain full_chain, keep task-local gate contract evidence, and require clean staged implementation review before commit.",
+      "source": "detail",
+      "owner": "UNIT-risk-contract-routing-full-scope",
+      "positive_case": "staged index has clean implementation-review, full_chain/high gate-contract.json, Guru verify suite 519/0, py_compile, diff check, mirror checks, and GitNexus staged detect_changes",
+      "negative_case": "no-contract or stale-review staged implementation is blocked or routed to micro_task recovery instead of bypassing review/contracts",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "check-implementation high/full requires slice packet",
+        "commit-plan no valid contract + stale review recommends micro_task recovery",
+        "check-commit latest clean staged digest required"
+      ]
+    }
+  ]
+}
