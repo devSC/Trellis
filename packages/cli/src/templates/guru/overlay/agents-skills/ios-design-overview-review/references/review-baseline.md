@@ -22,7 +22,7 @@
 
 | 章 | 应覆盖（L1 锚点） | 取证操作 | 缺口判级 |
 |----|------------------|---------|---------|
-| 1 设计约束与输入 | P0/P1 核心能力逐条带需求锚点；技术栈约束（DDD 四层 / SwiftUI / FactoryKit / WCDBSwift）；显式假设三字段（依据 / 影响范围 / 验证时点）；project-conventions 槽位快照（C1~C10） | 对照需求核心能力清单做差集；抽查需求锚点可定位；C1~C10 槽位取值是否落项或显式 pending（L1 §1-P3/P3a/P3b） | 缺章 P1；P0/P1 漏承接 P1（G1）；需求锚点缺失 P2；槽位未落项或与约定冲突 P2（影响归属 / 合规升 P1） |
+| 1 设计约束与输入 | P0/P1 核心能力逐条带需求锚点；技术栈约束（DDD 四层 / SwiftUI / FactoryKit / WCDBSwift）；显式假设三字段（依据 / 影响范围 / 验证时点）；project-conventions 槽位快照（C1~C6） | 对照需求核心能力清单做差集；抽查需求锚点可定位；C1~C6 槽位取值是否落项或显式 pending（L1 §1-P3/P3a/P3b） | 缺章 P1；P0/P1 漏承接 P1（G1）；需求锚点缺失 P2；槽位未落项或与约定冲突 P2（影响归属 / 合规升 P1） |
 | 2 行为集合 | §3 四类来源枚举（用户操作 / 系统反应 / 失败路径 / 生命周期）+ `### BHV-NNN <短名>` + GWT 三段 + 状态 / 数据标注 + §3.1 粒度 | 逐条核对 GWT（Given/When/Then）与「哪个 ViewModel 的哪个 `@Published`」「哪个 domain-model / 哪个 Repository」标注；抽样 ≥1/3 行为做 §3.1 四条粒度判定 | 无失败路径类行为（网络失败 / 权限拒绝 / WCDBSwift 损坏等）P1；粗粒度行为（如「处理创作」）P1；GWT 缺段或缺状态 / 数据标注 P2；行为从 SwiftUI View 名 / 组件名倒推（违 §3）→ 文档级重构（P1） |
 | 3 归属判定表 | §4 唯一 owner（七类 doc_type）+ 三问实质 + 分层依赖律 + 写作顺序依赖闭合 + 命名规范 §4.1 | 逐行：owner ∈ 七类且归正确层？三问是否有实质内容（非「同上」）？一个状态是否仅一个写 owner？依赖方向是否符合 Domain→App→Infrastructure→UI（运行期调用）单向？ | 分层依赖律违例 P1（阻断，见 §5）；行为无 owner / owner 非七类 P1；多写 owner（同一状态多写 owner）P1；三问空洞（「同上」）P2；名词先行 / 含混 Manager/Helper 后缀 P2 |
 | 4 页面流与路由 | §2.5③ 路由（`NavigationDestination` 枚举值）/ 入参出参 / deep link / 失败 / 取消 / 权限拒绝去向；导航必经 AppCoordinator；非 UI 需求标 N/A 及依据 | 路由名与归属表 coordinator owner 抽查；失败 / 取消 / 权限拒绝去向逐页核对；扫 View 间直连导航（`NavigationLink` 跨 feature 硬跳） | 整章缺失（UI 需求）P1；View 间直连导航绕过 coordinator P1（分层依赖律，见 §5）；缺失败 / 取消去向 P2；非 UI 需求缺 N/A 依据 P2 |

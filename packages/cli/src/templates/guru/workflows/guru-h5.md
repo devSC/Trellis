@@ -99,15 +99,15 @@ Phase 3: Finish  → 验证（tsc --noEmit / next build / eslint）→ 萃取回
 
 ### Request Triage
 
-- 收到实现类需求时先跑可执行分流：`python3 .trellis/scripts/guru/guru_gate.py intake --description "<需求>" [--path <path> ...]`。不要要求用户自己说 `full/lite/micro`；系统给出推荐；非高风险可在合法审计下 override，高风险不得降为 lite/micro。
-- 若当前已有 active task 但新需求可能完全不同，先不带 `task_dir` 跑 `intake`，确认任务归属或新建任务后才 `--write-contract`，避免污染当前任务。
+- 收到实现类需求时先做可审计分流：不要要求用户自己说 `full/lite/micro`；由 agent 按触达层级、风险与提交需求给出推荐。非高风险可在合法审计下 override，高风险不得降为 lite/micro。
+- 若当前已有 active task 但新需求可能完全不同，先确认任务归属或新建任务；需要提交的微小改动在任务确定后用 `guru_gate.py init-contract` 写 `gate-contract.json`，避免污染当前任务。
 - 简单对话/小任务：先问是否需要建 Trellis 任务；用户说不需要则本轮跳过 Trellis。
 - 进入任务后第一步判定碰哪几层（只文案 → l10n/文案路径；只一个 `ui-component`/`client-component` → 局部链；新增 route 段 / 跨 server-client → 全链）与风险等级。
 - **核心玩法 / 付费 / 广告 / 存档 / 涉权限或数据采集 / 跨 server-client 边界 / 新增 route 段 → 默认推荐完整五阶段（full 链，目录级设计包）**；单层小改可走轻量链（prd 简版 + 所碰 doc_type 的详细合同 + 实现），但每步仍要 Gate。判轨结论落 task.json `guru_chain`（默认 full；降 light 需用户同意）和 `gate-contract.json`；非高风险选择较轻 route 时必须记录 `route_selection` 风险确认审计；高风险请求较轻 route 只能记录偏好，不能绕过 `full_chain`。
 - 建任务许可 ≠ 实现许可：实现必须等 requirements 确认、overview/detail 双 clean（默认各含 adversarial clean；`adversarial_enabled=false` 时不要求）、detail 确认后 `task.py start`。
 
 [workflow-state:no_task]
-无任务：先跑 `guru_gate.py intake --description "<需求>" [--path <path> ...]` 分类请求并征得建任务同意。单层小改可不建；commit 需要 micro_task 合同；核心玩法/付费/广告/存档/权限/数据采集/跨 server-client/新增 route 段默认推荐完整五阶段（full 链）；非高风险选择较轻 route 时记录 route_selection 风险确认审计；高风险请求较轻 route 只记录偏好，仍按 full_chain 执行。
+无任务：先分类请求并征得建任务同意。单层小改可不建；commit 需有效 contract；高风险、跨 server-client 或新增 route 段默认 full_chain；选择较轻 route 必须记录 route_selection。
 [/workflow-state:no_task]
 
 ### Phase 1: Plan（承载 需求 → 概要 → 详细 三阶段）
@@ -328,7 +328,7 @@ channel 默认：主会话运行 `python3 .trellis/scripts/guru/guru_supervise.p
 
 提交前先运行 `python3 .trellis/scripts/guru/guru_gate.py commit-plan [task-dir]` 获取机器可读 JSON，按其中 `route`、`commit_mode`、`allowed_stage_paths`、`forbidden_stage_paths`、`can_commit_now`、`split_required`、`blocking_reasons` 汇报 staged scope 和建议切分；计划可提交时仍必须通过 `python3 .trellis/scripts/guru/guru_gate.py check-commit <task-dir>` 或等价 PreToolUse hook。
 
-若实现已发生但缺有效合同，且 staged scope 是低风险 scoped implementation diff，commit-plan 必须进入 post-implementation intake recovery：阻断 direct commit，只推荐创建/切换 `micro_task` 并运行 `init-contract --route micro_task --risk low`，不得倒逼补 full PRD / overview / detail。
+若实现已发生但缺有效合同，且 staged scope 是低风险 scoped implementation diff，commit-plan 必须进入 post-implementation route recovery：阻断 direct commit，只推荐创建/切换 `micro_task` 并运行 `init-contract --route micro_task --risk low`，不得倒逼补 full PRD / overview / detail。
 
 提交前展示 `commit-plan` 摘要、`tsc`/`next build`/`eslint` 验证证据与建议 commit 切分，等待用户确认；不 amend、不 push；只 stage 本任务相关文件，不回滚用户改动。
 

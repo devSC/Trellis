@@ -280,16 +280,16 @@ GURU_HOOKS="$(ls "$HERE"/hooks/platform/*.sh 2>/dev/null | xargs -n1 basename ||
 for gh in $GURU_HOOKS; do
   case " $INSTALLED_HOOKS " in *" $gh "*) ;; *) rm -f "$TARGET/.claude/hooks/$gh" ;; esac
 done
-# 装共享 + 平台专属 hook。block-legacy-dirs.sh 含用户必填的 SLOT-12（LEGACY_PATTERNS）：
+# 装共享 + 平台专属 hook。block-legacy-dirs.sh 含用户按项目约定填写的 LEGACY_PATTERNS：
 # cp 模板刷新脚本主体，但回填用户既有的非空值——否则二次 apply 用模板空值覆盖、老目录拦截静默失效。
 for h in $SHARED_HOOKS $XTRA_HOOKS; do
-  prev_slot12=""
+  prev_legacy_patterns=""
   if [ "$h" = "block-legacy-dirs.sh" ] && [ -f "$TARGET/.claude/hooks/$h" ]; then
-    prev_slot12="$(grep -m1 '^LEGACY_PATTERNS=' "$TARGET/.claude/hooks/$h" 2>/dev/null || true)"
+    prev_legacy_patterns="$(grep -m1 '^LEGACY_PATTERNS=' "$TARGET/.claude/hooks/$h" 2>/dev/null || true)"
   fi
   cp "$HERE/hooks/platform/$h" "$TARGET/.claude/hooks/$h"
-  if [ -n "$prev_slot12" ] && [ "$prev_slot12" != "LEGACY_PATTERNS=''" ] && [ "$prev_slot12" != 'LEGACY_PATTERNS=""' ]; then
-    python3 - "$TARGET/.claude/hooks/$h" "$prev_slot12" <<'PYEOF'
+  if [ -n "$prev_legacy_patterns" ] && [ "$prev_legacy_patterns" != "LEGACY_PATTERNS=''" ] && [ "$prev_legacy_patterns" != 'LEGACY_PATTERNS=""' ]; then
+    python3 - "$TARGET/.claude/hooks/$h" "$prev_legacy_patterns" <<'PYEOF'
 import sys
 path, prev = sys.argv[1], sys.argv[2]
 lines = open(path, encoding="utf-8").read().splitlines(keepends=True)
@@ -299,7 +299,7 @@ for i, ln in enumerate(lines):
         break
 open(path, "w", encoding="utf-8").write("".join(lines))
 PYEOF
-    echo "  hooks: 保留用户既有 SLOT-12（block-legacy-dirs.sh 的 LEGACY_PATTERNS 未被模板空值覆盖）"
+    echo "  hooks: 保留用户既有老目录拦截配置（block-legacy-dirs.sh 的 LEGACY_PATTERNS 未被模板空值覆盖）"
   fi
 done
 # grill-nudge 统一提示 design-grill；旧四名 skill 由下方 legacy 清理负责备份移除。
@@ -962,7 +962,7 @@ if [ "$FAIL" != 0 ]; then
 fi
 echo "== 装配完成，自检通过。剩余人工事项 =="
 echo "1) 项目约定：确认 $TARGET/.trellis/spec/conventions/project-conventions.md 已按模板填写（缺失时从 .template/样例取值建立）"
-echo "2) SLOT-12：填 $TARGET/.claude/hooks/block-legacy-dirs.sh 的 LEGACY_PATTERNS"
+echo "2) 老目录拦截：如项目有禁止新建的老目录，填 $TARGET/.claude/hooks/block-legacy-dirs.sh 的 LEGACY_PATTERNS"
 echo "3) Codex hooks：用户级 ~/.codex/config.toml 开 [features].hooks=true，并在 Codex /hooks 中 trust 本项目 hooks"
 echo "4) 人工 Gate 通道：默认 strict（用户终端）；如需对话确认+agent 代跑，在 config.yaml 顶层加 guru.gate_mode: soft（见 workflow 机制节）"
 echo ""

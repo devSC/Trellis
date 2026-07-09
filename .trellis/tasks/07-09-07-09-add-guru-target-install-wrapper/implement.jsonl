@@ -1,0 +1,5 @@
+{"file":".trellis/spec/cli/backend/index.md","reason":"CLI backend pre-development checklist and changed-area routing."}
+{"file":".trellis/spec/cli/backend/error-handling.md","reason":"Operator-facing command failure and exit-code conventions."}
+{"file":".trellis/spec/cli/backend/quality-guidelines.md","reason":"General CLI quality constraints and verification expectations."}
+{"file":".trellis/spec/cli/unit-test/conventions.md","reason":"Test/validation decision rules for script and package entry changes."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Search-first and thin-wrapper guidance to avoid duplicating installer logic."}

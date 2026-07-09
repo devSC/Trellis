@@ -1,0 +1,4 @@
+{"file":"drafts/guru-repeated-debug-install-hardening-plan.md","reason":"Primary source plan to convert into task-local PRD/design/implement artifacts."}
+{"file":".trellis/spec/guides/index.md","reason":"Thinking-guide index used to confirm cross-layer and code-reuse triggers even though this lite task is docs-only."}
+{"file":".trellis/spec/cli/backend/index.md","reason":"CLI backend guideline index identifies Guru overlay gate docs as the relevant future implementation spec."}
+{"file":".trellis/spec/cli/unit-test/index.md","reason":"Unit-test guideline index informs future validation planning without adding runtime tests in this lite task."}

@@ -76,7 +76,7 @@ UI 框架（SwiftUI 主 + RxSwift 遗留 → 纯 SwiftUI）、网络层（URLSes
 ## 装载顺序（硬前置，任一失败即终止并提示；只装当前小批次命中项，禁止预加载）
 
 1. **读 L1 detail SSOT**：`.trellis/spec/harness/detail/detail-structure-single-source.md`（合同八问规则正文、章节骨架合同、完成判定与 Gate 口径的唯一权威）；不可用 → 终止并提示先安装 guru spec 模板。
-2. **读通用方法 SSOT + 项目取值**：`.trellis/spec/guides/golden-path.md`（分层依赖律 + golden-path 五条硬红线）；`.trellis/spec/conventions/project-conventions.md`（校验上文「项目约定槽位」C1~C5 是否已落盘，取值一律引用槽位 `SLOT-NN`，不在详细阶段另定）。
+2. **读通用方法 SSOT + 项目取值**：`.trellis/spec/guides/golden-path.md`（分层依赖律 + golden-path 五条硬红线）；`.trellis/spec/conventions/project-conventions.md`（校验上文「项目约定槽位」C1~C6 是否已落盘，取值一律引用槽位 `SLOT-NN`，不在详细阶段另定）。
 3. **解析承接索引建立目标集合**：定位概要主定义（full=`design_package/design-main.md` 第 7 节详细设计承接索引；light=`design.md` §1），建立完整非空的 `chapter_target → detail_doc_type（→ 目标文件）` 目标集合；每条索引的 doc_type 必须落在 IOS 七类内（出现非七类名 → 回退概要，禁止详细补造）。
 4. **确定当前小批次（按需装载的范围基准）**：按 `chapter_target` / `chapter_batch` 或「iOS 写作顺序」自动取下一批（1~3 章），批次须足够小到只装载本批命中的 L2、概要锚点与必要上下文；后续步骤的 L2/豁免/细则装载全部限定在当前批次命中的 doc_type 上。
 5. **当前小批次命中 doc_type 读对应 v1 L2（仅 viewmodel/usecase/repository 三类）**：命中 `viewmodel` 读 `detail-type-viewmodel.md`（八问 3 状态机/三态 + 八问 6 `@Published` 发射强约束）、命中 `usecase` 读 `detail-type-usecase.md`（八问 1 capability owner 承接 + 八问 5 业务失败终态收口）、命中 `repository` 读 `detail-type-repository.md`（八问 2 接口/实现分离 + 八问 5 `[SLOT-error-mapping]` 错误转换点），路径均在 `.trellis/spec/harness/detail/`；命中即装、冲突时 L1 > L2。**不得为后续章节预加载未命中的 L2 类型。**

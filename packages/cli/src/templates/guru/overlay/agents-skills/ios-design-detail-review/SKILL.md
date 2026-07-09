@@ -1,12 +1,12 @@
 ---
 name: ios-design-detail-review
-description: 用于审核 Guru iOS 原生平台（SwiftUI 主 + RxSwift 遗留、DDD 四层 Domain→App→Infrastructure→UI、FactoryKit @Injected DI、Repository 模式、WCDBSwift 持久化、AppCoordinator 导航）详细设计文档，判定能否进入实现编码。先做 EX 前置检查（判轨 / 项目约定 C1~C5 / 承接索引 / 概要 review evidence / 承接源 / 机器 Gate），再按 review_scope 三模式执行：current_chapter 单章逐行为诊断、layer_checkpoint 跨章协同诊断、directory_final 目录级三段式终审（逐文档 D1~D9 诊断 → 跨层调用链 → 概要承接索引与时序覆盖率）。核查合同八问、概要 owner 追溯、Domain→App→Infrastructure→UI 单向依赖律、per-domain enum Error 收口、@Published 三态收口、WCDBSwift 事务边界、测试映射、合规红线与可编码粒度；编号断链拦截（单元引用幽灵 BHV / 行为无单元承接 / 切片引用幽灵 UNIT）；先证据后结论，输出分级 findings 与互斥三选一结论，输出 record-review 证据，并在双 clean 后等待 detail confirm。doc_type 一律以 IOS_BRIEF 钉死七类（viewmodel / usecase / repository / domain-model / view / coordinator / external）为权威，禁照抄 flutter（controller/page-entry/db-dao/api-network）或 Go（transport/service）类型名。规则唯一来源是 `.trellis/spec/harness/detail/` 的 L1/L2 SSOT 与 `.trellis/spec/harness/index.md`，本文件只组织取证、Finding 与输出。
+description: 用于审核 Guru iOS 原生平台（SwiftUI 主 + RxSwift 遗留、DDD 四层 Domain→App→Infrastructure→UI、FactoryKit @Injected DI、Repository 模式、WCDBSwift 持久化、AppCoordinator 导航）详细设计文档，判定能否进入实现编码。先做 EX 前置检查（判轨 / 项目约定 C1~C6 / 承接索引 / 概要 review evidence / 承接源 / 机器 Gate），再按 review_scope 三模式执行：current_chapter 单章逐行为诊断、layer_checkpoint 跨章协同诊断、directory_final 目录级三段式终审（逐文档 D1~D9 诊断 → 跨层调用链 → 概要承接索引与时序覆盖率）。核查合同八问、概要 owner 追溯、Domain→App→Infrastructure→UI 单向依赖律、per-domain enum Error 收口、@Published 三态收口、WCDBSwift 事务边界、测试映射、合规红线与可编码粒度；编号断链拦截（单元引用幽灵 BHV / 行为无单元承接 / 切片引用幽灵 UNIT）；先证据后结论，输出分级 findings 与互斥三选一结论，输出 record-review 证据，并在双 clean 后等待 detail confirm。doc_type 一律以 IOS_BRIEF 钉死七类（viewmodel / usecase / repository / domain-model / view / coordinator / external）为权威，禁照抄 flutter（controller/page-entry/db-dao/api-network）或 Go（transport/service）类型名。规则唯一来源是 `.trellis/spec/harness/detail/` 的 L1/L2 SSOT 与 `.trellis/spec/harness/index.md`，本文件只组织取证、Finding 与输出。
 ---
 
 # iOS 原生平台详细设计审核
 
 > 层级契约：L1（`.trellis/spec/harness/detail/detail-structure-single-source.md`）承载合同八问规则正文与详细 Gate 完成条件；L2（`detail-type-{viewmodel,usecase,repository}.md`，v1 三类）承载类型差异与 iOS 硬规则；`.trellis/spec/harness/index.md` 承载 doc_type 权威七类、编号纪律与 Gate 口径。本 SKILL.md 只做前置检查、scope 编排与诊断流程，不重定义规范正文。`references/review-baseline.md` 承载逐 doc_type 取证矩阵与判级，`references/review-output.md` 承载输出字段合同。冲突时 `index.md > L1 > L2 > references > 本文件`。
-> 横向硬依赖：通用方法 `.trellis/spec/guides/golden-path.md`（分层依赖律、FactoryKit DI、Repository 模式、enum Error 分层、WCDBSwift 持久化、禁止清单）+ 目标仓库 `.trellis/spec/conventions/project-conventions.md`（C1~C5 校验 + 项目约定槽位）。
+> 横向硬依赖：通用方法 `.trellis/spec/guides/golden-path.md`（分层依赖律、FactoryKit DI、Repository 模式、enum Error 分层、WCDBSwift 持久化、禁止清单）+ 目标仓库 `.trellis/spec/conventions/project-conventions.md`（C1~C6 校验 + 项目约定槽位）。
 > doc_type 七类一律以 IOS_BRIEF 为权威；出现 `transport-handler / service / page-entry / db-dao / api-network / manager / handler` 等异平台或自创类型名即归属红线（详细 Gate 直接 fail）。
 
 ## 目标
@@ -49,12 +49,12 @@ description: 用于审核 Guru iOS 原生平台（SwiftUI 主 + RxSwift 遗留�
 ## 装载顺序与 EX 前置检查（任一失败 → 前置缺口输出，停止逐文档诊断）
 
 1. 读 L1 主 SSOT：`.trellis/spec/harness/detail/detail-structure-single-source.md`；读五阶段入口 `.trellis/spec/harness/index.md`（doc_type 七类 / 编号纪律 / Gate 口径）；再读 `references/review-baseline.md` 与 `references/review-output.md`。
-2. 读 `.trellis/spec/guides/golden-path.md`（iOS 分层依赖律、FactoryKit DI、Repository 模式、enum Error 分层、WCDBSwift 持久化、禁止清单）与 `.trellis/spec/conventions/project-conventions.md`（执行 C1~C5 校验 + 槽位齐备：UI 框架 / 网络层 / 日志 / JSON 修复策略 / 测试框架 / i18n / 主题 / feature 模块结构 / mock 生成 / 构建自动化）。
+2. 读 `.trellis/spec/guides/golden-path.md`（iOS 分层依赖律、FactoryKit DI、Repository 模式、enum Error 分层、WCDBSwift 持久化、禁止清单）与 `.trellis/spec/conventions/project-conventions.md`（执行 C1~C6 校验 + 槽位齐备：UI 框架 / 网络层 / 日志 / JSON 修复策略 / 测试框架 / i18n / 主题 / feature 模块结构 / mock 生成 / 构建自动化）。
 3. **EX-1 输入键**：task.json `guru_chain`（full 链含 `design_package` 字段，相对 repo root）可判定；判轨结果决定 full（目录级设计包）/ light（任务内单文件 `design.md`）口径。
 4. **EX-2 路径与骨架**：full 链 `design_package/chapters/` 目录存在且路径边界合法；light 链 `design.md` §详细节存在。
 5. **EX-3 承接索引**：concept `design-main.md` 第 7 节详细设计承接索引（light 链 `design.md` 索引节）存在、非空，可建立 `chapter_target → ios doc_type → 目标文件` 完整映射，且 doc_type 取值落在 IOS_BRIEF 七类全集内（出现异平台/自创类型名 → 归属红线，回退概要重判）；归属表全部 owner 被索引覆盖（双向闭合）。
 6. **EX-4 概要 review evidence**：`python3 .trellis/scripts/guru/guru_gate.py status` 显示 overview 当前 digest 已有两个不同 run-id 的 clean review；缺 evidence → 回退概要 review/fix loop。
-7. **EX-5 承接源 + 项目约定**：被审章节引用的技术决策（UI 框架取向、网络层、日志、测试框架、mock 生成、主题、持久化等映射到 project-conventions 槽位）均已「选定」（待定槽位写明决策人/期限）；命中 pending L2 的 doc_type（`domain-model`/`view`/`coordinator`/`external`）均有 `L2豁免：<doc_type> 理由：…` 声明（full 链；缺即 P1）；项目约定 C1~C5 全部通过。
+7. **EX-5 承接源 + 项目约定**：被审章节引用的技术决策（UI 框架取向、网络层、日志、测试框架、mock 生成、主题、持久化等映射到 project-conventions 槽位）均已「选定」（待定槽位写明决策人/期限）；命中 pending L2 的 doc_type（`domain-model`/`view`/`coordinator`/`external`）均有 `L2豁免：<doc_type> 理由：…` 声明（full 链；缺即 P1）；项目约定 C1~C6 全部通过。
 8. **EX-6 机器 Gate**：`python3 .trellis/scripts/guru/guru_gate.py detail <task_dir>` 与 `guru_gate.py trace-matrix <task_dir> --strict` 的结构结论可获取（机检失败项——合同八问四标记缺失[承接行为/失败收口/测试映射/不得补造]、`implement.md` trace §1 缺失、章节闭合失败、编号断链 `unit_ghost_bhv`/`bhv_no_unit`/`slice_ghost_unit`、pending L2 拦截 `_check_pending_l2`——直接并入 findings，人工聚焦语义判定，不重复机检）。
 9. 按被审文档命中的 doc_type 读对应 L2；只装载命中类型（`viewmodel`/`usecase`/`repository`），不全量装；pending doc_type 不装 L2（不存在），按 L1 八问取证 + 豁免核查。
 
@@ -166,7 +166,7 @@ confirm detail 的 strict/soft 通道以 workflow Trellis System 节为准；未
   - `.trellis/spec/harness/detail/detail-type-repository.md`
   - （pending 四类 `domain-model`/`view`/`coordinator`/`external` 无 L2，按 L1 八问 + `L2豁免` 核查）
 - 通用方法与红线：`.trellis/spec/guides/golden-path.md`
-- 项目约定槽位与 C1~C5：`.trellis/spec/conventions/project-conventions.md`
+- 项目约定槽位与 C1~C6：`.trellis/spec/conventions/project-conventions.md`
 - 实现 trace 合同：`.trellis/spec/harness/implementation/implementation-trace-contract.md`
 - 逐 doc_type 取证矩阵与判级：`references/review-baseline.md`
 - 输出字段合同：`references/review-output.md`

@@ -1,6 +1,6 @@
 ---
 name: ios-design-overview-review
-description: 用于审核 Guru iOS 原生（Swift/SwiftUI + DDD 四层）概要设计文档，判定能否进入详细设计。先做 EX 前置判定（判轨/包骨架/需求准入/项目约定 C1~C10/机器 Gate），再按取证矩阵逐章审核：行为覆盖与粒度（BHV-NNN）、owner 归属与分层依赖律（Domain→App→Infrastructure→UI 单向、Domain 零依赖、禁 View 间直连导航、禁 View 直连持久化）、架构总览人审视图六件套、Use Case 时序图策略闭合、技术决策承接（technology_decision_handoff）与合规凭证策略、共享能力归属判定、七类 doc_type（viewmodel/usecase/repository/domain-model/view/coordinator/external）承接索引完整性与 L2 豁免（已出 3 类 viewmodel/usecase/repository，pending 4 类 domain-model/view/coordinator/external）、跨章边连线一致性；先证据后结论，输出分级 findings（严重度/证据/最小修订）与互斥三选一结论，并输出 record-review 证据作为 Gate 收口。规则唯一来源是 `.trellis/spec/harness/overview/` 的 L1 SSOT。
+description: 用于审核 Guru iOS 原生（Swift/SwiftUI + DDD 四层）概要设计文档，判定能否进入详细设计。先做 EX 前置判定（判轨/包骨架/需求准入/项目约定 C1~C6/机器 Gate），再按取证矩阵逐章审核：行为覆盖与粒度（BHV-NNN）、owner 归属与分层依赖律（Domain→App→Infrastructure→UI 单向、Domain 零依赖、禁 View 间直连导航、禁 View 直连持久化）、架构总览人审视图六件套、Use Case 时序图策略闭合、技术决策承接（technology_decision_handoff）与合规凭证策略、共享能力归属判定、七类 doc_type（viewmodel/usecase/repository/domain-model/view/coordinator/external）承接索引完整性与 L2 豁免（已出 3 类 viewmodel/usecase/repository，pending 4 类 domain-model/view/coordinator/external）、跨章边连线一致性；先证据后结论，输出分级 findings（严重度/证据/最小修订）与互斥三选一结论，并输出 record-review 证据作为 Gate 收口。规则唯一来源是 `.trellis/spec/harness/overview/` 的 L1 SSOT。
 ---
 
 # Guru iOS 概要设计审核
@@ -47,20 +47,20 @@ description: 用于审核 Guru iOS 原生（Swift/SwiftUI + DDD 四层）概要�
 - 概要 L1（本审核规则唯一来源）：`.trellis/spec/harness/overview/overview-structure-single-source.md`
 - 详细 L1（七类 doc_type 八问基线，校验承接索引合法性）：`.trellis/spec/harness/detail/detail-structure-single-source.md`
 - 详细 L2（已出 3 类，校验 `viewmodel` / `usecase` / `repository` 承接深度）：`.trellis/spec/harness/detail/detail-type-{viewmodel,usecase,repository}.md`
-- 项目约定（执行前校验 C1~C10）：`.trellis/spec/conventions/project-conventions.md`
+- 项目约定（执行前校验 C1~C6）：`.trellis/spec/conventions/project-conventions.md`
 
 ## 装载顺序与 EX 前置判定（任一失败 → 前置阻断输出，停止逐章审核）
 
 1. 读 L1 主 SSOT；不可用 → 终止并提示先安装 guru spec 模板（`trellis init -t guru-ios-native`）。
 2. 读 `references/review-baseline.md`（取证矩阵）与 `references/review-output.md`（输出合同）。
 3. 读 golden-path（DDD 四层依赖律、golden-path 硬规则）与详细 L1 / 已出 3 类 L2（校验承接索引时回指）。
-4. 读 `project-conventions.md` 并执行 C1~C10 槽位校验；不可读或校验不过 → 前置阻断。
+4. 读 `project-conventions.md` 并执行 C1~C6 槽位校验；不可读或校验不过 → 前置阻断。
 5. **EX-1 判轨**：task.json `guru_chain` 可判定；full 链 `design_package` 已声明。
 6. **EX-2 包骨架（full 链）**：design_package 目录、README.md、design-main.md、chapters/ 齐全；light 链 design.md §1 存在。
 7. **EX-3 需求准入**：需求产物可定位且有 P0/P1 核心能力；不可定位时只有当概要已按 L1 §1-P4 记录显式假设才继续，否则前置阻断（`Capability-to-Architecture Mapping` 只能判为「未建立」）。
 8. **EX-4 机器 Gate**：`python3 .trellis/scripts/guru/guru_gate.py overview <task_dir>` 通过（结构性缺口先由机检定位，人工审核聚焦语义与归属）。
 
-### C1~C10 项目约定槽位校验（任一未落项即记前置缺口）
+### C1~C6 项目约定槽位校验（任一未落项即记前置缺口）
 
 概要若依赖某槽位但 `project-conventions.md` 未给出取值，或概要取值与约定冲突，记前置阻断或 P2（影响归属/合规升 P1）：
 
@@ -111,7 +111,7 @@ description: 用于审核 Guru iOS 原生（Swift/SwiftUI + DDD 四层）概要�
 ## 审核流程
 
 1. **结构识别**：对照 L1 §2 产物合同（按链型取轨道），记录第 1~7 章存在性与位置；缺章记 P1。
-2. **前置判定**：执行 EX-1~EX-4 与 C1~C10；任一失败走前置阻断输出，停止逐章审核。
+2. **前置判定**：执行 EX-1~EX-4 与 C1~C6；任一失败走前置阻断输出，停止逐章审核。
 3. **架构总览取证**（G6，第一取证对象）：六件套逐件核查——一句话架构格式、系统架构图（DDD 四层与依赖方向 Domain→App→Infrastructure→UI）、系统边界图（外部依赖：网络/WCDBSwift/SDK/推送 与调用边界）、核心 UC 表、UC 承接表（列完整 + `bhv_refs`/`index_refs`）、时序图策略表（独立/合并/豁免三选一）。
 4. **行为覆盖核查**（G1）：逐条核对 P0/P1 核心能力 → BHV-NNN 行为集合差集；抽查粒度（§3.1）与失败路径/空态/loading-error 状态/生命周期覆盖。
 5. **归属判定核查**（G2，核心）：逐行核查 owner 唯一性（七类 doc_type 各归正确层）、三问实质性（「同上」式三问记 P2）、DDD 四层依赖律单向无循环无跨层一致性、Domain 零依赖、View 间禁直连导航、View 禁直连持久化、写作顺序依赖闭合、名词先行反模式。
@@ -135,7 +135,7 @@ description: 用于审核 Guru iOS 原生（Swift/SwiftUI + DDD 四层）概要�
 
 ## 输出（互斥分支）
 
-- **前置失败**：仅输出前置缺口与修复动作（含「回退需求 / 补判轨 / 补包骨架 / 补项目约定 C1~C10 / 过机器 Gate」指引）与最小结构状态，不展开逐章审核，不输出 G 项展开结论。
+- **前置失败**：仅输出前置缺口与修复动作（含「回退需求 / 补判轨 / 补包骨架 / 补项目约定 C1~C6 / 过机器 Gate」指引）与最小结构状态，不展开逐章审核，不输出 G 项展开结论。
 - **前置通过**：按 `references/review-output.md` 的字段合同输出——架构视图检查摘要 → 逐条 findings（severity / location / evidence / suggestion）→ 结构概况（链型 / 主定义位置 / 显式假设落盘状态）→ 技术决策承接预览（`technology_decision_handoff_source_preview`）→ 承接索引状态（owner 覆盖 / 七类 doc_type / pending 4 类 `l2_status: pending` 清单）→ G1~G8 状态表 → **三选一结论** → 修订形态建议。
 - 不在本文件维护输出字段清单；字段新增/删改/命名调整只改 `references/review-output.md`。
 

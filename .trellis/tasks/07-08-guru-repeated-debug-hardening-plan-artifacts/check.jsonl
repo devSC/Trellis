@@ -1,0 +1,5 @@
+{"file":"drafts/guru-repeated-debug-install-hardening-plan.md","reason":"Check that original-question coverage and full-chain handoff requirements remain represented in task artifacts."}
+{"file":".trellis/tasks/07-08-guru-repeated-debug-hardening-plan-artifacts/gate-contract.json","reason":"Check that the task is scoped as lite_task/medium with only task-local planning/contract writable paths."}
+{"file":".trellis/tasks/07-08-guru-repeated-debug-hardening-plan-artifacts/prd.md","reason":"Check requirements, scope boundaries, and acceptance criteria for the lite planning package."}
+{"file":".trellis/tasks/07-08-guru-repeated-debug-hardening-plan-artifacts/design.md","reason":"Check traceability from draft concerns to task artifacts and future full-chain handoff."}
+{"file":".trellis/tasks/07-08-guru-repeated-debug-hardening-plan-artifacts/implement.md","reason":"Check ordered validation steps and guardrails before any future implementation begins."}

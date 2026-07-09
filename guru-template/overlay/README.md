@@ -9,11 +9,11 @@
 | `verify/guru_supervise.py` | `.trellis/scripts/guru/` | channel 驱动的 requirements/overview/detail/implement/check runner |
 | `verify/guru_config_patch.py` | `.trellis/scripts/guru/` | 幂等补齐 `.trellis/config.yaml` 的 Guru 默认配置 |
 | `hooks/guru_after_create.py` | `.trellis/scripts/guru/` | jsonl 基线注入（config.yaml after_create） |
-| `hooks/platform/*.sh` | `.claude/hooks/` | 合规三拦截（l10n 同步/SLOT-12 老目录/制裁 TLD） |
+| `hooks/platform/*.sh` | `.claude/hooks/` | 合规三拦截（l10n 同步/老目录/制裁 TLD） |
 | `config-snippets/*` | 对应配置合并 | worktree.verify / config.hooks / claude settings |
 | `trellis-local/SKILL.md` | `.claude/skills/trellis-local/` | 团队定制登记（官方自我迭代规范） |
 
-安装后必做：①按 conventions 模板填 `.trellis/spec/conventions/project-conventions.md` ②按 SLOT-12 填 block-legacy-dirs.sh 的 LEGACY_PATTERNS ③AGENTS.md 受管区块追加（Codex 等无 hook 平台兜底）。
+安装后必做：①按 conventions 模板填 `.trellis/spec/conventions/project-conventions.md` ②按项目存量老目录约定填 block-legacy-dirs.sh 的 LEGACY_PATTERNS ③AGENTS.md 受管区块追加（Codex 等无 hook 平台兜底）。
 
 ## 安装/升级边界（apply.sh）
 

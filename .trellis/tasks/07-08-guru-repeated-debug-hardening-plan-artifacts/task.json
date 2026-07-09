@@ -1,0 +1,28 @@
+{
+  "id": "guru-repeated-debug-hardening-plan-artifacts",
+  "name": "guru-repeated-debug-hardening-plan-artifacts",
+  "title": "Prepare Guru repeated-debug hardening plan artifacts",
+  "description": "Docs-only lite task to convert drafts/guru-repeated-debug-install-hardening-plan.md into Trellis planning artifacts. No source code, runtime, schema, template, package, or install behavior changes.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-07-08",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/guru-0.6.0-ga-worktree",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-09-07-09-add-guru-target-install-wrapper"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

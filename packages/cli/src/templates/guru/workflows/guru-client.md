@@ -70,8 +70,8 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 
 ### Request Triage
 
-- 收到实现类需求时先跑可执行分流：`python3 .trellis/scripts/guru/guru_gate.py intake --description "<需求>" [--path <path> ...]`。不要要求用户自己说 `full/lite/micro`；系统给出推荐；非高风险可在合法审计下 override，高风险不得降为 lite/micro。
-- 若当前已有 active task 但新需求可能完全不同，先不带 `task_dir` 跑 `intake`，确认任务归属或新建任务后才 `--write-contract`，避免污染当前任务。
+- 收到实现类需求时先做可审计分流：不要要求用户自己说 `full/lite/micro`；由 agent 按触达层级、风险与提交需求给出推荐。非高风险可在合法审计下 override，高风险不得降为 lite/micro。
+- 若当前已有 active task 但新需求可能完全不同，先确认任务归属或新建任务；需要提交的微小改动在任务确定后用 `guru_gate.py init-contract` 写 `gate-contract.json`，避免污染当前任务。
 - 简单对话/低风险小改：先分类请求。`low -> small_inline` 自动 inline 处理，默认不创建完整 Trellis task；如果用户要求 commit，则升级为 `low + commit -> micro_task`，创建或复用最小任务并写入 `gate-contract.json`。
 - 进入任务后第一步加载 `client-small-iteration-dev` 的入口决策树：判定碰哪几层（只文案→l10n 路径；只接口→network+data；整页 feature→全链）、风险等级与 route。
 - 固定推荐表：`low -> small_inline`、`low + commit -> micro_task`、`medium -> lite_task`、`high -> full_chain`。`unknown` 不得降为 low；扫描失败至少按 medium，含高风险关键词或路径信号时推荐 high/full_chain。
@@ -79,7 +79,7 @@ Phase 3: Finish  → 验证 → 萃取回写 spec → commit → 收尾
 - 建任务许可 ≠ 实现许可：实现必须等 requirements 确认、overview/detail 双 clean（默认各含 adversarial clean；`adversarial_enabled=false` 时不要求）、detail 确认后 `task.py start`。
 
 [workflow-state:no_task]
-无任务：先跑 `guru_gate.py intake --description "<需求>" [--path <path> ...]` 分类请求。low -> small_inline 自动 inline；low + commit -> micro_task；medium -> lite_task；high -> full_chain 推荐。高风险默认建任务走完整五阶段；用户要求更轻 route 时，只记录 route_selection 偏好与风险确认，仍必须按 full_chain 执行。
+无任务：先分类请求并征得建任务同意。低风险可 small_inline；commit 需 micro_task contract；中风险 lite_task；高风险 full_chain；选择较轻 route 必须记录 route_selection。
 [/workflow-state:no_task]
 
 ### Phase 1: Plan（承载 需求 → 概要 → 详细 三阶段）
@@ -283,7 +283,7 @@ check 可作为 `implement-check` 的拆分子命令运行：`python3 .trellis/s
 
 #### 3.4 Commit `[required · once]`
 
-提交前先运行 `python3 .trellis/scripts/guru/guru_gate.py commit-plan [task-dir]` 获取机器可读 JSON，按其中 `route`、`commit_mode`、`allowed_stage_paths`、`forbidden_stage_paths`、`can_commit_now`、`split_required`、`blocking_reasons` 汇报 staged scope 和建议切分；计划可提交时仍必须通过 `python3 .trellis/scripts/guru/guru_gate.py check-commit <task-dir>` 或等价 PreToolUse hook。full/lite 的既有 Guru gate 语义不降：full 链要求任务已 `in_progress`、staged scope 落在最新 clean implementation review 的 `target_paths` 内；lite route 仍需 scoped 验证和 review 证据（产物形态兼容 `guru_chain=light`）。若 commit gate 只缺 required implementation review record，恢复命令是 `guru_supervise.py implementation-review <task-dir> --staged`，不是 `implement-check`。`small_inline` 不能直接 commit；低风险一旦需要 commit 必须走 `micro_task` 并由任务目录 `gate-contract.json` 约束 staged scope。若实现已发生但缺有效合同，且 staged scope 是低风险 scoped implementation diff，commit-plan 必须进入 post-implementation intake recovery：阻断 direct commit，只推荐创建/切换 `micro_task` 并运行 `init-contract --route micro_task --risk low`，不得倒逼补 full PRD / overview / detail。`gate-degradations.jsonl` 只可作为真实失败与补偿检查证据，不能预授权跳过 gate；high/full_chain 是推荐与 selected route 组合，用户选择较轻 route 时必须由 `route_selection` 审计承接。
+提交前先运行 `python3 .trellis/scripts/guru/guru_gate.py commit-plan [task-dir]` 获取机器可读 JSON，按其中 `route`、`commit_mode`、`allowed_stage_paths`、`forbidden_stage_paths`、`can_commit_now`、`split_required`、`blocking_reasons` 汇报 staged scope 和建议切分；计划可提交时仍必须通过 `python3 .trellis/scripts/guru/guru_gate.py check-commit <task-dir>` 或等价 PreToolUse hook。full/lite 的既有 Guru gate 语义不降：full 链要求任务已 `in_progress`、staged scope 落在最新 clean implementation review 的 `target_paths` 内；lite route 仍需 scoped 验证和 review 证据（产物形态兼容 `guru_chain=light`）。若 commit gate 只缺 required implementation review record，恢复命令是 `guru_supervise.py implementation-review <task-dir> --staged`，不是 `implement-check`。`small_inline` 不能直接 commit；低风险一旦需要 commit 必须走 `micro_task` 并由任务目录 `gate-contract.json` 约束 staged scope。若实现已发生但缺有效合同，且 staged scope 是低风险 scoped implementation diff，commit-plan 必须进入 post-implementation route recovery：阻断 direct commit，只推荐创建/切换 `micro_task` 并运行 `init-contract --route micro_task --risk low`，不得倒逼补 full PRD / overview / detail。`gate-degradations.jsonl` 只可作为真实失败与补偿检查证据，不能预授权跳过 gate；high/full_chain 是推荐与 selected route 组合，用户选择较轻 route 时必须由 `route_selection` 审计承接。
 
 提交前展示 `commit-plan` 摘要、验证证据与建议 commit 切分，等待用户确认；不 amend、不 push；只 stage 本任务相关文件，不回滚用户改动。
 

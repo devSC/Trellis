@@ -23,7 +23,7 @@
 **结论**：前置未通过，不进入逐文档诊断。
 ```
 
-EX 编号语义（详见 SKILL.md「装载顺序与 EX 前置检查」）：EX-1 输入键 / EX-2 路径与骨架 / EX-3 承接索引（`chapter_target → doc_type` 七类映射，双向闭合）/ EX-4 概要 review evidence（`guru_gate.py status` 显示 overview 当前 digest 已有两个不同 `run_id` 的 clean review）/ EX-5 承接源 + 项目约定 C1~C5 + pending L2 豁免 / EX-6 机器 Gate（`detail` + `trace-matrix --strict`）。
+EX 编号语义（详见 SKILL.md「装载顺序与 EX 前置检查」）：EX-1 输入键 / EX-2 路径与骨架 / EX-3 承接索引（`chapter_target → doc_type` 七类映射，双向闭合）/ EX-4 概要 review evidence（`guru_gate.py status` 显示 overview 当前 digest 已有两个不同 `run_id` 的 clean review）/ EX-5 承接源 + 项目约定 C1~C6 + pending L2 豁免 / EX-6 机器 Gate（`detail` + `trace-matrix --strict`）。
 
 ## 分支二：诊断输出（前置通过）
 

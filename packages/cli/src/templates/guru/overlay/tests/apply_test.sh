@@ -12,12 +12,27 @@ bad()  { failn=$((failn+1)); echo "FAIL  $1"; }
 
 mk_target() { # mk_target <name> [with_blocking_core]
   local d="$TMP/$1"
+  local active_task_src
   mkdir -p "$d/.trellis/scripts/common" "$d/.trellis/spec/conventions" "$d/.claude"
   if [ "${2:-yes}" = "yes" ]; then
     printf 'def run_blocking_task_hooks():\n    pass\n' > "$d/.trellis/scripts/common/task_utils.py"
   else
     printf 'def run_task_hooks():\n    pass\n' > "$d/.trellis/scripts/common/task_utils.py"
   fi
+  # Support both packaged template layout and guru-template SSOT layout.
+  for active_task_src in \
+    "$HERE/../../../trellis/scripts/common/active_task.py" \
+    "$HERE/../../../packages/cli/src/templates/trellis/scripts/common/active_task.py" \
+    "$HERE/../../../packages/cli/dist/templates/trellis/scripts/common/active_task.py"; do
+    if [ -f "$active_task_src" ]; then
+      cp "$active_task_src" "$d/.trellis/scripts/common/active_task.py"
+      break
+    fi
+  done
+  [ -f "$d/.trellis/scripts/common/active_task.py" ] || {
+    echo "missing active_task.py fixture source" >&2
+    exit 1
+  }
   # 已填写的项目约定（必须被保留）
   printf '# 项目约定\nSLOT-01: 已填写的真实取值 SENTINEL_KEEP_ME\n' > "$d/.trellis/spec/conventions/project-conventions.md"
   # 含用户自定义 hook 的 settings.json（必须被保留）
@@ -179,7 +194,7 @@ printf 'ENGINE v2\n' > "$T7/.claude/skills/trellis-brainstorm/SKILL.md"
 bash "$APPLY" "$T7" flutter >/dev/null 2>&1
 grep -q "ENGINE v2" "$T7/.agents/skills/trellis-brainstorm/SKILL.md" 2>/dev/null && ok "场景7 单面升级后跨面同步到 v2（D）" || bad "场景7 .agents 面陈旧（D 未修）"
 
-# ============ 场景 8：SLOT-12（block-legacy-dirs LEGACY_PATTERNS）用户值不被二次 apply 覆盖（修 E）============
+# ============ 场景 8：legacy dirs（block-legacy-dirs LEGACY_PATTERNS）用户值不被二次 apply 覆盖（修 E）============
 T8=$(mk_target slot12keep yes)
 bash "$APPLY" "$T8" flutter >/dev/null 2>&1
 python3 - "$T8/.claude/hooks/block-legacy-dirs.sh" <<'PYS'
@@ -188,9 +203,9 @@ p=sys.argv[1]; s=open(p).read()
 open(p,'w').write(s.replace("LEGACY_PATTERNS=''","LEGACY_PATTERNS='lib/old/|lib/legacy/'",1))
 PYS
 bash "$APPLY" "$T8" flutter >/dev/null 2>&1
-grep -q "LEGACY_PATTERNS='lib/old/|lib/legacy/'" "$T8/.claude/hooks/block-legacy-dirs.sh" && ok "场景8 SLOT-12 用户值保留（E）" || bad "场景8 SLOT-12 被模板覆盖（E 未修）"
+grep -q "LEGACY_PATTERNS='lib/old/|lib/legacy/'" "$T8/.claude/hooks/block-legacy-dirs.sh" && ok "场景8 LEGACY_PATTERNS 用户值保留（E）" || bad "场景8 LEGACY_PATTERNS 被模板覆盖（E 未修）"
 bash "$APPLY" "$T8" flutter >/dev/null 2>&1
-grep -q "LEGACY_PATTERNS='lib/old/|lib/legacy/'" "$T8/.claude/hooks/block-legacy-dirs.sh" && ok "场景8 三跑 SLOT-12 仍稳定（幂等）" || bad "场景8 SLOT-12 不稳定"
+grep -q "LEGACY_PATTERNS='lib/old/|lib/legacy/'" "$T8/.claude/hooks/block-legacy-dirs.sh" && ok "场景8 三跑 LEGACY_PATTERNS 仍稳定（幂等）" || bad "场景8 LEGACY_PATTERNS 不稳定"
 
 # ============ 场景 9：多文件 skill 内部非 SKILL.md 文件漂移也跨面同步（修 D 深化，填场景7 盲区）============
 T9=$(mk_target multifiledrift yes)
@@ -450,6 +465,8 @@ assert guards == [{"type": "command", "command": expected_guard, "timeoutSec": 1
 PY
 [ "$?" = 0 ] && ok "场景20 .codex/hooks.json 新建并接入 commit guard" || bad "场景20 .codex/hooks.json 未接入 commit guard"
 mkdir -p "$T20/sub/dir"
+mkdir -p "$T20/.trellis/.runtime/sessions"
+printf '{"current_task":".trellis/tasks/00-bootstrap-guidelines"}\n' > "$T20/.trellis/.runtime/sessions/codex-guard-test.json"
 codex_guard_cmd=$(python3 - "$T20/.codex/hooks.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))

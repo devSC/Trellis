@@ -1,6 +1,6 @@
 ---
 name: ios-design-overview-writing
-description: 用于撰写 Guru iOS 原生平台（典型形态：SwiftUI 主 + RxSwift 遗留，DDD 四层 Domain → App → Infrastructure → UI，Domain 零依赖，FactoryKit @Injected DI，Repository 模式，enum Error per domain，AppCoordinator 导航，WCDBSwift 持久化，ViewModel = ObservableObject + @Published）概要设计文档。按"判轨与设计包骨架、技术栈与约束确认（project-conventions C1~C5）、行为枚举（BHV-NNN 编号，按用户操作/系统反应/失败路径/生命周期四类）、四层 owner 归属判定（三问 + 分层依赖律自检，落 UI/App/Domain/Infrastructure 四层 + 七类 doc_type）、架构总览人审视图（一句话架构/分层架构图/页面流图/核心 UC 表/UC 承接表/时序图策略表）、technology_decision_handoff 技术决策承接清单（含 credential strategy）、详细设计承接索引（doc_type 七分类 viewmodel/usecase/repository/domain-model/view/coordinator/external，逐 UNIT 落 chapters/<slug>.md）、架构就绪自检 G1~G8"的顺序推进；把概要写到"详细设计可直接展开而不需要重新决定边界"，但不进入可编码合同层（Swift 方法签名/@Published 字段全集/enum Error 全集与 case/FactoryKit Container 注册项/WCDBSwift 表结构/SDK 初始化参数/secret value 禁写）。规则唯一来源是 .trellis/spec/harness/overview/ 的 L1 SSOT 与 .trellis/spec/guides/golden-path.md；本 skill 只编排写作动作，不复写规范正文。
+description: 用于撰写 Guru iOS 原生平台（典型形态：SwiftUI 主 + RxSwift 遗留，DDD 四层 Domain → App → Infrastructure → UI，Domain 零依赖，FactoryKit @Injected DI，Repository 模式，enum Error per domain，AppCoordinator 导航，WCDBSwift 持久化，ViewModel = ObservableObject + @Published）概要设计文档。按"判轨与设计包骨架、技术栈与约束确认（project-conventions C1~C6）、行为枚举（BHV-NNN 编号，按用户操作/系统反应/失败路径/生命周期四类）、四层 owner 归属判定（三问 + 分层依赖律自检，落 UI/App/Domain/Infrastructure 四层 + 七类 doc_type）、架构总览人审视图（一句话架构/分层架构图/页面流图/核心 UC 表/UC 承接表/时序图策略表）、technology_decision_handoff 技术决策承接清单（含 credential strategy）、详细设计承接索引（doc_type 七分类 viewmodel/usecase/repository/domain-model/view/coordinator/external，逐 UNIT 落 chapters/<slug>.md）、架构就绪自检 G1~G8"的顺序推进；把概要写到"详细设计可直接展开而不需要重新决定边界"，但不进入可编码合同层（Swift 方法签名/@Published 字段全集/enum Error 全集与 case/FactoryKit Container 注册项/WCDBSwift 表结构/SDK 初始化参数/secret value 禁写）。规则唯一来源是 .trellis/spec/harness/overview/ 的 L1 SSOT 与 .trellis/spec/guides/golden-path.md；本 skill 只编排写作动作，不复写规范正文。
 ---
 
 # Guru iOS 概要设计撰写
@@ -45,7 +45,7 @@ description: 用于撰写 Guru iOS 原生平台（典型形态：SwiftUI 主 + R
 
 1. 读 L1 概要 SSOT `.trellis/spec/harness/overview/overview-structure-single-source.md`；不可用 → 终止并提示先安装 guru spec 模板（`trellis init -t guru-ios-native`）。
 2. 读通用方法 SSOT `.trellis/spec/guides/golden-path.md`（分层依赖律 `Domain → App → Infrastructure → UI` 单向无环、`Domain` 零依赖、FactoryKit `@Injected` DI 禁手动初始化、Repository 模式强制、`enum Error` 分层定义、WCDBSwift 持久化禁 CoreData/SwiftData、ViewModel = `ObservableObject` + `@Published`、private 方法在 `private extension`——这是 owner 归属判定与红线自检的基准）。
-3. 读 `.trellis/spec/conventions/project-conventions.md` 并执行校验清单 C1~C5；任一不过（UI 框架 / 网络层 / 日志 / JSON 修复策略 / 测试框架 / i18n / 主题 / feature 模块结构 / mock 生成 / 构建自动化等槽位缺失或与硬规则冲突）→ 终止并提示先填写项目约定。取值一律引用槽位（`SLOT-NN` 裸 token），不在概要另定。
+3. 读 `.trellis/spec/conventions/project-conventions.md` 并执行校验清单 C1~C6；任一不过（UI 框架 / 网络层 / 日志 / JSON 修复策略 / 测试框架 / i18n / 主题 / feature 模块结构 / mock 生成 / 构建自动化等槽位缺失或与硬规则冲突）→ 终止并提示先填写项目约定。取值一律引用槽位（`SLOT-NN` 裸 token），不在概要另定。
 4. 判轨：读 task.json `guru_chain`（`guru_after_create` 默认 `full`）。full=完整五阶段链（新 feature 模块、新导航流、新 Domain 子能力、持久化结构变更、三方 SDK 接入等高风险需求）→ 走目录级设计包；light=同 feature 内小迭代且获用户同意降级 → 任务内单文件 `design.md`。full 链确认 / 声明 task.json `design_package`（相对 repo root，如 `docs/design/<feature>/`）。
 5. 详细阶段承接索引需要 doc_type 与 L2 状态时读详细 L1 `.trellis/spec/harness/detail/detail-structure-single-source.md`；需要类型差异锚点时读已出三类 L2 `.trellis/spec/harness/detail/detail-type-{viewmodel,usecase,repository}.md`（对应 flutter controller/usecase/repository-datasource 三类一一对应）；其余四类 `domain-model / view / coordinator / external` 为 pending，按 L1 合同八问展开并标注 `l2_status: pending` + `L2豁免：<doc_type> 理由：…`（full 链须 L2 豁免声明，否则详细 Gate 拦截）。
 6. 定位需求产物（`prd.md` / 正式需求包）；缺失走 L1 显式假设路径。
@@ -132,7 +132,7 @@ description: 用于撰写 Guru iOS 原生平台（典型形态：SwiftUI 主 + R
   - `链型`（full/light）与 `概要主定义位置`（`design-main.md` / `design.md` §概要）
   - `feature 边界`（落在哪个 `UI/Features/<Feature>/`，复用 / 新建 Domain 子能力 + Infrastructure 实现清单）
   - `显式假设`（无 / 有：假设、依据、影响范围、验证时点）及 `落盘状态`
-  - `项目约定校验状态`（C1~C5 逐项 通过 / 不过；不过即标终止原因）
+  - `项目约定校验状态`（C1~C6 逐项 通过 / 不过；不过即标终止原因）
   - `行为集合状态`（`BHV-NNN` 条数、四类分布、粒度自检结论）
   - `归属判定状态`（覆盖行为数、四层 owner 分布 + 七类 doc_type 分布、分层依赖律四红线自检结论、唯一写 owner 自检）
   - `架构总览状态`（六件套逐件 完整 / 缺失；缺失时标注影响 G6/G7）
@@ -148,6 +148,6 @@ description: 用于撰写 Guru iOS 原生平台（典型形态：SwiftUI 主 + R
 - 概要阶段中立规范（L1）：`.trellis/spec/harness/overview/overview-structure-single-source.md`
 - 详细阶段 L1 与已出 L2：`.trellis/spec/harness/detail/detail-structure-single-source.md`、`.trellis/spec/harness/detail/detail-type-{viewmodel,usecase,repository}.md`
 - 通用方法 SSOT（分层依赖律 `Domain → App → Infrastructure → UI` / 四条硬红线 / 禁止清单）：`.trellis/spec/guides/golden-path.md`
-- 项目约定取值（C1~C5 硬前置：UI 框架 / 网络层 / 日志 / 测试框架 / i18n / 主题 / mock 生成 / 构建自动化等槽位）：`.trellis/spec/conventions/project-conventions.md`
+- 项目约定取值（C1~C6 硬前置：UI 框架 / 网络层 / 日志 / 测试框架 / i18n / 主题 / mock 生成 / 构建自动化等槽位）：`.trellis/spec/conventions/project-conventions.md`
 - 分章写法细则与模板：`references/chapter-guide.md`
 - 最小成稿样例：`references/examples/design-main-minimal.md`

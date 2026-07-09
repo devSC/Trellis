@@ -5,7 +5,7 @@
 > 严重度判级与取证组织见 `./review-baseline.md`；修订形态（局部修订 / 文档级重构）判定回指 L1 §9。
 > doc_type 七类名一律以 L1 / 详细 L1 为准（`viewmodel` / `usecase` / `repository` / `domain-model` / `view` / `coordinator` / `external`），输出中禁出现自创类型名。
 
-## 分支一：前置阻断输出（EX-1~EX-4 / C1~C10 任一失败）
+## 分支一：前置阻断输出（EX-1~EX-4 / C1~C6 任一失败）
 
 只输出以下三段，不展开逐章审核，不输出 G 项展开结论：
 
