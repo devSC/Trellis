@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/cli/backend/guru-overlay-gates.md", "reason": "Review Guru route contracts, slice-plan, implementation-review, commit-plan, status, and route-aware finish requirements."}
+{"file": ".trellis/spec/cli/backend/commands-channel.md", "reason": "Review channel worker lifecycle, guard, concurrency, cleanup, and wait semantics."}
+{"file": ".trellis/spec/cli/backend/platform-integration.md", "reason": "Review sub-agent prompt/context parity and no nested-dispatch regressions."}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "Review multi-entry dispatch hazards, source/template parity, and regression coverage quality."}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Review test coverage quality and fixture shape."}
+{"file": ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/research/session-timing-evidence.md", "reason": "Validate that implementation addresses the observed slow paths without broadening scope."}

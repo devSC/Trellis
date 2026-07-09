@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "slice_id": "UNIT-route-and-platform-parity",
+  "owner_unit": "UNIT-route-and-platform-parity",
+  "target_kind": "staged",
+  "target_paths": [
+    ".trellis/config.yaml",
+    ".trellis/spec/cli/backend/guru-overlay-gates.md",
+    "guru-template/workflows/guru-client-workflow.md",
+    "guru-template/workflows/guru-go-workflow.md",
+    "guru-template/workflows/guru-h5-workflow.md",
+    "guru-template/workflows/guru-ios-workflow.md",
+    "packages/cli/src/templates/guru/workflows/guru-client.md",
+    "packages/cli/src/templates/guru/workflows/guru-go.md",
+    "packages/cli/src/templates/guru/workflows/guru-h5.md",
+    "packages/cli/src/templates/guru/workflows/guru-ios.md"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "workflow_contract",
+    "dispatch_mode_parity",
+    "template_mirror"
+  ],
+  "depends_on": [
+    "UNIT-parallel-slice-dispatcher"
+  ],
+  "deterministic_checks": [
+    "rg -n \"dispatch-mode aware\" guru-template/workflows packages/cli/src/templates/guru/workflows",
+    "pnpm --filter @devsc/trellis run sync:guru:check"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/check.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/implementation-evidence.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/implement.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/verification-evidence.jsonl",
+      ".trellis/scripts/guru/guru_gate.py",
+      ".trellis/scripts/guru/guru_supervise.py",
+      "guru-template/overlay/verify/guru_gate.py",
+      "guru-template/overlay/verify/guru_supervise.py",
+      "guru-template/overlay/verify/tests/run_tests.sh",
+      "marketplace",
+      "packages/cli/src/templates/guru/overlay/verify/guru_gate.py",
+      "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py",
+      "packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh"
+    ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-platform-docs-dispatch-mode-aware",
+      "rule": "workflow/template text must describe dispatch-mode aware routing: sub-agent is default when configured, channel is only selected by config or explicit backend, and worker prompts keep Active task context.",
+      "source": "design.md#UNIT-route-and-platform-parity",
+      "owner": "UNIT-route-and-platform-parity",
+      "positive_case": "Guru code-spec and workflow templates use dispatch-mode aware wording and package copies match guru-template",
+      "negative_case": "spec/template docs still say channel default or latest-row-only commit coverage",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "rg dispatch-mode aware",
+        "sync:guru:check"
+      ]
+    }
+  ]
+}

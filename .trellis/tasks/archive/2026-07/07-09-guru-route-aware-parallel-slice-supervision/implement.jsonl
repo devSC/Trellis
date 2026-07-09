@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/cli/backend/guru-overlay-gates.md", "reason": "Guru route contracts, slice-plan, implementation-review, commit-plan, worker status, and finish/commit contracts."}
+{"file": ".trellis/spec/cli/backend/commands-channel.md", "reason": "Channel worker guard, bounded concurrency, lifecycle, cleanup, and status semantics for parallel slice workers."}
+{"file": ".trellis/spec/cli/backend/platform-integration.md", "reason": "Platform sub-agent context delivery classes and Active task dispatch protocol parity."}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Python runtime script conventions for Guru gate and supervisor changes."}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "Shared backend quality and multi-entry dispatch review guidance."}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Unit and regression test expectations for CLI/template changes."}
+{"file": ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/research/session-timing-evidence.md", "reason": "Session timing evidence and concrete bottleneck summary that motivates the implementation."}

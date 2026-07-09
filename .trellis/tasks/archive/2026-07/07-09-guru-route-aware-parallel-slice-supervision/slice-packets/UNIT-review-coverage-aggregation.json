@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "slice_id": "UNIT-review-coverage-aggregation",
+  "owner_unit": "UNIT-review-coverage-aggregation",
+  "target_kind": "staged",
+  "target_paths": [
+    ".trellis/scripts/guru/guru_gate.py",
+    "guru-template/overlay/verify/guru_gate.py",
+    "packages/cli/src/templates/guru/overlay/verify/guru_gate.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "commit_gate",
+    "multi_slice_review",
+    "staged_scope_authorization"
+  ],
+  "depends_on": [
+    "UNIT-slice-plan-scheduler"
+  ],
+  "deterministic_checks": [
+    "python3 -m py_compile .trellis/scripts/guru/guru_gate.py guru-template/overlay/verify/guru_gate.py packages/cli/src/templates/guru/overlay/verify/guru_gate.py",
+    "bash guru-template/overlay/verify/tests/run_tests.sh"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/check.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/implementation-evidence.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/implement.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/verification-evidence.jsonl",
+      ".trellis/scripts/guru/guru_supervise.py",
+      "guru-template/overlay/verify/guru_supervise.py",
+      "guru-template/overlay/verify/tests/run_tests.sh",
+      "marketplace",
+      "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py",
+      "packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh"
+    ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-review-set-coverage",
+      "rule": "commit-plan and check-commit must aggregate current clean review records to cover all staged implementation paths and must not authorize commit from the latest row alone.",
+      "source": "design.md#UNIT-review-coverage-aggregation",
+      "owner": "UNIT-review-coverage-aggregation",
+      "positive_case": "multi-slice fixtures pass only when each staged path has current clean review coverage and recommend --slice for uncovered paths",
+      "negative_case": "latest clean review for one slice authorizes unrelated staged paths from another slice",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "commit-plan multi slice review-set pass fixture",
+        "commit-plan missing slice review command fixture"
+      ]
+    }
+  ]
+}

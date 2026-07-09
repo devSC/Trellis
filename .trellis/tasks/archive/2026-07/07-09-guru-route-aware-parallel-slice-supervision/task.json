@@ -1,0 +1,88 @@
+{
+  "id": "guru-route-aware-parallel-slice-supervision",
+  "name": "guru-route-aware-parallel-slice-supervision",
+  "title": "Harden Guru route-aware parallel slice supervision",
+  "description": "Route-aware Guru supervision hardening for parallel slice dispatch, provider policy, phase guard, active-task injection, worker watchdog, and multi-review commit coverage.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-07-09",
+  "completedAt": "2026-07-09",
+  "branch": null,
+  "base_branch": "codex/guru-0.6.0-ga-worktree",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {},
+  "guru_gates": {
+    "requirements": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-09T13:00:30+08:00",
+      "confirmation_scope": "requirements_gate_only",
+      "allowed_next_action": "overview_design",
+      "prompt_summary": "Requirements confirmation allows overview/detail planning only",
+      "artifact_digest": "7338e7f27eebf0c3353e1139fceeda202086aaa1edcd012ae81b5c5984cb7981"
+    },
+    "review_runs": {
+      "overview": [
+        {
+          "run_id": "overview-dispatch-mode-20260709T1301",
+          "reviewer": "clean-context-dispatch-mode",
+          "recorded_at": "2026-07-09T13:02:06+08:00",
+          "artifact_digest": "c5b1de22388477c8e7d7c0d83d40f7b1303a38e0694374cbae94f79d520e4cff",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "概要复核1：PRD BHV-001..009 均在 design §1 owner 表、流程图和详细设计承接索引中有承接；channel-first 已修正为 dispatch-mode aware，当前项目默认 sub-agent，channel 仅为配置/显式选择后端；未发现 medium+ 阻塞。"
+        },
+        {
+          "run_id": "overview-compatibility-20260709T1302",
+          "reviewer": "clean-context-compatibility",
+          "recorded_at": "2026-07-09T13:02:18+08:00",
+          "artifact_digest": "c5b1de22388477c8e7d7c0d83d40f7b1303a38e0694374cbae94f79d520e4cff",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "概要复核2：兼容性与回滚路径清楚：slice-plan 保持只读且新增字段 additive；micro/lite 不继承 full-chain packet 开销；unsafe writer 并行回退串行；review coverage 与 commit tail 保持 fail-closed；未发现 medium+ 阻塞。"
+        }
+      ],
+      "detail": [
+        {
+          "run_id": "detail-contract-20260709T1303",
+          "reviewer": "clean-context-detail-contract",
+          "recorded_at": "2026-07-09T13:02:39+08:00",
+          "artifact_digest": "be08598be32d7568d2c932b684656d899519c0e67798eff15f340b128993097b",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "详细复核1：§2 中 UNIT-slice-plan-scheduler、UNIT-parallel-slice-dispatcher、UNIT-worker-isolation-policy、UNIT-review-coverage-aggregation、UNIT-route-and-platform-parity、UNIT-tests 均包含职责、行为定义、数据结构/合同、状态边界、测试映射和不得补造清单；BHV 承接完整；未发现 medium+ 阻塞。",
+          "deletion_audit": "未发现应删除的核心设计单元；channel 相关内容已降级为可选后端说明，保留用于 codex.dispatch_mode=channel 或显式 durable worker 场景。"
+        },
+        {
+          "run_id": "detail-test-boundary-20260709T1304",
+          "reviewer": "clean-context-test-boundary",
+          "recorded_at": "2026-07-09T13:02:53+08:00",
+          "artifact_digest": "be08598be32d7568d2c932b684656d899519c0e67798eff15f340b128993097b",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "详细复核2：测试映射覆盖 plan schema、dispatch safety、multi-review commit coverage、micro/lite/full route behavior、dispatch mode selection 与 prompt docs；回滚路径明确；sub-agent mode 下不得隐式创建 channel 的限制已写入测试与不得补造清单；未发现 medium+ 阻塞。",
+          "deletion_audit": "未发现可删除但仍被保留的默认 channel 路径；保留 channel backend 是兼容配置分支，不是默认执行面；未发现重复或投机性的设计单元。"
+        }
+      ]
+    },
+    "detail": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-09T13:31:58+08:00",
+      "confirmation_scope": "detail_gate_only",
+      "allowed_next_action": "task_start",
+      "prompt_summary": "Detail confirmation allows task.py start only",
+      "artifact_digest": "be08598be32d7568d2c932b684656d899519c0e67798eff15f340b128993097b"
+    }
+  }
+}

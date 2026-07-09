@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "slice_id": "UNIT-slice-plan-scheduler",
+  "owner_unit": "UNIT-slice-plan-scheduler",
+  "target_kind": "staged",
+  "target_paths": [
+    ".trellis/scripts/guru/guru_gate.py",
+    "guru-template/overlay/verify/guru_gate.py",
+    "packages/cli/src/templates/guru/overlay/verify/guru_gate.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "gate_runtime",
+    "full_chain_packet_required",
+    "dispatch_advisory"
+  ],
+  "depends_on": [],
+  "deterministic_checks": [
+    "python3 -m py_compile .trellis/scripts/guru/guru_gate.py guru-template/overlay/verify/guru_gate.py packages/cli/src/templates/guru/overlay/verify/guru_gate.py",
+    "bash guru-template/overlay/verify/tests/run_tests.sh"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/check.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/implementation-evidence.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/implement.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/verification-evidence.jsonl",
+      ".trellis/scripts/guru/guru_supervise.py",
+      "guru-template/overlay/verify/guru_supervise.py",
+      "guru-template/overlay/verify/tests/run_tests.sh",
+      "marketplace",
+      "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py",
+      "packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh"
+    ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-slice-plan-readonly-dispatch-aware",
+      "rule": "slice-plan must remain read-only while emitting schema_version=2, parallel_groups, per-slice dependency/safety metadata, and dispatch_advisory selected from codex.dispatch_mode.",
+      "source": "design.md#UNIT-slice-plan-scheduler",
+      "owner": "UNIT-slice-plan-scheduler",
+      "positive_case": "slice-plan emits dispatch_advisory.selected_backend=sub-agent and channel_is_default=false in this project without writing task files",
+      "negative_case": "slice-plan creates channel state, writes packet/review files, or defaults to channel when codex.dispatch_mode is sub-agent",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "Guru overlay verify slice-plan dispatch-aware fixtures",
+        "live slice-plan dry run for this task"
+      ]
+    }
+  ]
+}

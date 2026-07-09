@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "slice_id": "UNIT-worker-isolation-policy",
+  "owner_unit": "UNIT-worker-isolation-policy",
+  "target_kind": "staged",
+  "target_paths": [
+    ".trellis/scripts/guru/guru_supervise.py",
+    "guru-template/overlay/verify/guru_supervise.py",
+    "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "writer_parallelism",
+    "dirty_scope",
+    "resource_locks"
+  ],
+  "depends_on": [
+    "UNIT-parallel-slice-dispatcher"
+  ],
+  "deterministic_checks": [
+    "python3 -m py_compile .trellis/scripts/guru/guru_supervise.py guru-template/overlay/verify/guru_supervise.py packages/cli/src/templates/guru/overlay/verify/guru_supervise.py",
+    "bash guru-template/overlay/verify/tests/run_tests.sh"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/check.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/implementation-evidence.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/implement.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/verification-evidence.jsonl",
+      ".trellis/scripts/guru/guru_gate.py",
+      "guru-template/overlay/verify/guru_gate.py",
+      "guru-template/overlay/verify/tests/run_tests.sh",
+      "marketplace",
+      "packages/cli/src/templates/guru/overlay/verify/guru_gate.py",
+      "packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh"
+    ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-worker-isolation-fail-closed",
+      "rule": "writer slices must downgrade or block before spawn when target paths overlap, dependencies are unresolved, dirty scope is invalid, or broad resource locks are detected.",
+      "source": "design.md#UNIT-worker-isolation-policy",
+      "owner": "UNIT-worker-isolation-policy",
+      "positive_case": "resource-lock and overlap fixtures mark affected slices parallel_safe=false with explicit blockers",
+      "negative_case": "two unsafe writer slices are emitted as a parallel writer group",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "resource-lock downgrade fixture",
+        "target-overlap downgrade fixture"
+      ]
+    }
+  ]
+}

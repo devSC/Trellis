@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "slice_id": "UNIT-parallel-slice-dispatcher",
+  "owner_unit": "UNIT-parallel-slice-dispatcher",
+  "target_kind": "staged",
+  "target_paths": [
+    ".trellis/scripts/guru/guru_supervise.py",
+    "guru-template/overlay/verify/guru_supervise.py",
+    "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "worker_dispatch",
+    "sub_agent_backend",
+    "channel_backend"
+  ],
+  "depends_on": [
+    "UNIT-slice-plan-scheduler"
+  ],
+  "deterministic_checks": [
+    "python3 -m py_compile .trellis/scripts/guru/guru_supervise.py guru-template/overlay/verify/guru_supervise.py packages/cli/src/templates/guru/overlay/verify/guru_supervise.py",
+    "python3 .trellis/scripts/guru/guru_supervise.py implement-slices .trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision --dry-run --backend auto"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/check.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/implementation-evidence.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/implement.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/verification-evidence.jsonl",
+      ".trellis/scripts/guru/guru_gate.py",
+      "guru-template/overlay/verify/guru_gate.py",
+      "guru-template/overlay/verify/tests/run_tests.sh",
+      "marketplace",
+      "packages/cli/src/templates/guru/overlay/verify/guru_gate.py",
+      "packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh"
+    ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-dispatcher-sub-agent-auto",
+      "rule": "implement-slices --backend auto must select the configured dispatch mode and in sub-agent mode return Active task-prefixed trellis-implement briefs instead of creating a channel.",
+      "source": "design.md#UNIT-parallel-slice-dispatcher",
+      "owner": "UNIT-parallel-slice-dispatcher",
+      "positive_case": "dry-run output has selected_backend=sub-agent, status_source for main-session platform sub-agent results, and no channel creation command",
+      "negative_case": "auto backend creates channel workers or omits Active task context when codex.dispatch_mode is sub-agent",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "Guru overlay verify implement-slices backend fixtures",
+        "live implement-slices --dry-run --backend auto"
+      ]
+    }
+  ]
+}

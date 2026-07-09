@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "slice_id": "UNIT-tests",
+  "owner_unit": "UNIT-tests",
+  "target_kind": "staged",
+  "target_paths": [
+    "guru-template/overlay/verify/tests/run_tests.sh",
+    "packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "gate_regression",
+    "dispatch_safety",
+    "commit_coverage"
+  ],
+  "depends_on": [
+    "UNIT-slice-plan-scheduler",
+    "UNIT-parallel-slice-dispatcher",
+    "UNIT-worker-isolation-policy",
+    "UNIT-review-coverage-aggregation"
+  ],
+  "deterministic_checks": [
+    "bash guru-template/overlay/verify/tests/run_tests.sh",
+    "bash packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/check.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/implementation-evidence.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/implement.jsonl",
+      ".trellis/tasks/07-09-guru-route-aware-parallel-slice-supervision/verification-evidence.jsonl",
+      ".trellis/scripts/guru/guru_gate.py",
+      ".trellis/scripts/guru/guru_supervise.py",
+      "guru-template/overlay/verify/guru_gate.py",
+      "guru-template/overlay/verify/guru_supervise.py",
+      "marketplace",
+      "packages/cli/src/templates/guru/overlay/verify/guru_gate.py",
+      "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py"
+    ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-tests-cover-route-parallel-review",
+      "rule": "overlay tests must cover route-aware no-packet behavior, dispatch backend selection, unsafe writer fallback, resource-lock downgrade, and review-set commit coverage.",
+      "source": "design.md#UNIT-tests",
+      "owner": "UNIT-tests",
+      "positive_case": "Guru overlay verify tests pass with fixtures for micro/lite no-packet, sub-agent backend, overlap/resource serial fallback, and multi-slice review coverage",
+      "negative_case": "parallel dispatch or commit coverage changes ship without focused regression fixtures",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "bash guru-template/overlay/verify/tests/run_tests.sh",
+        "bash packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh"
+      ]
+    }
+  ]
+}
