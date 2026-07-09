@@ -38,6 +38,7 @@
     "release:promote": "node scripts/release.js promote",
     "manifest": "node scripts/create-manifest.js",
     "guru:install": "bash scripts/guru-install-target.sh",
+    "guru:install:targets": "bash scripts/guru-install-target.sh --targets",
     "sync:guru": "node scripts/sync-guru-template.js",
     "sync:guru:check": "node scripts/sync-guru-template.js --check"
   },
