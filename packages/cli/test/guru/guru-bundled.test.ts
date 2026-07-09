@@ -182,7 +182,7 @@ describe("bundled multi-platform guru workflows", () => {
     }
   });
 
-  it("defaults ordinary in_progress routing to channel while preserving rollback modes", async () => {
+  it("routes ordinary in_progress through dispatcher plan while preserving rollback modes", async () => {
     for (const id of [GURU_CLIENT_WORKFLOW_ID, ...PLATFORMS]) {
       const resolved = await resolveWorkflowTemplate(id);
       const defaultRoute = workflowStateBlock(resolved.content, "in_progress");
@@ -199,10 +199,18 @@ describe("bundled multi-platform guru workflows", () => {
         "in_progress-inline",
       );
 
-      expect(defaultRoute).toContain("trellis channel");
+      expect(defaultRoute).toContain("dispatch-mode aware");
+      expect(defaultRoute).toContain(
+        "implement-slices <task-dir> --dry-run --backend auto",
+      );
+      expect(defaultRoute).toContain("按 selected_backend 派发");
+      expect(defaultRoute).toContain("channel 仅 selected_backend=channel");
+      expect(defaultRoute).toContain("dispatch_now/deferred_slices");
+      expect(defaultRoute).not.toContain("默认用官方 trellis channel");
       expect(defaultRoute).toContain("guru_supervise.py");
       expect(defaultRoute).not.toContain("dispatch trellis-implement");
       expect(channelRoute).toContain("guru_supervise.py");
+      expect(channelRoute).toContain("trellis channel");
       expect(channelRoute).toContain("done/error/killed");
       expect(legacyRoute).toContain("dispatch trellis-implement");
       expect(legacyRoute).toContain("Active task: <path>");

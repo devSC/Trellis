@@ -127,7 +127,7 @@ Phase 3: Finish  → 验证（swift build/test）→ 萃取回写 spec → commi
 - 2.3 回退 `[on demand]`
 
 [workflow-state:in_progress]
-实现→质检→spec回写→commit→finish。默认用官方 trellis channel：主会话运行 guru_supervise.py implement-check（或拆分 implement/check / 等价 create/spawn/send/wait/messages），等待 done/error/killed，失败先读 messages --raw；worker 不 commit/push/merge。无 swift build/test 证据不 commit；设计缺陷回 Phase1。
+实现→质检→spec回写→commit→finish。dispatch-mode aware：主会话先运行 guru_supervise.py implement-slices <task-dir> --dry-run --backend auto 读取 dispatcher plan；按 selected_backend 派发，sub-agent 按返回 brief 且 prompt 首行 Active task: <path>，worker 不嵌套 spawn implement/check；channel 仅 selected_backend=channel 时用官方 worker/implement-check；inline 串行手工执行；decision=serial|blocked 不强并行，按 dispatch_now/deferred_slices 推进；worker 不 commit/push/merge。无 swift build/test 证据不 commit；设计缺陷回 Phase1。
 [/workflow-state:in_progress]
 
 [workflow-state:in_progress-channel]
@@ -169,7 +169,7 @@ Phase 3: Finish  → 验证（swift build/test）→ 萃取回写 spec → commi
 - 需求不清 → `trellis-brainstorm`（前置探索）；full 链正式需求 → `requirement-writing` / `requirement-review`（guru-ai-guides）。
 - 概要/详细撰写 → `ios-design-overview-writing` / `ios-design-detail-writing`；Gate 判定 → 对应 `ios-design-overview-review` / `ios-design-detail-review`。
 - 需求发现 / Domain Grill → `trellis-brainstorm`；requirements review 默认按 route：full_chain+配置开启才运行 `guru_supervise.py --adversarial requirements`，lite bounded 可选，micro/small 默认不跑；overview/detail 自动 review/fix → `guru_supervise.py overview|detail`。
-- `in_progress` 实现/质检 → 默认运行 `python3 .trellis/scripts/guru/guru_supervise.py implement-check <task>`（必要时拆分 implement/check）（官方 `trellis channel`，注入 iOS implementation/review skill）。
+- `in_progress` 实现/质检 → 先运行 `python3 .trellis/scripts/guru/guru_supervise.py implement-slices <task-dir> --dry-run --backend auto` 读取 dispatcher plan；按 `selected_backend` 派发，`channel` 仅 `selected_backend=channel` 时使用官方 worker/`implement-check`，`sub-agent` 按返回 brief，`inline` 串行；worker 不嵌套 spawn implement/check、不 commit/push/merge。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`（萃取九段）。
 
 [/Claude Code, Cursor, OpenCode, codex-channel, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
@@ -178,7 +178,7 @@ Phase 3: Finish  → 验证（swift build/test）→ 萃取回写 spec → commi
 
 - 需求不清 → `trellis-brainstorm`；full 链正式需求 → `requirement-writing/review`；概要/详细 → `ios-design-*-writing/review`。
 - 需求发现 / Domain Grill → `trellis-brainstorm`；requirements review 默认按 route：full_chain+配置开启才运行 `guru_supervise.py --adversarial requirements`，lite bounded 可选，micro/small 默认不跑；overview/detail 自动 review/fix → `guru_supervise.py overview|detail`。
-- `in_progress` 实现/质检 → legacy dispatch `trellis-implement` / `trellis-check`（口径 = `ios-implementation-guru-writing` / `ios-implementation-guru-review`），prompt 以 `Active task: <path>` 开头。
+- `in_progress` 实现/质检 → 先运行 `python3 .trellis/scripts/guru/guru_supervise.py implement-slices <task-dir> --dry-run --backend auto`，只按返回的 `trellis-implement` / `trellis-check` brief 派发（口径 = `ios-implementation-guru-writing` / `ios-implementation-guru-review`，prompt 首行 `Active task: <path>`，worker 不嵌套 spawn implement/check）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`。
 
 [/codex-sub-agent]
@@ -284,7 +284,7 @@ prd 草稿成形后执行 Domain Grill：对照 golden-path/项目约定/既有 
 
 进入本节的最低硬条件是 `python3 .trellis/scripts/guru/guru_gate.py check-implementation <task-dir>` 通过；`guru_supervise.py implement|check|implement-check` 会在启动 worker 前自动执行该 gate，`planning` 状态一律 fail-closed。
 
-dispatch-mode aware：主会话先按 `codex.dispatch_mode` 选择后端；`sub-agent` 模式 dispatch `trellis-implement`（prompt 第一行必须是 `Active task: <path>`，且不得再嵌套 spawn implement/check）；`channel` 模式才运行 `python3 .trellis/scripts/guru/guru_supervise.py implement <task-dir>` 或等价官方 `trellis channel create/spawn/send/wait/messages`；`inline` 模式先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT（含命中的 `detail-type-*.md`）。helper 只注入存在的 `implement.jsonl`、任务产物和 `ios-implementation-guru-writing` skill，等待后端的 done/error/killed 或平台 final status。编码按 `ios-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，**按自底向上顺序**（`domain-model` → `repository` → `usecase` → `viewmodel` → `view`，`coordinator`/`external` 横切）逐片实现；执行/验证证据写入 task-local mutable evidence，不把 `implement.md` 当作 detail 确认后的可变证据文件。
+dispatch-mode aware：主会话第一步先运行 `python3 .trellis/scripts/guru/guru_supervise.py implement-slices <task-dir> --dry-run --backend auto`，不得直接凭 `codex.dispatch_mode` 手工选择后端；执行必须以 dry-run 报告的 `selected_backend`、`decision`、`dispatch_items`、`dispatch_now`、`deferred_slices`、`downgrade_reasons` 为准。`selected_backend=sub-agent` 时按返回的 `trellis-implement` brief 派发平台 sub-agent（prompt 第一行必须是 `Active task: <path>`，worker 已是被调度者，且不得再嵌套 spawn implement/check）；`selected_backend=channel` 时才使用官方 channel worker / `python3 .trellis/scripts/guru/guru_supervise.py implement-check <task-dir>` plan；`selected_backend=inline` 时串行手工执行返回命令，并先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT（含命中的 `detail-type-*.md`）。`decision=serial|blocked` 必须按 `downgrade_reasons` 串行执行或停下处理，不得强行并行；只派发 `dispatch_now`，`deferred_slices` 留待后续轮次。helper 只注入存在的 `implement.jsonl`、任务产物和 `ios-implementation-guru-writing` skill，等待后端的 done/error/killed 或平台 final status。编码按 `ios-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，**按自底向上顺序**（`domain-model` → `repository` → `usecase` → `viewmodel` → `view`，`coordinator`/`external` 横切）逐片实现；执行/验证证据写入 task-local mutable evidence，不把 `implement.md` 当作 detail 确认后的可变证据文件。
 golden-path 硬约束逐片落实：FactoryKit `@Injected` 注入（禁手动 init 依赖）、Repository 接口在 Domain 实现在 Infrastructure、`enum Error` 分层、ViewModel `ObservableObject`+`@Published`、private 方法置于 `private extension`、持久化只走 WCDBSwift。发现设计缺口停下回 Phase 1 修订，不在代码里绕过设计语义。
 
 #### 2.2 质检 `[required · repeatable]`
