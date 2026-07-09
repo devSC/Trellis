@@ -3163,20 +3163,31 @@ def _path_in_targets(path: str, target_paths: list) -> bool:
     return False
 
 
-def _implementation_review_problem(record, staged_paths: list, task_dir: str, root: str) -> str:
+def _implementation_review_record_id(record: dict, fallback: str) -> str:
+    for key in ("run_id", "review_target", "slice_id"):
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return fallback
+
+
+def _implementation_review_base_problem(record, label: str) -> str:
     if not isinstance(record, dict):
-        return "implementation review record missing"
+        return f"{label} missing"
     verdict_problem = guru_review_record.validate_verdict_values(record)
     if verdict_problem:
-        return "latest implementation review is malformed or incomplete; run implementation-review --staged for a complete clean verdict"
+        return (
+            f"{label} is malformed or incomplete; run implementation-review "
+            "--staged for a complete clean verdict"
+        )
     if str(record.get("review_result", "")).strip().lower() != "clean":
-        return f"latest implementation review is not clean: review_result={record.get('review_result')!r}"
+        return f"{label} is not clean: review_result={record.get('review_result')!r}"
     if str(record.get("route_class", "none")).strip() not in {"", "none"}:
-        return f"latest implementation review route_class is not none: {record.get('route_class')!r}"
+        return f"{label} route_class is not none: {record.get('route_class')!r}"
     if str(record.get("supervisor_failure", "none")).strip() not in {"", "none"}:
-        return f"latest implementation review has supervisor_failure={record.get('supervisor_failure')!r}"
+        return f"{label} has supervisor_failure={record.get('supervisor_failure')!r}"
     if record.get("required_satisfied") is not True:
-        return "latest implementation review did not satisfy required semantic provider"
+        return f"{label} did not satisfy required semantic provider"
     for key, bad_values in (
         ("deterministic_checks", {"failed", "missing"}),
         ("dirty_scope", {"invalid"}),
@@ -3184,7 +3195,20 @@ def _implementation_review_problem(record, staged_paths: list, task_dir: str, ro
     ):
         value = str(record.get(key, "")).strip().lower()
         if value in bad_values:
-            return f"latest implementation review has {key}={value}"
+            return f"{label} has {key}={value}"
+    target_paths = record.get("target_paths")
+    if not isinstance(target_paths, list) or not target_paths:
+        return f"{label} has no target_paths; cannot prove staged scope belongs to reviewed slice"
+    reviewed_digest = record.get("reviewed_target_digest")
+    if not isinstance(reviewed_digest, str) or not reviewed_digest.strip():
+        return f"{label} has no reviewed_target_digest; run implementation-review --staged before commit"
+    return ""
+
+
+def _implementation_review_problem(record, staged_paths: list, task_dir: str, root: str) -> str:
+    problem = _implementation_review_base_problem(record, "latest implementation review")
+    if problem:
+        return problem
     target_paths = record.get("target_paths")
     task_artifact_paths = [
         path for path in staged_paths
@@ -3197,15 +3221,11 @@ def _implementation_review_problem(record, staged_paths: list, task_dir: str, ro
         if path not in task_artifact_paths
     ]
     if not code_paths:
-        return "staged changes contain only task/workspace artifacts; this is not a Guru implementation commit"
-    if not isinstance(target_paths, list) or not target_paths:
-        return "latest implementation review has no target_paths; cannot prove staged scope belongs to reviewed slice"
+        return "staged changes contain only task artifacts/workspace artifacts; this is not a Guru implementation commit"
     out_of_scope = [path for path in code_paths if not _path_in_targets(path, target_paths)]
     if out_of_scope:
         return "staged paths outside latest reviewed target_paths: " + ", ".join(out_of_scope[:5])
     reviewed_digest = record.get("reviewed_target_digest")
-    if not isinstance(reviewed_digest, str) or not reviewed_digest.strip():
-        return "latest implementation review has no reviewed_target_digest; run implementation-review --staged before commit"
     try:
         staged_digest = guru_review_record.target_snapshot_digest(root, target_paths, "index")
     except guru_review_record.ReviewRecordError as exc:
@@ -3383,7 +3403,7 @@ def _cmd_check_micro_commit(task_dir: str, contract: dict, staged_paths: list, r
 def _direct_low_risk_commit_problem(staged_paths: list, root: str) -> str:
     artifact_paths = [path for path in staged_paths if guru_contract.is_task_artifact_path(path, "", root)]
     if artifact_paths:
-        return "direct low-risk commit cannot include task/workspace artifacts: " + ", ".join(artifact_paths[:5])
+        return "direct low-risk commit cannot include task artifacts/workspace artifacts: " + ", ".join(artifact_paths[:5])
     code_paths = [path for path in staged_paths if path not in artifact_paths]
     if not code_paths:
         return "direct low-risk commit requires staged implementation files"
@@ -3458,6 +3478,15 @@ def _implementation_review_command(task_dir: str, root: str) -> str:
     return f"python3 .trellis/scripts/guru/guru_supervise.py implementation-review{suffix} --staged"
 
 
+def _implementation_review_slice_command(task_dir: str, root: str, slice_id: str) -> str:
+    display_task = _display_task_dir(task_dir, root)
+    suffix = f" {shlex.quote(display_task)}" if display_task else ""
+    return (
+        "python3 .trellis/scripts/guru/guru_supervise.py "
+        f"implementation-review{suffix} --slice {shlex.quote(slice_id)} --staged"
+    )
+
+
 def _stage_command(paths: list) -> list:
     cleaned = [path for path in paths if isinstance(path, str) and path.strip()]
     if not cleaned:
@@ -3500,9 +3529,27 @@ def _new_commit_plan(staged_paths: list) -> dict:
         "required_user_confirmations": [],
         "suggested_stage_commands": [],
         "split_suggestions": [],
+        "review_coverage": _empty_review_coverage(),
         "stop_boundary": "before_commit",
         "contract_present": False,
         "contract_valid": None,
+    }
+
+
+def _empty_review_coverage() -> dict:
+    return {
+        "source": "review-records/implementation-reviews.jsonl",
+        "records_considered": 0,
+        "records_current_clean": 0,
+        "covered_staged_paths": [],
+        "uncovered_staged_paths": [],
+        "forbidden_staged_paths": [],
+        "covering_reviews": {},
+        "covering_review_ids": [],
+        "ignored_reviews": [],
+        "ignored_covering_review_ids": [],
+        "ignored_covering_staged_paths": [],
+        "missing_review_commands": [],
     }
 
 
@@ -3941,17 +3988,160 @@ def _dirty_scope_for_packet(root: str, packet: dict) -> tuple[str, list, str]:
     return ("isolated" if code_dirty else "clean"), [], ""
 
 
+def _slice_plan_dispatch_advisory(task_dir: str) -> dict:
+    mode = _config_value(("codex", "dispatch_mode"), task_dir).strip().lower() or "inline"
+    blockers = []
+    if mode not in {"inline", "sub-agent", "channel"}:
+        blockers.append(f"DISPATCH_MODE_INVALID:{mode}")
+        mode = "inline"
+    return {
+        "configured_dispatch_mode": mode,
+        "selected_backend": mode,
+        "channel_is_default": mode == "channel",
+        "slice_plan_read_only": True,
+        "sub_agent_requires_active_task_prelude": mode == "sub-agent",
+        "advisory_blockers": blockers,
+    }
+
+
+def _slice_plan_depends_on(packet: dict) -> tuple[list, list]:
+    raw = packet.get("depends_on", [])
+    if raw is None:
+        return [], []
+    if not isinstance(raw, list) or not all(isinstance(dep, str) and dep.strip() for dep in raw):
+        return [], ["DEPENDENCY_METADATA_INVALID"]
+    return list(raw), []
+
+
+def _slice_plan_resource_locks(checks: list) -> list:
+    locks = []
+    for raw_check in checks:
+        command = str(raw_check).strip().lower()
+        if not command:
+            continue
+        if "build_runner" in command:
+            locks.append("dart_build_runner")
+        if "flutter " in f" {command}" or command.startswith("fvm flutter "):
+            locks.append("flutter_tooling")
+        if (
+            " dart test" in f" {command}"
+            or " dart analyze" in f" {command}"
+            or command.startswith("dart run ")
+        ):
+            locks.append("dart_tooling")
+        if any(token in f" {command} " for token in (" pnpm ", " npm ", " yarn ", " bun ")):
+            locks.append("node_package_manager")
+        if "gradle" in command or "gradlew" in command:
+            locks.append("gradle")
+        if "xcodebuild" in command:
+            locks.append("xcodebuild")
+    return _dedupe_strings(locks)
+
+
+def _slice_plan_target_key(path: str) -> str:
+    value = path.replace("\\", "/").strip()
+    while value.startswith("./"):
+        value = value[2:]
+    value = value.strip("/")
+    return value or "."
+
+
+def _slice_plan_targets_overlap(left: str, right: str) -> bool:
+    left_key = _slice_plan_target_key(left)
+    right_key = _slice_plan_target_key(right)
+    if left_key == "." or right_key == ".":
+        return True
+    return (
+        left_key == right_key
+        or left_key.startswith(f"{right_key}/")
+        or right_key.startswith(f"{left_key}/")
+    )
+
+
+def _slice_plan_first_overlap(left_targets: list, right_targets: list) -> str:
+    for left in left_targets:
+        if not isinstance(left, str):
+            continue
+        for right in right_targets:
+            if not isinstance(right, str):
+                continue
+            if _slice_plan_targets_overlap(left, right):
+                return f"{left}<->{right}"
+    return ""
+
+
+def _slice_plan_target_conflicts(slices: list) -> dict:
+    conflicts = {entry["slice_id"]: [] for entry in slices}
+    for idx, left in enumerate(slices):
+        for right in slices[idx + 1:]:
+            overlap = _slice_plan_first_overlap(left.get("target_paths", []), right.get("target_paths", []))
+            if not overlap:
+                continue
+            left_id = left["slice_id"]
+            right_id = right["slice_id"]
+            conflicts[left_id].append(f"TARGET_PATH_OVERLAP:{right_id}:{overlap}")
+            conflicts[right_id].append(f"TARGET_PATH_OVERLAP:{left_id}:{overlap}")
+    return conflicts
+
+
+def _slice_plan_parallel_groups(slices: list) -> list:
+    groups = []
+    writer_slices = [
+        entry for entry in slices
+        if entry.get("parallel_safe") and entry.get("parallel_mode") == "writer"
+    ]
+    serial_slices = [
+        entry for entry in slices
+        if not entry.get("parallel_safe") or entry.get("parallel_mode") == "serial"
+    ]
+    if writer_slices:
+        group_id = f"g{len(groups) + 1}"
+        for entry in writer_slices:
+            entry["parallel_group"] = group_id
+        groups.append({
+            "group_id": group_id,
+            "mode": "writer",
+            "slice_ids": [entry["slice_id"] for entry in writer_slices],
+            "max_parallel": len(writer_slices),
+            "blocking_reasons": [],
+            "recommended_commands": [
+                entry["recommended_commands"]["implement_check"]
+                for entry in writer_slices
+            ],
+        })
+    if serial_slices:
+        group_id = f"g{len(groups) + 1}"
+        blocking_reasons = []
+        for entry in serial_slices:
+            entry["parallel_group"] = group_id
+            blocking_reasons.extend(entry.get("parallel_blockers", []))
+        groups.append({
+            "group_id": group_id,
+            "mode": "serial",
+            "slice_ids": [entry["slice_id"] for entry in serial_slices],
+            "max_parallel": 1,
+            "blocking_reasons": _dedupe_strings(blocking_reasons),
+            "recommended_commands": [
+                entry["recommended_commands"]["implement_check"]
+                for entry in serial_slices
+            ],
+        })
+    return groups
+
+
 def _slice_plan_payload(task_dir_arg) -> dict:
     root = _repo_root()
     task_dir = resolve_task_dir(task_dir_arg, allow_unique_planning_fallback=False)
     plan = {
-        "schema_version": 1,
+        "schema_version": 2,
         "task_dir": _display_task_dir(task_dir, root) if task_dir else "",
         "route": "",
         "risk": "",
         "packet_required": False,
         "packet_required_reason": "",
         "slices": [],
+        "parallel_groups": [],
+        "dispatch_advisory": {},
         "blocking_reasons": [],
     }
     if not task_dir:
@@ -3964,6 +4154,7 @@ def _slice_plan_payload(task_dir_arg) -> dict:
     plan["risk"] = risk
     plan["packet_required"] = required
     plan["packet_required_reason"] = required_reason
+    plan["dispatch_advisory"] = _slice_plan_dispatch_advisory(task_dir)
     packets = guru_review_record.list_packets(task_dir)
     if required and not packets:
         plan["blocking_reasons"].append("PACKET_REQUIRED_BEFORE_IMPLEMENT")
@@ -3978,6 +4169,23 @@ def _slice_plan_payload(task_dir_arg) -> dict:
             plan["blocking_reasons"].append(f"SCOPE_INVALID:{unit_id}")
         provider = packet.get("semantic_review_provider", {})
         checks = packet.get("deterministic_checks", [])
+        depends_on, dependency_blockers = _slice_plan_depends_on(packet)
+        resource_locks = _slice_plan_resource_locks(checks if isinstance(checks, list) else [])
+        display_task_dir = _display_task_dir(task_dir, root)
+        implement_command = (
+            f"python3 .trellis/scripts/guru/guru_supervise.py implement-check "
+            f"{shlex.quote(display_task_dir)} --slice {shlex.quote(unit_id)}"
+        )
+        review_command = (
+            f"python3 .trellis/scripts/guru/guru_supervise.py implementation-review "
+            f"{shlex.quote(display_task_dir)} --slice {shlex.quote(unit_id)}"
+        )
+        review_staged_command = f"{review_command} --staged"
+        parallel_blockers = list(dependency_blockers)
+        parallel_blockers.extend(f"DEPENDS_ON:{dep}" for dep in depends_on)
+        parallel_blockers.extend(f"RESOURCE_LOCK:{lock}" for lock in resource_locks)
+        if dirty_status == "invalid":
+            parallel_blockers.append("SCOPE_INVALID")
         plan["slices"].append({
             "slice_id": unit_id,
             "target_paths": packet.get("target_paths", []),
@@ -3991,13 +4199,43 @@ def _slice_plan_payload(task_dir_arg) -> dict:
             "dirty_scope": dirty_status,
             "dirty_out_of_scope": out_of_scope,
             "dirty_reason": dirty_reason,
-            "recommended_command": (
-                f"python3 .trellis/scripts/guru/guru_supervise.py implement-check "
-                f"{shlex.quote(_display_task_dir(task_dir, root))} --slice {shlex.quote(unit_id)}"
-            ),
+            "depends_on": depends_on,
+            "resource_locks": resource_locks,
+            "parallel_safe": False,
+            "parallel_mode": "serial",
+            "parallel_group": "",
+            "parallel_blockers": parallel_blockers,
+            "recommended_command": implement_command,
+            "recommended_commands": {
+                "implement_check": implement_command,
+                "implementation_review": review_command,
+                "implementation_review_staged": review_staged_command,
+            },
         })
+    known_slice_ids = {entry["slice_id"] for entry in plan["slices"]}
+    for entry in plan["slices"]:
+        unknown_dependencies = [
+            dep for dep in entry.get("depends_on", [])
+            if dep not in known_slice_ids
+        ]
+        entry["parallel_blockers"].extend(
+            f"DEPENDENCY_UNKNOWN:{dep}" for dep in unknown_dependencies
+        )
+    conflicts = _slice_plan_target_conflicts(plan["slices"])
+    overlap_found = False
+    for entry in plan["slices"]:
+        entry["parallel_blockers"].extend(conflicts.get(entry["slice_id"], []))
+        entry["parallel_blockers"] = _dedupe_strings(entry["parallel_blockers"])
+        if any(reason.startswith("TARGET_PATH_OVERLAP:") for reason in entry["parallel_blockers"]):
+            overlap_found = True
+        entry["parallel_safe"] = not entry["parallel_blockers"]
+        entry["parallel_mode"] = "writer" if entry["parallel_safe"] else "serial"
+    plan["parallel_groups"] = _slice_plan_parallel_groups(plan["slices"])
     if len(plan["slices"]) > 1:
         plan["blocking_reasons"].append("PACKET_AMBIGUOUS_WITHOUT_SLICE")
+    if overlap_found:
+        plan["blocking_reasons"].append("PARALLEL_TARGET_PATH_OVERLAP")
+    plan["blocking_reasons"].extend(plan["dispatch_advisory"].get("advisory_blockers", []))
     plan["source"] = source
     plan["blocking_reasons"] = _dedupe_strings(plan["blocking_reasons"])
     return plan
@@ -4108,6 +4346,195 @@ def _review_commit_stage_paths(record, staged_paths: list, task_dir: str, root: 
     return allowed, forbidden
 
 
+def _implementation_review_records(path: str) -> tuple[list, str]:
+    records = []
+    if not os.path.isfile(path):
+        return records, "implementation review record missing"
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for lineno, line in enumerate(fh, 1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    row = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    return [], f"implementation review record line {lineno} invalid JSON: {exc}"
+                if isinstance(row, dict):
+                    records.append(row)
+    except OSError as exc:
+        return [], f"cannot read implementation review record: {exc}"
+    if not records:
+        return records, "implementation review record empty"
+    return records, ""
+
+
+def _remember_ignored_review(coverage: dict, review_id: str, reason: str) -> None:
+    ignored = coverage.setdefault("ignored_reviews", [])
+    if len(ignored) < 20:
+        ignored.append({"review_id": review_id, "reason": reason})
+
+
+def _review_record_targets_staged_paths(record: dict, code_paths: list) -> bool:
+    target_paths = record.get("target_paths") if isinstance(record, dict) else None
+    if not isinstance(target_paths, list) or not target_paths:
+        return False
+    return any(_path_in_targets(path, target_paths) for path in code_paths)
+
+
+def _remember_ignored_covering_review(coverage: dict, review_id: str) -> None:
+    coverage["ignored_covering_review_ids"] = _dedupe_strings(
+        coverage.get("ignored_covering_review_ids", []) + [review_id]
+    )
+
+
+def _remember_ignored_covering_paths(coverage: dict, record: dict, code_paths: list) -> None:
+    target_paths = record.get("target_paths") if isinstance(record, dict) else None
+    if not isinstance(target_paths, list) or not target_paths:
+        return
+    covered = [path for path in code_paths if _path_in_targets(path, target_paths)]
+    coverage["ignored_covering_staged_paths"] = _dedupe_strings(
+        coverage.get("ignored_covering_staged_paths", []) + covered
+    )
+
+
+def _packet_slice_candidates_by_path(task_dir: str, paths: list) -> dict:
+    candidates = {path: [] for path in paths}
+    if not paths:
+        return candidates
+    for unit_id in guru_review_record.list_packets(task_dir):
+        try:
+            packet = guru_review_record.load_packet(task_dir, unit_id)
+        except guru_review_record.ReviewRecordError:
+            continue
+        target_paths = packet.get("target_paths", [])
+        for path in paths:
+            if _path_in_targets(path, target_paths):
+                candidates[path].append(unit_id)
+    return {
+        path: sorted(set(slice_ids))
+        for path, slice_ids in candidates.items()
+    }
+
+
+def _missing_review_commands_for_paths(task_dir: str, root: str, uncovered_paths: list) -> list:
+    slice_candidates = _packet_slice_candidates_by_path(task_dir, uncovered_paths)
+    slice_ids = []
+    needs_staged_review = False
+    for path in uncovered_paths:
+        candidates = slice_candidates.get(path, [])
+        if candidates:
+            slice_ids.append(candidates[0])
+        else:
+            needs_staged_review = True
+    commands = [
+        _implementation_review_slice_command(task_dir, root, slice_id)
+        for slice_id in sorted(set(slice_ids))
+    ]
+    if needs_staged_review:
+        commands.append(_implementation_review_command(task_dir, root))
+    return commands
+
+
+def _implementation_review_coverage(review_path: str, staged_paths: list, task_dir: str, root: str) -> tuple[dict, str, bool]:
+    coverage = _empty_review_coverage()
+    task_artifact_paths = [
+        path for path in staged_paths
+        if _is_task_artifact_path(path, task_dir, root)
+    ]
+    code_paths = [
+        path for path in staged_paths
+        if path not in task_artifact_paths
+    ]
+    coverage["forbidden_staged_paths"] = task_artifact_paths
+    if not code_paths:
+        return (
+            coverage,
+            "staged changes contain only task artifacts/workspace artifacts; this is not a Guru implementation commit",
+            False,
+        )
+    records, read_error = _implementation_review_records(review_path)
+    coverage["uncovered_staged_paths"] = code_paths
+    coverage["missing_review_commands"] = _missing_review_commands_for_paths(task_dir, root, code_paths)
+    if read_error:
+        return coverage, read_error, True
+
+    covering_reviews = {path: [] for path in code_paths}
+    clean_review_ids = []
+    targeted_review_problem = ""
+    for index, record in enumerate(records, 1):
+        coverage["records_considered"] += 1
+        review_id = _implementation_review_record_id(record, f"record:{index}")
+        problem = _implementation_review_base_problem(record, f"implementation review {review_id}")
+        if problem:
+            _remember_ignored_review(coverage, review_id, problem)
+            if _review_record_targets_staged_paths(record, code_paths):
+                _remember_ignored_covering_review(coverage, review_id)
+                _remember_ignored_covering_paths(coverage, record, code_paths)
+                if not targeted_review_problem:
+                    targeted_review_problem = problem
+            continue
+        target_paths = record.get("target_paths", [])
+        reviewed_digest = record.get("reviewed_target_digest")
+        try:
+            staged_digest = guru_review_record.target_snapshot_digest(root, target_paths, "index")
+        except guru_review_record.ReviewRecordError as exc:
+            reason = f"cannot compute staged target digest: {exc}"
+            _remember_ignored_review(coverage, review_id, reason)
+            if _review_record_targets_staged_paths(record, code_paths):
+                _remember_ignored_covering_review(coverage, review_id)
+                _remember_ignored_covering_paths(coverage, record, code_paths)
+                if not targeted_review_problem:
+                    targeted_review_problem = reason
+            continue
+        if staged_digest != reviewed_digest:
+            reason = (
+                f"staged target content differs from implementation review {review_id}; "
+                "rerun implementation-review --staged"
+            )
+            _remember_ignored_review(coverage, review_id, reason)
+            if _review_record_targets_staged_paths(record, code_paths):
+                _remember_ignored_covering_review(coverage, review_id)
+                _remember_ignored_covering_paths(coverage, record, code_paths)
+                if not targeted_review_problem:
+                    targeted_review_problem = reason
+            continue
+        coverage["records_current_clean"] += 1
+        clean_review_ids.append(review_id)
+        for path in code_paths:
+            if _path_in_targets(path, target_paths):
+                covering_reviews[path].append(review_id)
+
+    covered_paths = [
+        path for path in code_paths
+        if covering_reviews[path]
+    ]
+    uncovered_paths = [
+        path for path in code_paths
+        if not covering_reviews[path]
+    ]
+    coverage["covered_staged_paths"] = covered_paths
+    coverage["uncovered_staged_paths"] = uncovered_paths
+    coverage["covering_reviews"] = {
+        path: _dedupe_strings(review_ids)
+        for path, review_ids in covering_reviews.items()
+        if review_ids
+    }
+    coverage["covering_review_ids"] = _dedupe_strings(clean_review_ids)
+    coverage["missing_review_commands"] = _missing_review_commands_for_paths(task_dir, root, uncovered_paths)
+    if uncovered_paths:
+        ignored_covering_paths = set(coverage.get("ignored_covering_staged_paths", []))
+        if targeted_review_problem and all(path in ignored_covering_paths for path in uncovered_paths):
+            return coverage, targeted_review_problem, True
+        return (
+            coverage,
+            "staged implementation paths lack current clean implementation review coverage: "
+            + ", ".join(uncovered_paths[:5]),
+            True,
+        )
+    return coverage, "", False
+
+
 def _commit_plan_payload(task_dir_arg) -> dict:
     root = _repo_root()
     staged_paths, staged_error = _git_staged_paths(root)
@@ -4203,7 +4630,7 @@ def _commit_plan_payload(task_dir_arg) -> dict:
         if not plan["allowed_stage_paths"]:
             plan["allowed_stage_paths"] = split_code_paths
         plan["forbidden_stage_paths"] = _dedupe_strings(plan["forbidden_stage_paths"] + split_artifacts)
-        block("staged task/workspace artifacts must be split from implementation commit: " + ", ".join(split_artifacts[:5]))
+        block("staged task artifacts/workspace artifacts must be split from implementation commit: " + ", ".join(split_artifacts[:5]))
 
     if route == guru_contract.ROUTE_MICRO_TASK:
         plan["commit_mode"] = "implementation"
@@ -4237,48 +4664,54 @@ def _commit_plan_payload(task_dir_arg) -> dict:
         plan["required_commands"].append(_gate_command("check-implementation", task_dir, root))
 
     review_path = os.path.join(task_dir, "review-records", "implementation-reviews.jsonl")
-    latest_record, read_error = _latest_jsonl_record(review_path)
     needs_implementation_review = False
     implementation_review_problem = ""
-    if read_error:
-        block(read_error)
-        needs_implementation_review = True
-    else:
-        implementation_review_problem = _implementation_review_problem(latest_record, staged_paths, task_dir, root)
-        if implementation_review_problem:
-            block(implementation_review_problem)
-            needs_implementation_review = True
-        allowed, forbidden = _review_commit_stage_paths(latest_record, staged_paths, task_dir, root)
-        if allowed or forbidden:
-            plan["allowed_stage_paths"] = allowed
-            plan["forbidden_stage_paths"] = forbidden
-        target_paths = latest_record.get("target_paths") if isinstance(latest_record, dict) else None
-        if isinstance(target_paths, list) and target_paths:
-            plan["suggested_stage_commands"] = _stage_command(plan["allowed_stage_paths"])
-            if not plan["suggested_stage_commands"]:
-                plan["suggested_stage_commands"] = _stage_command(staged_paths)
+    review_coverage, implementation_review_problem, needs_implementation_review = (
+        _implementation_review_coverage(review_path, staged_paths, task_dir, root)
+    )
+    plan["review_coverage"] = review_coverage
+    if implementation_review_problem:
+        block(implementation_review_problem)
+    allowed = review_coverage.get("covered_staged_paths", [])
+    forbidden = (
+        review_coverage.get("forbidden_staged_paths", [])
+        + review_coverage.get("uncovered_staged_paths", [])
+    )
+    if allowed or forbidden:
+        plan["allowed_stage_paths"] = allowed
+        plan["forbidden_stage_paths"] = _dedupe_strings(forbidden)
+    if allowed:
+        plan["suggested_stage_commands"] = _stage_command(plan["allowed_stage_paths"])
 
     if not isinstance(contract, dict):
         direct_recovery_problem = _direct_low_risk_commit_problem(staged_paths, root)
         if direct_recovery_problem:
             block(direct_recovery_problem)
-        elif plan["blocking_reasons"] and (
-            not isinstance(latest_record, dict)
-            or implementation_review_problem.startswith("staged paths outside latest reviewed target_paths:")
+        elif (
+            plan["blocking_reasons"]
+            and implementation_review_problem
+            and not plan["review_coverage"].get("ignored_covering_review_ids")
         ):
             plan["route"] = guru_contract.ROUTE_MICRO_TASK
             plan["allowed_stage_paths"], plan["forbidden_stage_paths"] = _direct_commit_stage_paths(staged_paths, root)
             plan["blocking_reasons"] = []
             block(_post_implementation_recovery_reason("active task has no commit contract"))
             plan["required_commands"] = _micro_recovery_commands(staged_paths, root)
+            plan["review_coverage"]["missing_review_commands"] = []
             plan["suggested_stage_commands"] = _stage_command(plan["allowed_stage_paths"])
             return _finish_commit_plan(plan)
 
     if contract_problems:
         block("; ".join(contract_problems[:5]))
+    review_commands_allowed = not contract_problems and not implementation_problem and not plan.get("split_required")
+    if not review_commands_allowed:
+        review_coverage["missing_review_commands"] = []
     if plan["blocking_reasons"]:
-        if needs_implementation_review and not contract_problems and not implementation_problem and not plan.get("split_required"):
-            plan["required_commands"].append(_implementation_review_command(task_dir, root))
+        if needs_implementation_review and review_commands_allowed:
+            missing_review_commands = review_coverage.get("missing_review_commands") or [
+                _implementation_review_command(task_dir, root)
+            ]
+            plan["required_commands"].extend(missing_review_commands)
         plan["required_commands"].append(_gate_command("check-commit", task_dir, root))
     else:
         plan["can_commit_now"] = True
@@ -4331,7 +4764,7 @@ def cmd_check_commit(task_dir_arg) -> int:
     elif route == guru_contract.ROUTE_MICRO_TASK:
         print(f"[guru-gate:check-commit] COMMIT_READY: micro_task contract allows scoped low-risk commit（{task_dir}）")
     else:
-        print(f"[guru-gate:check-commit] COMMIT_READY: staged scope matches latest clean implementation review（{task_dir}）")
+        print(f"[guru-gate:check-commit] COMMIT_READY: staged scope has current clean implementation review coverage（{task_dir}）")
     return PASS
 
 

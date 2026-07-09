@@ -8,6 +8,7 @@ Usage:
     python3 guru_supervise.py [--adversarial] implement <task-dir> [--dry-run]
     python3 guru_supervise.py [--adversarial] check <task-dir> [--dry-run]
     python3 guru_supervise.py [--adversarial] implement-check <task-dir> [--dry-run]
+    python3 guru_supervise.py implement-slices <task-dir> [--dry-run] [--parallel N] [--group <id>] [--backend auto|sub-agent|channel]
     python3 guru_supervise.py implementation-review <task-dir> [--slice <UNIT>] [--staged] [--same-provider --user-quote <quote>]
     python3 guru_supervise.py status <task-dir> [--json]
     python3 guru_supervise.py kill <task-dir> --channel <name> --worker <name>
@@ -53,7 +54,9 @@ VALID_ACTIONS = {
     "implement-check",
     "implementation-review",
 }
-VALID_PLATFORMS = {"flutter", "go", "ios", "h5"}
+VALID_CONFIG_DISPATCH_MODES = {"inline", "sub-agent", "channel"}
+VALID_IMPLEMENT_SLICE_BACKENDS = {"auto", "sub-agent", "channel"}
+VALID_PLATFORMS = {"cli", "flutter", "go", "ios", "h5"}
 
 DEFAULT_PROVIDER = "codex"
 DEFAULT_IMPLEMENT_TIMEOUT = "45m"
@@ -90,6 +93,18 @@ MAX_SEVERITY_RE = re.compile(
 )
 
 SKILL_BY_PLATFORM: dict[str, dict[str, list[str]]] = {
+    "cli": {
+        "requirements": [".agents/skills/trellis-brainstorm/SKILL.md"],
+        "overview": [".agents/skills/trellis-meta/SKILL.md"],
+        "detail": [".agents/skills/trellis-meta/SKILL.md"],
+        "implement": [".agents/skills/trellis-before-dev/SKILL.md"],
+        "check": [".agents/skills/trellis-check/SKILL.md"],
+        "implementation-review": [".agents/skills/trellis-check/SKILL.md"],
+        "implement-check": [
+            ".agents/skills/trellis-before-dev/SKILL.md",
+            ".agents/skills/trellis-check/SKILL.md",
+        ],
+    },
     "flutter": {
         "requirements": [".agents/skills/requirement-review/SKILL.md"],
         "overview": [
@@ -1238,8 +1253,45 @@ def _unstaged_paths(repo_root: str) -> tuple[list[str], str]:
     return [path for path in result.stdout.split("\0") if path], ""
 
 
+def _dispatch_path_key(path: str) -> str:
+    value = str(path).replace("\\", "/").strip()
+    while value.startswith("./"):
+        value = value[2:]
+    value = value.strip("/")
+    return value or "."
+
+
 def _path_covered_by_targets(path: str, targets: set[str]) -> bool:
-    return any(path == target or path.startswith(f"{target}/") for target in targets)
+    path_key = _dispatch_path_key(path)
+    for target in targets:
+        target_key = _dispatch_path_key(target)
+        if (
+            target_key == "."
+            or path_key == target_key
+            or path_key.startswith(f"{target_key}/")
+        ):
+            return True
+    return False
+
+
+def _targets_overlap(left: str, right: str) -> bool:
+    left_key = _dispatch_path_key(left)
+    right_key = _dispatch_path_key(right)
+    if left_key == "." or right_key == ".":
+        return True
+    return (
+        left_key == right_key
+        or left_key.startswith(f"{right_key}/")
+        or right_key.startswith(f"{left_key}/")
+    )
+
+
+def _first_target_overlap(left_targets: Sequence[str], right_targets: Sequence[str]) -> str:
+    for left in left_targets:
+        for right in right_targets:
+            if _targets_overlap(left, right):
+                return f"{left}<->{right}"
+    return ""
 
 
 def _staged_target_drift(repo_root: str, target_paths: list) -> str:
@@ -1267,6 +1319,443 @@ def _staged_target_drift(repo_root: str, target_paths: list) -> str:
     if overlap:
         return f"unstaged changes overlap staged review target paths: {overlap}"
     return ""
+
+
+def _display_path(root: Path, path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def _normal_string_list(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _dedupe_strings(values: Sequence[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _positive_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _parallel_arg(value: str) -> int:
+    parsed = _positive_int(value)
+    if parsed is None:
+        raise argparse.ArgumentTypeError("--parallel must be a positive integer")
+    return parsed
+
+
+def _dispatch_mode_from_config(root: Path) -> tuple[str, str, list[str]]:
+    raw = _config_value(root, ("codex", "dispatch_mode"))
+    if raw is None or not raw.strip():
+        return "inline", "", []
+    mode = raw.strip().lower()
+    if mode not in VALID_CONFIG_DISPATCH_MODES:
+        return "inline", raw.strip(), [f"DISPATCH_MODE_INVALID:{raw.strip()}"]
+    return mode, raw.strip(), []
+
+
+def _select_dispatch_backend(root: Path, requested: str) -> dict:
+    configured, raw_configured, blockers = _dispatch_mode_from_config(root)
+    selected = configured if requested == "auto" else requested
+    serial_reasons: list[str] = []
+    if blockers and requested == "auto":
+        serial_reasons.extend(blockers)
+    if selected == "inline":
+        serial_reasons.append("DISPATCH_MODE_INLINE_SERIAL_ONLY")
+    if selected not in {"inline", "sub-agent", "channel"}:
+        selected = "inline"
+        serial_reasons.append(f"DISPATCH_BACKEND_INVALID:{requested}")
+    return {
+        "requested_backend": requested,
+        "configured_dispatch_mode": configured,
+        "raw_configured_dispatch_mode": raw_configured,
+        "selected_backend": selected,
+        "config_blockers": blockers,
+        "serial_reasons": _dedupe_strings(serial_reasons),
+    }
+
+
+def _load_current_slice_plan(root: Path, task_dir: Path) -> tuple[dict, list[str]]:
+    gate_script = Path(__file__).resolve().with_name("guru_gate.py")
+    cmd = [
+        "python3",
+        _display_path(root, gate_script),
+        "slice-plan",
+        _display_path(root, task_dir),
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise GuruSupervisionError(f"slice-plan failed before dispatch: {exc}") from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise GuruSupervisionError(f"slice-plan failed before dispatch: {detail}")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise GuruSupervisionError(f"slice-plan returned non-JSON output: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise GuruSupervisionError("slice-plan returned a non-object payload")
+    return payload, cmd
+
+
+def _slice_map(slice_plan: dict) -> dict[str, dict]:
+    slices = slice_plan.get("slices", [])
+    if not isinstance(slices, list):
+        return {}
+    mapped: dict[str, dict] = {}
+    for entry in slices:
+        if not isinstance(entry, dict):
+            continue
+        slice_id = str(entry.get("slice_id") or "").strip()
+        if slice_id:
+            mapped[slice_id] = entry
+    return mapped
+
+
+def _select_slice_group(slice_plan: dict, group_id: str | None) -> tuple[dict | None, list[str]]:
+    groups = slice_plan.get("parallel_groups", [])
+    if not isinstance(groups, list):
+        groups = []
+    valid_groups = [group for group in groups if isinstance(group, dict)]
+    if group_id:
+        for group in valid_groups:
+            if str(group.get("group_id") or "") == group_id:
+                return group, []
+        return None, [f"GROUP_NOT_FOUND:{group_id}"]
+    for group in valid_groups:
+        if group.get("mode") == "writer" and _normal_string_list(group.get("slice_ids")):
+            return group, []
+    for group in valid_groups:
+        if _normal_string_list(group.get("slice_ids")):
+            return group, []
+    return None, ["NO_PARALLEL_GROUPS"]
+
+
+def _slice_dependency_blockers(slice_entry: dict) -> list[str]:
+    blockers = _normal_string_list(slice_entry.get("parallel_blockers"))
+    return [
+        blocker for blocker in blockers
+        if (
+            blocker.startswith("DEPENDS_ON:")
+            or blocker.startswith("DEPENDENCY_")
+        )
+    ]
+
+
+def _slice_resource_blockers(slice_entry: dict) -> list[str]:
+    locks = _normal_string_list(slice_entry.get("resource_locks"))
+    return [f"RESOURCE_LOCK:{lock}" for lock in locks]
+
+
+def _slice_target_paths(slice_entry: dict) -> list[str]:
+    return _normal_string_list(slice_entry.get("target_paths"))
+
+
+def _dispatch_action_for_group(group_mode: str) -> str:
+    return "implementation-review" if group_mode == "read_only" else "implement-check"
+
+
+def _recommended_command(slice_entry: dict, action: str) -> str:
+    commands = slice_entry.get("recommended_commands")
+    if isinstance(commands, dict):
+        key = "implementation_review" if action == "implementation-review" else "implement_check"
+        command = commands.get(key)
+        if isinstance(command, str) and command.strip():
+            return command.strip()
+    command = slice_entry.get("recommended_command")
+    return command.strip() if isinstance(command, str) else ""
+
+
+def _supervisor_command(
+    root: Path,
+    task_dir: Path,
+    slice_id: str,
+    action: str,
+    *,
+    dry_run: bool,
+) -> list[str]:
+    script_ref = _display_path(root, Path(__file__).resolve())
+    command = ["python3", script_ref, action, _display_path(root, task_dir), "--slice", slice_id]
+    if dry_run:
+        command.append("--dry-run")
+    return command
+
+
+def _sub_agent_brief(
+    root: Path,
+    task_dir: Path,
+    slice_entry: dict,
+    *,
+    group_id: str,
+    group_mode: str,
+) -> str:
+    slice_id = str(slice_entry.get("slice_id") or "").strip()
+    target_paths = _slice_target_paths(slice_entry)
+    agent_name = "trellis-check" if group_mode == "read_only" else "trellis-implement"
+    write_rule = (
+        "Read-only review slice: do not edit files."
+        if group_mode == "read_only"
+        else "Write only inside the allowed target_paths. If another path is required, stop and report the blocker."
+    )
+    targets = "\n".join(f"- {path}" for path in target_paths) if target_paths else "- <none>"
+    return "\n".join([
+        f"Active task: {_display_path(root, task_dir)}",
+        "",
+        f"You are already the `{agent_name}` sub-agent for this Guru slice. Implement directly in this workspace and do not spawn another `trellis-implement` or `trellis-check`.",
+        "Do not create channels and do not call `trellis channel`; this dispatch uses the direct platform sub-agent backend.",
+        f"Task slice: {slice_id}",
+        f"Parallel group: {group_id}",
+        f"Slice mode: {group_mode}",
+        "Allowed target_paths:",
+        targets,
+        write_rule,
+        "Preserve unrelated dirty work. Do not commit, push, merge, archive, or run finish-work.",
+    ])
+
+
+def _group_safety(
+    group: dict | None,
+    slices_by_id: dict[str, dict],
+    backend: dict,
+) -> tuple[list[dict], list[str], str]:
+    if group is None:
+        return [], ["NO_RUNNABLE_GROUP"], "blocked"
+
+    group_mode = str(group.get("mode") or "serial").strip() or "serial"
+    slice_ids = _normal_string_list(group.get("slice_ids"))
+    selected_slices = [slices_by_id[slice_id] for slice_id in slice_ids if slice_id in slices_by_id]
+    missing_ids = sorted(set(slice_ids) - set(slices_by_id))
+    reasons = list(backend.get("serial_reasons", []))
+    reasons.extend(f"SLICE_NOT_FOUND:{slice_id}" for slice_id in missing_ids)
+    reasons.extend(_normal_string_list(group.get("blocking_reasons")))
+
+    if not selected_slices:
+        return [], _dedupe_strings(reasons or ["NO_RUNNABLE_SLICES"]), "blocked"
+    if group_mode == "serial":
+        reasons.append("SLICE_PLAN_SERIAL_GROUP")
+    elif group_mode not in {"writer", "read_only"}:
+        reasons.append(f"SLICE_PLAN_UNKNOWN_GROUP_MODE:{group_mode}")
+
+    if group_mode == "writer":
+        for entry in selected_slices:
+            slice_id = str(entry.get("slice_id") or "").strip()
+            target_paths = _slice_target_paths(entry)
+            blockers = _normal_string_list(entry.get("parallel_blockers"))
+            if not entry.get("parallel_safe"):
+                reasons.append(f"SLICE_NOT_PARALLEL_SAFE:{slice_id}")
+            if entry.get("parallel_mode") not in {"writer"}:
+                reasons.append(f"SLICE_PLAN_SERIAL:{slice_id}")
+            if not target_paths:
+                reasons.append(f"TARGET_PATHS_MISSING:{slice_id}")
+            dirty_scope = str(entry.get("dirty_scope") or "").strip()
+            if dirty_scope not in {"clean", "isolated"}:
+                reasons.append(f"DIRTY_SCOPE_INVALID:{slice_id}:{dirty_scope or 'unknown'}")
+            if entry.get("dirty_out_of_scope"):
+                reasons.append(f"SCOPE_INVALID:{slice_id}")
+            reasons.extend(f"{slice_id}:{blocker}" for blocker in blockers)
+            reasons.extend(f"{slice_id}:{blocker}" for blocker in _slice_dependency_blockers(entry))
+            reasons.extend(f"{slice_id}:{blocker}" for blocker in _slice_resource_blockers(entry))
+
+        for idx, left in enumerate(selected_slices):
+            left_id = str(left.get("slice_id") or "").strip()
+            left_targets = _slice_target_paths(left)
+            for right in selected_slices[idx + 1:]:
+                right_id = str(right.get("slice_id") or "").strip()
+                overlap = _first_target_overlap(left_targets, _slice_target_paths(right))
+                if overlap:
+                    reasons.append(f"TARGET_PATH_OVERLAP:{left_id}:{right_id}:{overlap}")
+    elif group_mode == "read_only":
+        for entry in selected_slices:
+            slice_id = str(entry.get("slice_id") or "").strip()
+            if _slice_dependency_blockers(entry):
+                reasons.extend(f"{slice_id}:{blocker}" for blocker in _slice_dependency_blockers(entry))
+
+    reasons = _dedupe_strings(reasons)
+    if reasons:
+        return selected_slices, reasons, "serial"
+    if len(selected_slices) == 1:
+        return selected_slices, [], "serial"
+    return selected_slices, [], "parallel"
+
+
+def _effective_parallel_limit(
+    selected_slices: list[dict],
+    group: dict | None,
+    decision: str,
+    requested_parallel: int,
+    backend: dict,
+    root: Path,
+) -> int:
+    if decision != "parallel":
+        return 1 if selected_slices else 0
+    group_limit = _positive_int(str(group.get("max_parallel"))) if isinstance(group, dict) else None
+    limit = min(requested_parallel, group_limit or requested_parallel, len(selected_slices))
+    if backend.get("selected_backend") == "channel":
+        channel_limit = _positive_int(_config_value(root, ("channel", "worker_guard", "max_live_workers")))
+        if channel_limit is not None:
+            limit = min(limit, channel_limit)
+    return max(1, limit)
+
+
+def _dispatch_item(
+    root: Path,
+    task_dir: Path,
+    slice_entry: dict,
+    *,
+    group_id: str,
+    group_mode: str,
+    backend: str,
+    dispatch_now: bool,
+) -> dict:
+    slice_id = str(slice_entry.get("slice_id") or "").strip()
+    action = _dispatch_action_for_group(group_mode)
+    recommended = _recommended_command(slice_entry, action)
+    review_command = _recommended_command(slice_entry, "implementation-review")
+    item = {
+        "slice_id": slice_id,
+        "mode": group_mode,
+        "target_paths": _slice_target_paths(slice_entry),
+        "dirty_scope": slice_entry.get("dirty_scope", ""),
+        "parallel_safe": bool(slice_entry.get("parallel_safe")),
+        "parallel_blockers": _normal_string_list(slice_entry.get("parallel_blockers")),
+        "dispatch_now": dispatch_now,
+        "recommended_command": recommended,
+        "read_only_review_command": review_command,
+    }
+    if backend == "sub-agent":
+        item["sub_agent"] = {
+            "agent": "trellis-check" if group_mode == "read_only" else "trellis-implement",
+            "brief": _sub_agent_brief(root, task_dir, slice_entry, group_id=group_id, group_mode=group_mode),
+        }
+    elif backend == "channel":
+        item["channel"] = {
+            "uses_existing_channel_plan_builder": True,
+            "dry_run_command": shlex.join(_supervisor_command(root, task_dir, slice_id, action, dry_run=True)),
+            "execute_command": shlex.join(_supervisor_command(root, task_dir, slice_id, action, dry_run=False)),
+        }
+    else:
+        item["manual"] = {
+            "reason": "inline dispatch mode is serial/manual only",
+            "command": recommended,
+        }
+    return item
+
+
+def run_implement_slices(args: argparse.Namespace) -> int:
+    task_dir = Path(args.task_dir).expanduser().resolve()
+    root = _resolve_root(args.root, task_dir)
+    slice_plan, slice_plan_cmd = _load_current_slice_plan(root, task_dir)
+    backend = _select_dispatch_backend(root, args.backend)
+    group, group_errors = _select_slice_group(slice_plan, args.group)
+    slices_by_id = _slice_map(slice_plan)
+    selected_slices, safety_reasons, decision = _group_safety(group, slices_by_id, backend)
+    if not selected_slices:
+        safety_reasons.extend(_normal_string_list(slice_plan.get("blocking_reasons")))
+    safety_reasons = _dedupe_strings([*group_errors, *safety_reasons])
+    if safety_reasons and decision == "parallel":
+        decision = "serial"
+    if not selected_slices:
+        decision = "blocked"
+
+    group_id = str(group.get("group_id") or "") if isinstance(group, dict) else ""
+    group_mode = str(group.get("mode") or "serial") if isinstance(group, dict) else "serial"
+    parallel_limit = _effective_parallel_limit(
+        selected_slices,
+        group,
+        decision,
+        args.parallel,
+        backend,
+        root,
+    )
+    dispatch_backend = str(backend["selected_backend"])
+    active_count = parallel_limit if decision == "parallel" else min(parallel_limit, len(selected_slices))
+    dispatchable = decision != "blocked"
+    items = [
+        _dispatch_item(
+            root,
+            task_dir,
+            entry,
+            group_id=group_id,
+            group_mode=group_mode,
+            backend=dispatch_backend,
+            dispatch_now=dispatchable and idx < active_count,
+        )
+        for idx, entry in enumerate(selected_slices)
+    ]
+    report = {
+        "schema_version": 1,
+        "command": "implement-slices",
+        "task_dir": _display_path(root, task_dir),
+        "dry_run": bool(args.dry_run),
+        "slice_plan_command": shlex.join(slice_plan_cmd),
+        "slice_plan_reread": True,
+        "slice_plan_schema_version": slice_plan.get("schema_version"),
+        "slice_plan_blocking_reasons": _normal_string_list(slice_plan.get("blocking_reasons")),
+        "configured_dispatch_mode": backend["configured_dispatch_mode"],
+        "raw_configured_dispatch_mode": backend["raw_configured_dispatch_mode"],
+        "requested_backend": backend["requested_backend"],
+        "selected_backend": dispatch_backend,
+        "selected_group": group_id,
+        "group_mode": group_mode,
+        "decision": decision,
+        "parallel_requested": args.parallel,
+        "parallel_limit": parallel_limit,
+        "downgrade_reasons": safety_reasons,
+        "dispatch_items": items,
+        "dispatch_now": [item["slice_id"] for item in items if item["dispatch_now"]],
+        "deferred_slices": [item["slice_id"] for item in items if not item["dispatch_now"]],
+        "read_only_fanout": [
+            {
+                "slice_id": item["slice_id"],
+                "command": item["read_only_review_command"],
+                "does_not_launch_implement_worker": True,
+            }
+            for item in items
+            if item.get("read_only_review_command")
+        ],
+        "status_input": {
+            "backend": dispatch_backend,
+            "status_source": (
+                "guru_supervise.py status --json"
+                if dispatch_backend == "channel"
+                else "main-session platform sub-agent results; no channel status queried"
+            ),
+            "status_command": (
+                shlex.join(["python3", _display_path(root, Path(__file__).resolve()), "status", _display_path(root, task_dir), "--json"])
+                if dispatch_backend == "channel"
+                else ""
+            ),
+        },
+    }
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return 2 if decision == "blocked" else 0
 
 
 def _active_review_brief(
@@ -2076,6 +2565,14 @@ def build_parser() -> argparse.ArgumentParser:
     implement_check.add_argument("--dry-run", action="store_true")
     implement_check.add_argument("--slice", help="P1 slice packet unit_id（多 packet 时必填；单 packet 可省）")
     implement_check.set_defaults(func=run_implement_check)
+
+    implement_slices = sub.add_parser("implement-slices")
+    implement_slices.add_argument("task_dir")
+    implement_slices.add_argument("--dry-run", action="store_true")
+    implement_slices.add_argument("--parallel", type=_parallel_arg, default=1)
+    implement_slices.add_argument("--group", help="Run only one slice-plan parallel_group id")
+    implement_slices.add_argument("--backend", choices=sorted(VALID_IMPLEMENT_SLICE_BACKENDS), default="auto")
+    implement_slices.set_defaults(func=run_implement_slices)
 
     implementation_review = sub.add_parser("implementation-review")
     implementation_review.add_argument("task_dir")

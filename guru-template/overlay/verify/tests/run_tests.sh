@@ -1611,6 +1611,153 @@ PY
 then pass=$((pass+1)); echo "PASS  commit-plan lite_task 输出 implementation stage plan"
 else failn=$((failn+1)); echo "FAIL  commit-plan lite_task stage plan 错误 (rc=$rc)"; echo "$out" | head -8; fi
 
+CG_MULTI_PAIR=$(mk_commit_gate_case commit-multi-review-set in_progress "lib/a.dart")
+CG_MULTI_ROOT="${CG_MULTI_PAIR%%|*}"; CG_MULTI_TASK="${CG_MULTI_PAIR#*|}"
+write_route_contract "$CG_MULTI_TASK" full_chain high
+printf 'code b\n' > "$CG_MULTI_ROOT/lib/b.dart"
+python3 - "$CG_MULTI_TASK" "$CG_MULTI_ROOT" "$GATE" <<'PY'
+import json, os, sys
+task, root, gate = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, os.path.dirname(os.path.abspath(gate)))
+import guru_review_record as R
+os.makedirs(os.path.join(task, "slice-packets"), exist_ok=True)
+def packet(unit, target):
+    return {
+        "schema_version": 1,
+        "slice_id": unit,
+        "owner_unit": unit,
+        "target_kind": "staged",
+        "target_paths": [target],
+        "risk": "high",
+        "risk_reasons": ["fixture"],
+        "deterministic_checks": ["true"],
+        "dirty_state": {"unrelated": []},
+        "semantic_review_provider": {"required": True, "provider": "opposite", "ocr": "optional"},
+        "invariants": [{
+            "invariant_id": f"INV-{unit}",
+            "rule": "fixture invariant",
+            "source": "detail",
+            "owner": "test",
+            "positive_case": "passes",
+            "negative_case": "fails",
+            "route_if_missing": "DETAIL_DEFECT",
+        }],
+    }
+def record(run_id, unit, target):
+    return {
+        "run_id": run_id,
+        "slice_id": unit,
+        "review_result": "clean",
+        "route_class": "none",
+        "supervisor_failure": "none",
+        "required_satisfied": True,
+        "deterministic_checks": "passed",
+        "dirty_scope": "clean",
+        "invariant_coverage": "all_passed",
+        "review_target": f"slice:{unit}",
+        "review_provider": "codex",
+        "target_paths": [target],
+        "reviewed_target_digest": R.target_snapshot_digest(root, [target], "worktree"),
+    }
+for unit, target in (("UNIT-a", "lib/a.dart"), ("UNIT-b", "lib/b.dart")):
+    with open(os.path.join(task, "slice-packets", f"{unit}.json"), "w", encoding="utf-8") as fh:
+        json.dump(packet(unit, target), fh)
+        fh.write("\n")
+reviews = [
+    record("review-a", "UNIT-a", "lib/a.dart"),
+    record("review-b-latest", "UNIT-b", "lib/b.dart"),
+]
+path = os.path.join(task, "review-records", "implementation-reviews.jsonl")
+with open(path, "w", encoding="utf-8") as fh:
+    for row in reviews:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+PY
+(cd "$CG_MULTI_ROOT" && git add lib/a.dart lib/b.dart)
+out=$(env TASK_JSON_PATH="$CG_MULTI_TASK/task.json" bash -c "cd '$CG_MULTI_ROOT' && python3 '$GATE' commit-plan '$CG_MULTI_TASK'" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" full_chain implementation && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["can_commit_now"] is True, plan
+assert plan["allowed_stage_paths"] == ["lib/a.dart", "lib/b.dart"], plan
+cov = plan["review_coverage"]
+assert cov["records_current_clean"] == 2, cov
+assert set(cov["covering_review_ids"]) == {"review-a", "review-b-latest"}, cov
+assert cov["uncovered_staged_paths"] == [], cov
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan 多 slice review-set 覆盖不再只信最新 row"
+else failn=$((failn+1)); echo "FAIL  commit-plan 多 slice review-set coverage 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+CG_MULTI_MISS_PAIR=$(mk_commit_gate_case commit-multi-missing-review in_progress "lib/a.dart")
+CG_MULTI_MISS_ROOT="${CG_MULTI_MISS_PAIR%%|*}"; CG_MULTI_MISS_TASK="${CG_MULTI_MISS_PAIR#*|}"
+write_route_contract "$CG_MULTI_MISS_TASK" full_chain high
+printf 'code b\n' > "$CG_MULTI_MISS_ROOT/lib/b.dart"
+python3 - "$CG_MULTI_MISS_TASK" "$CG_MULTI_MISS_ROOT" "$GATE" <<'PY'
+import json, os, sys
+task, root, gate = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, os.path.dirname(os.path.abspath(gate)))
+import guru_review_record as R
+os.makedirs(os.path.join(task, "slice-packets"), exist_ok=True)
+def packet(unit, target):
+    return {
+        "schema_version": 1,
+        "slice_id": unit,
+        "owner_unit": unit,
+        "target_kind": "staged",
+        "target_paths": [target],
+        "risk": "high",
+        "risk_reasons": ["fixture"],
+        "deterministic_checks": ["true"],
+        "dirty_state": {"unrelated": []},
+        "semantic_review_provider": {"required": True, "provider": "opposite", "ocr": "optional"},
+        "invariants": [{
+            "invariant_id": f"INV-{unit}",
+            "rule": "fixture invariant",
+            "source": "detail",
+            "owner": "test",
+            "positive_case": "passes",
+            "negative_case": "fails",
+            "route_if_missing": "DETAIL_DEFECT",
+        }],
+    }
+for unit, target in (("UNIT-a", "lib/a.dart"), ("UNIT-b", "lib/b.dart")):
+    with open(os.path.join(task, "slice-packets", f"{unit}.json"), "w", encoding="utf-8") as fh:
+        json.dump(packet(unit, target), fh)
+        fh.write("\n")
+record = {
+    "run_id": "review-b-latest",
+    "slice_id": "UNIT-b",
+    "review_result": "clean",
+    "route_class": "none",
+    "supervisor_failure": "none",
+    "required_satisfied": True,
+    "deterministic_checks": "passed",
+    "dirty_scope": "clean",
+    "invariant_coverage": "all_passed",
+    "review_target": "slice:UNIT-b",
+    "review_provider": "codex",
+    "target_paths": ["lib/b.dart"],
+    "reviewed_target_digest": R.target_snapshot_digest(root, ["lib/b.dart"], "worktree"),
+}
+path = os.path.join(task, "review-records", "implementation-reviews.jsonl")
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+PY
+(cd "$CG_MULTI_MISS_ROOT" && git add lib/a.dart lib/b.dart)
+out=$(env TASK_JSON_PATH="$CG_MULTI_MISS_TASK/task.json" bash -c "cd '$CG_MULTI_MISS_ROOT' && python3 '$GATE' commit-plan '$CG_MULTI_MISS_TASK'" 2>&1); rc=$?
+if [ "$rc" = 0 ] && assert_commit_plan_json "$out" full_chain implementation && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["can_commit_now"] is False, plan
+cov = plan["review_coverage"]
+assert cov["covered_staged_paths"] == ["lib/b.dart"], cov
+assert cov["uncovered_staged_paths"] == ["lib/a.dart"], cov
+joined = "\n".join(plan["required_commands"])
+assert "--slice UNIT-a --staged" in joined, plan
+assert "--slice UNIT-b --staged" not in joined, plan
+PY
+then pass=$((pass+1)); echo "PASS  commit-plan 多 slice 缺口推荐缺失 slice review"
+else failn=$((failn+1)); echo "FAIL  commit-plan 多 slice 缺口 coverage 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
 CG_SPLIT_PAIR=$(mk_commit_gate_case commit-split in_progress "lib/x.dart")
 CG_SPLIT_ROOT="${CG_SPLIT_PAIR%%|*}"; CG_SPLIT_TASK="${CG_SPLIT_PAIR#*|}"
 printf '{"schema_version":1,"status":"passed"}\n' > "$CG_SPLIT_TASK/verification-evidence.jsonl"
@@ -3940,6 +4087,20 @@ ok("P1c implementation-review --slice --staged staged 超出 target_paths→work
    rc == 2 and rec and rec["supervisor_failure"] == "SCOPE_INVALID"
    and "staged changes outside review target paths" in e)
 
+root, tdir = mkgit("high"); write_packet(tdir, "U", risk="high")
+os.makedirs(os.path.join(root, "lib"), exist_ok=True)
+open(os.path.join(root, "lib/x.dart"), "w", encoding="utf-8").write("target")
+subprocess.run(["git", "-C", root, "add", "lib/x.dart"], check=True)
+args = argparse.Namespace(task_dir=tdir, root=root, platform="cli", provider="codex",
+                          trellis_bin="trellis", run_id="RID", dry_run=True,
+                          slice="U", staged=True, contract=False, same_provider=False, user_quote="")
+out, err = io.StringIO(), io.StringIO()
+with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+    rc = gs.run_implementation_review(args)
+ok("P1c implementation-review --platform cli 使用 Trellis check skill dry-run",
+   rc == 0 and "Guru cli skill(s): trellis-check" in out.getvalue()
+   and "implementation-review" in out.getvalue())
+
 # ============ R1 (codex P1-impl 对抗审查) 修复回归 ============
 def err(fn):  # 捕获 ReviewRecordError → True(packet/append 非法负例)
     try:
@@ -4157,12 +4318,16 @@ write_gate_contract() { # write_gate_contract <task> <route> <risk>
   python3 - "$1" "$2" "$3" <<'PY'
 import json, os, sys
 task, route, risk = sys.argv[1], sys.argv[2], sys.argv[3]
+scope = {"allowed_paths": [], "forbidden_path_patterns": [], "max_files": None}
+if route == "micro_task":
+  scope["allowed_paths"] = ["lib/a.dart"]
+  scope["max_files"] = 3
 contract = {
   "schema_version": 1,
   "risk": risk,
   "route": route,
   "assessment": {"confidence": 0.9, "reasons": ["fixture"], "risk_flags": []},
-  "scope": {"allowed_paths": [], "forbidden_path_patterns": [], "max_files": None},
+  "scope": scope,
   "required_gates": [],
   "optional_gates": [],
   "allowed_degradations": [],
@@ -4183,8 +4348,31 @@ PY
 
 write_slice_packet() { # write_slice_packet <task> <unit> <target> <risk>
   python3 - "$1" "$2" "$3" "$4" <<'PY'
-import json, os, sys
+import json, os, subprocess, sys
 task, unit, target, risk = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+def current_dirty_paths():
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-uall"],
+            cwd=os.getcwd(),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        return []
+    if proc.returncode != 0:
+        return []
+    paths = []
+    for line in proc.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        raw = line[3:].strip()
+        if " -> " in raw:
+            paths.extend(part.strip() for part in raw.split(" -> ") if part.strip())
+        elif raw:
+            paths.append(raw)
+    return sorted(set(paths))
 packet = {
   "schema_version": 1,
   "slice_id": unit,
@@ -4194,7 +4382,7 @@ packet = {
   "risk": risk,
   "risk_reasons": ["fixture"],
   "deterministic_checks": ["python3 -m py_compile packages/cli/src/templates/guru/overlay/verify/guru_gate.py"],
-  "dirty_state": {"unrelated": []},
+  "dirty_state": {"unrelated": current_dirty_paths()},
   "semantic_review_provider": {"required": True, "provider": "opposite", "ocr": "optional"},
   "invariants": [{
     "invariant_id": f"INV-{unit}",
@@ -4322,8 +4510,12 @@ out=$(python3 "$GATE" slice-plan "$LC_HIGH" 2>&1); rc=$?
 if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
 import json, os
 plan = json.loads(os.environ["PLAN"])
+assert plan["schema_version"] == 2, plan
 assert plan["packet_required"] is True, plan
 assert plan["slices"] == [], plan
+assert plan["parallel_groups"] == [], plan
+assert plan["dispatch_advisory"]["selected_backend"] != "channel", plan
+assert plan["dispatch_advisory"]["slice_plan_read_only"] is True, plan
 assert "PACKET_REQUIRED_BEFORE_IMPLEMENT" in plan["blocking_reasons"], plan
 PY
 then pass=$((pass+1)); echo "PASS  slice-plan high/full 无 packet 输出阻断 JSON"
@@ -4352,6 +4544,39 @@ PY
 then pass=$((pass+1)); echo "PASS  slice-plan high/lite override 强制 full_chain packet"
 else failn=$((failn+1)); echo "FAIL  slice-plan high/lite override JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
 
+LC_MICRO=$(make_gate_case accel-micro-no-packet)
+write_new_gate_ready "$LC_MICRO"
+write_gate_contract "$LC_MICRO" micro_task low
+out=$(python3 "$GATE" slice-plan "$LC_MICRO" 2>&1); rc=$?
+if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["route"] == "micro_task", plan
+assert plan["packet_required"] is False, plan
+assert plan["slices"] == [], plan
+assert plan["parallel_groups"] == [], plan
+assert "PACKET_REQUIRED_BEFORE_IMPLEMENT" not in plan["blocking_reasons"], plan
+PY
+then pass=$((pass+1)); echo "PASS  slice-plan micro_task 不要求 packet"
+else failn=$((failn+1)); echo "FAIL  slice-plan micro_task 不应要求 packet (rc=$rc)"; echo "$out" | head -8; fi
+
+LC_LITE=$(make_gate_case accel-lite-no-packet)
+write_new_gate_ready "$LC_LITE"
+write_gate_contract "$LC_LITE" lite_task medium
+out=$(python3 "$GATE" slice-plan "$LC_LITE" 2>&1); rc=$?
+if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["route"] == "lite_task", plan
+assert plan["risk"] == "medium", plan
+assert plan["packet_required"] is False, plan
+assert plan["slices"] == [], plan
+assert plan["parallel_groups"] == [], plan
+assert "PACKET_REQUIRED_BEFORE_IMPLEMENT" not in plan["blocking_reasons"], plan
+PY
+then pass=$((pass+1)); echo "PASS  slice-plan lite_task 不要求 packet"
+else failn=$((failn+1)); echo "FAIL  slice-plan lite_task 不应要求 packet (rc=$rc)"; echo "$out" | head -8; fi
+
 LC_PKT=$(make_gate_case accel-one-packet)
 write_new_gate_ready "$LC_PKT"
 write_gate_contract "$LC_PKT" full_chain high
@@ -4371,7 +4596,17 @@ plan = json.loads(os.environ["PLAN"])
 assert plan["packet_required"] is True, plan
 assert len(plan["slices"]) == 1, plan
 assert plan["slices"][0]["slice_id"] == "UNIT-a", plan
+assert plan["slices"][0]["depends_on"] == [], plan
+assert plan["slices"][0]["parallel_safe"] is True, plan
+assert plan["slices"][0]["parallel_mode"] == "writer", plan
+assert plan["slices"][0]["parallel_blockers"] == [], plan
 assert "--slice UNIT-a" in plan["slices"][0]["recommended_command"], plan
+assert plan["slices"][0]["recommended_commands"]["implement_check"] == plan["slices"][0]["recommended_command"], plan
+assert "implementation-review" in plan["slices"][0]["recommended_commands"]["implementation_review"], plan
+assert len(plan["parallel_groups"]) == 1, plan
+assert plan["parallel_groups"][0]["mode"] == "writer", plan
+assert plan["parallel_groups"][0]["slice_ids"] == ["UNIT-a"], plan
+assert plan["parallel_groups"][0]["max_parallel"] == 1, plan
 PY
 then pass=$((pass+1)); echo "PASS  slice-plan 单 packet 输出 recommended command"
 else failn=$((failn+1)); echo "FAIL  slice-plan 单 packet JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
@@ -4387,9 +4622,129 @@ import json, os
 plan = json.loads(os.environ["PLAN"])
 assert len(plan["slices"]) == 2, plan
 assert "PACKET_AMBIGUOUS_WITHOUT_SLICE" in plan["blocking_reasons"], plan
+assert all(s["parallel_safe"] for s in plan["slices"]), plan
+assert all(s["parallel_mode"] == "writer" for s in plan["slices"]), plan
+assert len(plan["parallel_groups"]) == 1, plan
+assert plan["parallel_groups"][0]["mode"] == "writer", plan
+assert plan["parallel_groups"][0]["slice_ids"] == ["UNIT-a", "UNIT-b"], plan
+assert plan["parallel_groups"][0]["max_parallel"] == 2, plan
 PY
 then pass=$((pass+1)); echo "PASS  slice-plan 多 packet 标记 ambiguous"
 else failn=$((failn+1)); echo "FAIL  slice-plan 多 packet JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+LC_OVERLAP=$(make_gate_case accel-overlap-packet)
+write_new_gate_ready "$LC_OVERLAP"
+write_gate_contract "$LC_OVERLAP" full_chain high
+write_slice_packet "$LC_OVERLAP" UNIT-a "lib/a.dart" high
+write_slice_packet "$LC_OVERLAP" UNIT-b "lib" high
+out=$(python3 "$GATE" slice-plan "$LC_OVERLAP" 2>&1); rc=$?
+if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert len(plan["slices"]) == 2, plan
+assert "PARALLEL_TARGET_PATH_OVERLAP" in plan["blocking_reasons"], plan
+assert all(not s["parallel_safe"] for s in plan["slices"]), plan
+assert all(s["parallel_mode"] == "serial" for s in plan["slices"]), plan
+assert all(any(b.startswith("TARGET_PATH_OVERLAP:") for b in s["parallel_blockers"]) for s in plan["slices"]), plan
+assert len(plan["parallel_groups"]) == 1, plan
+assert plan["parallel_groups"][0]["mode"] == "serial", plan
+assert plan["parallel_groups"][0]["max_parallel"] == 1, plan
+assert set(plan["parallel_groups"][0]["slice_ids"]) == {"UNIT-a", "UNIT-b"}, plan
+PY
+then pass=$((pass+1)); echo "PASS  slice-plan 重叠 target_paths 降级 serial metadata"
+else failn=$((failn+1)); echo "FAIL  slice-plan 重叠 target_paths JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+LC_LOCK=$(make_gate_case accel-resource-lock-packet)
+write_new_gate_ready "$LC_LOCK"
+write_gate_contract "$LC_LOCK" full_chain high
+write_slice_packet "$LC_LOCK" UNIT-a "lib/a.dart" high
+write_slice_packet "$LC_LOCK" UNIT-b "lib/b.dart" high
+python3 - "$LC_LOCK" <<'PY'
+import json, os, sys
+task = sys.argv[1]
+for unit in ("UNIT-a", "UNIT-b"):
+    path = os.path.join(task, "slice-packets", f"{unit}.json")
+    packet = json.load(open(path, encoding="utf-8"))
+    packet["deterministic_checks"] = ["flutter test"]
+    open(path, "w", encoding="utf-8").write(json.dumps(packet, ensure_ascii=False) + "\n")
+PY
+out=$(python3 "$GATE" slice-plan "$LC_LOCK" 2>&1); rc=$?
+if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert len(plan["parallel_groups"]) == 1, plan
+assert plan["parallel_groups"][0]["mode"] == "serial", plan
+assert all(not s["parallel_safe"] for s in plan["slices"]), plan
+assert all("flutter_tooling" in s["resource_locks"] for s in plan["slices"]), plan
+assert all(any(b == "RESOURCE_LOCK:flutter_tooling" for b in s["parallel_blockers"]) for s in plan["slices"]), plan
+PY
+then pass=$((pass+1)); echo "PASS  slice-plan resource lock 降级 serial metadata"
+else failn=$((failn+1)); echo "FAIL  slice-plan resource lock JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+DS_ROOT="$TMP/dispatch-root"; mkdir -p "$DS_ROOT/.trellis/tasks/dispatch-multi" "$DS_ROOT/.trellis/tasks/dispatch-overlap" "$DS_ROOT/.trellis" "$DS_ROOT/lib"
+(cd "$DS_ROOT" && git init -q && git config core.hooksPath /dev/null && git config user.name Guru && git config user.email guru@example.invalid)
+printf 'codex:\n  dispatch_mode: sub-agent\n' > "$DS_ROOT/.trellis/config.yaml"
+printf 'a\n' > "$DS_ROOT/lib/a.dart"; printf 'b\n' > "$DS_ROOT/lib/b.dart"
+(cd "$DS_ROOT" && git add lib/a.dart lib/b.dart && git commit -q -m base)
+DS_MULTI="$DS_ROOT/.trellis/tasks/dispatch-multi"
+cp "$G/prd.md" "$G/design.md" "$G/implement.md" "$DS_MULTI/"
+printf '{}\n' > "$DS_MULTI/task.json"
+write_new_gate_ready "$DS_MULTI"
+write_gate_contract "$DS_MULTI" full_chain high
+write_slice_packet "$DS_MULTI" UNIT-a "lib/a.dart" high
+write_slice_packet "$DS_MULTI" UNIT-b "lib/b.dart" high
+DS_OVERLAP="$DS_ROOT/.trellis/tasks/dispatch-overlap"
+cp "$G/prd.md" "$G/design.md" "$G/implement.md" "$DS_OVERLAP/"
+printf '{}\n' > "$DS_OVERLAP/task.json"
+write_new_gate_ready "$DS_OVERLAP"
+write_gate_contract "$DS_OVERLAP" full_chain high
+write_slice_packet "$DS_OVERLAP" UNIT-a "lib/a.dart" high
+write_slice_packet "$DS_OVERLAP" UNIT-b "lib" high
+
+out=$(python3 "$SUP" --root "$DS_ROOT" implement-slices "$DS_MULTI" --dry-run --parallel 4 --backend auto 2>&1); rc=$?
+if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["command"] == "implement-slices", plan
+assert plan["slice_plan_reread"] is True, plan
+assert plan["selected_backend"] == "sub-agent", plan
+assert plan["decision"] == "parallel", plan
+assert plan["parallel_limit"] == 2, plan
+assert plan["dispatch_now"] == ["UNIT-a", "UNIT-b"], plan
+assert plan["status_input"]["status_command"] == "", plan
+assert all("sub_agent" in item and "channel" not in item for item in plan["dispatch_items"]), plan
+assert all(item["sub_agent"]["brief"].startswith("Active task: ") for item in plan["dispatch_items"]), plan
+PY
+then pass=$((pass+1)); echo "PASS  implement-slices auto 使用 sub-agent 并输出并行 briefs"
+else failn=$((failn+1)); echo "FAIL  implement-slices auto/sub-agent JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+out=$(python3 "$SUP" --root "$DS_ROOT" implement-slices "$DS_MULTI" --dry-run --parallel 4 --backend channel 2>&1); rc=$?
+if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["requested_backend"] == "channel", plan
+assert plan["selected_backend"] == "channel", plan
+assert plan["decision"] == "parallel", plan
+assert plan["status_input"]["status_command"], plan
+assert all("channel" in item and "sub_agent" not in item for item in plan["dispatch_items"]), plan
+assert all(item["channel"]["uses_existing_channel_plan_builder"] is True for item in plan["dispatch_items"]), plan
+PY
+then pass=$((pass+1)); echo "PASS  implement-slices 显式 channel 才输出 channel plan"
+else failn=$((failn+1)); echo "FAIL  implement-slices channel JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+
+out=$(python3 "$SUP" --root "$DS_ROOT" implement-slices "$DS_OVERLAP" --dry-run --parallel 4 --backend auto 2>&1); rc=$?
+if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
+import json, os
+plan = json.loads(os.environ["PLAN"])
+assert plan["selected_backend"] == "sub-agent", plan
+assert plan["decision"] == "serial", plan
+assert plan["parallel_limit"] == 1, plan
+assert any("TARGET_PATH_OVERLAP" in reason for reason in plan["downgrade_reasons"]), plan
+assert len(plan["dispatch_now"]) == 1, plan
+assert len(plan["deferred_slices"]) == 1, plan
+PY
+then pass=$((pass+1)); echo "PASS  implement-slices target overlap 降级 serial"
+else failn=$((failn+1)); echo "FAIL  implement-slices overlap serial JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
 
 out=$(bash -c "cd '$MC_ROOT' && python3 '$GATE' commit-plan '$MC_TASK' --write" 2>&1); rc=$?
 if [ "$rc" = 0 ] && assert_commit_plan_json "$out" micro_task implementation && [ -f "$MC_TASK/commit-plan.json" ] && PLAN="$out" FILE="$MC_TASK/commit-plan.json" python3 - <<'PY'

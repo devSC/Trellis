@@ -275,6 +275,229 @@ keeps required review gates non-degradable.
 
 ---
 
+## Scenario: Route-Aware Slice Dispatch and Review Coverage
+
+### 1. Scope / Trigger
+
+Apply this spec when editing Guru high-risk full-chain slice execution,
+dispatch backend selection, or implementation review evidence aggregation.
+
+Mandatory triggers:
+
+- `guru_gate.py slice-plan` output shape changes.
+- New or changed `guru_supervise.py implement-slices` behavior.
+- Changes to direct platform sub-agent vs channel worker dispatch rules.
+- Changes to commit-time required implementation review coverage.
+- Changes to slice packet safety metadata, resource locks, or target isolation.
+
+This surface is cross-layer workflow infrastructure. It must be fail-closed,
+mirrored between `.trellis/scripts/guru`, `guru-template/overlay/verify`, and
+`packages/cli/src/templates/guru/overlay/verify`, and covered by Guru verify
+tests.
+
+### 2. Signatures
+
+- Read-only slice plan:
+  - `python3 .trellis/scripts/guru/guru_gate.py slice-plan <task_dir>`
+  - Emits stdout JSON only. It must not write packets, reviews, task metadata,
+    channel state, or mutable evidence.
+
+- Route-aware slice dispatcher:
+  - `python3 .trellis/scripts/guru/guru_supervise.py implement-slices <task_dir> [--dry-run] [--parallel <n>] [--group <group_id>] [--backend auto|sub-agent|channel]`
+  - `--backend auto` reads `.trellis/config.yaml` key
+    `codex.dispatch_mode`.
+  - `sub-agent` mode emits direct platform sub-agent briefs. The CLI cannot
+    call the Codex Agent tool itself.
+  - `channel` mode emits/uses channel-compatible commands only when configured
+    or explicitly selected.
+
+- Check-only slice review:
+  - `python3 .trellis/scripts/guru/guru_supervise.py implementation-review <task_dir> [--slice <unit_id>] [--staged]`
+  - This command must not launch an implement worker.
+
+- Commit coverage:
+  - `python3 .trellis/scripts/guru/guru_gate.py commit-plan <task_dir>`
+  - `python3 .trellis/scripts/guru/guru_gate.py check-commit <task_dir>`
+  - Both commands must evaluate the same staged-scope review coverage model.
+
+### 3. Contracts
+
+`slice-plan` JSON must include additive scheduling metadata:
+
+```json
+{
+  "schema_version": 2,
+  "packet_required": true,
+  "slices": [
+    {
+      "slice_id": "UNIT-example",
+      "target_paths": [],
+      "depends_on": [],
+      "resource_locks": [],
+      "parallel_safe": false,
+      "parallel_mode": "writer|read_only|serial",
+      "parallel_group": "g1",
+      "parallel_blockers": [],
+      "recommended_commands": {
+        "implement_check": "...",
+        "implementation_review": "...",
+        "implementation_review_staged": "..."
+      }
+    }
+  ],
+  "parallel_groups": [
+    {
+      "group_id": "g1",
+      "mode": "writer|read_only|serial",
+      "slice_ids": [],
+      "max_parallel": 1,
+      "blocking_reasons": []
+    }
+  ],
+  "dispatch_advisory": {
+    "configured_dispatch_mode": "sub-agent",
+    "selected_backend": "sub-agent",
+    "channel_is_default": false,
+    "slice_plan_read_only": true,
+    "sub_agent_requires_active_task_prelude": true
+  }
+}
+```
+
+`implement-slices` JSON must include:
+
+- `selected_backend`: effective backend after CLI/config selection.
+- `raw_configured_dispatch_mode` and `configured_dispatch_mode`.
+- `slice_plan_reread=true`; the dispatcher must not trust stale caller JSON.
+- `decision`: `parallel | serial | blocked`.
+- `dispatch_items[]`, each with `slice_id`, `mode`, `target_paths`,
+  `dispatch_now`, `recommended_command`, and backend-specific details.
+- In `sub-agent` backend, each item must contain `sub_agent.agent` and
+  `sub_agent.brief`. The brief must start with `Active task: <task path>` and
+  must tell the worker it is already the dispatched worker and must not spawn
+  another implement/check agent.
+- In `channel` backend, each item must contain channel-compatible dry-run and
+  execute commands. Sub-agent status must not be represented as channel status.
+- `read_only_fanout[]` may recommend `implementation-review` commands and must
+  mark `does_not_launch_implement_worker=true`.
+
+`commit-plan.review_coverage` must be present and additive:
+
+```json
+{
+  "review_coverage": {
+    "source": "review-records/implementation-reviews.jsonl",
+    "records_considered": 0,
+    "records_current_clean": 0,
+    "covered_staged_paths": [],
+    "uncovered_staged_paths": [],
+    "forbidden_staged_paths": [],
+    "covering_reviews": {},
+    "covering_review_ids": [],
+    "ignored_reviews": [],
+    "ignored_covering_review_ids": [],
+    "ignored_covering_staged_paths": [],
+    "missing_review_commands": []
+  }
+}
+```
+
+Full-chain commit authorization must aggregate all current clean review records
+whose `reviewed_target_digest` matches the staged index digest for that record's
+`target_paths`. It must not authorize multi-slice staged scope from the latest
+JSONL row alone.
+
+Route awareness is mandatory. `micro_task` and `lite_task` must not inherit
+full-chain slice packet requirements unless their selected contract explicitly
+requires full-chain packet behavior.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+| --- | --- |
+| `route=full_chain`, `risk=high`, no slice packets | `slice-plan` reports `PACKET_REQUIRED_BEFORE_IMPLEMENT`; worker launch fails before implement/check |
+| Multiple packets and no selected slice | `slice-plan` reports `PACKET_AMBIGUOUS_WITHOUT_SLICE`; per-slice commands include `--slice <unit_id>` |
+| Packet target paths overlap | affected slices become `parallel_safe=false`, `parallel_mode=serial`, with `TARGET_PATH_OVERLAP:*` blockers |
+| Packet deterministic checks contain broad package/tool commands such as Flutter, Dart, pnpm/npm/yarn/bun, Gradle, or Xcode | affected slices get `RESOURCE_LOCK:<lock>` blockers and do not enter writer parallel groups |
+| Dirty scannable paths outside `target_paths` and `dirty_state.unrelated` | affected slice reports `SCOPE_INVALID` and dispatcher downgrades or blocks |
+| `codex.dispatch_mode=sub-agent` and backend auto | selected backend is `sub-agent`; no channel is created or queried |
+| backend explicitly `channel` | channel commands may be emitted; this is the only path that may query channel status |
+| backend `sub-agent` | status source is platform sub-agent results; channel live/terminal status must not be fabricated |
+| No safe writer group exists | dispatcher returns `decision=serial|blocked` with downgrade reasons |
+| Read-only review fanout is emitted | commands must be `implementation-review`, not `implement-check` |
+| Commit staged paths are covered by several current clean slice reviews | commit may proceed if all other gates pass |
+| Only the latest review row is clean but earlier staged slice paths lack current clean review | commit blocks and recommends missing `implementation-review --slice <unit_id> --staged` commands when mappable |
+| Task/workspace artifacts are mixed with implementation staged paths | commit remains split-required; review coverage does not authorize task artifacts |
+
+### 5. Good/Base/Bad Cases
+
+- Good: two independent clean slice packets with disjoint target paths and no
+  resource locks produce one writer parallel group.
+- Good: a current Codex project with `codex.dispatch_mode: sub-agent` produces
+  platform `trellis-implement` briefs headed by `Active task:` and does not call
+  `trellis channel`.
+- Good: broad validation commands such as `flutter test` or `pnpm ...` make the
+  writer group serial even if target paths are disjoint.
+- Good: `commit-plan` covers staged `lib/a.dart` from review A and staged
+  `lib/b.dart` from review B, with both review digests recomputed against the
+  staged index.
+- Base: a single-packet full-chain task continues to use explicit
+  `implement-check --slice <unit_id>` and `implementation-review --slice`.
+- Bad: direct platform sub-agent mode creates a channel and then waits on
+  channel status.
+- Bad: `commit-plan` uses only `_latest_jsonl_record` to authorize all staged
+  paths.
+- Bad: `slice-plan` writes or mutates packet files to manufacture a runnable
+  group.
+
+### 6. Tests Required
+
+Guru verify tests must cover:
+
+- `slice-plan` zero/one/multiple packet output with `schema_version=2`.
+- `slice-plan` `dispatch_advisory` for `sub-agent`, including
+  `channel_is_default=false`.
+- `micro_task` and `lite_task` no-packet cases do not get
+  `PACKET_REQUIRED_BEFORE_IMPLEMENT`.
+- Disjoint writer packets produce a writer group.
+- Overlapping target paths downgrade to serial.
+- Resource-lock deterministic checks downgrade to serial.
+- `implement-slices --backend auto` in sub-agent mode emits sub-agent briefs
+  with `Active task:` and does not create/query channel.
+- Explicit `--backend channel` emits channel plan data.
+- `implementation-review --slice --staged` remains check-only.
+- `commit-plan` multi-slice pass fixture covers all staged paths using a review
+  set.
+- `commit-plan` missing-slice fixture recommends only the missing slice review
+  command.
+- Source/template mirror checks cover gate, supervisor, tests, and workflow
+  copies.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+channel 默认：主会话运行 guru_supervise.py implement-check <task-dir>
+```
+
+This makes channel look like the default even when the project has
+`codex.dispatch_mode: sub-agent`, causing operators to route work through the
+wrong backend.
+
+#### Correct
+
+```text
+dispatch-mode aware: first read codex.dispatch_mode. In sub-agent mode emit
+Active task-prefixed trellis-implement briefs; use channel only when configured
+or explicitly selected.
+```
+
+This keeps direct platform sub-agent dispatch and durable channel dispatch as
+separate, explicit backends.
+
+---
+
 ## Scenario: Route-Aware Finish and Commit Contract
 
 ### 1. Scope / Trigger
