@@ -153,3 +153,36 @@ Implemented and committed Guru risk-based intake routing with task-local gate co
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Route-aware Guru slice supervision
+
+**Date**: 2026-07-09
+**Task**: Route-aware Guru slice supervision
+**Branch**: `codex/guru-0.6.0-ga-worktree`
+
+### Summary
+
+Implemented dispatch-mode aware parallel slice planning/supervision and review-set commit coverage, installed the refreshed overlay into guru_ai_himora (b3ad844c) and safe_land_web (9b073a7), then archived the completed task.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `613c8fd3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
