@@ -186,3 +186,44 @@ Implemented dispatch-mode aware parallel slice planning/supervision and review-s
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Guru workflow slice dispatcher parity
+
+**Date**: 2026-07-10
+**Task**: Guru workflow slice dispatcher parity
+**Branch**: `codex/guru-0.6.0-ga-worktree`
+
+### Summary
+
+Made Guru workflow implementation routing dispatch-mode aware, hardened staged implementation-review verdict prompts, installed updated Trellis config to target packages, and archived the completed task.
+
+### Main Changes
+
+- Updated H5/Go/iOS/client Guru workflow guidance to route Phase 2 through `guru_supervise.py implement-slices <task-dir> --dry-run --backend auto` before dispatching work.
+- Preserved backend semantics: sub-agent prompts start with `Active task:`, channel is used only when selected, inline remains serial, and `decision=serial|blocked` is not forced parallel.
+- Hardened `implementation-review` prompt output contracts so `review_provider` must be the real worker provider (`codex` or `claude`) and all seven verdict fields are explicit.
+- Added staged review `expected_invariants` prompt output, including the synthetic `staged_scope_reviewed` invariant, to prevent malformed clean reviews that borrow unrelated slice invariant ids.
+- Added/updated Guru overlay regression coverage and code-spec notes in `.trellis/spec/cli/backend/guru-overlay-gates.md`.
+- Validation included `sync:guru:check`, Python `py_compile`, overlay verify tests (`530 pass / 0 fail`), staged implementation-review clean evidence, GitNexus detect-changes, target install wrapper smoke checks, and Guru `check-commit`.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b575a472` | (see git log) |
+| `3da89ab9` | (see git log) |
+| `308ed856` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
