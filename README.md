@@ -66,6 +66,43 @@ trellis init --cursor --opencode --codex -u your-name
 
 See the [Quick Start](https://docs.trytrellis.app/start/install-and-first-task) and [Supported Platforms](https://docs.trytrellis.app/advanced/multi-platform) guides for setup details.
 
+## Maintainer: Refresh Guru Target Overlays
+
+When you are working from a local Trellis/Guru source checkout and need to
+refresh the generated Guru overlay in sibling target projects, use the batch
+installer instead of manually running target-by-target apply commands:
+
+```bash
+pnpm --filter @devsc/trellis run guru:install:targets
+```
+
+The batch command reads local target configuration from
+`.trellis/workspace/<developer>/guru-install-targets.tsv`, falling back to
+`.trellis/workspace/guru-install-targets.tsv`. Each non-empty, non-comment row
+is:
+
+```text
+<platform> <target_path>
+```
+
+Example:
+
+```text
+flutter /path/to/flutter-app
+h5 /path/to/web-app
+```
+
+For one-off refreshes, keep using the single-target wrapper:
+
+```bash
+pnpm --dir packages/cli run guru:install -- h5 /path/to/web-app
+```
+
+The wrapper prepares the source package once, delegates overlay installation to
+`trellis guru apply`, runs target smoke checks, and cleans generated Python
+cache directories. In batch mode, it also prints a per-target `PASS` / `FAIL`
+summary and exits non-zero if any target fails.
+
 ## How to Use
 
 The workflow is simple:
