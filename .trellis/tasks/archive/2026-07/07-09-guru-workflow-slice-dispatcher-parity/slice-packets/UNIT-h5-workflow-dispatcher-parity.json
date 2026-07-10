@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "slice_id": "UNIT-h5-workflow-dispatcher-parity",
+  "owner_unit": "UNIT-workflow-dispatcher-wording",
+  "target_kind": "staged",
+  "target_paths": [
+    "packages/cli/src/templates/guru/workflows/guru-h5.md",
+    "guru-template/workflows/guru-h5-workflow.md"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "workflow_contract",
+    "dispatch_mode_parity",
+    "template_mirror"
+  ],
+  "depends_on": [],
+  "deterministic_checks": [
+    "rg -n \"implement-slices <task-dir> --dry-run --backend auto\" packages/cli/src/templates/guru/workflows/guru-h5.md guru-template/workflows/guru-h5-workflow.md",
+    "rg -n \"dispatch-mode aware：.*implement-slices <task-dir> --dry-run --backend auto\" packages/cli/src/templates/guru/workflows/guru-h5.md guru-template/workflows/guru-h5-workflow.md",
+    "rg -n \"prompt 首行 Active task: <path>\" packages/cli/src/templates/guru/workflows/guru-h5.md guru-template/workflows/guru-h5-workflow.md",
+    "rg -n \"worker 不得嵌套 spawn implement/check\" packages/cli/src/templates/guru/workflows/guru-h5.md guru-template/workflows/guru-h5-workflow.md",
+    "rg -n \"dispatch_now/deferred_slices\" packages/cli/src/templates/guru/workflows/guru-h5.md guru-template/workflows/guru-h5-workflow.md",
+    "rg -n \"h5-implementation-guru-writing|domain-type.*data-access|server-first\" packages/cli/src/templates/guru/workflows/guru-h5.md guru-template/workflows/guru-h5-workflow.md"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/check.jsonl",
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/review-records/implementation-reviews.jsonl",
+      ".trellis/tasks/07-09-guru-full-chain-slice-acceleration-benchmark/check.jsonl",
+      ".trellis/tasks/07-09-guru-full-chain-slice-acceleration-benchmark/implement.jsonl",
+      ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/check.jsonl",
+      ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/implement.jsonl",
+            ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/review-records/implementation-reviews.jsonl",
+            ".trellis/workspace/devSC/guru-install-targets.tsv",
+            "packages/cli/test/guru/guru-bundled.test.ts",
+            "marketplace"
+        ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-h5-dispatcher-prelude",
+      "rule": "H5 Phase 2.1 must first run implement-slices --dry-run --backend auto and bind sub-agent/channel/inline execution to the returned dispatcher plan rather than selecting channel first.",
+      "source": "design.md#UNIT-workflow-dispatcher-wording",
+      "owner": "UNIT-h5-workflow-dispatcher-parity",
+      "positive_case": "Both H5 workflow copies contain the dry-run command, selected_backend/decision/dispatch item language, Active task prelude, and nested-dispatch guard.",
+      "negative_case": "H5 workflow still says to choose a backend directly from codex.dispatch_mode without reading implement-slices dry-run output.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "rg implement-slices dry-run in H5 source and mirror"
+      ]
+    },
+    {
+      "invariant_id": "INV-h5-golden-path-preserved",
+      "rule": "H5 platform-specific implementation order and golden-path constraints must remain present after adding the dispatcher prelude.",
+      "source": "design.md#UNIT-platform-golden-path-preservation",
+      "owner": "UNIT-h5-workflow-dispatcher-parity",
+      "positive_case": "The H5 workflow still names h5-implementation-guru-writing and preserves domain-type to route ordering, server/client boundaries, metadata/SEO, and style isolation.",
+      "negative_case": "The dispatcher edit deletes or weakens H5 layer ordering, server-first constraints, private data boundaries, or route metadata/error-boundary guidance.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "rg H5 platform guard terms in H5 source and mirror"
+      ]
+    },
+    {
+      "invariant_id": "INV-h5-in-progress-breadcrumb-dispatcher-aware",
+      "rule": "H5 [workflow-state:in_progress] breadcrumb must be dispatch-mode aware and must not describe channel as the default implementation backend.",
+      "source": "design.md#UNIT-workflow-state-breadcrumb-dispatcher-wording",
+      "owner": "UNIT-h5-workflow-dispatcher-parity",
+      "positive_case": "Both H5 workflow copies tell the main session to run implement-slices --dry-run --backend auto, choose backend from selected_backend, preserve the Active task prelude, forbid nested implement/check spawn, respect dispatch_now/deferred_slices, and keep the validation-evidence reminder within the install breadcrumb budget.",
+      "negative_case": "The H5 in_progress breadcrumb still says default official trellis channel or omits the dispatcher dry-run prelude.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "rg H5 in_progress breadcrumb dispatcher wording",
+        "negative rg no default channel"
+      ]
+    }
+  ]
+}

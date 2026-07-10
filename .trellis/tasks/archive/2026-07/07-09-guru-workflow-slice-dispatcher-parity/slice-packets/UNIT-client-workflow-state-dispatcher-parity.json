@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "slice_id": "UNIT-client-workflow-state-dispatcher-parity",
+  "owner_unit": "UNIT-workflow-state-breadcrumb-dispatcher-wording",
+  "target_kind": "staged",
+  "target_paths": [
+    "packages/cli/src/templates/guru/workflows/guru-client.md",
+    "guru-template/workflows/guru-client-workflow.md"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "workflow_contract",
+    "breadcrumb_dispatch",
+    "template_mirror"
+  ],
+  "depends_on": [],
+  "deterministic_checks": [
+    "rg -n \"dispatch-mode aware：.*implement-slices <task-dir> --dry-run --backend auto\" packages/cli/src/templates/guru/workflows/guru-client.md guru-template/workflows/guru-client-workflow.md",
+    "rg -n \"prompt 首行 Active task: <path>\" packages/cli/src/templates/guru/workflows/guru-client.md guru-template/workflows/guru-client-workflow.md",
+    "rg -n \"worker 不得嵌套 spawn implement/check\" packages/cli/src/templates/guru/workflows/guru-client.md guru-template/workflows/guru-client-workflow.md",
+    "rg -n \"dispatch_now/deferred_slices\" packages/cli/src/templates/guru/workflows/guru-client.md guru-template/workflows/guru-client-workflow.md",
+    "rg -n \"无验证证据不 commit|设计缺陷回P1\" packages/cli/src/templates/guru/workflows/guru-client.md guru-template/workflows/guru-client-workflow.md"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/check.jsonl",
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/review-records/implementation-reviews.jsonl",
+      ".trellis/tasks/07-09-guru-full-chain-slice-acceleration-benchmark/check.jsonl",
+      ".trellis/tasks/07-09-guru-full-chain-slice-acceleration-benchmark/implement.jsonl",
+      ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/check.jsonl",
+      ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/implement.jsonl",
+            ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/review-records/implementation-reviews.jsonl",
+            ".trellis/workspace/devSC/guru-install-targets.tsv",
+            "packages/cli/test/guru/guru-bundled.test.ts",
+            "marketplace"
+        ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-client-in-progress-breadcrumb-dispatcher-aware",
+      "rule": "Client [workflow-state:in_progress] breadcrumb must be dispatch-mode aware and must not describe channel as the default implementation backend.",
+      "source": "design.md#UNIT-workflow-state-breadcrumb-dispatcher-wording",
+      "owner": "UNIT-client-workflow-state-dispatcher-parity",
+      "positive_case": "Both client workflow copies tell the main session to run implement-slices --dry-run --backend auto, choose backend from selected_backend, preserve the Active task prelude, forbid nested implement/check spawn, respect dispatch_now/deferred_slices, and keep the validation-evidence reminder within the install breadcrumb budget.",
+      "negative_case": "The client in_progress breadcrumb still says default official trellis channel or omits the dispatcher dry-run prelude.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "rg client in_progress breadcrumb dispatcher wording",
+        "negative rg no default channel"
+      ]
+    }
+  ]
+}

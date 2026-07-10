@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "slice_id": "UNIT-guru-bundled-test-dispatcher-parity",
+  "owner_unit": "UNIT-tests",
+  "target_kind": "staged",
+  "target_paths": [
+    "packages/cli/test/guru/guru-bundled.test.ts"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "workflow_contract",
+    "regression_test",
+    "dispatch_mode_parity"
+  ],
+  "depends_on": [
+    "UNIT-client-workflow-state-dispatcher-parity",
+    "UNIT-go-workflow-dispatcher-parity",
+    "UNIT-h5-workflow-dispatcher-parity",
+    "UNIT-ios-workflow-dispatcher-parity"
+  ],
+  "deterministic_checks": [
+    "rg -n \"routes ordinary in_progress through dispatcher plan while preserving rollback modes\" packages/cli/test/guru/guru-bundled.test.ts",
+    "rg -n \"implement-slices <task-dir> --dry-run --backend auto|channel 仅 selected_backend=channel|not.toContain\\(\\\"默认用官方 trellis channel\\\"\\)\" packages/cli/test/guru/guru-bundled.test.ts",
+    "pnpm --dir packages/cli exec vitest run test/guru/guru-bundled.test.ts -t \"routes ordinary in_progress through dispatcher plan while preserving rollback modes\""
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/check.jsonl",
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/review-records/implementation-reviews.jsonl",
+      ".trellis/tasks/07-09-guru-full-chain-slice-acceleration-benchmark/check.jsonl",
+      ".trellis/tasks/07-09-guru-full-chain-slice-acceleration-benchmark/implement.jsonl",
+      ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/check.jsonl",
+      ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/implement.jsonl",
+      ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/review-records/implementation-reviews.jsonl",
+      ".trellis/workspace/devSC/guru-install-targets.tsv",
+      "marketplace"
+    ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-guru-bundled-test-dispatcher-aware",
+      "rule": "Bundled Guru workflow ordinary in_progress regression test must assert dispatcher-plan-first breadcrumb behavior while preserving explicit channel/sub-agent/inline rollback mode checks.",
+      "source": "design.md#UNIT-tests",
+      "owner": "UNIT-guru-bundled-test-dispatcher-parity",
+      "positive_case": "The test title and assertions require implement-slices dry-run, selected_backend dispatch, no default-channel wording in ordinary in_progress, and keep channel rollback checks on in_progress-channel.",
+      "negative_case": "The test still requires ordinary in_progress to contain trellis channel or omits the dispatcher dry-run assertion.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "rg test dispatcher wording",
+        "targeted vitest for bundled ordinary in_progress routing"
+      ]
+    }
+  ]
+}

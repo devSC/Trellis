@@ -1,0 +1,4 @@
+{"file":".trellis/spec/cli/backend/workflow-state-contract.md","reason":"review should verify workflow template changes do not alter breadcrumb/status contracts"}
+{"file":".trellis/spec/cli/backend/guru-overlay-gates.md","reason":"review should verify workflow text matches Guru route/dispatch/commit gate behavior"}
+{"file":".trellis/tasks/archive/2026-07/07-09-guru-route-aware-parallel-slice-supervision/prd.md","reason":"review should verify parity task preserves original acceleration requirements and non-goals"}
+{"file":".trellis/tasks/archive/2026-07/07-09-guru-route-aware-parallel-slice-supervision/design.md","reason":"review should verify dispatcher wording matches implemented design boundaries"}

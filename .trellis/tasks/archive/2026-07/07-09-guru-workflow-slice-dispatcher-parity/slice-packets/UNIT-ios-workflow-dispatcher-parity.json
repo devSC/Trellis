@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "slice_id": "UNIT-ios-workflow-dispatcher-parity",
+  "owner_unit": "UNIT-workflow-dispatcher-wording",
+  "target_kind": "staged",
+  "target_paths": [
+    "packages/cli/src/templates/guru/workflows/guru-ios.md",
+    "guru-template/workflows/guru-ios-workflow.md"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "workflow_contract",
+    "dispatch_mode_parity",
+    "template_mirror"
+  ],
+  "depends_on": [],
+  "deterministic_checks": [
+    "rg -n \"implement-slices <task-dir> --dry-run --backend auto\" packages/cli/src/templates/guru/workflows/guru-ios.md guru-template/workflows/guru-ios-workflow.md",
+    "rg -n \"dispatch-mode aware：.*implement-slices <task-dir> --dry-run --backend auto\" packages/cli/src/templates/guru/workflows/guru-ios.md guru-template/workflows/guru-ios-workflow.md",
+    "rg -n \"prompt 首行 Active task: <path>\" packages/cli/src/templates/guru/workflows/guru-ios.md guru-template/workflows/guru-ios-workflow.md",
+    "rg -n \"worker 不得嵌套 spawn implement/check\" packages/cli/src/templates/guru/workflows/guru-ios.md guru-template/workflows/guru-ios-workflow.md",
+    "rg -n \"dispatch_now/deferred_slices\" packages/cli/src/templates/guru/workflows/guru-ios.md guru-template/workflows/guru-ios-workflow.md",
+    "rg -n \"ios-implementation-guru-writing|domain-model.*repository.*usecase.*viewmodel|FactoryKit\" packages/cli/src/templates/guru/workflows/guru-ios.md guru-template/workflows/guru-ios-workflow.md"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/check.jsonl",
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/review-records/implementation-reviews.jsonl",
+      ".trellis/tasks/07-09-guru-full-chain-slice-acceleration-benchmark/check.jsonl",
+      ".trellis/tasks/07-09-guru-full-chain-slice-acceleration-benchmark/implement.jsonl",
+      ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/check.jsonl",
+      ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/implement.jsonl",
+            ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/review-records/implementation-reviews.jsonl",
+            ".trellis/workspace/devSC/guru-install-targets.tsv",
+            "packages/cli/test/guru/guru-bundled.test.ts",
+            "marketplace"
+        ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-ios-dispatcher-prelude",
+      "rule": "iOS Phase 2.1 must first run implement-slices --dry-run --backend auto and bind sub-agent/channel/inline execution to the returned dispatcher plan rather than selecting channel first.",
+      "source": "design.md#UNIT-workflow-dispatcher-wording",
+      "owner": "UNIT-ios-workflow-dispatcher-parity",
+      "positive_case": "Both iOS workflow copies contain the dry-run command, selected_backend/decision/dispatch item language, Active task prelude, and nested-dispatch guard.",
+      "negative_case": "iOS workflow still says to choose a backend directly from codex.dispatch_mode without reading implement-slices dry-run output.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "rg implement-slices dry-run in iOS source and mirror"
+      ]
+    },
+    {
+      "invariant_id": "INV-ios-golden-path-preserved",
+      "rule": "iOS platform-specific implementation order and hard rules must remain present after adding the dispatcher prelude.",
+      "source": "design.md#UNIT-platform-golden-path-preservation",
+      "owner": "UNIT-ios-workflow-dispatcher-parity",
+      "positive_case": "The iOS workflow still names ios-implementation-guru-writing and preserves domain-model to view ordering, FactoryKit DI, Repository ownership, ViewModel, private extension, and WCDBSwift constraints.",
+      "negative_case": "The dispatcher edit deletes or weakens iOS layer ordering, FactoryKit injection, Repository boundary, ViewModel state, or WCDBSwift persistence rules.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "rg iOS platform guard terms in iOS source and mirror"
+      ]
+    },
+    {
+      "invariant_id": "INV-ios-in-progress-breadcrumb-dispatcher-aware",
+      "rule": "iOS [workflow-state:in_progress] breadcrumb must be dispatch-mode aware and must not describe channel as the default implementation backend.",
+      "source": "design.md#UNIT-workflow-state-breadcrumb-dispatcher-wording",
+      "owner": "UNIT-ios-workflow-dispatcher-parity",
+      "positive_case": "Both iOS workflow copies tell the main session to run implement-slices --dry-run --backend auto, choose backend from selected_backend, preserve the Active task prelude, forbid nested implement/check spawn, respect dispatch_now/deferred_slices, and keep the validation-evidence reminder within the install breadcrumb budget.",
+      "negative_case": "The iOS in_progress breadcrumb still says default official trellis channel or omits the dispatcher dry-run prelude.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "rg iOS in_progress breadcrumb dispatcher wording",
+        "negative rg no default channel"
+      ]
+    }
+  ]
+}

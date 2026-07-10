@@ -1,0 +1,164 @@
+{
+  "id": "guru-workflow-slice-dispatcher-parity",
+  "name": "guru-workflow-slice-dispatcher-parity",
+  "title": "Unify Guru workflow slice dispatcher entry across H5 Go iOS",
+  "description": "Unify H5, Go, and iOS Guru workflow Phase 2 implementation guidance so it first uses implement-slices --dry-run --backend auto before dispatching work.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-07-09",
+  "completedAt": "2026-07-10",
+  "branch": null,
+  "base_branch": "codex/guru-0.6.0-ga-worktree",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {},
+  "guru_gates": {
+    "requirements": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-09T20:09:00+08:00",
+      "confirmation_scope": "requirements_gate_only",
+      "allowed_next_action": "overview_design",
+      "prompt_summary": "Requirements confirmation allows overview/detail planning only",
+      "artifact_digest": "9f5721654de21c02d44ffed5fed1bdab5d07e0ade28071c099f15d7cb5e36e37"
+    },
+    "review_runs": {
+      "overview": [
+        {
+          "run_id": "overview-dispatcher-parity-main-20260709T1",
+          "reviewer": "clean-context-codex-main",
+          "recorded_at": "2026-07-09T18:39:28+08:00",
+          "artifact_digest": "5df4b8e6fa93a98e2b876c424c58b016032cd1f8562009a151125f4686085191",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "requirements/overview/detail machine gates pass; overview maps BHV-001..BHV-006 to workflow template owners with three-question rationale; scope is limited to H5/Go/iOS workflow dispatcher parity and mirror sync"
+        },
+        {
+          "run_id": "overview-dispatcher-parity-blue-20260709T1",
+          "reviewer": "clean-context-codex-blue-review",
+          "recorded_at": "2026-07-09T18:39:28+08:00",
+          "artifact_digest": "5df4b8e6fa93a98e2b876c424c58b016032cd1f8562009a151125f4686085191",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "independent pass over current digest: dispatch-mode aware entrypoint, sub-agent/channel/inline boundaries, platform golden-path preservation, and template mirror acceptance are all covered without runtime scope creep"
+        },
+        {
+          "run_id": "overview-breadcrumb-parity-main-20260709T1939",
+          "reviewer": "clean-context-main",
+          "recorded_at": "2026-07-09T19:40:38+08:00",
+          "artifact_digest": "e6913b1ecc9ee0deac85e6ca0bf68b8efd20a9be466eadeec16c6e718efaab89",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Current digest passes guru_gate requirements/overview/detail; overview now covers BHV-001..BHV-007 including workflow-state breadcrumb parity for client/H5/Go/iOS, source/mirror ownership, dispatch-mode aware backend selection, nested-dispatch guard, and no runtime scope creep."
+        },
+        {
+          "run_id": "overview-breadcrumb-parity-blue-20260709T1939",
+          "reviewer": "clean-context-blue",
+          "recorded_at": "2026-07-09T19:40:38+08:00",
+          "artifact_digest": "e6913b1ecc9ee0deac85e6ca0bf68b8efd20a9be466eadeec16c6e718efaab89",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Independent pass over current digest: PRD acceptance includes no default-channel breadcrumb, design owner table maps BHV-007 to workflow-state blocks, rollback/sync boundaries are limited to eight workflow template files, and runtime parser/status writers remain out of scope."
+        },
+        {
+          "run_id": "overview-test-contract-parity-main-20260709T2009",
+          "reviewer": "clean-context-main",
+          "recorded_at": "2026-07-09T20:10:11+08:00",
+          "artifact_digest": "de32be549ba4f8b8ab8e3ac8b35150487ce67d8e9971a5befe35f09acf42b8b9",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Current digest passes guru_gate requirements/overview/detail; overview now covers BHV-001..BHV-008 including workflow-state breadcrumb parity and bundled regression test parity, with gate-contract scope expanded to the affected workflow templates plus guru-bundled.test.ts."
+        },
+        {
+          "run_id": "overview-test-contract-parity-blue-20260709T2009",
+          "reviewer": "clean-context-blue",
+          "recorded_at": "2026-07-09T20:10:11+08:00",
+          "artifact_digest": "de32be549ba4f8b8ab8e3ac8b35150487ce67d8e9971a5befe35f09acf42b8b9",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Independent pass over current digest: PRD acceptance now includes BHV-008, ordinary in_progress is dispatcher-plan-first, explicit channel behavior remains under in_progress-channel, and no runtime parser/status writer scope was added."
+        }
+      ],
+      "detail": [
+        {
+          "run_id": "detail-dispatcher-parity-main-20260709T1",
+          "reviewer": "clean-context-codex-main",
+          "recorded_at": "2026-07-09T18:39:28+08:00",
+          "artifact_digest": "27730ddc7817b7febb719173399e8273989d75c4ab57f60792552b5c228e8c15",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "detail defines workflow-dispatcher-wording, platform-golden-path-preservation, template-mirror-sync, and tests with responsibilities, data contracts, failure closure, and no-runtime-change boundaries",
+          "deletion_audit": "none: no existing valid design contract deleted; current design only expands from requirement summary into workflow parity units"
+        },
+        {
+          "run_id": "detail-dispatcher-parity-blue-20260709T1",
+          "reviewer": "clean-context-codex-blue-review",
+          "recorded_at": "2026-07-09T18:39:28+08:00",
+          "artifact_digest": "27730ddc7817b7febb719173399e8273989d75c4ab57f60792552b5c228e8c15",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "independent pass over current digest: all BHV-001..BHV-006 have UNIT coverage, implementation slices are explicit, validation maps to rg/sync:guru:check/diff checks, and rollback is limited to six workflow files",
+          "deletion_audit": "none: platform-specific golden-path text is explicitly protected; no deletion or narrowing of H5/Go/iOS implementation constraints is planned"
+        },
+        {
+          "run_id": "detail-breadcrumb-parity-main-20260709T1939",
+          "reviewer": "clean-context-main",
+          "recorded_at": "2026-07-09T19:40:38+08:00",
+          "artifact_digest": "893a42263528c851e965b6dab151287fa16eed2348828d7eb0c8cae7c64c39ce",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Current digest detail defines UNIT-workflow-dispatcher-wording, UNIT-workflow-state-breadcrumb-dispatcher-wording, platform golden-path preservation, mirror sync, and focused tests; stale six-file/BHV-006 wording was repaired to eight files/BHV-007 before review.",
+          "deletion_audit": "none: no valid contract deleted; breadcrumb parity extends the workflow contract while preserving Phase 2.1 platform constraints and runtime boundaries."
+        },
+        {
+          "run_id": "detail-breadcrumb-parity-blue-20260709T1939",
+          "reviewer": "clean-context-blue",
+          "recorded_at": "2026-07-09T19:40:38+08:00",
+          "artifact_digest": "893a42263528c851e965b6dab151287fa16eed2348828d7eb0c8cae7c64c39ce",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Independent pass over current digest: detail explicitly forbids channel-first breadcrumb text, requires implement-slices dry-run plan as dispatch input, protects platform evidence reminders, and validates source/mirror sync plus negative rg for default channel wording.",
+          "deletion_audit": "none: changes only correct stale planning wording and add breadcrumb parity coverage; no owner, invariant, or validation contract was removed."
+        },
+        {
+          "run_id": "detail-test-contract-parity-main-20260709T2009",
+          "reviewer": "clean-context-main",
+          "recorded_at": "2026-07-09T20:10:11+08:00",
+          "artifact_digest": "d428016b69bacde1d768911d628ddd4f06e6e8a910390dc84440a94f91097a36",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Current digest detail passes guru_gate detail and trace-matrix strict; UNIT-tests now explicitly承接 BHV-008 via VerifyBundledRegressionTest, and targeted Vitest for ordinary in_progress dispatcher routing passes.",
+          "deletion_audit": "none: no valid design contract deleted; the change expands scope to the regression test that enforces the same dispatcher-plan-first contract and preserves rollback mode assertions."
+        },
+        {
+          "run_id": "detail-test-contract-parity-blue-20260709T2009",
+          "reviewer": "clean-context-blue",
+          "recorded_at": "2026-07-09T20:10:11+08:00",
+          "artifact_digest": "d428016b69bacde1d768911d628ddd4f06e6e8a910390dc84440a94f91097a36",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Independent pass over current digest: gate-contract includes guru-bundled.test.ts, slice packet UNIT-guru-bundled-test-dispatcher-parity binds the test file and targeted Vitest, and slice-plan separates g1 workflow writers from g2 serial node package manager test slice.",
+          "deletion_audit": "none: previous workflow/template contract remains intact; only stale test-scope omission was corrected and no platform golden-path or mirror-sync invariant was removed."
+        }
+      ]
+    },
+    "detail": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-09T20:15:58+08:00",
+      "confirmation_scope": "detail_gate_only",
+      "allowed_next_action": "task_start",
+      "prompt_summary": "Detail confirmation allows task.py start only",
+      "artifact_digest": "d428016b69bacde1d768911d628ddd4f06e6e8a910390dc84440a94f91097a36"
+    }
+  }
+}

@@ -1,0 +1,4 @@
+{"file":".trellis/spec/cli/backend/workflow-state-contract.md","reason":"workflow template/breadcrumb contract and runtime-sensitive workflow update boundary"}
+{"file":".trellis/spec/cli/backend/guru-overlay-gates.md","reason":"Guru dispatch/gate/commit behavior reference for workflow parity"}
+{"file":".trellis/tasks/archive/2026-07/07-09-guru-route-aware-parallel-slice-supervision/prd.md","reason":"source requirement set for implement-slices dispatch-mode aware behavior"}
+{"file":".trellis/tasks/archive/2026-07/07-09-guru-route-aware-parallel-slice-supervision/design.md","reason":"source design for dispatcher backend selection, safety downgrade, and review coverage"}

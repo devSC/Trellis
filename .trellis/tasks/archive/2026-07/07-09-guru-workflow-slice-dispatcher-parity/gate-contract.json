@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "risk": "high",
+  "route": "full_chain",
+  "assessment": {
+    "confidence": null,
+    "reasons": [],
+    "risk_flags": [],
+    "recommended_route": "full_chain"
+  },
+  "route_selection": {
+    "selected_route": "full_chain",
+    "source": "recommended",
+    "recommended_route": "full_chain",
+    "risk_acknowledged": false,
+    "user_quote": "",
+    "selected_by": "system",
+    "selected_at": "2026-07-09T18:04:21+08:00"
+  },
+  "scope": {
+    "allowed_paths": [
+      "packages/cli/src/templates/guru/workflows/guru-h5.md",
+      "packages/cli/src/templates/guru/workflows/guru-go.md",
+      "packages/cli/src/templates/guru/workflows/guru-ios.md",
+      "packages/cli/src/templates/guru/workflows/guru-client.md",
+      "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py",
+      "packages/cli/test/guru/guru-bundled.test.ts",
+      "guru-template/workflows/guru-h5-workflow.md",
+      "guru-template/workflows/guru-go-workflow.md",
+      "guru-template/workflows/guru-ios-workflow.md",
+      "guru-template/workflows/guru-client-workflow.md",
+      "guru-template/overlay/verify/guru_supervise.py",
+      ".trellis/scripts/guru/guru_supervise.py",
+      ".trellis/spec/cli/backend/guru-overlay-gates.md",
+      "packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh",
+      "guru-template/overlay/verify/tests/run_tests.sh"
+    ],
+    "forbidden_path_patterns": [],
+    "max_files": null
+  },
+  "required_gates": [],
+  "optional_gates": [],
+  "allowed_degradations": [],
+  "commit_policy": {
+    "require_in_progress": true,
+    "require_clean_implementation_review": true,
+    "allow_task_artifacts_only": false
+  },
+  "created_by": "init-contract",
+  "created_at": "2026-07-09T10:04:21Z",
+  "policy_version": "guru-risk-contract-v1"
+}

@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "slice_id": "UNIT-review-provider-brief-disambiguation",
+  "owner_unit": "UNIT-implementation-review-provider-output-contract",
+  "target_kind": "staged",
+  "target_paths": [
+    "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py",
+    "guru-template/overlay/verify/guru_supervise.py",
+    ".trellis/scripts/guru/guru_supervise.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "implementation_review_gate",
+    "provider_contract",
+    "template_mirror"
+  ],
+  "depends_on": [],
+  "deterministic_checks": [
+    "rg -n \"review_provider 必须写实际 worker provider\" packages/cli/src/templates/guru/overlay/verify/guru_supervise.py guru-template/overlay/verify/guru_supervise.py .trellis/scripts/guru/guru_supervise.py",
+    "rg -n \"不要写 opposite/manual/ocr_optional\" packages/cli/src/templates/guru/overlay/verify/guru_supervise.py guru-template/overlay/verify/guru_supervise.py .trellis/scripts/guru/guru_supervise.py",
+    "rg -n \"不得漏写这 7 字段\" packages/cli/src/templates/guru/overlay/verify/guru_supervise.py guru-template/overlay/verify/guru_supervise.py .trellis/scripts/guru/guru_supervise.py",
+    "rg -n \"deterministic_checks、dirty_scope、invariant_coverage\" packages/cli/src/templates/guru/overlay/verify/guru_supervise.py guru-template/overlay/verify/guru_supervise.py .trellis/scripts/guru/guru_supervise.py",
+    "cmp -s packages/cli/src/templates/guru/overlay/verify/guru_supervise.py guru-template/overlay/verify/guru_supervise.py",
+    "cmp -s packages/cli/src/templates/guru/overlay/verify/guru_supervise.py .trellis/scripts/guru/guru_supervise.py",
+    "python3 -m py_compile packages/cli/src/templates/guru/overlay/verify/guru_supervise.py guru-template/overlay/verify/guru_supervise.py .trellis/scripts/guru/guru_supervise.py"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/check.jsonl",
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/design.md",
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/gate-contract.json",
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/implement.md",
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/prd.md",
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/task.json",
+      ".trellis/tasks/07-09-07-09-add-guru-target-install-wrapper/review-records/implementation-reviews.jsonl",
+      ".trellis/tasks/07-09-guru-full-chain-slice-acceleration-benchmark",
+      ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/check.jsonl",
+      ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/implement.jsonl",
+      ".trellis/tasks/07-09-guru-workflow-slice-dispatcher-parity/review-records/implementation-reviews.jsonl",
+      ".trellis/workspace/devSC/guru-install-targets.tsv",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "README.md",
+      "marketplace",
+      "packages/cli/src/templates/guru/workflows/guru-client.md",
+      "packages/cli/src/templates/guru/workflows/guru-go.md",
+      "packages/cli/src/templates/guru/workflows/guru-h5.md",
+      "packages/cli/src/templates/guru/workflows/guru-ios.md",
+      "guru-template/workflows/guru-client-workflow.md",
+      "guru-template/workflows/guru-go-workflow.md",
+      "guru-template/workflows/guru-h5-workflow.md",
+      "guru-template/workflows/guru-ios-workflow.md"
+    ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-review-provider-field-uses-actual-worker-provider",
+      "rule": "Implementation-review worker prompts must distinguish semantic_review_provider=opposite from the emitted review_provider field and must spell out all required structured verdict fields so clean review records can pass provider and field validation.",
+      "source": "implementation-review prompt contract",
+      "owner": "UNIT-review-provider-brief-disambiguation",
+      "positive_case": "The active review brief tells workers to emit the actual worker provider, codex or claude, explicitly forbids using opposite/manual/ocr_optional as review_provider, and lists review_result/route_class/review_target/review_provider/deterministic_checks/dirty_scope/invariant_coverage as required fields.",
+      "negative_case": "A worker sees semantic_review_provider=opposite and emits review_provider=opposite, or omits deterministic_checks/dirty_scope/invariant_coverage after a semantically clean review, producing MALFORMED_REVIEW_OUTPUT.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "rg provider disambiguation prompt",
+        "rg required structured verdict fields",
+        "py_compile guru_supervise.py",
+        "implementation-review clean record after prompt fix"
+      ]
+    }
+  ]
+}
