@@ -3875,6 +3875,7 @@ pass=$((pass + ${P1AP:-0})); failn=$((failn + ${P1AF:-1}))
 # ============================================================================
 P1B_OUT="$(PYTHONPATH="$HERE/.." python3 - <<'PY'
 import os, json, sys, tempfile, subprocess, io, contextlib, argparse
+from pathlib import Path
 import guru_review_record as R  # noqa: F401
 import guru_supervise as gs
 
@@ -3965,6 +3966,7 @@ pass=$((pass + ${P1BP:-0})); failn=$((failn + ${P1BF:-1}))
 # ============================================================================
 P1C_OUT="$(PYTHONPATH="$HERE/.." python3 - <<'PY'
 import os, json, sys, tempfile, subprocess, io, contextlib, argparse
+from pathlib import Path
 import guru_review_record as R
 import guru_supervise as gs
 
@@ -4100,6 +4102,15 @@ with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
 ok("P1c implementation-review --platform cli 使用 Trellis check skill dry-run",
    rc == 0 and "Guru cli skill(s): trellis-check" in out.getvalue()
    and "implementation-review" in out.getvalue())
+
+root, tdir = mkgit("high")
+os.makedirs(os.path.join(root, "lib"), exist_ok=True)
+open(os.path.join(root, "lib/x.dart"), "w", encoding="utf-8").write("target")
+subprocess.run(["git", "-C", root, "add", "lib/x.dart"], check=True)
+brief = gs._staged_review_target(Path(tdir), Path(root)).active_brief
+ok("P1c staged implementation-review brief 明示 synthetic invariant id",
+   "expected_invariants:" in brief and "staged_scope_reviewed" in brief
+   and "不要从其他 slice packet 借 id" in brief)
 
 # ============ R1 (codex P1-impl 对抗审查) 修复回归 ============
 def err(fn):  # 捕获 ReviewRecordError → True(packet/append 非法负例)

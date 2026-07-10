@@ -381,6 +381,18 @@ tests.
 - `read_only_fanout[]` may recommend `implementation-review` commands and must
   mark `does_not_launch_implement_worker=true`.
 
+`implementation-review` worker prompts are an output contract. They must list
+the required verdict fields by name: `review_result`, `route_class`,
+`review_target`, `review_provider`, `deterministic_checks`, `dirty_scope`, and
+`invariant_coverage`. `review_provider` is the actual check worker provider
+(`codex` or `claude`), not a semantic provider label such as `opposite`,
+`manual`, or `ocr_optional`. Supervisor-owned record fields such as
+`target_paths`, `required_satisfied`, and `reviewed_target_digest` must not be
+accepted as substitutes for those seven verdict fields. The prompt must also
+list the exact `expected_invariants` for the current review target, and staged
+review targets must include the synthetic `staged_scope_reviewed` invariant so
+the worker cannot borrow invariant ids from unrelated slice packets.
+
 `commit-plan.review_coverage` must be present and additive:
 
 ```json
@@ -425,6 +437,8 @@ requires full-chain packet behavior.
 | backend `sub-agent` | status source is platform sub-agent results; channel live/terminal status must not be fabricated |
 | No safe writer group exists | dispatcher returns `decision=serial|blocked` with downgrade reasons |
 | Read-only review fanout is emitted | commands must be `implementation-review`, not `implement-check` |
+| Implementation review output omits any required verdict field or writes `review_provider=opposite`, `manual`, or `ocr_optional` | supervisor records `MALFORMED_REVIEW_OUTPUT`; the record cannot satisfy required review coverage |
+| Staged implementation-review prompt omits the synthetic `staged_scope_reviewed` invariant id | worker output is likely malformed; prompt contract must be repaired before rerunning the review |
 | Commit staged paths are covered by several current clean slice reviews | commit may proceed if all other gates pass |
 | Only the latest review row is clean but earlier staged slice paths lack current clean review | commit blocks and recommends missing `implementation-review --slice <unit_id> --staged` commands when mappable |
 | Task/workspace artifacts are mixed with implementation staged paths | commit remains split-required; review coverage does not authorize task artifacts |
@@ -447,6 +461,12 @@ requires full-chain packet behavior.
   channel status.
 - Bad: `commit-plan` uses only `_latest_jsonl_record` to authorize all staged
   paths.
+- Bad: a reviewer sees `semantic_review_provider=opposite` and writes
+  `review_provider=opposite`, or replaces the required verdict fields with
+  `target_paths` / `required_satisfied`.
+- Bad: a staged review prompt says "output every invariant" but does not list
+  `staged_scope_reviewed`, causing the worker to copy invariant ids from old
+  slice packets.
 - Bad: `slice-plan` writes or mutates packet files to manufacture a runnable
   group.
 
@@ -466,6 +486,11 @@ Guru verify tests must cover:
   with `Active task:` and does not create/query channel.
 - Explicit `--backend channel` emits channel plan data.
 - `implementation-review --slice --staged` remains check-only.
+- `implementation-review` rejects malformed reviewer output that omits one of
+  the seven required verdict fields, and rejects semantic provider labels in
+  `review_provider` even when the packet requires opposite-provider evidence.
+- `implementation-review --staged --dry-run` exposes the synthetic
+  `staged_scope_reviewed` invariant id in the active review brief.
 - `commit-plan` multi-slice pass fixture covers all staged paths using a review
   set.
 - `commit-plan` missing-slice fixture recommends only the missing slice review

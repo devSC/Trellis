@@ -1758,6 +1758,27 @@ def run_implement_slices(args: argparse.Namespace) -> int:
     return 2 if decision == "blocked" else 0
 
 
+def _review_invariant_brief(invariants: list | None) -> str:
+    if not isinstance(invariants, list) or not invariants:
+        return ""
+    lines = ["expected_invariants:"]
+    for inv in invariants:
+        if not isinstance(inv, dict):
+            continue
+        inv_id = inv.get("invariant_id")
+        if not isinstance(inv_id, str) or not inv_id.strip():
+            continue
+        detail = inv.get("rule") or inv.get("description") or inv.get("positive_case") or ""
+        if isinstance(detail, str) and detail.strip():
+            lines.append(f"- {inv_id.strip()}: {detail.strip()}")
+        else:
+            lines.append(f"- {inv_id.strip()}")
+    if len(lines) == 1:
+        return ""
+    lines.append("只使用这些 invariant id 输出 invariant_status/invariant_evidence/invariant_reason；不要从其他 slice packet 借 id。")
+    return "\n".join(lines) + "\n"
+
+
 def _active_review_brief(
     *,
     label: str,
@@ -1765,6 +1786,7 @@ def _active_review_brief(
     target_paths: list,
     semantic_provider: dict,
     digest_source: str,
+    invariants: list | None = None,
     slice_packet_path: Path | None = None,
 ) -> str:
     packet_line = f"slice_packet={slice_packet_path}\n" if slice_packet_path is not None else ""
@@ -1778,6 +1800,7 @@ def _active_review_brief(
         "review_provider 必须写实际 worker provider（codex 或 claude），不要写 opposite/manual/ocr_optional。\n"
         "置顶逐行输出且不得漏写这 7 字段：review_result、route_class、review_target、review_provider、"
         "deterministic_checks、dirty_scope、invariant_coverage；不要用 target_paths/required_satisfied 替代。\n"
+        f"{_review_invariant_brief(invariants)}"
         "随后输出逐条 invariant_status.<id>=pass|fail|not_applicable"
         "（pass 必随 invariant_evidence.<id>；not_applicable 必随 invariant_reason.<id>）。\n"
     )
@@ -1808,6 +1831,7 @@ def _slice_review_target(task_dir: Path, root: Path, unit_id: str, *, staged: bo
             target_paths=packet.get("target_paths", []),
             semantic_provider=semantic_provider,
             digest_source=digest_source,
+            invariants=packet.get("invariants", []),
             slice_packet_path=slice_packet_path,
         ),
     )
@@ -1855,6 +1879,7 @@ def _staged_review_target(task_dir: Path, root: Path) -> ReviewTarget:
             target_paths=code_paths,
             semantic_provider=packet["semantic_review_provider"],
             digest_source="index",
+            invariants=packet.get("invariants", []),
         ),
     )
 
@@ -1875,6 +1900,7 @@ def _with_same_provider_review(target: ReviewTarget, user_quote: str) -> ReviewT
             target_paths=packet.get("target_paths", []),
             semantic_provider=packet["semantic_review_provider"],
             digest_source=target.digest_source,
+            invariants=packet.get("invariants", []),
         ),
     )
 
@@ -2038,6 +2064,7 @@ def run_implement_check(args: argparse.Namespace) -> int:
             target_paths=packet_target_paths,
             semantic_provider=packet_semantic_provider,
             digest_source="worktree",
+            invariants=packet.get("invariants", []),
             slice_packet_path=slice_packet_path,
         )
 
