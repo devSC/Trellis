@@ -1775,7 +1775,10 @@ def _active_review_brief(
         f"target_paths={target_paths}\n"
         f"target_digest_source={digest_source}\n"
         f"semantic_review_provider={semantic_provider.get('provider')}(required={semantic_provider.get('required')})\n"
-        "置顶输出 7 字段 + 逐条 invariant_status.<id>=pass|fail|not_applicable"
+        "review_provider 必须写实际 worker provider（codex 或 claude），不要写 opposite/manual/ocr_optional。\n"
+        "置顶逐行输出且不得漏写这 7 字段：review_result、route_class、review_target、review_provider、"
+        "deterministic_checks、dirty_scope、invariant_coverage；不要用 target_paths/required_satisfied 替代。\n"
+        "随后输出逐条 invariant_status.<id>=pass|fail|not_applicable"
         "（pass 必随 invariant_evidence.<id>；not_applicable 必随 invariant_reason.<id>）。\n"
     )
 

@@ -108,7 +108,7 @@ Phase 3: Finish  → 验证（go build/vet/test + golangci-lint）→ 萃取回�
 - 2.3 回退 `[on demand]`
 
 [workflow-state:in_progress]
-实现→质检→spec回写→commit→finish。dispatch-mode aware：主会话先运行 guru_supervise.py implement-slices <task-dir> --dry-run --backend auto 读取 dispatcher plan；按 selected_backend 派发，sub-agent 按返回 brief 且 prompt 首行 Active task: <path>，worker 不嵌套 spawn implement/check；channel 仅 selected_backend=channel 时用官方 worker/implement-check；inline 串行手工执行；decision=serial|blocked 不强并行，按 dispatch_now/deferred_slices 推进；worker 不 commit/push/merge。无 go build/vet/test 证据不 commit；设计缺陷回 Phase1。
+dispatch-mode aware：guru_supervise.py implement-slices <task-dir> --dry-run --backend auto；按 selected_backend 派发；sub-agent prompt 首行 Active task: <path>，worker 不得嵌套 spawn implement/check；channel 仅 selected_backend=channel 官方 implement-check；inline串行；decision=serial|blocked不并行；dispatch_now/deferred_slices；无验证不commit；设计缺陷回P1。
 [/workflow-state:in_progress]
 
 [workflow-state:in_progress-channel]
