@@ -78,6 +78,10 @@ This is an executable gate surface. Changes must be fail-closed by default, mirr
   - `.trellis/config.yaml` path: `guru.supervision.adversarial_enabled`
   - Default: `true`
   - `false` disables the adversarial reviewer requirement only.
+  - `.trellis/config.yaml` path: `guru.supervision.high_risk_review_provider_policy`
+  - Allowed values: `current | opposite | codex | claude`; only an absent key defaults to `current`.
+  - For high-risk slice-backed implementation review, precedence is audited `--same-provider --user-quote` > project policy > packet provider metadata. Low-risk slices and non-slice staged/contract review retain their packet contracts.
+  - Explicit null, empty, whitespace-only, non-string, or unknown policy values fail before worker-plan construction.
 
 - Route-aware review policy:
   - `small_inline`: no task-local requirements adversarial review is required; if the work later needs commit, create/route to `micro_task`.
@@ -272,6 +276,104 @@ required-gate degradation.
 
 This keeps high-risk work on the full chain, records the recommendation, and
 keeps required review gates non-degradable.
+
+---
+
+## Scenario: High-Risk Slice Review Provider Policy
+
+### 1. Scope / Trigger
+
+Apply this contract when changing Guru implementation-review provider
+selection, supervision config installation, or required review-record provider
+validation. The project policy applies only to high-risk slice-backed reviews.
+
+### 2. Signatures
+
+- Config key: `guru.supervision.high_risk_review_provider_policy`
+- Allowed values: `current | opposite | codex | claude`
+- CLI override: `implementation-review --same-provider --user-quote <quote>`
+- Shared actions: `guru_supervise.py implement-check` and
+  `guru_supervise.py implementation-review`
+
+### 3. Contracts
+
+- Only an absent config key defaults to `current`. The config installer writes
+  `current` only when the key is absent and preserves every explicit raw value,
+  including empty values, so runtime validation remains authoritative.
+- High-risk slice precedence is valid quoted CLI override, then project policy,
+  then packet provider metadata as audit-only context.
+- Low-risk slices retain packet semantics. In particular,
+  `opposite(required=true)` requires the opposite provider, while
+  `opposite(required=false)` permits the current provider.
+- Non-slice staged/contract review retains its synthetic
+  `opposite(required=true)` contract unless the valid quoted CLI override is
+  present.
+- Supervisor records bind `provider_override_source`,
+  `same_provider_user_quote`, `high_risk_review_provider_policy`,
+  `check_provider`, `implement_provider`, and `review_target_kind` as one tuple.
+  Worker `review_provider` must equal the actual `check_provider`.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+| --- | --- |
+| Policy key absent | Resolve `current`; installer may add `current` |
+| Explicit null, empty, whitespace, bool, list, or unknown policy | Fail before worker-plan construction; installer must not rewrite it |
+| High-risk slice with `current` | `check_provider == implement_provider` |
+| High-risk slice with `opposite` | `check_provider != implement_provider` |
+| High-risk slice with `codex` or `claude` | Pin the named provider |
+| High-risk packet metadata conflicts with project policy | Keep metadata for audit; project policy wins |
+| Low-risk packet `opposite(required=false)` | Keep current provider and accept a coherent clean record |
+| Low-risk or staged packet `opposite(required=true)` | Require the opposite provider |
+| Medium/unknown slice independently requires review | Keep its packet provider contract; do not apply the high-risk project policy |
+| Packet risk absent/unknown and task risk is high | Treat the slice as effectively high-risk and apply the project policy |
+| Missing CLI quote or inconsistent record tuple | Block before plan or normalize to `MALFORMED_REVIEW_OUTPUT` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: project policy `current` keeps a Codex implementation review on Codex
+  even when a high-risk slice packet says `opposite(required=true)`.
+- Base: no policy key behaves as `current`, while installer output for a fresh
+  project contains an explicit `current` default.
+- Bad: installer converts `high_risk_review_provider_policy: ""` to `current`,
+  hiding an invalid explicit configuration from runtime validation.
+- Bad: record normalization accepts a worker-reported provider that differs
+  from the supervisor's actual check provider.
+
+### 6. Tests Required
+
+- Matrix all four policies under current Codex and current Claude.
+- Assert absent versus explicit null/empty/whitespace/bool/list/unknown values,
+  with no `WORKER=`, `check-*`, or channel spawn plan on invalid config.
+- Assert valid CLI override precedence and missing/blank quote rejection.
+- Assert high-risk packet conflicts are audit-only, low-risk
+  `opposite(required=true|false)` compatibility, medium/unknown packet-contract
+  preservation, task-high fallback, and non-slice staged isolation.
+- Feed the real resolver context into record normalization and reject tampered
+  source/policy/quote/target/provider tuples and worker-provider mismatches.
+- Run installer/apply tests proving absent adds `current` while every explicit
+  raw value is preserved, then verify dogfood/template/CLI source mirrors.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```yaml
+guru:
+  supervision:
+    high_risk_review_provider_policy: "" # silently rewritten to current
+```
+
+#### Correct
+
+```yaml
+guru:
+  supervision:
+    high_risk_review_provider_policy: current
+```
+
+An explicitly empty value must remain empty and fail at runtime; only a missing
+key may acquire the `current` default.
 
 ---
 

@@ -1018,6 +1018,7 @@ describe("guru_config_patch.py", () => {
     adversarial_claude_model: claude-sonnet-4-6
     adversarial_codex_model: gpt-5.4
     adversarial_codex_reasoning_effort: high
+    high_risk_review_provider_policy: current
   platform: go`);
   });
 
@@ -1059,6 +1060,37 @@ guru:
     expect(once).toContain("adversarial_claude_model: custom-claude");
     expect(once).toContain("adversarial_codex_model: gpt-5.4");
     expect(once).toContain("adversarial_codex_reasoning_effort: max");
+  });
+
+  it("preserves explicit high-risk review provider policies for runtime validation", () => {
+    const configPath = path.join(tmpDir, ".trellis", "config.yaml");
+    const explicitValues = [
+      "",
+      '\"\"',
+      "null",
+      "banana",
+      "current",
+      "opposite",
+      "codex",
+      "claude",
+    ];
+
+    for (const rawValue of explicitValues) {
+      fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      const separator = rawValue ? " " : "";
+      const policyLine = `    high_risk_review_provider_policy:${separator}${rawValue}`;
+      fs.writeFileSync(
+        configPath,
+        `guru:\n  supervision:\n${policyLine}\n`,
+        "utf8",
+      );
+
+      runPatch("go");
+
+      expect(configText().split("\n")).toContain(policyLine);
+      expect(configText().match(/high_risk_review_provider_policy:/g)).toHaveLength(1);
+    }
   });
 
   it("preserves explicit adversarial disable switches", () => {

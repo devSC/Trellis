@@ -66,6 +66,8 @@ DEFAULT_IMPLEMENT_CHECK_MAX_LOOPS = 3
 DEFAULT_ADVERSARIAL_CLAUDE_MODEL = "claude-sonnet-4-6"
 DEFAULT_ADVERSARIAL_CODEX_MODEL = "gpt-5.4"
 DEFAULT_ADVERSARIAL_CODEX_REASONING_EFFORT = "high"
+HIGH_RISK_REVIEW_PROVIDER_POLICIES = {"current", "opposite", "codex", "claude"}
+DEFAULT_HIGH_RISK_REVIEW_PROVIDER_POLICY = "current"
 ADVERSARIAL_MODEL_ACTIONS = {"requirements", "overview", "detail"}
 GATES_KEY = "guru_gates"
 ADVERSARIAL_SKIPS_KEY = "adversarial_skips"
@@ -203,6 +205,16 @@ class SupervisionConfig:
     trellis_bin: str
     adversarial_model: str | None
     adversarial_reasoning_effort: str | None
+    high_risk_review_provider_policy: str = DEFAULT_HIGH_RISK_REVIEW_PROVIDER_POLICY
+
+
+@dataclass(frozen=True)
+class ReviewProviderResolution:
+    check_config: SupervisionConfig
+    reason: str
+    provider_override_source: str
+    same_provider_user_quote: str | None
+    review_target_kind: str
 
 
 @dataclass(frozen=True)
@@ -279,6 +291,27 @@ def _config_value(root: Path, path: tuple[str, ...]) -> str | None:
         if not _has_scalar(raw_value):
             stack.append((indent, key))
     return None
+
+
+def _config_entry(root: Path, path: tuple[str, ...]) -> tuple[bool, str | None]:
+    """Return presence separately from value so explicit empty YAML fails closed."""
+    config_path = root / ".trellis" / "config.yaml"
+    if not config_path.exists():
+        return False, None
+    stack: list[tuple[int, str]] = []
+    for line in config_path.read_text(encoding="utf-8").splitlines():
+        parsed = _parse_key_line(line)
+        if parsed is None:
+            continue
+        indent, key, raw_value = parsed
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        current_path = tuple(k for _, k in stack) + (key,)
+        if current_path == path:
+            return True, _scalar(raw_value)
+        if not _has_scalar(raw_value):
+            stack.append((indent, key))
+    return False, None
 
 
 def _config_bool(root: Path, path: tuple[str, ...], default: bool) -> bool:
@@ -439,23 +472,126 @@ def _packet_requires_opposite_review(packet: dict | None) -> bool:
     )
 
 
+def _packet_is_high_risk(packet: dict | None) -> bool:
+    if not isinstance(packet, dict):
+        return False
+    if packet.get("risk") in {"high", "critical"}:
+        return True
+    reasons = packet.get("risk_reasons")
+    return isinstance(reasons, list) and any(
+        isinstance(reason, str) and reason in guru_risk.RISK_REASON_KEYWORDS
+        for reason in reasons
+    )
+
+
+def _slice_uses_high_risk_review_policy(packet: dict | None, task_dir: Path) -> bool:
+    if not isinstance(packet, dict):
+        return False
+    if _packet_is_high_risk(packet):
+        return True
+    if packet.get("risk") == "low":
+        return False
+    return guru_risk.task_risk_level(str(task_dir)) == "high"
+
+
 def _implementation_review_check_config(
     config: SupervisionConfig,
     *,
     packet: dict | None,
     independent_required: bool,
     independent_reason: str,
-) -> tuple[SupervisionConfig, str]:
+    high_risk_policy_applies: bool,
+    review_target_kind: str,
+    same_provider_user_quote: str | None = None,
+) -> ReviewProviderResolution:
+    if review_target_kind not in {"slice", "staged"}:
+        raise GuruSupervisionError(
+            f"review_target_kind must be slice|staged; got {review_target_kind!r}"
+        )
+    if not isinstance(high_risk_policy_applies, bool):
+        raise GuruSupervisionError("high_risk_policy_applies must be bool")
+    if same_provider_user_quote is not None:
+        quote = same_provider_user_quote.strip()
+        if not quote:
+            raise GuruSupervisionError(
+                "cli_same_provider resolution requires a non-empty user quote"
+            )
+        return ReviewProviderResolution(
+            check_config=config,
+            reason="same-provider explicitly authorized by user",
+            provider_override_source="cli_same_provider",
+            same_provider_user_quote=quote,
+            review_target_kind=review_target_kind,
+        )
+
+    if review_target_kind == "slice" and high_risk_policy_applies:
+        policy = config.high_risk_review_provider_policy
+        if policy == "current":
+            check_provider = config.provider
+        elif policy == "opposite":
+            check_provider = _opposite_provider(config.provider)
+        else:
+            check_provider = policy
+        return ReviewProviderResolution(
+            check_config=replace(
+                config,
+                current_provider=config.provider,
+                provider=check_provider,
+            ),
+            reason=f"project high-risk review provider policy={policy}",
+            provider_override_source="config_policy",
+            same_provider_user_quote=None,
+            review_target_kind=review_target_kind,
+        )
+
     reasons: list[str] = []
-    if independent_required:
-        reasons.append(independent_reason)
-    if _packet_requires_opposite_review(packet):
+    check_provider = config.provider
+    semantic_provider = (
+        packet.get("semantic_review_provider")
+        if isinstance(packet, dict)
+        else None
+    )
+    packet_provider = (
+        semantic_provider.get("provider", "opposite")
+        if isinstance(semantic_provider, dict)
+        else None
+    )
+    if packet_provider in {"codex", "claude"}:
+        check_provider = packet_provider
+        reasons.append(f"semantic_review_provider pinned to {packet_provider}")
+    elif _packet_requires_opposite_review(packet):
+        check_provider = _opposite_provider(config.provider)
         reasons.append("semantic_review_provider opposite(required=true)")
-    if not reasons:
-        return config, independent_reason
-    return (
-        replace(config, current_provider=config.provider, provider=_opposite_provider(config.provider)),
-        "; ".join(reasons),
+    elif isinstance(semantic_provider, dict) and packet_provider == "opposite":
+        reasons.append("semantic_review_provider opposite(required=false)")
+    elif independent_required:
+        check_provider = _opposite_provider(config.provider)
+        reasons.append(independent_reason)
+    check_config = replace(
+        config,
+        current_provider=config.provider,
+        provider=check_provider,
+    )
+    return ReviewProviderResolution(
+        check_config=check_config,
+        reason="; ".join(reasons) if reasons else independent_reason,
+        provider_override_source="staged_packet",
+        same_provider_user_quote=None,
+        review_target_kind=review_target_kind,
+    )
+
+
+def _report_review_provider_resolution(
+    config: SupervisionConfig,
+    resolution: ReviewProviderResolution,
+) -> None:
+    sys.stderr.write(
+        "[guru-supervise] implementation review provider "
+        f"source={resolution.provider_override_source} "
+        f"policy={config.high_risk_review_provider_policy} "
+        f"target={resolution.review_target_kind} "
+        f"implement={config.provider} check={resolution.check_config.provider} "
+        f"reason={resolution.reason}\n"
     )
 
 
@@ -493,6 +629,19 @@ def _load_config(
     adversarial: bool,
     trellis_bin: str | None,
 ) -> SupervisionConfig:
+    policy_path = ("guru", "supervision", "high_risk_review_provider_policy")
+    policy_present, raw_policy = _config_entry(root, policy_path)
+    if policy_present:
+        review_provider_policy = (raw_policy or "").strip().lower()
+        if review_provider_policy not in HIGH_RISK_REVIEW_PROVIDER_POLICIES:
+            allowed = "|".join(sorted(HIGH_RISK_REVIEW_PROVIDER_POLICIES))
+            raise GuruSupervisionError(
+                "guru.supervision.high_risk_review_provider_policy must be one of "
+                f"{allowed}; got {raw_policy!r}"
+            )
+    else:
+        review_provider_policy = DEFAULT_HIGH_RISK_REVIEW_PROVIDER_POLICY
+
     resolved_platform = platform or _config_value(root, ("guru", "platform"))
     if resolved_platform not in VALID_PLATFORMS:
         allowed = "|".join(sorted(VALID_PLATFORMS))
@@ -538,6 +687,7 @@ def _load_config(
         adversarial_reasoning_effort=_adversarial_reasoning_effort(root, spawned_provider)
         if adversarial
         else None,
+        high_risk_review_provider_policy=review_provider_policy,
     )
 
 
@@ -1884,27 +2034,6 @@ def _staged_review_target(task_dir: Path, root: Path) -> ReviewTarget:
     )
 
 
-def _with_same_provider_review(target: ReviewTarget, user_quote: str) -> ReviewTarget:
-    packet = dict(target.packet)
-    packet["semantic_review_provider"] = {
-        "provider": "opposite",
-        "required": False,
-        "user_quote": user_quote,
-    }
-    return replace(
-        target,
-        packet=packet,
-        active_brief=_active_review_brief(
-            label=target.unit_id or target.review_target,
-            review_target=target.review_target,
-            target_paths=packet.get("target_paths", []),
-            semantic_provider=packet["semantic_review_provider"],
-            digest_source=target.digest_source,
-            invariants=packet.get("invariants", []),
-        ),
-    )
-
-
 def _append_supervisor_review_record(
     *,
     task_dir: Path,
@@ -1912,13 +2041,11 @@ def _append_supervisor_review_record(
     target: ReviewTarget,
     run_id: str,
     config: SupervisionConfig,
-    check_config: SupervisionConfig,
+    resolution: ReviewProviderResolution,
     check_plan: RunPlan,
     messages: str,
     det_status: str,
     det_results: list,
-    independent_required: bool,
-    same_provider_user_quote: str | None = None,
 ) -> tuple[dict, str | None]:
     verdict = guru_review_record.parse_verdict_block(messages)
     try:
@@ -1935,14 +2062,17 @@ def _append_supervisor_review_record(
         "run_id": run_id, "slice_id": target.unit_id,
         "review_target": target.review_target, "target_paths": target.packet.get("target_paths", []),
         "channel": check_plan.channel, "worker": check_plan.worker,
-        "check_provider": check_config.provider,
-        "independent_required": independent_required,
+        "check_provider": resolution.check_config.provider,
+        "provider_override_source": resolution.provider_override_source,
+        "same_provider_user_quote": resolution.same_provider_user_quote,
+        "high_risk_review_provider_policy": config.high_risk_review_provider_policy,
+        "review_target_kind": resolution.review_target_kind,
         "reviewed_target_digest": reviewed_target_digest,
     })
-    if same_provider_user_quote and failure is None:
+    if resolution.same_provider_user_quote and failure is None:
         record["message"] = (
             "same-provider implementation-review authorized by user quote: "
-            + same_provider_user_quote
+            + resolution.same_provider_user_quote
         )
     guru_review_record.append_record(str(task_dir), record)
     return record, failure
@@ -2021,9 +2151,8 @@ def run_implement_check(args: argparse.Namespace) -> int:
             sys.stderr.write(f"[guru-supervise] scope invalid,硬停(SCOPE_INVALID):{scope_failure}\n")
             return 2
 
-    # ③ P0/P1：高风险触发独立(对立 provider)阻断 check;packet.risk 优先(unit_id,§4.5.8;packet 已 preflight 合法)。
-    # provider 隔离还必须服从 packet semantic_review_provider 的 required evidence 合约；low-risk 只取消
-    # 风险强制独立，不得把 required opposite-provider evidence 降级成 same-provider self-check。
+    # ③ P0/P1：风险判定决定是否需要独立阻断 check；只有有效 high-risk slice 的实际
+    # provider 由项目 policy 决定，其他 slice 保留 packet provider 合同。
     try:
         independent_required, independent_reason = guru_risk.implement_check_independent_required(
             str(task_dir), config.platform, str(root), unit_id=unit_id
@@ -2034,17 +2163,16 @@ def run_implement_check(args: argparse.Namespace) -> int:
         sys.stderr.write(f"[guru-supervise] slice packet 非法,硬停(PACKET_INVALID):{exc}\n")
         return 2
 
-    check_config, check_reason = _implementation_review_check_config(
+    resolution = _implementation_review_check_config(
         config,
         packet=packet,
         independent_required=independent_required,
         independent_reason=independent_reason,
+        high_risk_policy_applies=_slice_uses_high_risk_review_policy(packet, task_dir),
+        review_target_kind="slice" if packet is not None else "staged",
     )
-    if check_config.provider != config.provider:
-        sys.stderr.write(
-            f"[guru-supervise] 独立实现期 review ON（{check_reason}）："
-            f"implement provider={config.provider} ≠ check provider={check_config.provider}\n"
-        )
+    check_config = resolution.check_config
+    _report_review_provider_resolution(config, resolution)
 
     # P1c R4-F2：有 packet 时注入到 worker（artifact --file + brief active_slice），worker 才能逐条
     # invariant、输出正确 review_target/provider。无 packet → slice_packet_path=None（P0 旧路径）。
@@ -2158,12 +2286,11 @@ def run_implement_check(args: argparse.Namespace) -> int:
                     ),
                     run_id=f"{base_run_id}-check-{iteration}",
                     config=config,
-                    check_config=check_config,
+                    resolution=resolution,
                     check_plan=check_plan,
                     messages=messages,
                     det_status=det_status,
                     det_results=det_results,
-                    independent_required=independent_required,
                 )
             except GuruSupervisionError as exc:
                 sys.stderr.write(f"[guru-supervise] {exc}\n")
@@ -2256,8 +2383,6 @@ def run_implementation_review(args: argparse.Namespace) -> int:
                 sys.stderr.write("[guru-supervise] implementation-review requires --staged when no slice packet exists\n")
                 return 2
             target = _slice_review_target(task_dir, root, resolved_unit, staged=False)
-        if same_provider_quote:
-            target = _with_same_provider_review(target, same_provider_quote)
         record_unit_id = target.unit_id
         if target.digest_source == "index":
             drift_failure = _staged_target_drift(str(root), target.packet.get("target_paths", []))
@@ -2284,17 +2409,20 @@ def run_implementation_review(args: argparse.Namespace) -> int:
         sys.stderr.write(f"[guru-supervise] implementation-review target invalid,硬停(PACKET_INVALID):{exc}\n")
         return 2
 
-    check_config, check_reason = _implementation_review_check_config(
+    review_target_kind = "slice" if target.review_target.startswith("slice:") else "staged"
+    resolution = _implementation_review_check_config(
         config,
         packet=target.packet,
         independent_required=independent_required,
         independent_reason=independent_reason,
+        high_risk_policy_applies=_slice_uses_high_risk_review_policy(
+            target.packet, task_dir
+        ),
+        review_target_kind=review_target_kind,
+        same_provider_user_quote=same_provider_quote or None,
     )
-    if check_config.provider != config.provider:
-        sys.stderr.write(
-            f"[guru-supervise] 独立实现期 review ON（{check_reason}）："
-            f"implement provider={config.provider} ≠ check provider={check_config.provider}\n"
-        )
+    check_config = resolution.check_config
+    _report_review_provider_resolution(config, resolution)
 
     check_plan = build_run_plan(
         "implementation-review",
@@ -2327,13 +2455,11 @@ def run_implementation_review(args: argparse.Namespace) -> int:
             target=target,
             run_id=f"{base_run_id}-review-1",
             config=config,
-            check_config=check_config,
+            resolution=resolution,
             check_plan=check_plan,
             messages=messages,
             det_status=det_status,
             det_results=det_results,
-            independent_required=independent_required,
-            same_provider_user_quote=same_provider_quote or None,
         )
     except GuruSupervisionError as exc:
         sys.stderr.write(f"[guru-supervise] {exc}\n")

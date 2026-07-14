@@ -12,6 +12,11 @@ from typing import Sequence
 
 
 VALID_PLATFORMS = {"flutter", "go", "ios", "h5"}
+HIGH_RISK_REVIEW_PROVIDER_POLICY_PATH = (
+    "guru",
+    "supervision",
+    "high_risk_review_provider_policy",
+)
 DEFAULTS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("codex", "dispatch_mode"), "sub-agent"),
     (("channel", "worker_guard", "idle_timeout"), "10m"),
@@ -24,6 +29,7 @@ DEFAULTS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("guru", "supervision", "adversarial_claude_model"), "claude-sonnet-4-6"),
     (("guru", "supervision", "adversarial_codex_model"), "gpt-5.4"),
     (("guru", "supervision", "adversarial_codex_reasoning_effort"), "high"),
+    (("guru", "supervision", "high_risk_review_provider_policy"), "current"),
 )
 LEGACY_DEFAULTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (
@@ -248,6 +254,12 @@ def patch_config_text(
     warnings: list[str] = []
 
     for path, value in DEFAULTS:
+        if (
+            path == HIGH_RISK_REVIEW_PROVIDER_POLICY_PATH
+            and _find_key(lines, path) is not None
+        ):
+            actions.append(f"preserved explicit {'.'.join(path)}")
+            continue
         _ensure_scalar(lines, path, value, actions, warnings)
 
     _ensure_scalar(

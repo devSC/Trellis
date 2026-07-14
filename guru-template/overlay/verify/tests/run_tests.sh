@@ -3604,11 +3604,12 @@ def workers_for(platform, risk, provider="codex"):
 
 rc, w, err = workers_for("flutter", "high")
 ok("③a flutter high dry-run → implement=codex, check=对立(claude) + 审计行",
-   rc == 0 and len(w) == 2 and "codex" in w[0] and "claude" in w[1] and "独立实现期 review ON" in err)
+   rc == 0 and len(w) == 2 and "codex" in w[0] and "claude" in w[1]
+   and "source=staged_packet" in err)
 
 rc, w, err = workers_for("go", "high")
 ok("③ go high dry-run → check 同 provider(codex)，不隔离",
-   rc == 0 and len(w) == 2 and "codex" in w[1] and "独立实现期 review ON" not in err)
+   rc == 0 and len(w) == 2 and "codex" in w[1] and "source=staged_packet" in err)
 
 # ---- ② _package_dir cwd≠root 锚定（生产语义）----
 root, tdir = mk(design_package="design/pkg", guru_chain="full")
@@ -3969,6 +3970,7 @@ import os, json, sys, tempfile, subprocess, io, contextlib, argparse
 from pathlib import Path
 import guru_review_record as R
 import guru_supervise as gs
+import guru_config_patch as CP
 
 gs._guru_gate_check_implementation = lambda _task_dir: 0
 
@@ -4015,7 +4017,10 @@ ok("P1c parse channel raw JSONL text verdict",
 
 # --- normalize_review_record(两层)---
 ctx = {"mode": "supervisor", "packet": {"invariants": invs, "semantic_review_provider": {"provider": "opposite"}},
-       "implement_provider": "codex", "supervisor_deterministic_status": "passed", "run_id": "r", "slice_id": "U"}
+       "implement_provider": "codex", "check_provider": "claude",
+       "provider_override_source": "config_policy", "same_provider_user_quote": None,
+       "high_risk_review_provider_policy": "opposite", "review_target_kind": "slice",
+       "supervisor_deterministic_status": "passed", "run_id": "r", "slice_id": "U"}
 rec, fail = R.normalize_review_record(R.parse_verdict_block(txt), ctx)
 ok("P1c normalize clean 双过+provider opposite(actual≠impl)→record clean", fail is None and rec["review_result"] == "clean")
 rec, fail = R.normalize_review_record(R.parse_verdict_block(txt), {**ctx, "supervisor_deterministic_status": "failed"})
@@ -4054,19 +4059,42 @@ def run_ic(tdir, root):
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         return gs.run_implement_check(args)
 
-def run_ir(tdir, root):
-    args = argparse.Namespace(task_dir=tdir, root=root, platform="flutter", provider="codex",
-                              trellis_bin="trellis", run_id="RID", dry_run=True,
-                              slice="U", staged=True, contract=False)
+def run_ic_plan(tdir, root, *, provider="codex"):
+    args = argparse.Namespace(task_dir=tdir, root=root, platform="flutter", provider=provider,
+                              adversarial=False, trellis_bin="trellis", run_id="RID",
+                              dry_run=True, slice="U")
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        rc = gs.run_implementation_review(args)
+        rc = gs.run_implement_check(args)
     return rc, out.getvalue(), err.getvalue()
+
+def run_ir(tdir, root, *, staged=True, same_provider=False, user_quote="", dry_run=True,
+           provider="codex", slice_id="U"):
+    args = argparse.Namespace(task_dir=tdir, root=root, platform="flutter", provider=provider,
+                              trellis_bin="trellis", run_id="RID", dry_run=dry_run,
+                              slice=slice_id, staged=staged, contract=False,
+                              same_provider=same_provider, user_quote=user_quote)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            rc = gs.run_implementation_review(args)
+        except gs.GuruSupervisionError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            rc = 1
+    return rc, out.getvalue(), err.getvalue()
+
+def write_policy(root, raw_value):
+    config_path = os.path.join(root, ".trellis", "config.yaml")
+    open(config_path, "w", encoding="utf-8").write(
+        "guru:\n  supervision:\n"
+        f"    high_risk_review_provider_policy: {raw_value}\n"
+    )
 
 real_exec, real_det = gs._execute_plan, R.run_deterministic_checks
 try:
     R.run_deterministic_checks = lambda c, r: ("passed", [{"command": "x", "exit_code": 0}])
-    gs._execute_plan = lambda plan, cfg: (0, "done", txt if plan.action == "check" else "")
+    current_txt = txt.replace("review_provider=claude", "review_provider=codex")
+    gs._execute_plan = lambda plan, cfg: (0, "done", current_txt if plan.action == "check" else "")
     root, tdir = mkgit("high"); write_packet(tdir, "U", risk="high")
     rc = run_ic(tdir, root); rec = jsonl_last(tdir)
     ok("P1c gating: packet 结构化 clean 双过→rc0 + jsonl clean", rc == 0 and rec and rec["review_result"] == "clean")
@@ -4103,6 +4131,262 @@ ok("P1c implementation-review --platform cli 使用 Trellis check skill dry-run"
    rc == 0 and "Guru cli skill(s): trellis-check" in out.getvalue()
    and "implementation-review" in out.getvalue())
 
+root, tdir = mkgit("high"); write_packet(tdir, "U", risk="high")
+os.makedirs(os.path.join(root, "lib"), exist_ok=True)
+open(os.path.join(root, "lib/x.dart"), "w", encoding="utf-8").write("target")
+rc, o, _e = run_ir(tdir, root, staged=False)
+ok("P1c high-risk implementation-review 默认使用 current provider",
+   rc == 0 and "WORKER=check-codex-" in o and "--provider codex" in o
+   and "check-claude" not in o)
+
+matrix_ok = True
+for policy, current_provider, expected_provider in (
+    (None, "codex", "codex"),
+    (None, "claude", "claude"),
+    ("current", "codex", "codex"),
+    ("current", "claude", "claude"),
+    ("opposite", "codex", "claude"),
+    ("opposite", "claude", "codex"),
+    ("codex", "codex", "codex"),
+    ("codex", "claude", "codex"),
+    ("claude", "codex", "claude"),
+    ("claude", "claude", "claude"),
+):
+    mr, mt = mkgit("high")
+    write_packet(
+        mt,
+        "U",
+        risk="high",
+        semantic_review_provider={"provider": "opposite", "required": True},
+    )
+    os.makedirs(os.path.join(mr, "lib"), exist_ok=True)
+    open(os.path.join(mr, "lib/x.dart"), "w", encoding="utf-8").write("target")
+    if policy is not None:
+        write_policy(mr, policy)
+    mrc, mout, _merr = run_ir(
+        mt, mr, staged=False, provider=current_provider
+    )
+    matrix_ok = matrix_ok and (
+        mrc == 0
+        and f"WORKER=check-{expected_provider}-" in mout
+        and f"--provider {expected_provider}" in mout
+    )
+ok("P1c absent/current/opposite/codex/claude 双 current-provider 矩阵且 packet opposite 仅审计", matrix_ok)
+
+mr, mt = mkgit("low")
+write_packet(
+    mt,
+    "U",
+    risk="low",
+    semantic_review_provider={"provider": "opposite", "required": True},
+)
+os.makedirs(os.path.join(mr, "lib"), exist_ok=True)
+open(os.path.join(mr, "lib/x.dart"), "w", encoding="utf-8").write("target")
+write_policy(mr, "current")
+rc, o, _ = run_ir(mt, mr, staged=False)
+ok("P1c low-risk slice 保留 packet opposite(required=true) 兼容合同",
+   rc == 0 and "WORKER=check-claude-" in o and "--provider claude" in o)
+
+packet_pin_plan_ok = True
+for current_provider in ("codex", "claude"):
+    for pinned_provider in ("codex", "claude"):
+        mr, mt = mkgit("low")
+        write_packet(
+            mt,
+            "U",
+            risk="low",
+            semantic_review_provider={"provider": pinned_provider, "required": True},
+        )
+        os.makedirs(os.path.join(mr, "lib"), exist_ok=True)
+        open(os.path.join(mr, "lib/x.dart"), "w", encoding="utf-8").write("target")
+        rc, o, e = run_ir(mt, mr, staged=False, provider=current_provider)
+        packet_pin_plan_ok = packet_pin_plan_ok and (
+            rc == 0
+            and "source=staged_packet" in e
+            and f"WORKER=check-{pinned_provider}-" in o
+            and f"--provider {pinned_provider}" in o
+        )
+ok("P1c non-high-risk packet codex/claude pin 在双 current-provider 下保持合同",
+   packet_pin_plan_ok)
+
+non_high_fallback_ok = True
+for task_risk in ("medium", None):
+    mr, mt = mkgit(task_risk)
+    write_packet(
+        mt,
+        "U",
+        risk="unknown",
+        semantic_review_provider={"provider": "opposite", "required": True},
+    )
+    os.makedirs(os.path.join(mr, "lib"), exist_ok=True)
+    open(os.path.join(mr, "lib/x.dart"), "w", encoding="utf-8").write("target")
+    write_policy(mr, "current")
+    rc, o, e = run_ir(mt, mr, staged=False)
+    non_high_fallback_ok = non_high_fallback_ok and (
+        rc == 0
+        and "source=staged_packet" in e
+        and "WORKER=check-claude-" in o
+        and "--provider claude" in o
+    )
+ok("P1c medium/unknown slice 不得被 high-risk config policy 削弱 packet opposite 合同",
+   non_high_fallback_ok)
+
+mr, mt = mkgit("high")
+write_packet(
+    mt,
+    "U",
+    risk="unknown",
+    semantic_review_provider={"provider": "opposite", "required": True},
+)
+os.makedirs(os.path.join(mr, "lib"), exist_ok=True)
+open(os.path.join(mr, "lib/x.dart"), "w", encoding="utf-8").write("target")
+write_policy(mr, "current")
+rc, o, e = run_ir(mt, mr, staged=False)
+ok("P1c packet risk unknown 回退 task high 时仍应用 high-risk config policy",
+   rc == 0 and "source=config_policy" in e
+   and "WORKER=check-codex-" in o and "--provider codex" in o)
+
+mr, mt = mkgit("high")
+write_packet(mt, "U", risk="high")
+os.makedirs(os.path.join(mr, "lib"), exist_ok=True)
+open(os.path.join(mr, "lib/x.dart"), "w", encoding="utf-8").write("target")
+irc, iout, _ = run_ic_plan(mt, mr)
+rrc, rout, _ = run_ir(mt, mr, staged=False)
+ok("P1c implement-check 与 implementation-review 共用 current resolver",
+   irc == 0 and rrc == 0 and "WORKER=check-codex-" in iout
+   and "WORKER=check-codex-" in rout)
+
+mr, mt = mkgit("high")
+write_packet(mt, "U", risk="high")
+os.makedirs(os.path.join(mr, "lib"), exist_ok=True)
+open(os.path.join(mr, "lib/x.dart"), "w", encoding="utf-8").write("target")
+open(os.path.join(mr, ".trellis", "config.yaml"), "w", encoding="utf-8").write(
+    "guru:\n  supervision:\n"
+    "    high_risk_review_provider_policy: current\n"
+    "    adversarial_enabled: false\n"
+)
+rc, o, _ = run_ir(mt, mr, staged=False)
+ok("P1c adversarial_enabled=false 不禁用 high-risk current-provider review",
+   rc == 0 and "WORKER=check-codex-" in o)
+
+invalid_ok = True
+for raw_value in ("", "null", '\"\"', '\"   \"', "true", "[]", "banana"):
+    ir, it = mkgit("high")
+    write_packet(it, "U", risk="high")
+    write_policy(ir, raw_value)
+    invalid_rc, invalid_out, invalid_err = run_ir(it, ir, staged=False)
+    combined = invalid_out + invalid_err
+    invalid_ok = invalid_ok and (
+        invalid_rc != 0
+        and "high_risk_review_provider_policy" in invalid_err
+        and all(value in invalid_err for value in ("current", "opposite", "codex", "claude"))
+        and "WORKER=" not in combined
+        and "trellis channel spawn" not in combined
+        and "check-codex-" not in combined
+        and "check-claude-" not in combined
+    )
+ok("P1c policy 显式 null/empty/whitespace/non-string/unknown 在 plan 前 fail-closed", invalid_ok)
+
+ir, it = mkgit("high")
+write_policy(ir, "banana")
+status_out, status_err = io.StringIO(), io.StringIO()
+with contextlib.redirect_stdout(status_out), contextlib.redirect_stderr(status_err):
+    status_rc = gs.main([
+        "--root", ir, "--platform", "flutter", "status", it, "--json",
+    ])
+kill_out, kill_err = io.StringIO(), io.StringIO()
+with contextlib.redirect_stdout(kill_out), contextlib.redirect_stderr(kill_err):
+    kill_rc = gs.main([
+        "--root", ir, "--platform", "flutter", "kill", it,
+        "--channel", "x", "--worker", "y", "--dry-run",
+    ])
+ok("P1c invalid policy 对 status/kill 同样 fail-closed 且不输出 channel plan",
+   status_rc != 0 and kill_rc != 0
+   and "high_risk_review_provider_policy" in status_err.getvalue()
+   and "high_risk_review_provider_policy" in kill_err.getvalue()
+   and "trellis channel" not in status_out.getvalue() + kill_out.getvalue())
+
+quote = "用户明确授权当前 Codex provider 执行实现审查"
+write_policy(root, "opposite")
+rc, o, _e = run_ir(
+    tdir, root, staged=False, same_provider=True, user_quote=quote
+)
+ok("P1c high-risk --same-provider 授权后只生成 check-codex plan",
+   rc == 0 and "WORKER=check-codex-" in o
+   and "check-claude" not in o and "--provider claude" not in o)
+
+write_policy(root, "claude")
+rc, o, _e = run_ir(
+    tdir, root, staged=False, same_provider=True, user_quote=quote
+)
+ok("P1c --same-provider 高于 pinned claude policy",
+   rc == 0 and "WORKER=check-codex-" in o and "check-claude" not in o)
+
+rc, o, e = run_ir(tdir, root, staged=False, same_provider=True)
+ok("P1c --same-provider 缺 --user-quote 在 worker plan 前 fail-closed",
+   rc == 2 and "requires --user-quote" in e and "WORKER=" not in o)
+rc, o, e = run_ir(tdir, root, staged=False, same_provider=True, user_quote="   ")
+ok("P1c --same-provider 空白 --user-quote 在 worker plan 前 fail-closed",
+   rc == 2 and "requires --user-quote" in e and "WORKER=" not in o)
+
+real_exec, real_det = gs._execute_plan, R.run_deterministic_checks
+try:
+    R.run_deterministic_checks = lambda c, r: (
+        "passed", [{"command": "x", "exit_code": 0}]
+    )
+    codex_txt = txt.replace("review_provider=claude", "review_provider=codex")
+    gs._execute_plan = lambda _plan, _cfg: (0, "done", codex_txt)
+    rc, _o, _e = run_ir(
+        tdir, root, staged=False, same_provider=True, user_quote=quote, dry_run=False
+    )
+    rec = jsonl_last(tdir)
+    ok("P1c high-risk same-provider clean 规范化成功并保留用户授权审计",
+       rc == 0 and rec and rec["review_result"] == "clean"
+       and rec.get("required_satisfied") is True
+       and rec.get("provider_override_source") == "cli_same_provider"
+       and rec.get("same_provider_user_quote") == quote
+       and quote in rec.get("message", ""))
+finally:
+    gs._execute_plan, R.run_deterministic_checks = real_exec, real_det
+
+root, tdir = mkgit("high")
+os.makedirs(os.path.join(root, "lib"), exist_ok=True)
+open(os.path.join(root, "lib/x.dart"), "w", encoding="utf-8").write("target")
+subprocess.run(["git", "-C", root, "add", "lib/x.dart"], check=True)
+write_policy(root, "codex")
+rc, o, _e = run_ir(tdir, root, slice_id=None)
+ok("P1c non-slice staged 忽略 config=codex 并保持 opposite provider",
+   rc == 0 and "WORKER=check-claude-" in o and "--provider claude" in o)
+rc, o, _e = run_ir(
+    tdir, root, slice_id=None, same_provider=True, user_quote=quote
+)
+ok("P1c non-slice staged 有审计 CLI override 时使用 current provider",
+   rc == 0 and "WORKER=check-codex-" in o and "check-claude" not in o)
+
+patched, _ = CP.patch_config_text("guru:\n  supervision:\n    provider: claude\n", "flutter")
+preserved, _ = CP.patch_config_text(
+    "guru:\n  supervision:\n    provider: claude\n    high_risk_review_provider_policy: opposite\n",
+    "flutter",
+)
+ok("P1c config patch 缺失补 current 且保留显式 policy",
+   "provider: claude" in patched
+   and "high_risk_review_provider_policy: current" in patched
+   and "high_risk_review_provider_policy: opposite" in preserved
+   and "high_risk_review_provider_policy: current" not in preserved)
+
+explicit_policy_values_preserved = True
+for raw_value in ("", '\"\"', "null", "banana", "current", "opposite", "codex", "claude"):
+    separator = " " if raw_value else ""
+    original_line = f"    high_risk_review_provider_policy:{separator}{raw_value}"
+    explicit_text = f"guru:\n  supervision:\n{original_line}\n"
+    explicit_patched, _ = CP.patch_config_text(explicit_text, "flutter")
+    explicit_policy_values_preserved = explicit_policy_values_preserved and (
+        original_line in explicit_patched.splitlines()
+        and explicit_patched.count("high_risk_review_provider_policy:") == 1
+    )
+ok("P1c config patch 仅缺失补 current 且保留显式 empty/null/unknown/allowed policy",
+   explicit_policy_values_preserved)
+
 root, tdir = mkgit("high")
 os.makedirs(os.path.join(root, "lib"), exist_ok=True)
 open(os.path.join(root, "lib/x.dart"), "w", encoding="utf-8").write("target")
@@ -4120,7 +4404,9 @@ def err(fn):  # 捕获 ReviewRecordError → True(packet/append 非法负例)
         return True
 
 ctxO = {"mode": "supervisor", "packet": {"invariants": invs, "semantic_review_provider": {"provider": "opposite"}},
-        "implement_provider": "codex", "check_provider": "claude", "independent_required": True,
+        "implement_provider": "codex", "check_provider": "claude",
+        "provider_override_source": "config_policy", "same_provider_user_quote": None,
+        "high_risk_review_provider_policy": "opposite", "review_target_kind": "slice",
         "supervisor_deterministic_status": "passed", "run_id": "r", "slice_id": "U", "review_target": "slice:U"}
 INVOK = {"_invariants": {"INV-1": {"status": "pass", "evidence": "e"}}}  # clean 正例须覆盖 ctxO.packet 的 INV-1
 
@@ -4134,12 +4420,127 @@ ok("R1-F1 normalize clean review_provider 未知→MALFORMED", f == "MALFORMED_R
 _, f = R.normalize_review_record(vf(rp="codex"), ctxO)
 ok("R1-F1 normalize 自报 provider≠实际 spawn(check_provider)→MALFORMED", f == "MALFORMED_REVIEW_OUTPUT")
 rec, f = R.normalize_review_record({**vf(rp="codex"), **INVOK},
-    {**ctxO, "independent_required": False, "check_provider": "codex", "implement_provider": "codex"})
-ok("R1-F1 required opposite 即使 low-risk override 也拒同 provider clean", f == "MALFORMED_REVIEW_OUTPUT" and rec["review_result"] == "blocked")
-optional_ctx = {**ctxO, "packet": {"invariants": invs, "semantic_review_provider": {"provider": "opposite", "required": False}},
-                "independent_required": False, "check_provider": "codex", "implement_provider": "codex"}
+    {**ctxO, "check_provider": "codex", "implement_provider": "codex"})
+ok("R1-F1 opposite policy 拒同 provider clean", f == "MALFORMED_REVIEW_OUTPUT" and rec["review_result"] == "blocked")
+optional_packet = {
+    "invariants": invs,
+    "risk": "low",
+    "semantic_review_provider": {"provider": "opposite", "required": False},
+}
+resolver_config = gs.SupervisionConfig(
+    root=Path("."), platform="flutter", current_provider="codex", provider="codex",
+    adversarial=False, adversarial_enabled=True, implement_timeout="45m",
+    check_timeout="30m", warn_before="5m", idle_timeout=None,
+    max_live_workers=None, trellis_bin="trellis", adversarial_model=None,
+    adversarial_reasoning_effort=None, high_risk_review_provider_policy="current",
+)
+optional_resolution = gs._implementation_review_check_config(
+    resolver_config, packet=optional_packet, independent_required=False,
+    independent_reason="approved low risk", high_risk_policy_applies=False,
+    review_target_kind="slice",
+)
+optional_ctx = {
+    **ctxO,
+    "packet": optional_packet,
+    "check_provider": optional_resolution.check_config.provider,
+    "implement_provider": resolver_config.provider,
+    "provider_override_source": optional_resolution.provider_override_source,
+    "high_risk_review_provider_policy": "current",
+}
 rec, f = R.normalize_review_record({**vf(rp="codex"), **INVOK}, optional_ctx)
-ok("R1-F1 非 required low-risk 同 provider 自检仍可留痕", f is None and rec["review_result"] == "clean")
+ok("R1-F1 resolver+normalizer optional opposite(required=false) 接受同 provider clean",
+   optional_resolution.provider_override_source == "staged_packet"
+   and optional_resolution.check_config.provider == "codex"
+   and f is None and rec["review_result"] == "clean")
+
+packet_pin_tuple_ok = True
+for current_provider in ("codex", "claude"):
+    for pinned_provider in ("codex", "claude"):
+        pinned_packet = {
+            "invariants": invs,
+            "risk": "low",
+            "semantic_review_provider": {
+                "provider": pinned_provider,
+                "required": True,
+            },
+        }
+        pinned_config = gs.replace(
+            resolver_config,
+            current_provider=current_provider,
+            provider=current_provider,
+        )
+        pinned_resolution = gs._implementation_review_check_config(
+            pinned_config, packet=pinned_packet, independent_required=False,
+            independent_reason="approved low risk", high_risk_policy_applies=False,
+            review_target_kind="slice",
+        )
+        pinned_ctx = {
+            **ctxO,
+            "packet": pinned_packet,
+            "check_provider": pinned_resolution.check_config.provider,
+            "implement_provider": current_provider,
+            "provider_override_source": pinned_resolution.provider_override_source,
+            "high_risk_review_provider_policy": "current",
+        }
+        rec, f = R.normalize_review_record(
+            {**vf(rp=pinned_provider), **INVOK}, pinned_ctx
+        )
+        packet_pin_tuple_ok = packet_pin_tuple_ok and (
+            pinned_resolution.check_config.provider == pinned_provider
+            and f is None
+            and rec["review_result"] == "clean"
+        )
+ok("R1-F1 resolver+normalizer 接受 non-high-risk packet codex/claude pin 矩阵",
+   packet_pin_tuple_ok)
+
+current_ctx = {
+    **optional_ctx,
+    "packet": {"invariants": invs},
+    "provider_override_source": "config_policy",
+    "same_provider_user_quote": None,
+}
+rec, f = R.normalize_review_record({**vf(rp="codex"), **INVOK}, current_ctx)
+ok("HRP tuple config=current + packet provider 缺失接受 actual current provider",
+   f is None and rec.get("provider_override_source") == "config_policy")
+
+tampered_contexts = [
+    {**current_ctx, "provider_override_source": None},
+    {**current_ctx, "provider_override_source": "cli_same_provider"},
+    {**current_ctx, "same_provider_user_quote": "伪造 quote"},
+    {**current_ctx, "high_risk_review_provider_policy": "opposite"},
+    {**current_ctx, "high_risk_review_provider_policy": "claude"},
+    {**current_ctx, "review_target_kind": "staged"},
+    {**current_ctx, "check_provider": "claude"},
+]
+tampered_ok = all(
+    R.normalize_review_record({**vf(rp="codex"), **INVOK}, bad)[1]
+    == "MALFORMED_REVIEW_OUTPUT"
+    for bad in tampered_contexts
+)
+ok("HRP tuple 拒 source/policy/quote/target/check-provider 矛盾组合", tampered_ok)
+
+cli_ctx = {
+    **current_ctx,
+    "provider_override_source": "cli_same_provider",
+    "same_provider_user_quote": "用户授权",
+    "high_risk_review_provider_policy": "opposite",
+}
+rec, f = R.normalize_review_record({**vf(rp="codex"), **INVOK}, cli_ctx)
+ok("HRP tuple coherent cli_same_provider 保留 quote", f is None and rec.get("same_provider_user_quote") == "用户授权")
+
+staged_ctx = {
+    **ctxO,
+    "packet": {"invariants": invs, "semantic_review_provider": {"provider": "opposite", "required": True}},
+    "provider_override_source": "staged_packet",
+    "same_provider_user_quote": None,
+    "high_risk_review_provider_policy": "codex",
+    "review_target_kind": "staged",
+    "review_target": "staged:index",
+}
+rec, f = R.normalize_review_record(
+    {**vf(rt="staged:index", rp="claude"), **INVOK}, staged_ctx
+)
+ok("HRP tuple staged_packet 忽略 project policy 并执行 packet opposite", f is None)
 
 # R1-F2 review_target 绑定:worker 自报 target≠当前 slice→MALFORMED
 _, f = R.normalize_review_record(vf(rt="slice:OTHER"), ctxO)
@@ -4257,10 +4658,10 @@ _, f = R.normalize_review_record({**vf(), **INVOK}, {**ctxO, "packet": {"invaria
 ok("R6-F1 normalize 空 invariants→MALFORMED(防 aggregate([],{}) all_passed fail-open)", f == "MALFORMED_REVIEW_OUTPUT")
 _, f = R.normalize_review_record({**vf(), **INVOK}, {**ctxO, "packet": {"invariants": invs, "semantic_review_provider": [1]}})
 ok("R6-F1 normalize semantic_review_provider 非 dict→MALFORMED(不 AttributeError)", f == "MALFORMED_REVIEW_OUTPUT")
-# R6-F2 具体 provider pin 第一版未接线 supervisor(总 spawn opposite)→ 作 required clean 一律 MALFORMED（Agent 缺口:pin 分支此前未测）
+# R6-F2 slice packet provider pin 是 config_policy 的审计元数据，不覆盖项目 policy。
 _, f = R.normalize_review_record({**vf(rp="codex"), **INVOK},
     {**ctxO, "packet": {"invariants": invs, "semantic_review_provider": {"provider": "codex"}}, "check_provider": "codex", "implement_provider": "claude"})
-ok("R6-F2 具体 pin provider=codex(第一版 deferred)→MALFORMED", f == "MALFORMED_REVIEW_OUTPUT")
+ok("R6-F2 slice packet pin 不覆盖 config opposite policy", f is None)
 
 print(f"COUNT {np} {nf}")
 sys.exit(0 if nf == 0 else 1)

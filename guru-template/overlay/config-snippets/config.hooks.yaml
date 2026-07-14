@@ -3,6 +3,14 @@
 #   guru:
 #     gate_mode: soft   # strict（默认）=用户终端 TTY；soft=对话确认后 agent --via-agent 代跑
 #     supervision:
+#       # 当前实现与普通 Guru worker 的默认 provider；命令行 --provider 的优先级更高。
+#       provider: codex
+#       # 仅控制高风险 slice-backed 实现审查，不影响低风险 slice 或 non-slice staged/contract review：
+#       # current=沿用 provider；opposite=使用相反 provider；codex/claude=硬锁到指定 provider。
+#       # 要彻底阻止高风险 slice 审查切到 Claude，请同时设置 provider: codex 和本项: codex。
+#       # 有效 --same-provider + 非空 --user-quote 是单次审计例外；packet provider 元数据不能覆盖项目策略。
+#       # 只有键完全缺失才默认 current；显式 null/空串/空白/非字符串/未知值会在 worker plan 前失败。
+#       high_risk_review_provider_policy: current
 #       adversarial_enabled: true  # false=即使命令传 --adversarial 也不启动 opposite-provider worker；不会产生 clean 证据
 #       adversarial_claude_model: claude-sonnet-4-6
 #       adversarial_codex_model: gpt-5.4

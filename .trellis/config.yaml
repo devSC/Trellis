@@ -81,6 +81,25 @@ guru:
   # should load generic Trellis implementation/check guidance by default.
   platform: cli
   supervision:
+    # 当前实现与普通 Guru worker 默认使用的 provider。
+    # 优先级：命令行 --provider > 本配置 > 内置默认 codex。
+    # 可选值为 codex / claude；这里固定为 codex，避免普通流程默认切到 Claude。
+    provider: codex
+
+    # 高风险、slice-backed 实现审查的 provider 选择策略；不控制低风险 slice，
+    # 也不控制无 --slice 的 staged/contract 审查。四个可选值：
+    # - current：沿用上面的 provider；provider=codex 时仍由 Codex 审查。
+    # - opposite：使用相反 provider；provider=codex 时会启动 Claude。
+    # - codex：无论当前实现 provider 是什么，都将高风险 slice 审查硬锁到 Codex。
+    # - claude：无论当前实现 provider 是什么，都将高风险 slice 审查硬锁到 Claude。
+    # 当前设为 codex，表示高风险 slice 审查不得因 packet 中的 opposite 元数据切到 Claude。
+    # 例外：用户显式传入 --same-provider 且提供非空 --user-quote 时，该次审查按
+    # 一次性审计授权使用当前实现 provider；缺少/空白 quote 会在生成 worker plan 前失败。
+    # 只有配置键完全缺失时才默认 current；显式 null、空串、空白、非字符串或未知值均失败。
+    high_risk_review_provider_policy: codex
+
+    # 该开关只控制 requirements/overview/detail 的 adversarial reviewer 要求，
+    # 不会关闭上面的高风险实现审查，也不会生成或伪造 clean 审查证据。
     adversarial_enabled: false
 
 #-------------------------------------------------------------------------------

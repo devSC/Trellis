@@ -39,6 +39,8 @@ REQUIRED_PROVIDER_VALUES = {"codex", "claude", "opposite"}
 _CHANNEL_PROVIDERS = {"codex", "claude"}  # worker 自报 review_provider 的合法值域(真 channel-spawn;opposite 仅 packet 要求类型)
 NON_REQUIRED_PROVIDERS = {"manual", "ocr_optional"}
 OCR_VALUES = {"optional", "disabled"}
+HIGH_RISK_REVIEW_PROVIDER_POLICIES = {"current", "opposite", "codex", "claude"}
+PROVIDER_OVERRIDE_SOURCES = {"cli_same_provider", "config_policy", "staged_packet"}
 
 _INVARIANT_REQUIRED_FIELDS = (
     "invariant_id", "rule", "source", "owner",
@@ -90,10 +92,8 @@ def _validate_semantic_review_provider(obj) -> dict:
     """present 时:required:bool / provider∈{codex,claude,opposite} / ocr∈{optional,disabled}。
     缺 → 默认 {required:true,provider:opposite,ocr:optional}。
     required=true ∧ provider∈{manual,ocr_optional} → ReviewRecordError(R5-F1:第一版 required 只 channel-spawnable)。
-    第一版边界(R6):supervisor 总 spawn opposite(check_config=_opposite_provider),未接线具体 provider pin →
-    normalize 仅 provider=opposite 作 required clean(codex/claude 具体 pin 与 manual/ocr 一样 deferred);
-    `required=true` 是 required clean record 的独立性下限：provider=opposite 时不得被 low-risk
-    self-check 覆盖；非 required 的同 provider 自检必须显式写 required=false。"""
+    Slice-backed review 将该字段作为审计元数据，实际 provider 由 supervisor 的项目 policy
+    resolution context 决定；non-slice staged review 继续把该字段作为 provider contract。"""
     if obj is None:
         return {"required": True, "provider": "opposite", "ocr": "optional"}
     if not isinstance(obj, dict):
@@ -191,6 +191,8 @@ _RECORD_FIELDS = (
     "route_class", "review_result", "deterministic_checks", "dirty_scope", "invariant_coverage",
     "deterministic_results", "channel", "worker", "timestamp", "supervisor_failure", "repairable",
     "message", "candidates", "supplemental", "required_satisfied", "reviewed_target_digest",
+    "provider_override_source", "same_provider_user_quote", "high_risk_review_provider_policy",
+    "check_provider", "implement_provider", "review_target_kind",
 )
 
 
@@ -878,6 +880,12 @@ def normalize_review_record(fields, context):
         "review_provider": f.get("review_provider"), "channel": context.get("channel"),
         "worker": context.get("worker"), "timestamp": context.get("timestamp"),
         "deterministic_results": context.get("deterministic_results", []),
+        "provider_override_source": context.get("provider_override_source"),
+        "same_provider_user_quote": context.get("same_provider_user_quote"),
+        "high_risk_review_provider_policy": context.get("high_risk_review_provider_policy"),
+        "check_provider": context.get("check_provider"),
+        "implement_provider": context.get("implement_provider"),
+        "review_target_kind": context.get("review_target_kind"),
     }
     if context.get("reviewed_target_digest"):
         base["reviewed_target_digest"] = context.get("reviewed_target_digest")
@@ -908,44 +916,79 @@ def normalize_review_record(fields, context):
     if want_target and f.get("review_target") != want_target:
         return blocked("MALFORMED_REVIEW_OUTPUT")
 
+    pkt = context.get("packet")
+    if isinstance(pkt, dict):
+        semantic_metadata = pkt.get("semantic_review_provider")
+        if semantic_metadata is not None and not isinstance(semantic_metadata, dict):
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+    source = context.get("provider_override_source")
+    quote = context.get("same_provider_user_quote")
+    policy = context.get("high_risk_review_provider_policy")
+    target_kind = context.get("review_target_kind")
+    actual = f.get("review_provider")
+    impl = context.get("implement_provider")
+    check_provider = context.get("check_provider")
+    if (
+        source not in PROVIDER_OVERRIDE_SOURCES
+        or policy not in HIGH_RISK_REVIEW_PROVIDER_POLICIES
+        or target_kind not in {"slice", "staged"}
+        or actual not in _CHANNEL_PROVIDERS
+        or impl not in _CHANNEL_PROVIDERS
+        or check_provider not in _CHANNEL_PROVIDERS
+        or actual != check_provider
+        or (quote is not None and not isinstance(quote, str))
+    ):
+        return blocked("MALFORMED_REVIEW_OUTPUT")
+    normalized_quote = quote.strip() if isinstance(quote, str) else ""
+
+    if source == "cli_same_provider":
+        if not normalized_quote or check_provider != impl:
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+    elif source == "config_policy":
+        if normalized_quote or target_kind != "slice":
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        if policy == "current":
+            expected_provider = impl
+        elif policy == "opposite":
+            expected_provider = "claude" if impl == "codex" else "codex"
+        else:
+            expected_provider = policy
+        if check_provider != expected_provider:
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+    else:
+        if normalized_quote or not isinstance(pkt, dict):
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        if target_kind == "slice" and pkt.get("risk") in {"high", "critical"}:
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        semantic_provider = pkt.get("semantic_review_provider")
+        if semantic_provider is None:
+            semantic_provider = {"provider": "opposite", "required": True}
+        if not isinstance(semantic_provider, dict):
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        packet_provider = semantic_provider.get("provider", "opposite")
+        packet_required = semantic_provider.get("required", True)
+        if not isinstance(packet_required, bool):
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        if packet_provider == "opposite":
+            expected_provider = (
+                "claude" if impl == "codex" else "codex"
+            ) if packet_required else impl
+        elif packet_provider in _CHANNEL_PROVIDERS:
+            expected_provider = packet_provider
+        else:
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        if check_provider != expected_provider:
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+
     # 层②(supervisor 消费 channel check 作 required clean)：provider gating + deterministic 双过 + 聚合重算
     if f["review_result"] == "clean":
         # R6-F1:supervisor clean 必须有有效 packet(dict + 非空 invariants list)。packet 缺失 / 非 dict /
         # 空 invariants 既会 .get 出 traceback,又会让 aggregate([],{}) 误判 all_passed → 零 invariant 核验的
         # fail-open clean;统一 blocked(绝不静默 `or {}` 回落,那会重新引入 fail-open)。
-        pkt = context.get("packet")
         if not isinstance(pkt, dict):
             return blocked("MALFORMED_REVIEW_OUTPUT")
         invs = pkt.get("invariants")
         if not isinstance(invs, list) or not invs:
-            return blocked("MALFORMED_REVIEW_OUTPUT")
-        srp = pkt.get("semantic_review_provider")
-        if srp is None:
-            srp = {"provider": "opposite"}
-        elif not isinstance(srp, dict):  # R6-F1:嵌套 srp 非 dict → blocked(不 .get traceback)
-            return blocked("MALFORMED_REVIEW_OUTPUT")
-        want = srp.get("provider", "opposite")
-        actual, impl = f.get("review_provider"), context.get("implement_provider")
-        check_provider = context.get("check_provider")
-        # R1-F1:actual 必须是真 channel-spawn provider — 显式拒 manual/ocr_optional/未知 provider 作 required clean
-        if actual not in _CHANNEL_PROVIDERS:
-            return blocked("MALFORMED_REVIEW_OUTPUT")
-        # R1-F1:worker 自报 provider 必须 == supervisor 实际 spawn 的 check provider(防 worker 伪报)
-        if check_provider and actual != check_provider:
-            return blocked("MALFORMED_REVIEW_OUTPUT")
-        # R6-F2:第一版 supervisor 总 spawn opposite(check_config=_opposite_provider),未接线具体 provider pin;
-        # 故仅 provider=opposite 受支持作 required clean,具体 codex/claude pin 与 manual/ocr 一样第一版 deferred。
-        if want != "opposite":
-            return blocked("MALFORMED_REVIEW_OUTPUT")
-        required = srp.get("required", True)
-        if not isinstance(required, bool):
-            return blocked("MALFORMED_REVIEW_OUTPUT")
-        # Required opposite-provider evidence is fail-closed. Low-risk self-checks
-        # must be explicit non-required records, otherwise commit evidence can
-        # advertise opposite(required=True) while accepting same-provider review.
-        if want == "opposite" and required and actual == impl:
-            return blocked("MALFORMED_REVIEW_OUTPUT")
-        if context.get("independent_required", True) and actual == impl:
             return blocked("MALFORMED_REVIEW_OUTPUT")
         if context.get("supervisor_deterministic_status") != "passed" or f["deterministic_checks"] != "passed":
             return blocked("MALFORMED_REVIEW_OUTPUT")
