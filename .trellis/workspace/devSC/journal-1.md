@@ -227,3 +227,36 @@ Made Guru workflow implementation routing dispatch-mode aware, hardened staged i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Configure high-risk slice review provider
+
+**Date**: 2026-07-14
+**Task**: Configure high-risk slice review provider
+**Branch**: `codex/preserve-guru-target-wip-75887690`
+
+### Summary
+
+Added dynamic high-risk slice review provider policy, strict evidence validation, synchronized templates, and provider-contract regressions.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f46cea60` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
