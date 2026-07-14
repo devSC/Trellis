@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "slice_id": "UNIT-high-risk-review-provider-policy",
+  "owner_unit": "UNIT-provider-resolution",
+  "target_kind": "staged",
+  "target_paths": [
+    ".trellis/config.yaml",
+    ".trellis/scripts/guru/guru_supervise.py",
+    ".trellis/scripts/guru/guru_review_record.py",
+    ".trellis/scripts/guru/guru_config_patch.py",
+    ".trellis/spec/cli/backend/guru-overlay-gates.md",
+    "guru-template/overlay/config-snippets/config.hooks.yaml",
+    "guru-template/overlay/README.md",
+    "guru-template/overlay/verify/guru_supervise.py",
+    "guru-template/overlay/verify/guru_review_record.py",
+    "guru-template/overlay/verify/guru_config_patch.py",
+    "guru-template/overlay/verify/tests/run_tests.sh",
+    "packages/cli/src/templates/guru/overlay/config-snippets/config.hooks.yaml",
+    "packages/cli/src/templates/guru/overlay/README.md",
+    "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py",
+    "packages/cli/src/templates/guru/overlay/verify/guru_review_record.py",
+    "packages/cli/src/templates/guru/overlay/verify/guru_config_patch.py",
+    "packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh",
+    "packages/cli/test/guru/guru-bundled.test.ts"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "implementation_review_gate",
+    "provider_selection",
+    "evidence_contract",
+    "template_mirror"
+  ],
+  "depends_on": [],
+  "deterministic_checks": [
+    "bash guru-template/overlay/verify/tests/run_tests.sh",
+    "python3 -m py_compile .trellis/scripts/guru/guru_supervise.py .trellis/scripts/guru/guru_review_record.py .trellis/scripts/guru/guru_config_patch.py guru-template/overlay/verify/guru_supervise.py guru-template/overlay/verify/guru_review_record.py guru-template/overlay/verify/guru_config_patch.py packages/cli/src/templates/guru/overlay/verify/guru_supervise.py packages/cli/src/templates/guru/overlay/verify/guru_review_record.py packages/cli/src/templates/guru/overlay/verify/guru_config_patch.py",
+    "python3 .trellis/scripts/guru/guru_supervise.py --help",
+    "pnpm -C packages/cli sync:guru:check",
+    "git diff --check"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      "marketplace",
+      ".trellis/tasks/07-08-high-risk-slice-review-provider/review-records/implementation-reviews.jsonl"
+    ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "disabled"
+  },
+  "review_context": [
+    "Explicit invalid policy values intentionally fail closed during global config loading, including status/kill; provider precedence applies only to valid configured values.",
+    "The task-owned CLI gate is the three config-patch tests, verified as 3 passed and 79 skipped. Five full guru-bundled file failures are pre-existing stale COMMIT_READY/allowed_stage_paths assertions for unchanged guru_gate.py behavior and are not part of this packet deterministic gate.",
+    "Required verdict fields must use exact enum values with no suffix: deterministic_checks=passed, dirty_scope=isolated, invariant_coverage=all_passed when clean."
+  ],
+  "invariants": [
+    {
+      "invariant_id": "HRP-INV-001",
+      "rule": "Disabling adversarial planning review must not disable high-risk implementation review.",
+      "source": "design.md section 9",
+      "owner": "UNIT-high-risk-review-provider-policy",
+      "positive_case": "adversarial_enabled=false still produces a high-risk check worker plan",
+      "negative_case": "the high-risk implementation review is skipped with adversarial planning review",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "overlay shell regression for adversarial_enabled=false"
+      ]
+    },
+    {
+      "invariant_id": "HRP-INV-002",
+      "rule": "An absent high-risk review provider policy defaults to the current implementation provider.",
+      "source": "design.md section 9",
+      "owner": "UNIT-high-risk-review-provider-policy",
+      "positive_case": "Codex remains Codex and Claude remains Claude when the policy key is absent",
+      "negative_case": "the absent policy silently creates an opposite-provider worker",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "overlay shell regressions for absent policy under Codex and Claude"
+      ]
+    },
+    {
+      "invariant_id": "HRP-INV-003",
+      "rule": "High-risk slice-backed review provider selection follows project policy; non-high-risk slices retain packet provider contracts.",
+      "source": "design.md section 9",
+      "owner": "UNIT-high-risk-review-provider-policy",
+      "positive_case": "high-risk current, opposite, codex, and claude policies resolve deterministically while non-high-risk slices retain opposite and concrete codex/claude packet contracts",
+      "negative_case": "project high-risk policy weakens a non-high-risk packet contract, a concrete packet pin is ignored, or packet metadata overrides high-risk project configuration",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "overlay shell matrix for all four high-risk policies, medium/unknown preservation, concrete codex/claude packet pins under both current providers, task-high fallback, and conflicting packet metadata"
+      ]
+    },
+    {
+      "invariant_id": "HRP-INV-004",
+      "rule": "Only an absent policy key defaults; explicit invalid values fail globally before action-specific provider precedence or worker-plan construction.",
+      "source": "design.md section 9",
+      "owner": "UNIT-high-risk-review-provider-policy",
+      "positive_case": "null, empty, whitespace, non-string, and unknown values return non-zero with no worker plan, including status/kill and otherwise valid CLI override paths",
+      "negative_case": "an explicit invalid value is bypassed because the selected target is low-risk/non-slice or because a CLI override has higher provider precedence",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "overlay shell invalid-config matrix checks both stdout and stderr; status/kill fail-closed regression proves validation is intentionally global"
+      ]
+    },
+    {
+      "invariant_id": "HRP-INV-005",
+      "rule": "Review record normalization validates the resolved source, policy, quote, target kind, and actual provider as one tuple.",
+      "source": "design.md section 9",
+      "owner": "UNIT-high-risk-review-provider-policy",
+      "positive_case": "a coherent CLI or config policy tuple with the actual worker provider is accepted",
+      "negative_case": "a forged source, policy, quote, provider, or worker report is accepted",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "Python normalization regressions for accepted and tampered tuples"
+      ]
+    },
+    {
+      "invariant_id": "HRP-INV-006",
+      "rule": "implement-check and implementation-review use the same slice-backed provider resolver.",
+      "source": "design.md section 9",
+      "owner": "UNIT-high-risk-review-provider-policy",
+      "positive_case": "both actions select the same provider for the same policy and slice",
+      "negative_case": "one action uses project policy while the other still flips provider from packet metadata",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "overlay shell dry-run assertions for both actions"
+      ]
+    },
+    {
+      "invariant_id": "HRP-INV-007",
+      "rule": "Non-slice staged and contract reviews retain their synthetic opposite-provider contract unless an audited CLI override is valid.",
+      "source": "design.md section 9",
+      "owner": "UNIT-high-risk-review-provider-policy",
+      "positive_case": "with valid configuration, staged review ignores conflicting project policy while a quoted same-provider override wins for one run",
+      "negative_case": "a valid slice configuration weakens staged opposite-provider evidence or an unquoted CLI override is accepted; explicit invalid configuration remains a global preflight failure rather than a lower-precedence provider choice",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "overlay shell staged target and CLI override regressions"
+      ]
+    },
+    {
+      "invariant_id": "HRP-INV-008",
+      "rule": "Dogfood, template, and CLI source runtimes expose synchronized provider-policy behavior and install defaults.",
+      "source": "design.md section 9",
+      "owner": "UNIT-high-risk-review-provider-policy",
+      "positive_case": "runtime mirrors, config defaults, help output, and sync checks agree",
+      "negative_case": "a generated target retains old opposite-provider behavior or lacks the policy default",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "overlay verify suite, py_compile, dogfood help, sync:guru:check, and the focused three-test CLI config-patch command in implement.md; five unrelated full-file commit-plan baseline failures are explicitly excluded"
+      ]
+    }
+  ]
+}

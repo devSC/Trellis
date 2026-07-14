@@ -20,8 +20,9 @@
     "selected_at": "2026-07-08T19:30:53+08:00"
   },
     "scope": {
-        "allowed_paths": [
-            ".trellis/scripts/guru/guru_supervise.py",
+    "allowed_paths": [
+      ".trellis/config.yaml",
+      ".trellis/scripts/guru/guru_supervise.py",
             ".trellis/scripts/guru/guru_risk.py",
             ".trellis/scripts/guru/guru_config_patch.py",
             ".trellis/scripts/guru/guru_review_record.py",
@@ -61,6 +62,7 @@
             "packages/cli/src/templates/guru/overlay/verify/guru_config_patch.py",
             "packages/cli/src/templates/guru/overlay/verify/guru_review_record.py",
             "packages/cli/src/templates/guru/overlay/verify/tests/run_tests.sh",
+            "packages/cli/test/guru/guru-bundled.test.ts",
             "packages/cli/src/templates/guru/specs/guru-flutter-client/harness/gate/gate-confirmation-model.md",
             "packages/cli/src/templates/guru/specs/guru-flutter-client/harness/index.md",
             "packages/cli/src/templates/guru/specs/guru-go-backend/harness/gate/gate-confirmation-model.md",

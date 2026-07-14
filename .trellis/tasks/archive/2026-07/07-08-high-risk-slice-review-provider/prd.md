@@ -17,20 +17,20 @@ This is separate from `guru.supervision.adversarial_enabled`. That flag only con
 - `guru.supervision.provider` is the current/default provider used by Guru supervision.
 - `--adversarial` currently flips to the opposite provider and is skipped when `adversarial_enabled=false`.
 - High-risk implementation review is currently driven by `guru_risk.implement_check_independent_required()` and then provider-flipped by `guru_supervise._implementation_review_check_config()`.
-- Slice packets already carry `risk`, `risk_reasons`, and `semantic_review_provider`; the latter should remain semantic evidence policy and not silently override high-risk provider routing.
+- Slice packets already carry `risk`, `risk_reasons`, and `semantic_review_provider`; raw provider metadata must be preserved for audit but is non-authoritative for slice-backed provider routing and provider-gate evidence.
 - Required implementation review records validate the actual spawned `check_provider` against the worker's reported `review_provider`.
 - Overlay scripts exist in local dogfood runtime, `guru-template`, `packages/cli/src/templates`, and `packages/cli/dist/templates`; source/template drift is a real risk.
-- The dogfood runtime `.trellis/scripts/guru/guru_supervise.py` currently lags the template runtime: it has `implement-check` but not `implementation-review`, `_implementation_review_check_config()`, or staged synthetic packet handling. This task must close that parity gap or explicitly fail validation.
+- The dogfood runtime, Guru template, and CLI src template currently expose the same `implementation-review` path; the provider-policy implementation must preserve that parity.
 
 ## Semantic Review Provider Contract
 
-The new high-risk policy must distinguish raw packet intent from normalized defaults:
+The new high-risk policy distinguishes slice-backed provider routing from non-slice staged review:
 
-- If a slice packet omits `semantic_review_provider`, it has no explicit cross-provider semantic requirement. High-risk required review still runs, and the default `high_risk_review_provider_policy: current` may satisfy the required evidence with same-provider review when deterministic checks and invariants pass.
-- If a packet explicitly sets `semantic_review_provider: {provider: opposite, required: true}`, same-provider review must fail closed even when `high_risk_review_provider_policy: current`.
-- If a packet explicitly sets `semantic_review_provider.required: false`, provider mismatch is non-required semantic guidance and must not force high-risk review to the opposite provider.
-- If a packet explicitly pins `semantic_review_provider.provider: codex|claude` with `required: true`, required evidence must match that explicit packet contract or fail closed. This is separate from the high-risk policy default and must not be silently downgraded.
-- If `implementation-review --staged` or `--contract` runs without `--slice`, it uses the existing staged-review synthetic packet and its explicit semantic provider contract. The new high-risk slice policy does not override that non-slice packet; staged commit evidence can be changed only by a separate explicit design.
+- Provider precedence is `--same-provider` with a non-empty audited `--user-quote` > `guru.supervision.high_risk_review_provider_policy` > slice packet provider metadata. The one-off override always resolves to the current implementation provider and preserves the user quote in the review record.
+- For `implement-check --slice` and `implementation-review --slice`, `guru.supervision.high_risk_review_provider_policy` is the authoritative provider decision. This remains true when the slice packet says `semantic_review_provider: {provider: opposite, required: true}`; otherwise a project configured with `current` could still spawn Claude and the parameter would not control the live behavior.
+- Slice packet `semantic_review_provider` remains visible review metadata, but it does not override the configured provider policy for a high-risk slice.
+- Required evidence must match the supervisor's actual resolved `check_provider`; deterministic checks and invariant coverage remain mandatory.
+- If `implementation-review --staged` or `--contract` runs without `--slice`, it uses the existing staged-review synthetic packet and its explicit semantic provider contract unless a valid audited `--same-provider` one-off override is present. The high-risk config policy does not override that non-slice packet.
 
 ## Requirements
 
@@ -92,10 +92,11 @@ Then the installer should add the default `current` policy while preserving exis
 
 ## Failure Paths
 
-- Invalid `high_risk_review_provider_policy` value must block before channel creation and must not silently fall back.
-- Same-provider review must not satisfy packet-level `semantic_review_provider.opposite(required=true)`.
+- Invalid `high_risk_review_provider_policy` value must block before worker-plan construction or channel creation, must not silently fall back, and must emit no `WORKER=`, `check-*` plan, or `trellis channel spawn` command.
+- `--same-provider` without a non-empty `--user-quote` must fail before config resolution or worker-plan construction.
+- Slice-backed review records must validate against the provider resolved from `high_risk_review_provider_policy`, even when packet metadata requests `opposite(required=true)`.
 - Missing `semantic_review_provider` must not be normalized into an implicit opposite-provider requirement that makes the default `current` policy impossible to satisfy.
-- Explicit packet provider requirements take precedence over `high_risk_review_provider_policy`. A conflict must fail closed before worker spawn or during record validation; it must not silently switch to a different provider without operator-visible evidence.
+- Without a valid audited CLI one-off override, non-slice staged/contract review keeps its existing explicit opposite-provider contract.
 - Disabling `adversarial_enabled` must not skip high-risk implementation review.
 - Template/source drift must block completion until synchronized or explicitly recorded as out of scope.
 
@@ -113,6 +114,9 @@ question_policy: evidence_only
 - decision: Create a full-chain task before implementation.
   user_quote: "好，同意"
   result: Task `.trellis/tasks/07-08-high-risk-slice-review-provider` created with `route=full_chain`, `risk=high`.
+- decision: Make project config authoritative over slice packet provider metadata.
+  user_quote: "确认"
+  result: For slice-backed high-risk review, `high_risk_review_provider_policy: current` must keep the review on the current provider even when the packet requests `opposite(required=true)`; non-slice staged review remains unchanged.
 
 ## Acceptance Criteria
 
@@ -120,11 +124,13 @@ question_policy: evidence_only
 - [ ] `high_risk_review_provider_policy: opposite` produces the previous `codex -> claude` and `claude -> codex` behavior.
 - [ ] `high_risk_review_provider_policy: codex|claude` pins the check provider exactly.
 - [ ] Invalid policy values fail before channel spawn.
+- [ ] Invalid policy output contains the field name and allowed values, while stdout/stderr contain no `WORKER=`, `check-*` worker plan, or `trellis channel spawn`.
+- [ ] `--same-provider --user-quote` overrides `opposite` and `claude` config values for one run, generates `check-codex` when the current provider is Codex, and preserves the quote in the record; missing/blank quote fails before any plan.
 - [ ] Same-provider high-risk required clean review records are accepted only when the actual `check_provider` matches `review_provider`.
-- [ ] Required `semantic_review_provider: {provider: opposite, required: true}` still fails closed if policy resolves same-provider, unless the design explicitly changes that packet contract.
+- [ ] Slice packet `semantic_review_provider: {provider: opposite, required: true}` cannot override `high_risk_review_provider_policy: current`; the generated worker and accepted record both remain bound to the configured current provider.
 - [ ] Missing `semantic_review_provider` plus default `current` accepts same-provider high-risk required clean review when deterministic checks and invariants pass.
 - [ ] `implementation-review --slice --dry-run` and `implementation-review --staged/--contract --dry-run` are covered separately from `implement-check --dry-run`.
-- [ ] `implementation-review --staged/--contract` without `--slice` remains governed by its staged synthetic packet; the high-risk slice policy applies only to slice-backed targets.
+- [ ] `implementation-review --staged/--contract` without `--slice` remains governed by its staged synthetic packet when no valid audited CLI one-off override is present; the high-risk config policy applies only to slice-backed targets.
 - [ ] Dogfood `.trellis/scripts/guru/guru_supervise.py`, `guru-template`, CLI src template, and CLI dist template all expose the same relevant `implementation-review` provider-policy behavior, or drift is treated as a blocker.
 - [ ] `adversarial_enabled=false` continues to skip only `--adversarial`, not implementation-review provider policy.
 - [ ] `guru_config_patch.py` and `trellis guru apply` support preserving/defaulting the new policy.

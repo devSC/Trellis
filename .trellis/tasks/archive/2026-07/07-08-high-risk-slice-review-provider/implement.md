@@ -27,14 +27,15 @@ Tasks:
 
 - Add high-risk provider policy constants and parser.
 - Port the existing template `implementation-review` check-only path into dogfood `.trellis/scripts/guru/guru_supervise.py` so dogfood runtime exposes the same relevant action as `guru-template` and CLI src/dist copies.
-- Split independent-review reason categories so high-risk and packet-required-opposite can resolve differently.
+- Distinguish slice-backed policy routing from non-slice staged opposite-provider routing.
 - Default high-risk independent review to current provider.
 - Preserve old behavior when policy is `opposite`.
 - Support pinned `codex` and `claude`.
+- Preserve strict precedence: audited `--same-provider --user-quote` > project policy > slice packet provider metadata; record the override source and quote.
 - Route both `implement-check` and `implementation-review` through the same resolver; include `implementation-review --slice`, `implementation-review --slice --staged`, and staged/contract review targets in tests.
-- Preserve raw packet semantic-review intent in supervisor context (`semantic_review_provider_explicit` or equivalent) so missing `semantic_review_provider` does not become implicit `opposite(required=true)`.
-- Fail closed before spawn when an explicit required packet provider conflicts with the resolved high-risk policy; do not silently switch from pinned policy to packet-required provider.
-- Keep non-slice `implementation-review --staged/--contract` governed by its existing staged synthetic packet and explicit `semantic_review_provider: opposite(required=true)`; the new policy applies only to slice-backed high-risk review targets.
+- Preserve raw packet semantic-review intent for audit, but make the resolved high-risk project policy authoritative for slice-backed worker selection.
+- Do not let explicit slice packet provider metadata switch or block the provider resolved from `high_risk_review_provider_policy`.
+- Without a valid audited CLI one-off override, keep non-slice `implementation-review --staged/--contract` governed by its existing staged synthetic packet and explicit `semantic_review_provider: opposite(required=true)`; the config policy applies only to slice-backed high-risk review targets.
 - Include policy/reason in stderr/dry-run output.
 - Treat dogfood/template parity drift as a blocker: `.trellis/scripts/guru/guru_supervise.py --help` must expose `implementation-review` after implementation, and dry-run coverage must include dogfood and template paths.
 
@@ -47,10 +48,9 @@ Targets:
 Tasks:
 
 - Add explicit supervisor context to allow same-provider required review only when the resolved policy permits it.
-- Treat missing `semantic_review_provider` as no explicit packet-level provider requirement for the new high-risk default; keep explicit `opposite(required=true)` fail-closed.
-- Support explicit `semantic_review_provider.provider=codex|claude(required=true)` as an exact provider requirement or fail closed; do not silently downgrade it to high-risk policy.
-- Reject explicit packet provider vs resolved-policy conflicts with a stable failure code/message; this is safer than implicitly choosing a different provider.
-- Keep `semantic_review_provider.opposite(required=true)` fail-closed.
+- Pass explicit supervisor policy context so slice-backed clean records validate against the actual resolved `check_provider`.
+- Keep packet provider metadata for audit without letting it override `current`, `opposite`, `codex`, or `claude` project policy.
+- Keep non-slice staged/contract review on the existing explicit opposite-provider validation path when no valid audited CLI override is present.
 - Keep actual worker provider validation strict.
 
 ### Step 3 - Config patch and docs
@@ -59,7 +59,7 @@ Targets:
 
 - `guru_config_patch.py` in all overlay copies.
 - `config.hooks.yaml` and overlay README in `guru-template`, CLI src templates, and dist templates.
-- Optionally `packages/cli/src/commands/guru.ts` and `packages/cli/src/cli/index.ts` if adding a CLI override flag.
+- Existing CLI override parsing remains in `guru_supervise.py`; no new CLI command surface is required.
 
 Tasks:
 
@@ -79,18 +79,23 @@ Targets:
 Test cases:
 
 - Unset/default config keeps Codex high-risk check on Codex.
+- Unset/default config keeps Claude high-risk check on Claude when Claude is the current provider.
 - Unset/default config keeps `implementation-review --slice --dry-run` on Codex.
-- `implementation-review --slice --staged --dry-run` follows the slice packet and high-risk policy when the packet has no explicit provider requirement.
-- `implementation-review --staged/--contract --dry-run` without `--slice` keeps the staged synthetic packet's explicit opposite(required=true) behavior.
+- `implementation-review --slice --staged --dry-run` follows the high-risk project policy even when the slice packet requests another provider.
+- `implementation-review --staged/--contract --dry-run` without `--slice` and without a valid CLI override keeps the staged synthetic packet's explicit opposite(required=true) behavior.
 - Dogfood `.trellis/scripts/guru/guru_supervise.py --help` includes `implementation-review`, and dogfood `implementation-review --slice --dry-run` uses the same resolved provider as the template/CLI copies.
 - `opposite` flips Codex to Claude and Claude to Codex.
 - `codex` / `claude` pin provider.
-- Pinned provider plus conflicting explicit packet required provider fails closed before spawn.
-- Invalid policy fails closed before spawn.
+- Pinned provider remains authoritative when packet metadata requests another provider.
+- Invalid policy fails before plan construction; assert non-zero, actionable stderr, and no `WORKER=`, `check-*` plan, or `trellis channel spawn` in either output stream.
+- `--same-provider --user-quote` overrides `opposite` and `claude` policy values for one run; missing or blank quote fails before config resolution/plan creation, and successful records retain the quote.
+- Non-slice staged review ignores conflicting `current|codex` config and stays opposite unless a valid CLI one-off override is present.
+- Record normalization rejects incoherent source/policy/quote/check-provider tuples instead of trusting `same_provider_required_allowed` alone.
+- Only an absent policy key uses default `current`; explicit null, empty string, whitespace-only string, non-string, and unknown values fail before plan construction.
 - Same-provider required clean review is accepted with policy context and missing raw semantic provider.
 - Same-provider required clean review is rejected without policy context.
-- Required explicit semantic opposite remains rejected with same-provider check.
-- Explicit `semantic_review_provider.provider=codex|claude(required=true)` is accepted only when the actual check provider matches the explicit provider.
+- Required explicit semantic opposite in a slice packet cannot override `current`; same-provider clean is accepted only when it matches the actual spawned provider and supervisor policy context.
+- Explicit `semantic_review_provider.provider=codex|claude(required=true)` remains audit metadata for slice-backed review; the actual check provider must match the configured policy.
 
 ### Step 5 - Validation
 

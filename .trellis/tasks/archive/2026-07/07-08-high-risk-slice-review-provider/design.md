@@ -23,6 +23,13 @@ Allowed values:
 
 This policy only controls high-risk independent implementation review provider resolution. It does not change whether an independent review is required, whether a slice packet is required, or whether `--adversarial` is skipped by `adversarial_enabled=false`.
 
+Provider precedence is strict:
+
+1. `--same-provider` plus a non-empty `--user-quote` selects the current implementation provider for this run and records the quote.
+2. Otherwise `guru.supervision.high_risk_review_provider_policy` selects the provider for slice-backed high-risk review.
+3. Slice packet provider metadata remains audit context and cannot override either decision above.
+4. Non-slice staged/contract review remains outside the config policy and follows its synthetic opposite-provider packet, while the existing valid audited CLI override remains highest priority for a single run.
+
 ### 1.2 行为 owner 归属表
 
 | Behavior | Owner | Rationale |
@@ -36,17 +43,19 @@ This policy only controls high-risk independent implementation review provider r
 
 ```mermaid
 flowchart TD
-  A["implementation-review / implement-check"] --> B["load current provider"]
-  B --> C["risk says independent review required?"]
-  C -->|no| D["use current provider"]
-  C -->|yes| E["read high_risk_review_provider_policy"]
+  A["implementation-review / implement-check"] --> B["valid --same-provider + user quote?"]
+  B -->|yes| D["use current provider; source=cli_same_provider"]
+  B -->|no| C["slice-backed high-risk target?"]
+  C -->|no| S["use staged/legacy packet resolver; source=staged_packet"]
+  C -->|yes| E["read high_risk_review_provider_policy; source=config_policy"]
   E -->|current / unset| D
   E -->|opposite| F["use _opposite_provider(current)"]
   E -->|codex / claude| G["use pinned provider"]
-  E -->|invalid| H["fail before spawn"]
+  E -->|invalid| H["fail before worker-plan construction"]
   D --> I["spawn check worker"]
   F --> I
   G --> I
+  S --> I
   I --> J["normalize review record with actual check_provider"]
 ```
 
@@ -66,7 +75,7 @@ flowchart TD
 - Projects that depend on old cross-LLM high-risk review can opt in with `opposite`.
 - Existing `adversarial_enabled` behavior stays byte-for-byte semantically scoped to `--adversarial` review.
 - Existing low-risk `semantic_review_provider: {provider: opposite, required: false}` records stay valid.
-- Required `semantic_review_provider: opposite` should remain fail-closed if same-provider policy is selected, because that packet explicitly requires opposite evidence.
+- For slice-backed high-risk review, the configured provider policy is authoritative over `semantic_review_provider`; without a valid audited CLI override, non-slice staged review retains its explicit opposite-provider contract.
 
 ### 1.6 Template Sync
 
@@ -93,11 +102,11 @@ Rollback is local to provider policy resolution and config defaulting. Reverting
 | UNIT | 职责 | 依赖关系 | 承接行为 |
 | --- | --- | --- | --- |
 | UNIT-provider-policy-config | 读取并校验 `guru.supervision.high_risk_review_provider_policy`，为未配置项目提供 `current` 默认值。 | 读取 `.trellis/config.yaml`；不决定风险、slice packet 或 worker 输出格式。 | BHV-001, BHV-002, BHV-003, BHV-004, BHV-005 |
-| UNIT-provider-resolution | 在 `implement-check` 与 `implementation-review` 建立 worker plan 时，根据独立审查原因解析实际 `check_provider`。 | 调用 `guru_risk.implement_check_independent_required()` 的结论；不改写 packet 语义合同。 | BHV-001, BHV-002, BHV-003, BHV-004, BHV-005 |
+| UNIT-provider-resolution | 在 `implement-check` 与 `implementation-review` 建立 worker plan 时，先按 CLI override 和 target kind 分流，再解析实际 `check_provider`。 | 调用 `guru_risk.implement_check_independent_required()` 的结论；保留 raw packet metadata，但 slice provider-gate evidence 以 resolved policy 为准。 | BHV-001, BHV-002, BHV-003, BHV-004, BHV-005 |
 | UNIT-review-record-validation | 校验 required implementation review 记录是否与 supervisor 实际派发 provider 一致，并决定 same-provider required evidence 是否可接受。 | 读取 supervisor context、worker output、slice packet semantic review contract；不负责 spawn worker。 | BHV-006 |
 | UNIT-dogfood-template-parity | 让 `.trellis/scripts/guru/guru_supervise.py` 与 `guru-template`/CLI src/dist 在 `implementation-review` provider-policy 行为上保持一致。 | 以 template runtime 的 check-only implementation-review path 为参考；不改变 task/gate policy 本身。 | BHV-001, BHV-006, BHV-007 |
 | UNIT-config-install | 在 overlay 安装/刷新时默认写入并保留 `high_risk_review_provider_policy`，同步 README 与 config snippet。 | 使用 `guru_config_patch.py` 默认补丁；不覆盖目标项目显式配置。 | BHV-007 |
-| UNIT-tests | 覆盖 provider policy、invalid config、same-provider record validation、semantic opposite fail-closed 与模板同步。 | 复用 overlay verify test harness；不新增外部依赖。 | BHV-001, BHV-002, BHV-003, BHV-004, BHV-005, BHV-006, BHV-007 |
+| UNIT-tests | 覆盖 provider policy、invalid config、same-provider record validation、slice config precedence、staged opposite fail-closed 与模板同步。 | 复用 overlay verify test harness；不新增外部依赖。 | BHV-001, BHV-002, BHV-003, BHV-004, BHV-005, BHV-006, BHV-007 |
 
 #### UNIT-provider-policy-config
 
@@ -131,10 +140,10 @@ Rollback is local to provider policy resolution and config defaulting. Reverting
 | --- | --- | --- |
 | ResolveDefaultCurrentProvider | 未配置新字段时，高风险 slice required review 继续使用当前 provider 的 check subagent/review worker。 | BHV-001 |
 | ResolveOppositeProvider | 显式配置 `opposite` 时恢复旧行为：`codex -> claude`、`claude -> codex`。 | BHV-002 |
-| ResolvePinnedProvider | 显式配置 `codex` 或 `claude` 时固定 high-risk check worker provider；若 raw packet 显式 required provider 与 pinned policy 冲突，则 fail closed。 | BHV-003 |
+| ResolvePinnedProvider | 显式配置 `codex` 或 `claude` 时固定 high-risk check worker provider，slice packet provider metadata 不得改写该结果。 | BHV-003 |
 | RejectInvalidPolicy | 配置值不在允许集合内时，在 channel worker spawn 前失败。 | BHV-004 |
 | KeepAdversarialSeparate | `adversarial_enabled=false` 只影响 `--adversarial`，不跳过 high-risk implementation review。 | BHV-005 |
-| AcceptSameProviderRequiredEvidence | 仅在 supervisor context 显式允许且 packet 未要求 opposite 时，接受 same-provider required clean review。 | BHV-006 |
+| AcceptSameProviderRequiredEvidence | supervisor policy 解析为当前 provider 时，按实际 `check_provider` 接受 same-provider required clean review。 | BHV-006 |
 | PreserveDogfoodTemplateParity | dogfood `.trellis` runtime 与 template/CLI copies 在 `implementation-review` provider policy 上一致。 | BHV-001, BHV-006, BHV-007 |
 | InstallPolicyDefault | `trellis guru apply` 默认补齐该配置并保留已有显式值，同时文档暴露允许值。 | BHV-007 |
 
@@ -155,7 +164,7 @@ def _implementation_review_check_config(
 ) -> tuple[GuruSupervisionConfig, dict[str, object]]: ...
 ```
 
-`guru_review_record.normalize_review_record()` 继续接收 worker 输出和 context；context 新增 supervisor 允许信号，例如 `same_provider_required_allowed` 与 `semantic_review_provider_required`，用于 required evidence 判定。
+`guru_review_record.normalize_review_record()` 继续接收 worker 输出和 context；context 新增 resolution source、resolved policy、target kind 和 audited quote。validator 必须验证这些字段与 implement/check provider 的组合一致，不能只信任自由布尔值。
 
 ### 3. 核心数据结构
 
@@ -172,7 +181,9 @@ def _implementation_review_check_config(
 | --- | --- | --- | --- | --- |
 | `check_provider` | string | 实际派发的 check worker provider。 | UNIT-provider-resolution | UNIT-review-record-validation |
 | `high_risk_review_provider_policy` | string | 解析后的策略值。 | UNIT-provider-resolution | review record normalization / debug output |
-| `same_provider_required_allowed` | boolean | 当前 required review 是否允许 same-provider evidence。 | UNIT-provider-resolution | UNIT-review-record-validation |
+| `provider_override_source` | string | `cli_same_provider`, `config_policy`, or `staged_packet`; records which authority selected the provider. | UNIT-provider-resolution | UNIT-review-record-validation / audit message |
+| `same_provider_user_quote` | string/null | CLI override 的非空用户授权原话；非 CLI source 必须为空。 | UNIT-provider-resolution | UNIT-review-record-validation / audit message |
+| `same_provider_required_allowed` | boolean | 当前 slice provider policy 是否允许 same-provider evidence。 | UNIT-provider-resolution | UNIT-review-record-validation |
 | `semantic_review_provider_explicit` | boolean | raw packet 是否显式声明 `semantic_review_provider`。 | slice packet loader / UNIT-provider-resolution | UNIT-review-record-validation |
 | `semantic_review_provider_required` | boolean | packet 是否显式要求 semantic provider。 | slice packet loader / UNIT-provider-resolution | UNIT-review-record-validation |
 | `semantic_review_provider` | string | packet 要求的 semantic provider，例如 `opposite`。 | slice packet loader | UNIT-review-record-validation |
@@ -183,8 +194,7 @@ def _implementation_review_check_config(
 | 错误名 | 错误码/枚举 | 语义 | 上抛/收口位置 |
 | --- | --- | --- | --- |
 | InvalidHighRiskReviewProviderPolicy | `CONFIG_INVALID` | 配置值不在 `current|opposite|codex|claude`。 | `_high_risk_review_provider_policy()` 抛 `GuruSupervisionError`，命令退出前不 spawn worker。 |
-| RequiredOppositeProviderUnsatisfied | `PROVIDER_MISMATCH` | packet 要求 opposite(required=true)，但实际 check provider 与 implement provider 相同。 | `guru_review_record.normalize_review_record()` fail closed。 |
-| RequiredProviderPolicyConflict | `CONFIG_CONFLICT` | raw packet 显式 required provider 与 `high_risk_review_provider_policy` 的 pinned/opposite/current 解析结果冲突。 | UNIT-provider-resolution 在 spawn 前 fail closed；若历史记录绕过 resolver，则 UNIT-review-record-validation fail closed。 |
+| ResolvedProviderMismatch | `PROVIDER_MISMATCH` | worker 自报 provider 与 supervisor 根据项目 policy 实际派发的 provider 不一致。 | `guru_review_record.normalize_review_record()` fail closed。 |
 | ImplicitSemanticProviderDefault | `MALFORMED_REVIEW_OUTPUT` prevention | raw packet 缺 `semantic_review_provider` 时不得被 normalization 当作显式 opposite(required=true)。 | UNIT-provider-resolution 传 `semantic_review_provider_explicit=false`，UNIT-review-record-validation 按无显式语义要求处理。 |
 | WorkerProviderMismatch | `PROVIDER_MISMATCH` | worker 输出的 `review_provider` 与 supervisor 实际 `check_provider` 不一致。 | `guru_review_record.normalize_review_record()` fail closed。 |
 
@@ -206,9 +216,9 @@ def _implementation_review_check_config(
 | 返回值/发射值 | 类型 | 语义 |
 | --- | --- | --- |
 | `check_provider` | string | 等于 `config.provider`。 |
-| `same_provider_required_allowed` | bool | true，前提是 packet 未显式要求 opposite required。 |
+| `same_provider_required_allowed` | bool | true；slice-backed `current` policy 是项目级授权。 |
 
-- 执行流程：读取配置；未配置时落到 `current`；检查 raw packet 是否显式声明 `semantic_review_provider`；若缺失或 `required=false`，返回当前 provider 并写入 `same_provider_required_allowed=true` 与 `semantic_review_provider_explicit=false`；若显式 opposite(required=true)，转入 `ResolveOppositeProvider` 的 packet-contract 分支。
+- 执行流程：读取配置；未配置时落到 `current`；对 slice-backed high-risk review 返回当前 provider 并写入 `same_provider_required_allowed=true`。packet provider metadata 只用于审计，不参与最终 provider 选择。
 - 失败收口：配置文件不可读按既有默认读取语义处理；配置值无效交给 `RejectInvalidPolicy`。
 
 #### 4.2 ResolveOppositeProvider
@@ -216,24 +226,24 @@ def _implementation_review_check_config(
 - 承接行为：BHV-002。
 - 输入参数表：`config.provider` 为 `codex|claude`，policy 为 `opposite`。
 - 输出表：`check_provider` 为 `_opposite_provider(config.provider)`；`same_provider_required_allowed=false`。
-- 执行流程：如果 raw packet 显式 `semantic_review_provider: {provider: opposite, required: true}`，packet contract 优先，强制 `_opposite_provider()`，并写入 `same_provider_required_allowed=false`；如果独立审查只来自 high-risk policy 且配置为 `opposite`，调用 `_opposite_provider()`；返回旧行为。
+- 执行流程：policy 为 `opposite` 时调用 `_opposite_provider()` 并写入 `same_provider_required_allowed=false`；packet provider metadata 不改变该结果。
 - 失败收口：provider 非支持值时沿用既有 provider 校验错误。
 
 #### 4.3 ResolvePinnedProvider
 
 - 承接行为：BHV-003。
 - 输入参数表：policy 为 `codex` 或 `claude`。
-- 输出表：`check_provider` 等于 policy；`same_provider_required_allowed` 仅在 pinned provider 等于 implement provider 且 packet 未要求 opposite 时为 true。
-- 执行流程：不调用 `_opposite_provider()`；直接复制 config 并替换 provider 字段；context 记录 policy。若 raw packet 显式要求另一个 provider 且 `required=true`，必须在 spawn 前以 `RequiredProviderPolicyConflict` fail closed；不得自动改用 packet-required provider，也不得让 pinned policy 覆盖显式 packet requirement。
+- 输出表：`check_provider` 等于 policy；`same_provider_required_allowed` 在 pinned provider 等于 implement provider 时为 true。
+- 执行流程：不调用 `_opposite_provider()`；直接复制 config 并替换 provider 字段；context 记录 policy。slice packet provider metadata 不得覆盖 pinned policy。
 - 失败收口：pinned provider 之外的值交给 `RejectInvalidPolicy`。
 
 #### 4.4 RejectInvalidPolicy
 
 - 承接行为：BHV-004。
-- 输入参数表：原始 YAML 值，允许字符串或缺省；非字符串或未知字符串均无效。
+- 输入参数表：原始 YAML entry；只有字段完全缺失可使用默认值，显式 null、空串、纯空白、非字符串或未知值均无效。
 - 输出表：无 worker plan；命令返回非 0。
 - 执行流程：trim + lowercase；检查允许集合；失败时抛 `GuruSupervisionError`，错误文案包含字段名、实际值、允许值。
-- 失败收口：必须在 `trellis channel spawn` 或 worker plan 执行前收口。
+- 失败收口：必须在 worker plan 构造前收口；stdout/stderr 不得包含 `WORKER=`、`check-*` plan 或 `trellis channel spawn`。
 
 #### 4.5 KeepAdversarialSeparate
 
@@ -248,13 +258,8 @@ def _implementation_review_check_config(
 - 承接行为：BHV-006。
 - 输入参数表：worker output、`implement_provider`、`check_provider`、supervisor context、slice packet raw semantic review contract。
 - 输出表：normalized clean review record 或 fail-closed diagnostic。
-- 执行流程：先校验 worker output `review_provider == check_provider`；再按 raw packet 合同判断：
-  - `semantic_review_provider_explicit=false`：无 packet-level provider requirement，same-provider required evidence 可由 high-risk policy context 接受。
-  - `semantic_review_provider.required=false`：不强制 provider，但仍要求 actual 等于 supervisor `check_provider`。
-  - 显式 `provider=opposite, required=true`：`actual == implement_provider` 必须 blocked。
-  - 显式 `provider=codex|claude, required=true`：`actual` 必须等于 pinned provider。
-  - 通过 provider gate 后再检查 deterministic checks 与 invariant aggregation。
-- 失败收口：缺少 required context、显式 packet provider 未满足、worker provider mismatch 任一出现都不得算 required clean evidence。
+- 执行流程：先校验 worker output `review_provider == check_provider`，再校验 source tuple：`cli_same_provider` 必须有非空 quote 且 check==implement；`config_policy` 必须按 `current|opposite|codex|claude` 精确推出 check provider，quote 必须为空；`staged_packet` 必须服从现有 packet contract，quote 必须为空。packet provider metadata 在 slice-backed config/CLI source 下只保留为审计信息。通过 provider gate 后再检查 deterministic checks 与 invariant aggregation。
+- 失败收口：缺少 source/policy context、quote/source 不一致、resolved provider 不一致或 worker provider mismatch 任一出现都不得算 required clean evidence。
 
 #### 4.7 InstallPolicyDefault
 
@@ -269,7 +274,7 @@ def _implementation_review_check_config(
 - 承接行为：BHV-001, BHV-006。
 - 输入参数表：`implementation-review --staged` 或 `--contract`，且没有 `--slice`。
 - 输出表：使用现有 staged synthetic packet：`review_target=staged:index`、`digest_source=index`、`deterministic_checks=["git diff --cached --check"]`、非空 `invariants`、显式 `semantic_review_provider={provider: "opposite", required: true}`。
-- 执行流程：不从 high-risk slice policy 推导 provider；按 staged synthetic packet 的显式 semantic provider contract 走 required opposite evidence。若未来要让 staged review 默认 current，必须新增独立需求和配置，不能复用本任务的 high-risk slice policy 偷改。
+- 执行流程：有效 CLI override 已在进入本分支前解析并返回；仅当不存在有效 override 时进入 `source=staged_packet`，不从 high-risk config policy 推导 provider，并按 staged synthetic packet 的显式 semantic provider contract 走 required opposite evidence。
 - 失败收口：staged paths 缺失、contract invalid、只有 task artifacts、synthetic packet 无 invariants 时写 preflight failure 或阻断，不得补造 clean required evidence。
 
 #### 4.9 PreserveDogfoodTemplateParity
@@ -285,9 +290,9 @@ def _implementation_review_check_config(
 | 状态/边界 | owner | 读 | 写 | 边界规则 |
 | --- | --- | --- | --- | --- |
 | `.trellis/config.yaml` provider policy | UNIT-provider-policy-config / UNIT-config-install | runtime resolver、installer | installer 只补缺省 | 不覆盖显式值。 |
-| slice packet semantic review provider | slice packet owner | provider resolver、record validator | 本任务不写 | `required=true` 的 opposite 语义优先 fail-closed。 |
+| slice packet semantic review provider | slice packet owner | provider resolver、record validator | 本任务不写 | slice-backed high-risk review 中只作审计元数据，项目 policy 决定实际 provider。 |
 | review records | UNIT-review-record-validation | gates / status | implementation-review command | same-provider acceptance 必须来自 supervisor context。 |
-| staged synthetic review packet | UNIT-provider-resolution / existing staged target builder | implementation-review staged path | existing staged target builder | 无 `--slice` 时不使用 high-risk slice policy；显式 opposite(required=true) 仍硬约束。 |
+| staged synthetic review packet | UNIT-provider-resolution / existing staged target builder | implementation-review staged path | existing staged target builder | 无 `--slice` 且无有效 CLI override 时不使用 high-risk config policy；显式 opposite(required=true) 仍硬约束。 |
 | dogfood runtime parity | UNIT-dogfood-template-parity | dogfood `.trellis` runtime / template copies | implementation patch | dogfood runtime 不得缺少本任务验收覆盖的 `implementation-review` provider-policy path。 |
 | adversarial skip state | 既有 adversarial branch | gates / status | 本任务不改写 | 与 high-risk implementation review policy 分离。 |
 
@@ -307,19 +312,22 @@ def _implementation_review_check_config(
 
 | BHV/行为 | 测试层 | 测试点 |
 | --- | --- | --- |
-| BHV-001 ResolveDefaultCurrentProvider | shell regression | unset/default policy 下 `implement-check --slice --dry-run` 和 `implementation-review --slice --dry-run` 都产生当前 provider，例如 `check-codex`；`implementation-review --staged/--contract --dry-run` 无 `--slice` 时仍按 staged synthetic packet 的 explicit opposite contract。 |
+| BHV-001 ResolveDefaultCurrentProvider | shell regression | unset/default policy 下当前 provider 为 Codex 或 Claude 时，`implement-check --slice --dry-run` 和 `implementation-review --slice --dry-run` 都保持当前 provider；无 CLI override 的 `implementation-review --staged/--contract --dry-run` 无 `--slice` 时仍按 staged synthetic packet 的 explicit opposite contract。 |
 | BHV-002 ResolveOppositeProvider | shell regression | `opposite` 下 `implement-check` 与 `implementation-review` 都保留 codex→claude、claude→codex。 |
-| BHV-003 ResolvePinnedProvider | shell regression | policy 为 `codex` / `claude` 时 slice-backed `implement-check` 与 `implementation-review` 的实际 check provider 精确等于配置；显式 packet required provider 冲突时 fail closed。 |
-| BHV-004 RejectInvalidPolicy | shell regression | unknown policy 在 spawn 前非 0，stderr 含字段名与允许值。 |
+| BHV-003 ResolvePinnedProvider | shell regression | policy 为 `codex` / `claude` 时 slice-backed `implement-check` 与 `implementation-review` 的实际 check provider 精确等于配置，不受 packet provider metadata 改写。 |
+| BHV-004 RejectInvalidPolicy | shell regression | 字段完全缺失使用默认 `current`；显式 null、空串、纯空白、非字符串或未知值均在 plan 前非 0，stderr 含字段名与允许值，stdout/stderr 均不含 `WORKER=`、`check-*` plan 或 `trellis channel spawn`。 |
 | BHV-005 KeepAdversarialSeparate | shell regression | `adversarial_enabled=false` 时 `implement-check` 与 `implementation-review` 仍计划 check worker。 |
-| BHV-006 AcceptSameProviderRequiredEvidence | Python unit snippet / shell regression | 缺 `semantic_review_provider` + default current + context 的 same-provider clean required review 被接受；显式 opposite(required=true)、缺 context、worker provider mismatch 被拒绝。 |
+| BHV-006 AcceptSameProviderRequiredEvidence | Python unit snippet / shell regression | default/current policy 的 same-provider clean required review被接受，包括 packet 显式 opposite(required=true)；缺 policy context或 worker provider mismatch 被拒绝。 |
+| CLI same-provider override | shell regression / Python unit snippet | missing/blank quote 在 plan 前拒绝；override 在 config=`opposite|claude` 下仍选择当前 Codex；record 保留 quote；伪造 source/policy/check-provider/allowed tuple 被拒绝。 |
+| Target-kind isolation | shell regression | current provider Codex + policy `codex` 时，无 slice staged review 仍选择 Claude；有效 CLI override 可单次选择 Codex。 |
 | BHV-007 InstallPolicyDefault / PreserveDogfoodTemplateParity | shell regression / template diff | `guru_config_patch.py` 补默认且保留显式值；README/config snippets/template copies/workflow/spec/implementation-review skill 文案同步；dogfood `guru_supervise.py --help` 暴露 `implementation-review`；dogfood/template/CLI copies 的 provider-policy behavior 同步；`pnpm -C packages/cli sync:guru:check` 通过。 |
 
 ### 8. 不得补造清单
 
 - 不得把 `adversarial_enabled=false` 解释为“禁用所有其他 LLM 或所有审查”。
 - 不得改写 `guru_risk.implement_check_independent_required()` 的职责来隐藏 provider policy。
-- 不得让 same-provider review 满足 `semantic_review_provider: {provider: opposite, required: true}`。
+- 不得让 slice packet 的 `semantic_review_provider` 覆盖项目配置解析出的 provider。
+- 不得让 config policy 覆盖带非空审计原话的 `--same-provider` 一次性授权；缺失/空 quote 必须在 plan 前拒绝。
 - 不得把缺失的 `semantic_review_provider` normalize 成显式 opposite(required=true)，否则默认 `current` 策略无法满足 required evidence。
 - 不得只覆盖 `implement-check`，漏掉 commit evidence 使用的 `implementation-review` check-only 路径。
 - 不得让 dogfood `.trellis/scripts/guru/guru_supervise.py` 缺少本任务要求的 `implementation-review` provider-policy path，同时声称 template/CLI 已经 clean。
@@ -333,7 +341,7 @@ def _implementation_review_check_config(
 | --- | --- | --- | --- | --- |
 | HRP-INV-001 | `adversarial_enabled=false` must not disable high-risk implementation review. | `guru_supervise.py` | High-risk review is skipped entirely because adversarial is disabled. | `IMPLEMENT_DEFECT` |
 | HRP-INV-002 | Default high-risk policy must not spawn the opposite provider. | `guru_supervise.py` | Codex default still creates `check-claude`. | `IMPLEMENT_DEFECT` |
-| HRP-INV-003 | Required packet-level opposite evidence must not be silently satisfied by same-provider review. | `guru_review_record.py` | `semantic_review_provider.opposite(required=true)` accepts Codex-on-Codex clean. | `IMPLEMENT_DEFECT` |
+| HRP-INV-003 | Slice-backed review provider must follow project policy even when packet metadata requests opposite. | `guru_supervise.py`, `guru_review_record.py` | `high_risk_review_provider_policy: current` still creates or requires `check-claude`. | `IMPLEMENT_DEFECT` |
 | HRP-INV-004 | Invalid config values must fail before worker spawn. | `guru_supervise.py` | Unknown policy falls back to `current` silently. | `PROCESS_DEFECT` |
 | HRP-INV-005 | Missing `semantic_review_provider` is not explicit opposite(required=true). | `guru_review_record.py` | Default current same-provider clean is blocked only because the field was absent. | `IMPLEMENT_DEFECT` |
 | HRP-INV-006 | `implementation-review` and `implement-check` use the same provider resolver. | `guru_supervise.py` | `implement-check` uses current but `implementation-review --slice` still flips opposite. | `IMPLEMENT_DEFECT` |

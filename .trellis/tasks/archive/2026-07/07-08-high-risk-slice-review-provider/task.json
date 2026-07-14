@@ -3,7 +3,7 @@
   "name": "high-risk-slice-review-provider",
   "title": "Configure high-risk slice review provider",
   "description": "Add a configurable provider policy for high-risk Guru slice implementation reviews: default to current LLM subagent/review worker, with explicit opt-in for other LLM providers.",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "devSC",
   "assignee": "devSC",
   "createdAt": "2026-07-08",
-  "completedAt": null,
+  "completedAt": "2026-07-14",
   "branch": null,
   "base_branch": "codex/guru-0.6.0-ga-worktree",
   "worktree_path": null,
@@ -43,6 +43,24 @@
           "result": "clean",
           "max_severity": "none",
           "evidence": "只读复查当前产物 clean：PRD 覆盖需求/事实/失败路径/验收，design 明确 current/opposite/codex/claude 配置合同、record 校验、staged 边界与不变量，implement 写清实现、GitNexus impact、验证与回滚；dogfood parity 缺口已 fail-closed 纳入计划。"
+        },
+        {
+          "run_id": "codex-config-precedence-a-overview-20260714-final",
+          "reviewer": "clean-context-current-llm-config-precedence-a",
+          "recorded_at": "2026-07-14T01:07:51+08:00",
+          "artifact_digest": "e0780bd778799aeb85159d6d623c2c40d4159d7138a0ae815d99df70004200e8",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "当前 digest 优先级合同一致：有效 same-provider CLI 授权 > slice 项目配置 > slice packet metadata；仅配置键缺失默认 current，显式 null/空白/非字符串/未知值在 worker plan 前 fail closed；non-slice staged 保留 legacy opposite 且允许 audited CLI 一次性覆盖。"
+        },
+        {
+          "run_id": "codex-config-precedence-b-overview-20260714-final",
+          "reviewer": "clean-context-current-llm-config-precedence-b",
+          "recorded_at": "2026-07-14T01:07:51+08:00",
+          "artifact_digest": "e0780bd778799aeb85159d6d623c2c40d4159d7138a0ae815d99df70004200e8",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "最终蓝军复核 CLEAN：PRD 覆盖 absent versus explicit invalid、CLI/config/packet precedence、staged target isolation、missing/blank quote、worker plan 前零副作用失败以及三份 runtime mirror parity。"
         }
       ],
       "detail": [
@@ -65,16 +83,44 @@
           "max_severity": "none",
           "evidence": "只读复查详细设计 clean：BHV-001..007 到 UNIT 和测试点闭合；dogfood runtime parity 风险已在 PRD/design/implement 中作为 fail-closed blocker 收口；当前状态适合进入用户确认阶段，不得跳过确认直接实现。",
           "deletion_audit": "本轮 detail 修订为补强 semantic provider、staged packet、dogfood parity 与验证边界；没有删除有效行为、测试映射或不变量，旧歧义表述已由明确 fail-closed 合同替代。"
+        },
+        {
+          "run_id": "codex-config-precedence-a-detail-20260714-final",
+          "reviewer": "clean-context-current-llm-config-precedence-a",
+          "recorded_at": "2026-07-14T01:07:51+08:00",
+          "artifact_digest": "51f80886196cd777d6f7b2722575211b84001d4eebc0af0c6d6a5f57c2b0f62c",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Design/implement 当前 digest 对 source/policy/quote/provider/target tuple 逐项重算校验；worker review_provider 必须等于实际 check_provider；slice packet metadata 对 CLI/config 来源仅作审计；测试矩阵覆盖四种 policy、双 provider、packet 冲突、非法显式值、staged CLI/config 边界与伪造记录。",
+          "deletion_audit": "旧的 slice packet provider 权威规则已按用户确认替换为项目 config 权威；未删除有效 BHV、UNIT、失败路径、target-kind 分支、证据字段或测试映射；non-slice staged opposite 合同及 audited CLI 例外均保留。"
+        },
+        {
+          "run_id": "codex-config-precedence-b-detail-20260714-final",
+          "reviewer": "clean-context-current-llm-config-precedence-b",
+          "recorded_at": "2026-07-14T01:07:51+08:00",
+          "artifact_digest": "51f80886196cd777d6f7b2722575211b84001d4eebc0af0c6d6a5f57c2b0f62c",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "最终蓝军复核 CLEAN：presence-aware 配置解析拒绝 explicit null/empty/whitespace/non-string/unknown；target-kind flow 先处理有效 CLI，再将 slice 路由 config_policy、staged 路由 synthetic packet；resolver 和 normalize 均 fail closed 校验完整上下文。",
+          "deletion_audit": "本轮最终修订仅补强显式空值 fail-closed 与 staged CLI override 限定；没有无解释删除或空占位；此前删除的 packet-provider slice 优先规则由已确认的 config precedence 完整替代，并保留 staged legacy opposite 合同。"
         }
       ]
     },
     "detail": {
       "confirmed_by": "devSC",
-      "confirmed_at": "2026-07-08T22:09:34+08:00",
+      "confirmed_at": "2026-07-14T07:46:25+08:00",
       "confirmation_scope": "detail_gate_only",
       "allowed_next_action": "task_start",
       "prompt_summary": "Detail confirmation allows task.py start only",
-      "artifact_digest": "65d86543ad024ea85224d20c4c3f60418a52e067982ef60a3495c6c5fec7b2ae"
+      "artifact_digest": "51f80886196cd777d6f7b2722575211b84001d4eebc0af0c6d6a5f57c2b0f62c"
+    },
+    "requirements": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-14T07:46:24+08:00",
+      "confirmation_scope": "requirements_gate_only",
+      "allowed_next_action": "overview_design",
+      "prompt_summary": "Requirements confirmation allows overview/detail planning only",
+      "artifact_digest": "3f0af6526958fb320a877f369ff4824f490e662a6ed92ae85c33329db587980a"
     }
   }
 }
