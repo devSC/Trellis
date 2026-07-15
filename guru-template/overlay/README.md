@@ -20,9 +20,14 @@
 apply.sh 负责 guru 定制内容的完整安装与升级刷新：skills（.agents + 平台镜像）、gate/hook 脚本、
 settings.json 接线、workflow.md、harness/guides SSOT、config 接线，并在装配后自检。
 
-需要可撤销安装时，rollback bundle 必须放在目标项目外部。恢复使用 post-apply digest 做
-CAS；apply 后若目标发生任何非 Git 漂移，unapply 会拒绝覆盖用户新改动。`.git` 从不进入
-bundle，也不会被 unapply 读取或修改：
+需要可撤销安装时，rollback bundle 必须放在目标项目外部。成功 apply 会把 preimage 与
+post-apply target 做结构化 diff，在 `managed-assets.json` 中稳定记录实际新增、替换或删除的
+非 Git assets，以及各自 pre/post type、mode、文件 digest/size 或 symlink target。普通
+unapply 先校验 top-level manifest、managed evidence、preimage 和全部 managed post-state，
+全部通过后才开始修改目标，并且只恢复这些 managed assets。无关文件的新增或修改不会阻断
+unapply，也会逐字节保留；managed asset 漂移或 bundle/evidence 篡改会在首个 target mutation
+前 fail closed。overlay 创建的目录只在清空 managed children 后仍为空时删除，目录中的用户
+新增文件会连同非空目录保留。`.git` 从不进入 manifest/CAS/preimage，也不会被读取或修改：
 
 ```bash
 bash /path/to/guru-template/overlay/apply.sh /path/to/project flutter \
@@ -31,8 +36,20 @@ bash /path/to/guru-template/overlay/apply.sh --unapply /path/to/project \
   /tmp/guru-overlay-rollback
 ```
 
+带 rollback bundle 的 apply 会先保存 `prepared` preimage，并在全部目标写入完成后记录
+本进程最后一个 target digest checkpoint。之后若自检失败或收到 `INT`/`TERM`/`HUP`，只有
+当前 target digest 仍精确匹配该 checkpoint 时才自动恢复 preimage；并发或外部目标漂移会
+fail closed，bundle 保持 `prepared`、recovery 标为 `manual_required`，且不会伪装成可成功
+unapply 的 `applied` 状态。自动恢复成功后 bundle 状态为 `recovered`，部分安装文件会被删除，
+用户原有非 Git 文件按 preimage 精确恢复，`.git` 保持不动。rollback bundle 的解析后路径
+必须位于目标项目外，且 bundle 路径本身不得是符号链接，避免通过路径别名绕回目标内部。
+failed-apply recovery 仍使用这个 whole-target checkpoint，不使用尚未发布的 managed manifest。
+旧 schema-v1 `applied` bundle 若没有 managed manifest，继续使用原有 whole-target exact-digest
+unapply；不会猜测 ownership。
+
 V0 的 docs/code/tests 一致性、四路由 policy smoke、Codex-only event 负例与 apply/unapply
-round-trip 由 `bash guru-template/overlay/tests/apply_test.sh` 一次性验证。
+round-trip，以及 failed-apply recovery/CAS 拒绝覆盖负例，由
+`bash guru-template/overlay/tests/apply_test.sh` 一次性验证。
 
 不负责（边界）：
 - **CLI core 脚本**（task.py/common/*）：归 `trellis update` 的 hash 三方合并；apply.sh 只检测

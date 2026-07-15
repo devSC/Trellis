@@ -112,6 +112,39 @@ for dirpath, dirnames, filenames in sorted(os.walk(root)):
 print(h.hexdigest())
 PYS
 }
+
+exact_snapshot() { # 类型、mode、文件内容、link target；根级 .git 按 rollback 合同排除
+  python3 - "$1" <<'PYS'
+import hashlib
+import os
+import stat
+import sys
+
+root = os.path.realpath(sys.argv[1])
+digest = hashlib.sha256()
+for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+    dirnames[:] = sorted(name for name in dirnames if not (dirpath == root and name == ".git"))
+    filenames = sorted(name for name in filenames if not (dirpath == root and name == ".git"))
+    for name in [*dirnames, *filenames]:
+        path = os.path.join(dirpath, name)
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        info = os.lstat(path)
+        if stat.S_ISLNK(info.st_mode):
+            kind, payload = "link", os.readlink(path).encode("utf-8", "surrogateescape")
+        elif stat.S_ISDIR(info.st_mode):
+            kind, payload = "dir", b""
+        elif stat.S_ISREG(info.st_mode):
+            kind = "file"
+            with open(path, "rb") as fh:
+                payload = fh.read()
+        else:
+            kind, payload = "other", b""
+        digest.update(f"{rel}\0{kind}\0{stat.S_IMODE(info.st_mode):o}\0".encode())
+        digest.update(payload)
+        digest.update(b"\0")
+print(digest.hexdigest())
+PYS
+}
 SNAP1=$(snapshot "$T1") || { bad "场景1 快照失败（首次）"; SNAP1="__fail1__"; }
 out=$(bash "$APPLY" "$T1" 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "场景1 二跑 apply 退出码 0" || { bad "场景1 二跑退出码 (rc=$rc)"; echo "$out" | tail -5; }
@@ -580,6 +613,283 @@ T24_AFTER=$(snapshot "$T24")
   && ok "V0 unapply 字节恢复且保留 user-owned/.git" \
   || { bad "V0 unapply 未完整恢复 preimage (rc=$rc)"; echo "$out" | tail -10; }
 
+# ============ 场景 25：apply 自检失败自动恢复；并发目标漂移时 CAS 拒绝覆盖 ============
+T25=$(mk_target partial-apply-recovery no)
+mkdir -p "$T25/.git" "$T25/user-owned"
+printf 'RECOVERY_INDEX_SENTINEL\n' > "$T25/.git/index"
+printf 'RECOVERY_USER_SENTINEL\n' > "$T25/user-owned/keep.txt"
+T25_BEFORE=$(snapshot "$T25")
+T25_BUNDLE="$TMP/partial-apply-recovery-bundle"
+out=$(bash "$APPLY" "$T25" flutter --rollback-bundle "$T25_BUNDLE" 2>&1); rc=$?
+T25_AFTER=$(snapshot "$T25")
+if [ "$rc" != 0 ] \
+  && [ "$T25_BEFORE" = "$T25_AFTER" ] \
+  && [ ! -e "$T25/.trellis/scripts/guru/guru_gate.py" ] \
+  && grep -qx 'RECOVERY_INDEX_SENTINEL' "$T25/.git/index" \
+  && grep -qx 'RECOVERY_USER_SENTINEL' "$T25/user-owned/keep.txt" \
+  && python3 - "$T25_BUNDLE/manifest.json" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+assert manifest["state"] == "recovered"
+assert manifest["post_apply_digest"] is None
+assert manifest["git_internals_owned"] is False
+assert manifest["recovery"]["status"] == "succeeded"
+PY
+then
+  ok "场景25 apply 自检失败自动恢复精确 preimage 且不触碰 .git"
+else
+  bad "场景25 apply 自检失败未自动恢复 (rc=$rc)"
+  echo "$out" | tail -12
+fi
+printf '%s' "$out" | grep -q 'RECOVERED:.*精确 preimage' \
+  && ok "场景25 自动恢复输出明确成功状态" || bad "场景25 自动恢复未输出成功状态"
+T25_RECOVERED_BEFORE=$(snapshot "$T25")
+out=$(bash "$APPLY" --unapply "$T25" "$T25_BUNDLE" 2>&1); rc=$?
+T25_RECOVERED_AFTER=$(snapshot "$T25")
+[ "$rc" != 0 ] \
+  && [ "$T25_RECOVERED_BEFORE" = "$T25_RECOVERED_AFTER" ] \
+  && printf '%s' "$out" | grep -q '未处于 applied 状态' \
+  && ok "场景25 recovered bundle 不可伪装为成功 unapply" \
+  || bad "场景25 recovered bundle 被错误接受为 unapply (rc=$rc)"
+
+T26=$(mk_target partial-apply-cas-drift yes)
+mkdir -p "$T26/.git" "$T26/user-owned" "$T26/scripts"
+printf 'CAS_INDEX_SENTINEL\n' > "$T26/.git/index"
+printf 'CAS_USER_BEFORE\n' > "$T26/user-owned/keep.txt"
+cat > "$T26/scripts/check_workflow_compliance.py" <<'PY'
+import time
+
+time.sleep(2)
+PY
+T26_BUNDLE="$TMP/partial-apply-cas-drift-bundle"
+T26_OUT="$TMP/partial-apply-cas-drift.out"
+bash "$APPLY" "$T26" flutter --rollback-bundle "$T26_BUNDLE" >"$T26_OUT" 2>&1 &
+T26_PID=$!
+T26_CHECKPOINTED=0
+for _ in $(seq 1 300); do
+  if python3 - "$T26_BUNDLE/manifest.json" <<'PY' 2>/dev/null
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+raise SystemExit(0 if manifest.get("recovery", {}).get("status") == "checkpointed" else 1)
+PY
+  then
+    T26_CHECKPOINTED=1
+    break
+  fi
+  sleep 0.01
+done
+printf 'CAS_USER_EXTERNAL_DRIFT\n' > "$T26/user-owned/keep.txt"
+wait "$T26_PID"; rc=$?
+if [ "$T26_CHECKPOINTED" = 1 ] \
+  && [ "$rc" != 0 ] \
+  && grep -qx 'CAS_USER_EXTERNAL_DRIFT' "$T26/user-owned/keep.txt" \
+  && grep -qx 'CAS_INDEX_SENTINEL' "$T26/.git/index" \
+  && [ -e "$T26/.trellis/scripts/guru/guru_gate.py" ] \
+  && python3 - "$T26_BUNDLE/manifest.json" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+assert manifest["state"] == "prepared"
+assert manifest["post_apply_digest"] is None
+assert manifest["recovery"]["status"] == "manual_required"
+PY
+then
+  ok "场景25 checkpoint 后外部漂移使 recovery CAS fail-closed 并保留 bundle"
+else
+  bad "场景25 外部漂移未使 recovery fail-closed (checkpointed=$T26_CHECKPOINTED rc=$rc)"
+  tail -12 "$T26_OUT"
+fi
+grep -q 'MANUAL RECOVERY REQUIRED' "$T26_OUT" \
+  && ok "场景25 CAS 拒绝后输出明确人工恢复指引" || bad "场景25 CAS 拒绝后缺人工恢复指引"
+T26_MANUAL_BEFORE=$(snapshot "$T26")
+out=$(bash "$APPLY" --unapply "$T26" "$T26_BUNDLE" 2>&1); rc=$?
+T26_MANUAL_AFTER=$(snapshot "$T26")
+[ "$rc" != 0 ] \
+  && [ "$T26_MANUAL_BEFORE" = "$T26_MANUAL_AFTER" ] \
+  && grep -qx 'CAS_USER_EXTERNAL_DRIFT' "$T26/user-owned/keep.txt" \
+  && printf '%s' "$out" | grep -q '未处于 applied 状态' \
+  && ok "场景25 manual_required bundle 不可伪装为成功 unapply" \
+  || bad "场景25 manual_required bundle 被错误接受为 unapply (rc=$rc)"
+
+# ============ 场景 26：rollback bundle 路径不能用 symlink 绕回目标内部 ============
+T27=$(mk_target rollback-bundle-symlink yes)
+mkdir -p "$T27/inside-bundle"
+T27_LINK="$TMP/rollback-bundle-link"
+ln -s "$T27/inside-bundle" "$T27_LINK"
+out=$(bash "$APPLY" "$T27" flutter --rollback-bundle "$T27_LINK" 2>&1); rc=$?
+if [ "$rc" != 0 ] \
+  && [ ! -e "$T27/inside-bundle/preimage" ] \
+  && printf '%s' "$out" | grep -q 'rollback bundle 路径不得是符号链接'
+then
+  ok "场景26 rollback bundle symlink 绕回目标内部时 fail-closed"
+else
+  bad "场景26 rollback bundle symlink 未在复制前阻断 (rc=$rc)"
+  echo "$out" | tail -8
+fi
+
+# ============ 场景 27：无关用户改动不阻断 managed-asset unapply ==========
+T28=$(mk_target managed-unapply-unrelated yes)
+mkdir -p "$T28/.git" "$T28/user-owned"
+printf 'MANAGED_UNRELATED_INDEX\n' > "$T28/.git/index"
+printf 'USER_BEFORE\n' > "$T28/user-owned/keep.txt"
+T28_EXPECTED="$TMP/managed-unapply-unrelated-expected"
+python3 - "$T28" "$T28_EXPECTED" <<'PY'
+import shutil
+import sys
+
+shutil.copytree(sys.argv[1], sys.argv[2], symlinks=True)
+PY
+T28_BUNDLE="$TMP/managed-unapply-unrelated-bundle"
+out=$(bash "$APPLY" "$T28" flutter --rollback-bundle "$T28_BUNDLE" 2>&1); rc=$?
+[ "$rc" = 0 ] && python3 - "$T28_BUNDLE/manifest.json" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+assert manifest["schema_version"] == 2
+assert manifest["state"] == "applied"
+assert manifest["managed_assets"]["count"] > 0
+PY
+if [ "$?" = 0 ]; then
+  ok "场景27 apply 发布 deterministic managed-asset manifest"
+else
+  bad "场景27 managed-asset manifest 未发布 (rc=$rc)"
+  echo "$out" | tail -10
+fi
+printf 'USER_AFTER\n' > "$T28/user-owned/keep.txt"
+printf 'USER_NEW\n' > "$T28/user-owned/new.txt"
+printf 'TOP_LEVEL_NEW\n' > "$T28/new-user-file.txt"
+printf 'USER_AFTER\n' > "$T28_EXPECTED/user-owned/keep.txt"
+printf 'USER_NEW\n' > "$T28_EXPECTED/user-owned/new.txt"
+printf 'TOP_LEVEL_NEW\n' > "$T28_EXPECTED/new-user-file.txt"
+out=$(bash "$APPLY" --unapply "$T28" "$T28_BUNDLE" 2>&1); rc=$?
+if [ "$rc" = 0 ] \
+  && [ "$(exact_snapshot "$T28")" = "$(exact_snapshot "$T28_EXPECTED")" ] \
+  && grep -qx 'MANAGED_UNRELATED_INDEX' "$T28/.git/index" \
+  && [ ! -e "$T28/.trellis/scripts/guru/guru_gate.py" ]
+then
+  ok "场景27 unapply 只恢复 managed assets 并逐字节保留无关用户改动/.git"
+else
+  bad "场景27 无关改动错误阻断或被 unapply 覆盖 (rc=$rc)"
+  echo "$out" | tail -10
+fi
+
+# ============ 场景 28：managed asset 漂移在首个 target mutation 前 fail-closed ==========
+T29=$(mk_target managed-unapply-conflict yes)
+mkdir -p "$T29/user-owned"
+printf 'USER_BEFORE\n' > "$T29/user-owned/keep.txt"
+T29_BUNDLE="$TMP/managed-unapply-conflict-bundle"
+bash "$APPLY" "$T29" flutter --rollback-bundle "$T29_BUNDLE" >/dev/null 2>&1
+printf '\nMANAGED_USER_EDIT\n' >> "$T29/.trellis/scripts/guru/guru_gate.py"
+printf 'USER_AFTER\n' > "$T29/user-owned/keep.txt"
+T29_TARGET_BEFORE=$(exact_snapshot "$T29")
+T29_BUNDLE_BEFORE=$(exact_snapshot "$T29_BUNDLE")
+out=$(bash "$APPLY" --unapply "$T29" "$T29_BUNDLE" 2>&1); rc=$?
+if [ "$rc" != 0 ] \
+  && [ "$T29_TARGET_BEFORE" = "$(exact_snapshot "$T29")" ] \
+  && [ "$T29_BUNDLE_BEFORE" = "$(exact_snapshot "$T29_BUNDLE")" ] \
+  && grep -q 'MANAGED_USER_EDIT' "$T29/.trellis/scripts/guru/guru_gate.py" \
+  && grep -qx 'USER_AFTER' "$T29/user-owned/keep.txt" \
+  && [ -e "$T29/.trellis/scripts/guru/guru_contract.py" ] \
+  && printf '%s' "$out" | grep -q 'managed asset 已漂移'
+then
+  ok "场景28 managed asset 漂移时整批 unapply 零 target/bundle mutation"
+else
+  bad "场景28 managed asset 漂移未在首个 mutation 前阻断 (rc=$rc)"
+  echo "$out" | tail -10
+fi
+
+# ============ 场景 29：overlay-created 目录内用户文件保留，目录仅空时剪枝 ==========
+T30=$(mk_target managed-unapply-user-child yes)
+T30_BUNDLE="$TMP/managed-unapply-user-child-bundle"
+bash "$APPLY" "$T30" flutter --rollback-bundle "$T30_BUNDLE" >/dev/null 2>&1
+printf 'USER_CHILD_KEEP\n' > "$T30/.agents/skills/user-owned-note.txt"
+out=$(bash "$APPLY" --unapply "$T30" "$T30_BUNDLE" 2>&1); rc=$?
+if [ "$rc" = 0 ] \
+  && grep -qx 'USER_CHILD_KEEP' "$T30/.agents/skills/user-owned-note.txt" \
+  && [ ! -e "$T30/.agents/skills/requirement-writing" ] \
+  && [ ! -e "$T30/.trellis/scripts/guru/guru_gate.py" ] \
+  && python3 - "$T30_BUNDLE/manifest.json" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+assert manifest["state"] == "restored"
+retained = manifest["unapply"]["retained_user_directories"]
+assert ".agents" in retained
+assert ".agents/skills" in retained
+PY
+then
+  ok "场景29 overlay-created 目录只移除 managed children，用户文件/非空目录保留"
+else
+  bad "场景29 用户新增 child 被删除或错误阻断 (rc=$rc)"
+  echo "$out" | tail -10
+fi
+
+# ============ 场景 30：managed evidence/manifest 篡改均在 target mutation 前阻断 ==========
+T31=$(mk_target managed-unapply-tamper yes)
+T31_BUNDLE="$TMP/managed-unapply-tamper-bundle"
+bash "$APPLY" "$T31" flutter --rollback-bundle "$T31_BUNDLE" >/dev/null 2>&1
+cp "$T31_BUNDLE/managed-assets.json" "$TMP/managed-assets.original.json"
+printf ' ' >> "$T31_BUNDLE/managed-assets.json"
+T31_TARGET_BEFORE=$(exact_snapshot "$T31")
+out=$(bash "$APPLY" --unapply "$T31" "$T31_BUNDLE" 2>&1); rc=$?
+[ "$rc" != 0 ] \
+  && [ "$T31_TARGET_BEFORE" = "$(exact_snapshot "$T31")" ] \
+  && printf '%s' "$out" | grep -q 'managed manifest integrity 不匹配' \
+  && ok "场景30 managed evidence 篡改在 target mutation 前阻断" \
+  || { bad "场景30 managed evidence 篡改未阻断 (rc=$rc)"; echo "$out" | tail -8; }
+cp "$TMP/managed-assets.original.json" "$T31_BUNDLE/managed-assets.json"
+python3 - "$T31_BUNDLE/manifest.json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+manifest = json.load(open(path, encoding="utf-8"))
+manifest["tampered"] = True
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, ensure_ascii=False, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+out=$(bash "$APPLY" --unapply "$T31" "$T31_BUNDLE" 2>&1); rc=$?
+[ "$rc" != 0 ] \
+  && [ "$T31_TARGET_BEFORE" = "$(exact_snapshot "$T31")" ] \
+  && printf '%s' "$out" | grep -q 'manifest integrity 不匹配' \
+  && ok "场景30 top-level manifest 篡改在 target mutation 前阻断" \
+  || { bad "场景30 top-level manifest 篡改未阻断 (rc=$rc)"; echo "$out" | tail -8; }
+
+# ============ 场景 31：legacy schema-v1 applied bundle 保留 whole-target CAS fallback ==========
+T32=$(mk_target legacy-unapply-fallback yes)
+T32_BEFORE=$(exact_snapshot "$T32")
+T32_BUNDLE="$TMP/legacy-unapply-fallback-bundle"
+bash "$APPLY" "$T32" flutter --rollback-bundle "$T32_BUNDLE" >/dev/null 2>&1
+python3 - "$T32_BUNDLE/manifest.json" <<'PY'
+import json
+import os
+import sys
+
+path = sys.argv[1]
+manifest = json.load(open(path, encoding="utf-8"))
+manifest["schema_version"] = 1
+manifest.pop("managed_assets", None)
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, ensure_ascii=False, indent=2, sort_keys=True)
+    fh.write("\n")
+bundle = os.path.dirname(path)
+os.unlink(os.path.join(bundle, "managed-assets.json"))
+os.unlink(os.path.join(bundle, "manifest.sha256"))
+PY
+out=$(bash "$APPLY" --unapply "$T32" "$T32_BUNDLE" 2>&1); rc=$?
+[ "$rc" = 0 ] \
+  && [ "$T32_BEFORE" = "$(exact_snapshot "$T32")" ] \
+  && ok "场景31 legacy applied bundle 沿用 whole-target exact-digest unapply" \
+  || { bad "场景31 legacy schema-v1 fallback 失效 (rc=$rc)"; echo "$out" | tail -8; }
+
 v0_consistency_check() { # v0_consistency_check <guru-template-root> [events-jsonl]
   python3 - "$1" "${2:-}" <<'PY'
 import json
@@ -614,6 +924,10 @@ for token in ("--rollback-bundle", "--unapply", "apply_test.sh"):
         raise SystemExit(f"docs/code/tests mismatch: README missing {token}")
 if "--unapply" not in apply_source or "V0-ROUNDTRIP" not in test_source:
     raise SystemExit("docs/code/tests mismatch: unapply code/test coverage missing")
+if any("manual_required" not in source for source in (readme, apply_source, test_source)):
+    raise SystemExit("docs/code/tests mismatch: failed-apply recovery coverage missing")
+if any("managed-assets.json" not in source for source in (readme, apply_source, test_source)):
+    raise SystemExit("docs/code/tests mismatch: managed-asset unapply coverage missing")
 
 index = json.load(open(os.path.join(root, "index.json"), encoding="utf-8"))
 for entry in index.get("templates", []):
