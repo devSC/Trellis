@@ -28,6 +28,10 @@ try:
     import guru_delivery_policy  # noqa: E402
 except Exception:  # pragma: no cover - older installs may not have delivery policy yet
     guru_delivery_policy = None
+try:
+    import guru_risk  # noqa: E402
+except Exception:  # pragma: no cover - older installs may not have risk classifier yet
+    guru_risk = None
 
 BASELINE = [
     {"file": ".trellis/spec/conventions/project-conventions.md",
@@ -125,22 +129,43 @@ def main() -> int:
         if not isinstance(data, dict):
             raise ValueError("task.json 根节点必须是对象")
         selection = None
-        if guru_delivery_policy is not None:
+        assessment = {"route": "full_chain", "risk": "unknown", "reasons": []}
+        raw_paths = data.get("affected_paths")
+        affected_paths = tuple(raw_paths) if isinstance(raw_paths, list) else ()
+        title = str(data.get("title") or data.get("name") or "").strip()
+        detail = str(data.get("description") or "").strip()
+        description = "\n".join(part for part in (title, detail) if part)
+        commit_requested = bool(data.get("commit_requested", True))
+        if guru_risk is not None:
+            assessment = guru_risk.assess_intake(
+                description,
+                affected_paths,
+                commit_requested=commit_requested,
+            )
+        if guru_delivery_policy is not None and assessment.get("risk") != "high":
             try:
-                raw_paths = data.get("affected_paths")
-                affected_paths = tuple(raw_paths) if isinstance(raw_paths, list) else ()
                 selection = guru_delivery_policy.resolve_delivery_selection(
                     guru_delivery_policy.IntakeRequest(
-                        description=str(data.get("title") or data.get("name") or ""),
+                        description=description,
                         affected_paths=affected_paths,
-                        commit_requested=bool(data.get("commit_requested", True)),
+                        commit_requested=commit_requested,
                     ),
                     capability_report={},
                 )
             except Exception as exc:
-                contract_note = f"；delivery policy 保守回落 full（{exc}）"
-        selected_route = selection.execution_route if selection is not None else "full_chain"
-        selected_risk = selection.risk if selection is not None else data.get("risk_level", "unknown")
+                # Rejected scope is not evidence for a cheaper route. Keep task
+                # creation usable, but require strict planning before any work.
+                assessment = {
+                    "route": "full_chain",
+                    "risk": "unknown",
+                    "confidence": 0.0,
+                    "reasons": [f"delivery policy rejected intake: {exc}"],
+                    "risk_flags": ["delivery_policy_rejected"],
+                    "recommended_contract": "full_chain",
+                }
+                contract_note = f"；delivery policy fail-closed 到 full_chain/unknown（{exc}）"
+        selected_route = selection.execution_route if selection is not None else assessment["route"]
+        selected_risk = selection.risk if selection is not None else assessment["risk"]
         if data.get("guru_chain") not in ("full", "light"):
             data["guru_chain"] = "full" if selected_route == "full_chain" else "light"
             # 原子写：先写临时文件再 replace，中断不会留下半截 task.json
@@ -160,9 +185,15 @@ def main() -> int:
                 selected_risk,
                 created_by="guru_after_create",
             )
-            contract["assessment"]["reasons"] = ["selected by Custom delivery policy"]
             if selection is not None:
                 contract.update(guru_delivery_policy.selection_to_contract_patch(selection))
+            else:
+                contract["assessment"].update({
+                    "confidence": assessment.get("confidence"),
+                    "reasons": list(assessment.get("reasons") or []),
+                    "risk_flags": list(assessment.get("risk_flags") or []),
+                    "recommended_route": assessment.get("recommended_contract") or selected_route,
+                })
             guru_contract.write_contract(task_dir, contract)
             contract_note += f"；gate-contract route={selected_route}"
     except (ValueError, OSError) as e:

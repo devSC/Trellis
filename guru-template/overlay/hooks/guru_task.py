@@ -17,7 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-VERIFY_DIR = Path(__file__).resolve().parents[1] / "verify"
+SOURCE_VERIFY_DIR = Path(__file__).resolve().parents[1] / "verify"
+VERIFY_DIR = SOURCE_VERIFY_DIR if SOURCE_VERIFY_DIR.is_dir() else Path(__file__).resolve().parent
 sys.path.insert(0, str(VERIFY_DIR))
 import guru_contract  # noqa: E402
 

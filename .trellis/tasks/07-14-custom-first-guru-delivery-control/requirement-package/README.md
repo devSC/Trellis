@@ -21,4 +21,6 @@ This package does not redefine the approved requirements in `prd.md`. It assigns
 
 ## Confirmation Boundary
 
-The user confirmed the architecture baseline quoted in `../prd.md` as DEC-001, and earlier Requirements/Detail Gate confirmations are preserved as historical evidence. This final consistency batch changes digest-bearing artifacts, so those historical confirmations are not current authorization; one batch review and one user reconfirmation must bind the final Requirements/Overview/Detail digests before further slice execution or burn.
+The user confirmed the Custom-first/Core-zero/reversible architecture as DEC-001 and later authorized the outcome-first milestone decomposition recorded as DEC-002. Milestone synchronization does not create a new product decision and must not restart Requirements/Overview/Detail review loops.
+
+Only a new irreversible product choice, a real external-information gap, or newly expanded critical/high risk may require another user confirmation. Bootstrap burn, repeated planning review and same-provider independence claims are not prerequisites for the current milestones.

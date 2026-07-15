@@ -1,5 +1,16 @@
 # Implementation Plan
 
+## Current Outcome-first Execution Authority (2026-07-15)
+
+The requirement package and `prd.md` milestones M0-M4 supersede the six-slice/wave/bootstrap-burn execution sequence below. The remaining work is:
+
+1. M1 operational route proof - candidate complete; evidence in `M1_OPERATIONAL_ROUTE_PROOF.md`.
+2. M2 all-intent compounding and Gate-value proof - candidate complete; evidence in `M2_ALL_INTENT_COMPOUNDING_PROOF.md`.
+3. M3 official Custom/Template cutover readiness using the existing rollback-bundle implementation - candidate complete; evidence in `M3_CUSTOM_TEMPLATE_CUTOVER_PROOF.md`.
+4. M4 final consistency, spec update, final check and commit - current milestone.
+
+Marketplace catalog, ExtensionManager WAL, trusted reviewer identity, generic replay infrastructure, bootstrap burn/reuse and six independent slice lifecycles are deferred non-requirements. The historical plan below remains read-only rationale and must not be used to block or sequence the current milestones.
+
 ## 计划与交付策略
 
 使用一个 full-chain task 内的独立 vertical slices，避免为每个内部模块重复创建/确认任务。每个 slice 必须先有失败测试或可复现实验，再实现最小行为，完成局部检查后才进入下一片。功能阶段只允许修改 `guru-template/index.json`、`guru-template/workflows/**`、`guru-template/specs/**`、`guru-template/overlay/**`。

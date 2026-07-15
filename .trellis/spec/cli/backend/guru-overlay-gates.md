@@ -86,7 +86,7 @@ This is an executable gate surface. Changes must be fail-closed by default, mirr
 - Route-aware review policy:
   - `small_inline`: no task-local requirements adversarial review is required; if the work later needs commit, create/route to `micro_task`.
   - `micro_task`: requirements adversarial review and overview/detail adversarial reviewer evidence are not required; commit remains bounded by explicit scope, file limits, and contract evidence. It is never valid for high-risk work.
-  - `lite_task`: bounded review policy. Requirements adversarial review is optional, and overview/detail still require two current-digest clean review run ids but do not require an adversarial reviewer. Current blocked/malformed/medium+ review evidence remains blocking.
+- `lite_task`: implementation is `host_inline` with zero confirmation batches, zero Workers, no pre-code requirements/overview/detail/implementation-review Gate, and one scoped `deterministic_final` after code. If an operator explicitly invokes a legacy overview/detail review command, that command still validates current evidence strictly; it is not part of the Lite implementation route.
   - `full_chain`, `risk=unknown`, or missing/invalid contract: strict default policy. Requirements review is required when `adversarial_enabled=true`, and overview/detail require at least one counted adversarial clean review.
 
 ### 3. Contracts
@@ -145,12 +145,12 @@ For `lite_task`, low/P3 follow-ups and wording nits should be tracked as
 follow-ups without forcing a PRD digest refresh and requirements re-review,
 unless they change behavior, scope, acceptance criteria, or a high-risk decision.
 
-Lite scope expansion must stop for user confirmation. If review or supervision
-finds that a `lite_task` now touches high-risk areas, additional layers, or
-scope beyond the confirmed route/contract, it must ask the user whether to keep
-the non-high-risk route with updated audit, expand the non-high-risk contract,
-or promote to `full_chain`; high-risk expansion must promote to `full_chain`.
-It must not silently rewrite `evidence_ready` or assumptions as `user_confirmed`.
+Lite scope expansion must be re-intaken before another repository write. High-risk
+expansion promotes to `full_chain`, requires a current risk packet and guarded
+start, and consumes at most the one Full confirmation batch for unresolved
+critical/high decisions. Non-high-risk scope drift invalidates only the stale
+scope/digest evidence. It must not silently rewrite `evidence_ready` or
+assumptions as `user_confirmed`.
 
 ### 4. Validation & Error Matrix
 
@@ -175,7 +175,7 @@ It must not silently rewrite `evidence_ready` or assumptions as `user_confirmed`
 | `adversarial_enabled=false` with missing adversarial reviewer only | Allow if other current clean-review/digest gates pass |
 | `micro_task` with no requirements adversarial review | Allow; continue enforcing structure/confirmation only when that command is explicitly used |
 | `lite_task` with no requirements adversarial review | Allow under bounded policy if risk is known and no current blocked/malformed/medium+ requirements evidence exists |
-| `lite_task` with two ordinary clean overview/detail reviews and no adversarial reviewer | Allow under bounded policy |
+| `lite_task` implementation before code | Allow host-inline without requirements/overview/detail review; require only scoped deterministic final after code |
 | `lite_task` with current requirements `blocked` or clean `max_severity=medium+` | Block |
 | `lite_task` review discovers high-risk or expanded scope | Stop for user confirmation; do not silently promote evidence-ready scope to user-confirmed |
 | `risk=unknown` or invalid `gate-contract.json` | Strict default policy; do not apply route-aware adversarial relaxation |
@@ -215,7 +215,7 @@ Guru overlay verify tests must cover:
 - `check-commit` blocks staged task artifacts, out-of-scope staged paths, non-full high-risk paths, high-risk non-full contracts even with valid override audit, and missing compensating evidence.
 - `check-commit` rejects high-risk path signals inside confirmed non-full scope when the contract itself is high-risk, even if valid user override audit is present.
 - `adversarial_enabled=false` allows double ordinary clean reviews to proceed, but does not bypass current blocked or medium+ review evidence.
-- Route-aware review policy: `micro_task` skips requirements adversarial review, `lite_task` bounded review accepts double ordinary clean, and `full_chain` keeps strict gates while only requiring requirements adversarial review when `adversarial_enabled=true`.
+- Route-aware execution policy: `micro_task` uses a bounded micro contract, `lite_task` reaches host-inline code without pre-code planning review, and `full_chain` keeps strict requirements/overview/detail/risk/start gates.
 - `init-contract` generates valid micro/lite/full contracts and blocks high-risk non-full selected routes even with valid user override audit.
 - `check-implementation` and `guru_supervise.py implement-check` block high-risk selected full-chain tasks with no slice packet before worker launch.
 - `check-implementation` treats high-risk selected lite/micro contracts as invalid and requires full-chain routing before implementation.
@@ -276,6 +276,150 @@ required-gate degradation.
 
 This keeps high-risk work on the full chain, records the recommendation, and
 keeps required review gates non-degradable.
+
+---
+
+## Scenario: Outcome-First Delivery And Reversible Custom Lifecycle
+
+### 1. Scope / Trigger
+
+Apply this contract when changing any of these Custom-first surfaces:
+
+- `guru-template/overlay/policy/delivery-policy.json`
+- `guru-template/overlay/verify/guru_delivery_policy.py`
+- `guru-template/overlay/hooks/guru_after_create.py`
+- `guru-template/overlay/hooks/guru_task.py`
+- `guru-template/overlay/apply.sh`
+- matching workflows, execution skills, README, and focused regressions
+
+The goal is to make low-risk work enter value quickly, expose high risk before
+implementation, close after at most one confirmation batch, reuse exact evidence,
+and keep the Custom package reversible without modifying Trellis Core.
+
+### 2. Signatures
+
+Delivery selection:
+
+```python
+resolve_delivery_selection(
+    request: IntakeRequest,
+    *,
+    prior_evidence: dict | None = None,
+    capability_report: dict | None = None,
+) -> DeliverySelection
+```
+
+Lifecycle commands:
+
+```text
+apply.sh --plan <target> [flutter|go|ios|h5] [--rollback-bundle <external-empty-dir>]
+apply.sh <target> [flutter|go|ios|h5] [--rollback-bundle <external-empty-dir>]
+apply.sh --status <target> <rollback-bundle>
+apply.sh --verify <target> <rollback-bundle>
+apply.sh --upgrade <target> [flutter|go|ios|h5] --rollback-bundle <new-external-empty-dir>
+apply.sh --unapply <target> <rollback-bundle>
+```
+
+Official Template inputs remain `guru-template/index.json` entries with
+`type: "spec"` or `type: "workflow"`; do not create a second resolver manifest
+unless the official CLI can no longer consume that registry.
+
+### 3. Contracts
+
+Route contracts:
+
+- `small_inline`: first value within 120 seconds, no task ceremony, no Worker,
+  no confirmation, final deterministic evidence only.
+- `micro_task`: explicit bounded paths/max files, first value within 300 seconds,
+  no confirmation, at most one Worker, micro contract plus deterministic final.
+- `lite_task`: host-inline code within 300 seconds, zero confirmation, zero
+  Worker, zero pre-code planning/review Gates, deterministic final after code.
+- `full_chain`: high/unknown-high-signal work, current requirements/overview/
+  detail/risk/slice/start evidence before implementation, at most one confirmation
+  batch, and deterministic final.
+
+Evidence reuse requires the same policy version, intent/route, scope fingerprint,
+target digest, docs-code-test digest, and a passed prior outcome. An exact hit
+applies the declared 70 percent planning/context/token-budget proxy; either
+digest changing invalidates reuse. This is not provider billing telemetry.
+
+Lifecycle contracts:
+
+- `plan`, `status`, and `verify` are byte-read-only for target and bundle.
+- Apply creates the external preimage before target writes and publishes
+  `state=applied` only after final exact CAS.
+- Status values are `installed-current`, `drifted`, and `not-applied`.
+- `prepared`, including `recovery.status=manual_required`, is `drifted`, never
+  `not-applied`, because partial target writes may exist.
+- Verify returns nonzero for missing receipt, drift, tamper, prepared/manual
+  recovery, or invalid ownership evidence.
+- Upgrade must use a new external missing-or-empty bundle and reuses apply; its
+  unapply restores the immediate pre-upgrade state.
+- Managed unapply restores only owned, post-state-matching assets, preserves
+  unrelated user content and `.git`, and fails before mutation on conflict.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Lite implementation request with no high-risk signal | Route `lite_task`; no confirmation/Worker/pre-code review; implement next action |
+| High-risk path or signal | Route `full_chain`; risk packet and guarded start before any implement Worker |
+| Exact prior evidence and both digests unchanged | Reuse evidence and apply 70 percent controllable proxy |
+| Target or docs-code-test digest changed | Do not reuse evidence |
+| Lite expands to high risk | Promote before next write; require risk/start evidence; confirmation batches remain at most one |
+| Plan/status/verify | Target and bundle snapshots remain byte-identical |
+| Missing bundle receipt | Status `not-applied`; verify nonzero |
+| Applied current receipt | Status/verify `installed-current`; verify zero |
+| Managed drift or receipt tamper | Status `drifted`; verify nonzero; zero mutation |
+| Prepared/manual-required receipt | Status `drifted`; verify nonzero; zero mutation |
+| Upgrade without a fresh bundle | Exit 2 before target mutation |
+| Upgrade then unapply | Exact immediate pre-upgrade target restored |
+
+### 5. Good/Base/Bad Cases
+
+- Good: a bounded behavior change resolves to Lite, reaches a scoped code diff
+  without Overview/Detail loops, then runs only the deterministic final check.
+- Good: workflow/runtime scope promotes to Full before code and fails closed if
+  the risk packet is absent.
+- Base: a successful apply has a current schema-v2 managed-assets receipt;
+  status and verify are read-only and report `installed-current`.
+- Bad: treating `state=prepared` as `not-applied`; failed recovery can leave
+  partial target writes and must be reported as `drifted`.
+- Bad: using a first-install bundle for upgrade rollback; every upgrade needs a
+  fresh bundle so rollback semantics are the immediate pre-upgrade state.
+
+### 6. Tests Required
+
+- Policy unit tests cover all intent profiles, four routes, first-value/terminal
+  budgets, exact reuse, both digest invalidations, high-risk promotion, and the
+  one-batch confirmation ceiling.
+- Start-guard tests prove missing/stale risk, envelope, slice, or confirmation
+  evidence blocks before the official subprocess.
+- `apply_test.sh` snapshots target and bundle around every read-only command,
+  tests current/drift/tamper/prepared states, fresh-bundle upgrade, exact
+  upgrade rollback, managed unapply conflict behavior, docs-code-tests
+  consistency, and Codex-only event rejection.
+- Official `0.6.7` HTTPS Git E2E installs every spec/workflow pair from the typed
+  registry and rejects raw blank-template fallback even when the CLI exits zero.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+lite_task -> requirements -> Overview x2 -> Detail x2 -> confirmation -> code
+prepared rollback receipt -> status=not-applied
+upgrade -> reuse the first-install rollback receipt
+```
+
+#### Correct
+
+```text
+lite_task -> host-inline code -> scoped deterministic_final
+full/high -> current risk + one confirmation batch + guarded start -> code/check
+prepared rollback receipt -> status=drifted, verify nonzero, zero mutation
+upgrade -> fresh external bundle -> unapply restores immediate pre-upgrade state
+```
 
 ---
 

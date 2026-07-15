@@ -264,6 +264,129 @@ class DeliveryPolicyTests(unittest.TestCase):
         self.assertFalse(miss.evidence_reused)
         self.assertEqual(miss.planning_cost_ratio_percent, 100)
 
+    def test_all_intents_have_bounded_first_value_terminal_and_write_contracts(self):
+        cases = (
+            ("implementation", "change local button behavior", "lib/ui/button.dart", True, False, "first_code", "scoped_repository"),
+            ("review", "review current button implementation only", "lib/ui/button.dart", False, True, "first_verified_evidence", "none"),
+            ("research", "research parser behavior only", "lib/parser.py", False, True, "first_verified_evidence", "none"),
+            ("docs", "update local usage document", "docs/usage.md", True, False, "first_accepted_artifact", "scoped_repository"),
+            ("config", "update local formatter config", "config/formatter.json", True, False, "first_code", "scoped_repository"),
+            ("ops", "inspect local status output", "scripts/status.py", False, False, "first_verified_evidence", "task_artifacts"),
+            ("debug", "fix parser bug", "lib/parser.py", True, False, "first_code", "scoped_repository"),
+        )
+        for intent, description, path, commit, read_only, first_metric, write_capability in cases:
+            with self.subTest(intent=intent):
+                selection = self.select(
+                    description=description,
+                    intent_hint=intent,
+                    affected_paths=(PurePosixPath(path),),
+                    commit_requested=commit,
+                    read_only_requested=read_only,
+                )
+                self.assertEqual(selection.intent, intent)
+                self.assertEqual(selection.first_value_metric, first_metric)
+                self.assertEqual(selection.write_capability, write_capability)
+                self.assertEqual(
+                    selection.terminal_conditions,
+                    ("first_value_deadline", "terminal_deadline", "budget_exceeded", "required_gate_failed"),
+                )
+                self.assertLessEqual(selection.resolved_budget["confirmation_batches"], 1)
+                self.assertTrue(selection.route_acceptance["autonomous_close"])
+                self.assertEqual(selection.route_acceptance["provider"], "codex")
+                self.assertTrue(selection.route_acceptance["claude_forbidden"])
+
+    def test_all_intents_compound_on_exact_evidence_and_invalidate_on_either_digest(self):
+        cases = (
+            ("implementation", "change local button behavior", "lib/ui/button.dart", True, False),
+            ("review", "review current button implementation only", "lib/ui/button.dart", False, True),
+            ("research", "research parser behavior only", "lib/parser.py", False, True),
+            ("docs", "update local usage document", "docs/usage.md", True, False),
+            ("config", "update local formatter config", "config/formatter.json", True, False),
+            ("ops", "inspect local status output", "scripts/status.py", False, False),
+            ("debug", "fix parser bug", "lib/parser.py", True, False),
+        )
+        current = {"target_digest": "a" * 64, "docs_code_test_digest": "b" * 64}
+        cost_keys = tuple(self.policy["evidence_reuse"]["cost_budget_keys"])
+        for intent, description, path, commit, read_only in cases:
+            request = policy.IntakeRequest(
+                description=description,
+                intent_hint=intent,
+                affected_paths=(PurePosixPath(path),),
+                commit_requested=commit,
+                read_only_requested=read_only,
+            )
+            with self.subTest(intent=intent, state="warm"):
+                cold = policy.resolve_delivery_selection(
+                    request,
+                    self.policy,
+                    evidence=current,
+                    capability_report=policy.managed_capability_report(parallel=True),
+                )
+                candidate = {
+                    "evidence_cache_key": cold.evidence_cache_key,
+                    **current,
+                    "outcome": "passed",
+                }
+                warm = policy.resolve_delivery_selection(
+                    request,
+                    self.policy,
+                    evidence={**current, "reuse_candidate": candidate},
+                    capability_report=policy.managed_capability_report(parallel=True),
+                )
+                self.assertTrue(warm.evidence_reused)
+                self.assertLessEqual(warm.planning_cost_ratio_percent, 70)
+                self.assertEqual(warm.required_gate_ids, cold.required_gate_ids)
+                for key in cost_keys:
+                    self.assertLessEqual(warm.resolved_budget[key], max(1, cold.resolved_budget[key] * 70 // 100))
+            for drift_name, drift in (
+                ("target", {"target_digest": "c" * 64}),
+                ("consistency", {"docs_code_test_digest": "d" * 64}),
+            ):
+                with self.subTest(intent=intent, state=f"{drift_name}_drift"):
+                    miss = policy.resolve_delivery_selection(
+                        request,
+                        self.policy,
+                        evidence={**current, **drift, "reuse_candidate": candidate},
+                        capability_report=policy.managed_capability_report(parallel=True),
+                    )
+                    self.assertFalse(miss.evidence_reused)
+                    self.assertEqual(miss.planning_cost_ratio_percent, 100)
+
+    def test_scope_expansion_promotes_before_next_write_and_confirmation_is_single_batch(self):
+        lite = self.select(
+            description="change local button behavior",
+            intent_hint="implementation",
+            affected_paths=(PurePosixPath("lib/ui/button.dart"),),
+            commit_requested=True,
+        )
+        expanded = self.select(
+            description="change workflow hook gate runtime",
+            intent_hint="implementation",
+            affected_paths=(PurePosixPath("lib/ui/button.dart"), PurePosixPath(".trellis/workflow.md")),
+            commit_requested=True,
+        )
+        self.assertEqual(lite.execution_route, guru_contract.ROUTE_LITE_TASK)
+        self.assertEqual(lite.resolved_budget["confirmation_batches"], 0)
+        self.assertEqual(expanded.execution_route, guru_contract.ROUTE_FULL_CHAIN)
+        self.assertEqual(expanded.risk, guru_contract.RISK_HIGH)
+        self.assertIn("risk_packet", expanded.required_gate_ids)
+        self.assertIn("start_guard", expanded.required_gate_ids)
+        self.assertEqual(expanded.resolved_budget["confirmation_batches"], 1)
+
+        envelope_args = {
+            "task_id": "task-1",
+            "slice_id": "delivery-control",
+            "slice_packet_digest": "a" * 64,
+            "risk_packet_digest": "b" * 64,
+            "confirmation_attestation_digest": "c" * 64,
+            "confirmation_required": True,
+        }
+        first = policy.build_execution_envelope(expanded, **envelope_args)
+        unchanged_retry = policy.build_execution_envelope(expanded, **envelope_args)
+        self.assertEqual(unchanged_retry, first)
+        self.assertEqual(first["confirmation_attestation_digest"], "c" * 64)
+        self.assertEqual(first["budget"]["confirmation_batches"], 1)
+
     def test_risk_packet_binds_complete_detail_decision_universe(self):
         selection = self.select(
             description="change workflow hook gate runtime",

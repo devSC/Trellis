@@ -3,7 +3,11 @@ set -euo pipefail
 # guru-template overlay 安装/升级器：装配官方 init -t/--workflow 覆盖不到的部分，
 # 并负责 guru 定制内容（workflow/harness SSOT/skills/hooks/settings 接线）的后续升级刷新。
 # 用法:
+#   ./apply.sh --plan <目标项目路径> [flutter|go|ios|h5] [--rollback-bundle <外部目录>]
 #   ./apply.sh <目标项目路径> [flutter|go|ios|h5] [--rollback-bundle <外部目录>]
+#   ./apply.sh --upgrade <目标项目路径> [flutter|go|ios|h5] --rollback-bundle <新外部目录>
+#   ./apply.sh --status <目标项目路径> <rollback-bundle>
+#   ./apply.sh --verify <目标项目路径> <rollback-bundle>
 #   ./apply.sh --unapply <目标项目路径> <rollback-bundle>
 # 前提: 目标项目已 trellis init（存在 .trellis/）。幂等：重复执行不产生额外变化。
 #
@@ -17,6 +21,20 @@ ROOT="$(cd "$HERE/.." && pwd)"   # guru-template/
 APPLY_RECOVERY_ARMED=0
 APPLY_RECOVERY_EXPECTED_DIGEST=""
 APPLY_RECOVERY_BUNDLE=""
+
+usage() {
+  cat <<'EOF'
+用法:
+  apply.sh --plan <目标项目路径> [flutter|go|ios|h5] [--rollback-bundle <外部目录>]
+  apply.sh <目标项目路径> [flutter|go|ios|h5] [--rollback-bundle <外部目录>]
+  apply.sh --upgrade <目标项目路径> [flutter|go|ios|h5] --rollback-bundle <新外部目录>
+  apply.sh --status <目标项目路径> <rollback-bundle>
+  apply.sh --verify <目标项目路径> <rollback-bundle>
+  apply.sh --unapply <目标项目路径> <rollback-bundle>
+
+plan/status/verify 只读；upgrade 复用 apply，并要求新的外部 rollback bundle。
+EOF
+}
 
 tree_digest() { # tree_digest <target>; excludes Git internals by contract
   python3 - "$1" <<'PYEOF'
@@ -336,7 +354,7 @@ if schema_version == 1 and (
     or os.path.lexists(os.path.join(bundle, "manifest.sha256"))
 ):
     raise SystemExit("ERROR: legacy rollback bundle 含不兼容 managed evidence；疑似被篡改")
-if mode == "unapply":
+if mode in {"unapply", "verify"}:
     if manifest.get("state") != "applied":
         raise SystemExit("ERROR: rollback bundle 未处于 applied 状态")
     if schema_version == 2:
@@ -418,6 +436,10 @@ if mode == "unapply":
                     + ", ".join(unowned_descendants[:8])
                 )
 
+        if mode == "verify":
+            print(f"installed-current managed_assets={len(assets)}")
+            raise SystemExit(0)
+
         retained_directories = []
         for asset in sorted(assets, key=lambda item: (-item["path"].count("/"), item["path"]), reverse=False):
             rel, pre_state, post_state = asset["path"], asset["pre"], asset["post"]
@@ -478,6 +500,9 @@ if mode == "unapply":
     current_digest = digest_tree(target)
     if manifest.get("post_apply_digest") != current_digest:
         raise SystemExit("ERROR: apply 后目标已有漂移；拒绝覆盖用户新改动")
+    if mode == "verify":
+        print("installed-current managed_assets=legacy-whole-target")
+        raise SystemExit(0)
     restored_state = "restored"
 elif mode == "recovery":
     current_digest = digest_tree(target)
@@ -525,6 +550,117 @@ write_atomic(
     manifest_path,
     (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"),
 )
+PYEOF
+}
+
+rollback_bundle_state() { # rollback_bundle_state <target> <bundle>; rc 0=applied, 3=not-applied
+  python3 - "$1" "$2" <<'PYEOF'
+import hashlib
+import json
+import os
+import sys
+
+target, bundle = os.path.realpath(sys.argv[1]), os.path.abspath(sys.argv[2])
+manifest_path = os.path.join(bundle, "manifest.json")
+if not os.path.isfile(manifest_path):
+    print("not-applied")
+    raise SystemExit(3)
+try:
+    with open(manifest_path, "rb") as fh:
+        manifest_bytes = fh.read()
+    manifest = json.loads(manifest_bytes)
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"rollback bundle manifest 非法: {exc}") from exc
+if manifest.get("schema_version") not in {1, 2}:
+    raise SystemExit("rollback bundle schema 非法")
+if manifest.get("target") != target:
+    raise SystemExit("rollback bundle 不属于该目标项目")
+
+state = manifest.get("state")
+managed_evidence = any(
+    os.path.lexists(os.path.join(bundle, name))
+    for name in ("managed-assets.json", "manifest.sha256")
+) or "managed_assets" in manifest
+if manifest.get("schema_version") == 2 and managed_evidence:
+    try:
+        with open(os.path.join(bundle, "manifest.sha256"), encoding="ascii") as fh:
+            expected = fh.read().strip()
+    except OSError as exc:
+        raise SystemExit("rollback bundle manifest integrity 缺失") from exc
+    if expected != hashlib.sha256(manifest_bytes).hexdigest():
+        raise SystemExit("rollback bundle manifest integrity 不匹配")
+if state == "applied":
+    print("applied")
+    raise SystemExit(0)
+if state in {"recovered", "restored"}:
+    print("not-applied")
+    raise SystemExit(3)
+if state == "prepared":
+    raise SystemExit("rollback bundle 仍处于 prepared 状态；apply 未完成或需要人工恢复")
+raise SystemExit("rollback bundle state 非法")
+PYEOF
+}
+
+report_rollback_lifecycle() { # report_rollback_lifecycle <status|verify> <target> <bundle>
+  local operation="$1" target="$2" bundle="$3" state rc=0 detail verify_output
+  state="$(rollback_bundle_state "$target" "$bundle" 2>&1)" || rc=$?
+  if [ "$rc" = 3 ]; then
+    echo "status=not-applied"
+    echo "target=$target"
+    echo "rollback_bundle=$bundle"
+    [ "$operation" = status ] && return 0
+    echo "ERROR: Guru overlay 未处于 applied 状态" >&2
+    return 1
+  fi
+  if [ "$rc" != 0 ]; then
+    detail="${state//$'\n'/; }"
+    echo "status=drifted"
+    echo "target=$target"
+    echo "rollback_bundle=$bundle"
+    echo "detail=$detail"
+    [ "$operation" = status ] && return 0
+    return 1
+  fi
+
+  rc=0
+  verify_output="$(restore_rollback_bundle "$target" "$bundle" verify 2>&1)" || rc=$?
+  if [ "$rc" = 0 ]; then
+    echo "status=installed-current"
+    echo "target=$target"
+    echo "rollback_bundle=$bundle"
+    echo "$verify_output"
+    return 0
+  fi
+  detail="${verify_output//$'\n'/; }"
+  echo "status=drifted"
+  echo "target=$target"
+  echo "rollback_bundle=$bundle"
+  echo "detail=$detail"
+  [ "$operation" = status ] && return 0
+  return 1
+}
+
+validate_planned_rollback_bundle() { # read-only validation for plan
+  python3 - "$1" "$2" <<'PYEOF'
+import os
+import sys
+
+target = os.path.realpath(sys.argv[1])
+bundle_arg = os.path.abspath(sys.argv[2])
+if os.path.lexists(bundle_arg) and os.path.islink(bundle_arg):
+    raise SystemExit("ERROR: rollback bundle 路径不得是符号链接")
+bundle = os.path.realpath(bundle_arg)
+try:
+    inside_target = os.path.commonpath((target, bundle)) == target
+except ValueError:
+    inside_target = False
+if inside_target:
+    raise SystemExit("ERROR: rollback bundle 必须位于目标项目外部")
+if os.path.exists(bundle) and not os.path.isdir(bundle):
+    raise SystemExit(f"ERROR: rollback bundle 必须是目录: {bundle}")
+if os.path.isdir(bundle) and os.listdir(bundle):
+    raise SystemExit(f"ERROR: rollback bundle 必须不存在或为空: {bundle}")
+print(bundle)
 PYEOF
 }
 
@@ -579,6 +715,21 @@ handle_failed_apply_signal() { # handle_failed_apply_signal <exit-code> <signal-
   exit "$rc"
 }
 
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  --status|--verify)
+    LIFECYCLE_OPERATION="${1#--}"
+    [ "$#" = 3 ] || { usage >&2; exit 2; }
+    TARGET="$(cd "$2" && pwd)"
+    [ -d "$TARGET/.trellis" ] || { echo "ERROR: $TARGET 不是 Trellis 项目（缺 .trellis/）"; exit 1; }
+    report_rollback_lifecycle "$LIFECYCLE_OPERATION" "$TARGET" "$3"
+    exit $?
+    ;;
+esac
+
 if [ "${1:-}" = "--unapply" ]; then
   [ "$#" = 3 ] || { echo "用法: apply.sh --unapply <目标项目路径> <rollback-bundle>"; exit 2; }
   TARGET="$(cd "$2" && pwd)"
@@ -588,7 +739,15 @@ if [ "${1:-}" = "--unapply" ]; then
   exit 0
 fi
 
-TARGET="${1:?用法: apply.sh <目标项目路径> [platform] [--rollback-bundle <外部目录>]}"
+LIFECYCLE_OPERATION="apply"
+case "${1:-}" in
+  --plan|--upgrade)
+    LIFECYCLE_OPERATION="${1#--}"
+    shift
+    ;;
+esac
+[ "$#" -gt 0 ] || { usage >&2; exit 2; }
+TARGET="$1"
 TARGET="$(cd "$TARGET" && pwd)"
 [ -d "$TARGET/.trellis" ] || { echo "ERROR: $TARGET 不是 Trellis 项目（缺 .trellis/），先 trellis init"; exit 1; }
 shift
@@ -608,6 +767,10 @@ while [ "$#" -gt 0 ]; do
     *) echo "ERROR: 未知参数: $1"; exit 2 ;;
   esac
 done
+if [ "$LIFECYCLE_OPERATION" = upgrade ] && [ -z "$ROLLBACK_BUNDLE" ]; then
+  echo "ERROR: --upgrade 必须指定新的 --rollback-bundle" >&2
+  exit 2
+fi
 GURU_WITH_GITNEXUS="${GURU_WITH_GITNEXUS:-0}"
 GURU_ADVERSARIAL_ENABLED="${GURU_ADVERSARIAL_ENABLED:-}"
 
@@ -659,6 +822,22 @@ case "$PLATFORM" in
 esac
 [ -d "$ROOT/specs/$SPEC_NAME" ] || { echo "ERROR: spec 包不存在: specs/${SPEC_NAME}（先 pnpm -C packages/cli sync:guru 或确认 guru-template/specs/）"; exit 1; }
 BOOTSTRAP_PRD="$HERE/bootstrap/${PLATFORM}-bootstrap-prd.md"
+
+if [ "$LIFECYCLE_OPERATION" = plan ]; then
+  PLANNED_BUNDLE="none"
+  if [ -n "$ROLLBACK_BUNDLE" ]; then
+    PLANNED_BUNDLE="$(validate_planned_rollback_bundle "$TARGET" "$ROLLBACK_BUNDLE")"
+  fi
+  echo "status=ready"
+  echo "operation=apply"
+  echo "target=$TARGET"
+  echo "platform=$PLATFORM"
+  echo "spec=$SPEC_NAME"
+  echo "workflow=$WF_NAME"
+  echo "rollback_bundle=$PLANNED_BUNDLE"
+  echo "mutation=none"
+  exit 0
+fi
 
 # guru-managed skill 全集（剪枝白名单：只删这些里的"非本平台"项，绝不碰用户自有/官方 trellis-* skill）
 GURU_SKILLS="$(ls -d "$HERE"/agents-skills/*/ 2>/dev/null | xargs -n1 basename || true)"
@@ -849,7 +1028,11 @@ PYEOF
   trap 'handle_failed_apply_signal 129 HUP' HUP
 fi
 
-echo "== guru overlay 装配 → ${TARGET} （平台: ${PLATFORM} → spec=${SPEC_NAME} workflow=${WF_NAME}）=="
+if [ "$LIFECYCLE_OPERATION" = upgrade ]; then
+  echo "== guru overlay 显式升级 → ${TARGET} （平台: ${PLATFORM} → spec=${SPEC_NAME} workflow=${WF_NAME}）=="
+else
+  echo "== guru overlay 装配 → ${TARGET} （平台: ${PLATFORM} → spec=${SPEC_NAME} workflow=${WF_NAME}）=="
+fi
 ensure_local_runtime_gitignore
 
 # 1) skills → .agents/skills/（装本平台集合 + shared 需求三件套，剪枝他平台 guru skill）
@@ -866,19 +1049,23 @@ for gs in $GURU_SKILLS; do
 done
 echo "  skills ×${agent_skill_n} → .agents/skills/（${PLATFORM} 平台 + shared 需求三件套）"
 
-# 2) gate + after_create + config patcher → .trellis/scripts/guru/
-mkdir -p "$TARGET/.trellis/scripts/guru"
+# 2) delivery policy + guarded lifecycle + gates → project-local Custom runtime
+mkdir -p "$TARGET/.trellis/scripts/guru" "$TARGET/.trellis/policy"
 cp \
   "$HERE/verify/guru_gate.py" \
   "$HERE/verify/guru_risk.py" \
   "$HERE/verify/guru_contract.py" \
+  "$HERE/verify/guru_delivery_policy.py" \
   "$HERE/verify/guru_review_record.py" \
   "$HERE/hooks/guru_after_create.py" \
+  "$HERE/hooks/guru_after_start.py" \
+  "$HERE/hooks/guru_task.py" \
   "$HERE/verify/guru_config_patch.py" \
   "$HERE/verify/guru_supervise.py" \
   "$TARGET/.trellis/scripts/guru/"
+cp "$HERE/policy/delivery-policy.json" "$TARGET/.trellis/policy/delivery-policy.json"
 chmod +x "$TARGET/.trellis/scripts/guru/"*.py
-echo "  scripts: guru_gate.py, guru_risk.py, guru_contract.py, guru_review_record.py, guru_after_create.py, guru_config_patch.py, guru_supervise.py → .trellis/scripts/guru/"
+echo "  runtime: delivery policy + guarded lifecycle + gates → .trellis/scripts/guru/；policy → .trellis/policy/"
 
 # 3) 平台 hooks（Claude）+ trellis-local：只装共享 + 本平台专属 + 平台化 grill-nudge
 mkdir -p "$TARGET/.claude/hooks" "$TARGET/.claude/skills/trellis-local"
@@ -1365,14 +1552,29 @@ if os.path.isfile(_cfg_path):
             "(after_create/before_start) 会形成重复顶层键，YAML last-wins 将静默覆盖你的 "
             "after_*/before_* hook。请把你的 hook 手动并入 guru-overlay marker 块内（或确认无冲突）。\n")
 
-merge(os.path.join(t, ".trellis", "config.yaml"),
-"""hooks:
-  after_create:
-    - "python3 .trellis/scripts/guru/guru_after_create.py"
-  # 阻断式：需求确认 + overview/detail 双 clean review + detail 确认缺一，task.py start 直接失败。
-  # check-start 只代表 START_READY，不授权实现 worker 或 git commit；后续由 check-implementation/check-commit 分别把关。
-  before_start:
-    - "python3 .trellis/scripts/guru/guru_gate.py check-start\"""")
+task_utils = os.path.join(t, ".trellis", "scripts", "common", "task_utils.py")
+supports_blocking_start = os.path.isfile(task_utils) and "run_blocking_task_hooks" in open(
+    task_utils, encoding="utf-8"
+).read()
+hook_lines = [
+    "hooks:",
+    "  after_create:",
+    '    - "python3 .trellis/scripts/guru/guru_after_create.py"',
+    "  after_start:",
+    '    - "python3 .trellis/scripts/guru/guru_after_start.py"',
+]
+if supports_blocking_start:
+    hook_lines.extend([
+        "  # Blocking hook supported by this checkout-local Core.",
+        "  before_start:",
+        '    - "python3 .trellis/scripts/guru/guru_gate.py check-start"',
+    ])
+else:
+    hook_lines.extend([
+        "  # Official Core has no blocking before_start hook.",
+        "  # Use guru_task.py start; after_start records direct official bypass as advisory evidence.",
+    ])
+merge(os.path.join(t, ".trellis", "config.yaml"), "\n".join(hook_lines))
 PYEOF
 
 # 7.5) by-layer 项目 spec 骨架 + bootstrap 任务接线
@@ -1491,11 +1693,14 @@ FAIL=0
 # 用 ast.parse 做语法检查：py_compile 会写 __pycache__ 副产物，破坏装配幂等性
 if python3 -c "import ast,sys; [ast.parse(open(f,encoding='utf-8').read()) for f in sys.argv[1:]]" \
     "$TARGET/.trellis/scripts/guru/guru_gate.py" \
-    "$TARGET/.trellis/scripts/guru/guru_risk.py" \
-    "$TARGET/.trellis/scripts/guru/guru_contract.py" \
-    "$TARGET/.trellis/scripts/guru/guru_review_record.py" \
-    "$TARGET/.trellis/scripts/guru/guru_after_create.py" \
-    "$TARGET/.trellis/scripts/guru/guru_config_patch.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_risk.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_contract.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_delivery_policy.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_review_record.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_after_create.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_after_start.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_task.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_config_patch.py" \
     "$TARGET/.trellis/scripts/guru/guru_supervise.py" 2>/dev/null; then
   echo "  ✓ guru 脚本语法"
 else
@@ -1503,7 +1708,7 @@ else
 fi
 
 # 循环导入冒烟：ast.parse 抓不到 guru_risk↔guru_gate↔guru_supervise 的导入环；-B 不写 __pycache__ 保幂等
-if PYTHONPATH="$TARGET/.trellis/scripts/guru" python3 -B -c "import guru_risk, guru_contract, guru_review_record, guru_gate, guru_supervise" 2>/dev/null; then
+if PYTHONPATH="$TARGET/.trellis/scripts/guru" python3 -B -c "import guru_risk, guru_contract, guru_delivery_policy, guru_review_record, guru_gate, guru_supervise, guru_task" 2>/dev/null; then
   echo "  ✓ guru 脚本可导入（无循环依赖）"
 else
   echo "  ✗ guru 脚本导入失败（循环依赖 / 缺失模块）"; FAIL=1
@@ -1524,18 +1729,25 @@ else
 fi
 
 if grep -q "run_blocking_task_hooks" "$TARGET/.trellis/scripts/common/task_utils.py" 2>/dev/null; then
-  echo "  ✓ core 支持 before_start 阻断钩子"
+  if grep -q 'guru_gate.py check-start' "$TARGET/.trellis/config.yaml"; then
+    echo "  ✓ core 支持 before_start 阻断钩子"
+  else
+    echo "  ✗ core 支持 before_start，但 Guru marker 未接线"; FAIL=1
+  fi
 else
-  # §7 刚把 before_start→guru_gate.py 写进 config.yaml。若 core 不支持阻断钩子，该 Gate 被静默忽略
-  # → 用户以为有硬 Gate、实则 task.py start 拦不住（最危险的失败：假安全）。故硬失败，不软警告。
-  # 根因不在本 overlay：core 脚本归 trellis update 的哈希三方合并管理（见脚本头部边界），本 overlay
-  # 按设计不碰 core。此缺口=项目用「上游」CLI init/update（.trellis/.version 不带 -guru），其 core 无此能力。
-  ver="$(cat "$TARGET/.trellis/.version" 2>/dev/null || echo '未知')"
-  printf '  \033[31m✗ core 缺 before_start 阻断支持：guru 硬 Gate 已接线但不会生效（task.py start 拦不住）！\033[0m\n'
-  echo "    根因：本项目用上游 CLI 装的（.trellis/.version=${ver}，非 -guru）。修复=用 guru CLI 重新基线 core（可复现、哈希追踪）："
-  echo "      npm i -g @devsc/trellis@guru   # 或用 fork 本地 bin：node <fork>/packages/cli/bin/trellis.js"
-  echo "      cd $TARGET && trellis update    # 交互式：对 task.py / common/task_utils.py 选「取模板版」"
-  FAIL=1
+  # Official Trellis exposes non-blocking after_* hooks. Do not install a
+  # before_start key that Core would silently ignore; the guarded wrapper is
+  # the writable high-risk entry, after_start records bypass truthfully, and
+  # the Codex commit guard retains the irreversible boundary.
+  if grep -q 'guru_gate.py check-start' "$TARGET/.trellis/config.yaml"; then
+    echo "  ✗ official Core 不支持 before_start，但 config 仍宣称硬 Gate"; FAIL=1
+  elif [ -x "$TARGET/.trellis/scripts/guru/guru_task.py" ] \
+      && grep -q 'guru_after_start.py' "$TARGET/.trellis/config.yaml" \
+      && [ -x "$TARGET/.codex/hooks/block-unstarted-commit.sh" ]; then
+    echo "  ✓ official Core compensated：guarded wrapper + after_start evidence + Codex commit guard"
+  else
+    echo "  ✗ official Core compensated lifecycle 接线不完整"; FAIL=1
+  fi
 fi
 
 if [ -f "$TARGET/scripts/check_workflow_compliance.py" ]; then

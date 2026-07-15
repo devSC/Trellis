@@ -8,6 +8,6 @@
 
 ## 摘要
 
-设计以官方 Custom-first、功能阶段 Trellis Core 零修改、完整可卸载为边界，将 Guru 的 Template Registry、project-local Extension、全任务路由、语义摘要、独立 review、有限监督、上下文复用、设计同步与回放基准收敛为一套可验证控制面。
+设计以官方 Custom-first、功能阶段 Trellis Core 零修改、完整可卸载为边界。自 2026-07-15 起，交付由 `prd.md` 与 requirement package 的 M0-M4 outcome milestones 驱动；内部模块、slice 数量、bootstrap burn 和 reviewer identity 基础设施不是完成标准。
 
-本文件仅保留任务入口和摘要；行为归属、架构图、章节承接索引、UNIT 合同与测试映射均以正式设计包为准。
+本文件仅保留任务入口和摘要；正式设计包作为历史设计与可选实现参考保留。若设计包与当前 outcome milestones 冲突，以 requirement package 和 `prd.md` 的最新里程碑为准。

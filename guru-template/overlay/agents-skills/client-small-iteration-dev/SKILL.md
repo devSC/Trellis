@@ -22,20 +22,20 @@ description: 客户端小需求端到端闭环编排：按入口决策树分流�
    同时判定风险并按固定表路由：
    - `low -> small_inline`：局部 UI / 文案 / 注释 / 格式 / 非共享配置等低风险小改，且未命中高风险信号时，默认本轮 inline 处理，不创建完整 Trellis task，不要求 full Guru gate。
    - `low + commit -> micro_task`：同一低风险小改一旦需要 commit，必须创建或复用最小任务，写入任务目录 `gate-contract.json`，只承载 scoped commit contract，不进入完整规划链。
-   - `medium -> lite_task`：局部业务行为、单层逻辑、小范围多文件或需要可复跑验证的变更，进入轻量链（prd 简版 + 所碰层 design 合同 + 实现/验证），采用 bounded review policy。
+   - `medium -> lite_task`：局部业务行为、单层逻辑、小范围多文件或需要可复跑验证的变更，只做 compact intake，然后由当前主会话 host-inline 实现并运行 scoped deterministic_final；不生成 PRD/Overview/Detail，不确认，不派 Worker。
    - `high -> full_chain`：核心玩法 / 付费 / 广告 / 存档或持久化状态 / 权限 / 隐私或数据采集 / DB 或 schema / workflow、hook、gate、runtime / 跨层协议 / 发布交付链，默认推荐完整五阶段（full 链，目录级设计包）；即使用户要求 `lite_task` 或 `micro_task`，也必须写入偏好审计并保持 `full_chain`；override 不能授权高风险降级。
 
    **判轨落盘**：`guru_chain` 仍只表达 `full|light` 的既有 Guru 产物形态；`gate-contract.json.route` 记录实际执行 route（`micro_task|lite_task|full_chain`），`assessment.recommended_route` 记录风险系统推荐，`route_selection` 记录用户选择、推荐值、风险确认与用户原话。`gate-degradations.jsonl` 只能追加真实发生的 gate/tool 失败与补偿检查证据，是事实记录，不是预授权绕行单。非高风险 route 可在合法 user override 审计后选择更轻 route；高风险 override 只记录用户偏好，不能授权 `lite_task` 或 `micro_task`，后续 Gate 必须要求 `full_chain`。
 
-   **route review policy**：route 只能放宽 adversarial 证据要求，不能绕过结构 Gate、人工确认、当前 blocked/medium+ 证据、staged scope 或 implementation review digest。`small_inline` / `micro_task` 不要求 requirements adversarial review；`lite_task` 不强制 requirements adversarial review，overview/detail 仍需当前 digest 两条 clean，但不强制 adversarial reviewer；`full_chain`、`risk=unknown`、缺失或非法 contract 保持 strict gate 路径，且只有 `guru.supervision.adversarial_enabled=true` 时才默认要求 requirements adversarial review。高风险推荐 full 且必须执行 full_chain；用户确认选择 lite/micro 时只能形成 route_selection 审计，Gate 仍拒绝非 full_chain 合同。lite 中低严重度文案 nit / P3 follow-up 可作为后续项，不强制刷新 PRD digest 或重跑 requirements review；若 review/supervise 发现范围扩大、验收变化或高风险信号，必须停下请用户确认扩 scope、保持当前 route 或改选 full，不能把 `evidence_ready` 静默改成 `user_confirmed`。
+   **route review policy**：以 `gate-contract.json.route` 为执行权威。`small_inline` / `micro_task` 不进入 Full planning review；`lite_task` 固定为 compact intake → host-inline → scoped deterministic_final，确认 0、Worker 0、无 requirements/Overview/Detail/check-implementation；只有 `full_chain`、`risk=unknown`、缺失或非法 contract 进入 strict Gate。Lite 发现 scope expansion 或 high-risk 时先 re-intake 为 Full，不在 Lite 内补跑 Full Gate。
 
-2. **需求澄清（简版）**：行为（Given/When/Then）+ 边界（不做什么）+ 验收（怎么算对）三要素；未决问题向用户提问（一次 1~4 个），不私自拍板。
+2. **Lite 执行**：记录 compact intake 和精确 scope，立即 host-inline 修改真实代码，执行与改动匹配的 focused check 并写入 mutable evidence。只有新增 high-risk 或 scope expansion 才停止并提升为 Full。
 
-3. **必要的详细设计单元**：对所碰层产出合同八问（装载 `.trellis/spec/harness/detail/` 的 L1 + 对应 L2）；小改可单文档多章节，但每章独立满足合同。
+3. **Full 需求与设计**：只有 Full 才执行需求澄清、Overview、Detail、合同八问及其 review/confirm。
 
 4. **实现与验证**：按 `flutter-implementation-guru-writing` 执行（含 implementation-trace、逐片验证、存量豁免处置）。
 
-5. **每步人工 Gate**：产物给用户过目后再进下一步，不一次推到底。
+5. **人工 Gate**：只在 Full/high-risk 的批量风险确认与不可逆边界使用；Lite 不逐步询问。
 
 6. **收口输出**：结论 → 改动 → 验证证据 → 风险 → 下一步。
 

@@ -2,21 +2,23 @@
 
 ## Reliability
 
-- Filesystem lifecycle operations are crash-recoverable, idempotent and ownership-preserving.
+- Filesystem lifecycle operations are idempotent and ownership-preserving. Trappable failures recover automatically when exact ownership is provable; power loss, `SIGKILL` or restore I/O failure retains an external preimage and one explicit manual-recovery action.
 - Gate and worker state transitions use current digest/scope CAS and a single-run lock.
 - Budget expiry produces a terminal report; it never downgrades or skips a Gate.
 
 ## Performance And Cost
 
 - TTFC applies only to implementation intent; other intents declare a route-specific first-value metric.
-- Benchmark reports cold and warm runs separately using planning time, canonical context bytes and provider uncached+cached input-token telemetry as independent mandatory proxies; unavailable token telemetry blocks the comparison instead of becoming zero or being replaced by another proxy.
-- The <=70% reuse rule applies independently to declared proxies and uses a documented minimum cold-baseline floor to avoid meaningless ratios.
+- Benchmark reports cold and warm runs separately using planning time, canonical context bytes, model/tool cycles and provider token telemetry when available.
+- Unavailable provider token telemetry remains `unknown`; a separately labelled controllable token-budget proxy may be reported but must not be presented as actual billing or provider-token reduction.
+- The <=70% reuse rule applies independently to available controllable proxies and uses a documented minimum cold-baseline floor to avoid meaningless ratios.
 
 ## Security And Trust
 
 - No secret value is stored in planning, install state or logs.
-- Confirmation/reviewer identity binds trusted platform/TTY evidence, task, scope and artifact digest.
-- Agent-authored strings and run ids are not authorization or independence proof.
+- This is a self-use local workflow, not a hostile local-bundle security boundary.
+- Confirmation evidence binds task, scope and artifact digest for workflow correctness; it is not a cryptographic authorization claim.
+- Provider/context provenance is recorded honestly. Agent-authored strings, same-provider contexts and run ids are not independence proof.
 
 ## Compatibility
 

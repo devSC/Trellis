@@ -4,6 +4,12 @@ Status: **candidate usable**. This is the first runnable Custom-overlay version,
 
 Recorded at: `2026-07-15T09:26:23+08:00`
 
+Current status note: this file preserves the original V0 deadline snapshot. Its
+hardening list is superseded by `HARDENED_STATUS_REPORT.md`: failed-apply recovery,
+managed-asset unapply, the full Custom overlay suite, and official Template
+cutover have since completed. Deferred infrastructure that does not serve the six
+user outcomes remains intentionally deleted from the critical path.
+
 Exact V0 target digest: `cfea96ad35742e0a6088d7eed15873f0bcbbdbef00c71857096a97f1a48e66d5`
 
 ## What Is Usable
@@ -98,14 +104,17 @@ Final Codex check-only review: PASS, findings=none, recommendation=candidate_usa
 
 The V0 validation intentionally did not run the full overlay suite. That suite belongs to hardening, not this candidate-usable deadline.
 
-## Deferred Hardening
+## V0 Deferral Resolution
 
-- Partial-failed-apply automatic recovery.
-- Incremental per-asset uninstall instead of exact full-preimage restore.
-- Full overlay regression suite.
-- Bootstrap burn and bootstrap reuse.
-- Marketplace catalog, ExtensionManager WAL, trusted reviewer identity, and generic replay framework.
-- Six independent slice lifecycles and planning review repetition.
-- Template cutover hardening and release packaging.
+| V0 item | Current resolution |
+| --- | --- |
+| Partial failed-apply recovery | Completed: exact owned recovery or explicit `manual_required` fail-closed state |
+| Incremental per-asset uninstall | Completed as managed-asset unapply with unrelated user content preserved |
+| Full overlay regression | Completed: `564/0` hardening baseline; M4 owns the final proportional rerun |
+| Template cutover hardening | Completed in `M3_CUSTOM_TEMPLATE_CUTOVER_PROOF.md`: official 0.6.7 four-stack E2E plus reversible lifecycle `120/0` |
+| Bootstrap burn/reuse | Deleted from completion criteria; historical chain remains read-only and not burned/reused |
+| Marketplace/WAL/trusted identity/generic replay/six slice lifecycles | Deleted from completion criteria because they add no required user outcome |
+| Production release packaging | Still out of scope; current status remains a self-use hardened candidate |
 
-None of these deferred items blocks the V0 install, Lite route, high-risk fail-closed route, evidence reuse, deterministic consistency check, or clean unapply demonstrated above.
+The original V0 measurements above remain historical evidence and are not
+rewritten as if they were collected by the later hardened implementation.

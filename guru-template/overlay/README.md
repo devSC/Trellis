@@ -6,6 +6,8 @@
 |----|--------------|------|
 | `agents-skills/client-*/` | `.agents/skills/` | 7 个执行类 skill（15 平台共享池） |
 | `verify/guru_gate.py` | `.trellis/scripts/guru/` | 五阶段 Gate（worktree.yaml verify 调 `auto`） |
+| `verify/guru_delivery_policy.py` + `policy/delivery-policy.json` | `.trellis/scripts/guru/` + `.trellis/policy/` | 四路由、预算、证据复用与 Codex-only policy |
+| `hooks/guru_task.py` + `hooks/guru_after_start.py` | `.trellis/scripts/guru/` | High-risk guarded start；官方 Core 的 direct start 只记录 advisory evidence |
 | `verify/guru_supervise.py` | `.trellis/scripts/guru/` | channel 驱动的 requirements/overview/detail/implement/check runner |
 | `verify/guru_config_patch.py` | `.trellis/scripts/guru/` | 幂等补齐 `.trellis/config.yaml` 的 Guru 默认配置 |
 | `hooks/guru_after_create.py` | `.trellis/scripts/guru/` | jsonl 基线注入（config.yaml after_create） |
@@ -20,6 +22,25 @@
 apply.sh 负责 guru 定制内容的完整安装与升级刷新：skills（.agents + 平台镜像）、gate/hook 脚本、
 settings.json 接线、workflow.md、harness/guides SSOT、config 接线，并在装配后自检。
 
+用户生命周期保持在同一个兼容入口，不引入第二套状态或 ownership 真源：
+
+| 操作 | 命令 | 是否写目标/rollback bundle |
+|------|------|----------------------------|
+| 计划 | `apply.sh --plan TARGET [platform] [--rollback-bundle NEW_BUNDLE]` | 否；只校验 target、平台、Template 输入和可选 bundle 路径 |
+| 安装 | `apply.sh TARGET [platform] [--rollback-bundle NEW_BUNDLE]` | 是；原有语法保持兼容 |
+| 状态 | `apply.sh --status TARGET BUNDLE` | 否；稳定输出 `installed-current`、`drifted` 或 `not-applied` |
+| 验证 | `apply.sh --verify TARGET BUNDLE` | 否；复用 manifest、managed-assets 与 preimage 完整性，漂移或篡改返回非零 |
+| 升级 | `apply.sh --upgrade TARGET [platform] --rollback-bundle NEW_BUNDLE` | 是；复用 apply 路径，bundle 必须为新的外部空目录 |
+| 卸载 | `apply.sh --unapply TARGET BUNDLE` | 是；只恢复 bundle 拥有且 post-state 匹配的 assets |
+
+`plan`、`status`、`verify` 不创建审计文件、不刷新时间戳，也不改 target 或 bundle 字节。
+`prepared`（包括 failed-apply 的 `manual_required`）表示安装未完整收口，`status` 必须报告
+`drifted`，不能把部分写入的 target 假报为 `not-applied`；只有缺失 receipt 或已
+`recovered`/`restored` 的 bundle 才报告 `not-applied`。
+显式 `upgrade` 先把升级前 target 保存进新的外部 rollback bundle，再运行原 apply 刷新逻辑；
+因此随后用这个新 bundle 执行 `unapply`，会恢复到**本次升级前**，而不是首次安装前。
+目标已有的用户 config 键、`project-conventions.md` 和其他非 managed 文件继续按既有 apply 合并/保留规则处理。
+
 需要可撤销安装时，rollback bundle 必须放在目标项目外部。成功 apply 会把 preimage 与
 post-apply target 做结构化 diff，在 `managed-assets.json` 中稳定记录实际新增、替换或删除的
 非 Git assets，以及各自 pre/post type、mode、文件 digest/size 或 symlink target。普通
@@ -30,10 +51,18 @@ unapply，也会逐字节保留；managed asset 漂移或 bundle/evidence 篡改
 新增文件会连同非空目录保留。`.git` 从不进入 manifest/CAS/preimage，也不会被读取或修改：
 
 ```bash
+bash /path/to/guru-template/overlay/apply.sh --plan /path/to/project flutter \
+  --rollback-bundle /tmp/guru-overlay-rollback
 bash /path/to/guru-template/overlay/apply.sh /path/to/project flutter \
   --rollback-bundle /tmp/guru-overlay-rollback
-bash /path/to/guru-template/overlay/apply.sh --unapply /path/to/project \
+bash /path/to/guru-template/overlay/apply.sh --status /path/to/project \
   /tmp/guru-overlay-rollback
+bash /path/to/guru-template/overlay/apply.sh --verify /path/to/project \
+  /tmp/guru-overlay-rollback
+bash /path/to/guru-template/overlay/apply.sh --upgrade /path/to/project flutter \
+  --rollback-bundle /tmp/guru-overlay-upgrade-rollback
+bash /path/to/guru-template/overlay/apply.sh --unapply /path/to/project \
+  /tmp/guru-overlay-upgrade-rollback
 ```
 
 带 rollback bundle 的 apply 会先保存 `prepared` preimage，并在全部目标写入完成后记录
@@ -50,6 +79,11 @@ unapply；不会猜测 ownership。
 V0 的 docs/code/tests 一致性、四路由 policy smoke、Codex-only event 负例与 apply/unapply
 round-trip，以及 failed-apply recovery/CAS 拒绝覆盖负例，由
 `bash guru-template/overlay/tests/apply_test.sh` 一次性验证。
+
+官方 Trellis Core 目前没有阻断式 `before_start`。安装器不会写入一个 Core 会忽略的假硬 Gate，
+而是安装 `guru_task.py start` 作为 High-risk 可写入口，使用 `after_start` 记录 direct official
+start 的 advisory evidence，并由 Codex commit guard 保留不可逆边界。若目标 checkout 确实提供
+blocking `before_start`，安装器才在 Guru config marker 中追加该 hook。
 
 不负责（边界）：
 - **CLI core 脚本**（task.py/common/*）：归 `trellis update` 的 hash 三方合并；apply.sh 只检测

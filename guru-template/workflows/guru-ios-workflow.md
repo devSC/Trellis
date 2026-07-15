@@ -9,7 +9,7 @@
 
 ## Core Principles
 
-1. **Plan before code** — requirements 已确认、overview/detail 当前 digest 双 clean（默认各含至少一次 adversarial clean；`adversarial_enabled=false` 时不要求）、detail 已确认后才能 `task.py start`（before_start 钩子强制校验）
+1. **Plan before code** — Full/high-risk 必须先完成 requirements、overview/detail 与 detail 确认，再通过 `guru_task.py start` 的 digest-bound guarded activation；Lite 保持 host-inline，不继承 Full planning Gate
 2. **Specs injected, not remembered** — 规则经 jsonl/hook 注入，不靠记忆
 3. **Persist everything** — 研究、决策、trace 全部落文件
 4. **Gate 不过不进下一阶段** — 缺陷只能回上游阶段修，禁止下游补造
@@ -29,15 +29,15 @@
 - **iOS 三条最高禁令（违反即任务失败）**：① 禁止违反分层依赖律的 import（Domain 不得 import App/Infrastructure/UI；View 不得直接 import 持久化或网络）② 禁止 View 间直接导航（必须走 `AppCoordinator`）③ 禁止用 CoreData / SwiftData 落地持久化（持久化一律走 WCDBSwift + Repository）。
 - **golden-path 锁定硬规则**：FactoryKit `@Injected` DI（禁手动 `init()` 注入依赖）；Repository 模式强制（接口在 Domain，实现在 Infrastructure）；`enum Error` 分层定义（per domain，如 `StoryError` / `PersistenceError`）；ViewModel = `ObservableObject` + `@Published`；private 方法收纳到 `private extension`。
 - **Guru Gate 机制**：planning 只保留 `requirements` 与 `detail` 两个人工确认；`overview` / `detail` 的设计 review 证据写入 `task.json.guru_gates.review_runs`，完整模型见 `.trellis/spec/harness/gate/gate-confirmation-model.md`。通道按 config `guru.gate_mode`（**本节是通道唯一主定义**）：
-  - `requirements`：结构 Gate 通过后按 route 选择默认 review。`full_chain` 且 `guru.supervision.adversarial_enabled=true` 时运行 `python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements <task_dir>` 做 opposite-provider 需求 review；`full_chain` 且配置为 false 时不默认 spawn adversarial worker，但仍要求当前 digest clean/current requirements review；`lite_task` 走 bounded requirements path，adversarial requirements review 可选；`micro_task` / `small_inline` 默认不做 task-local requirements adversarial review（若后续需要 commit，先创建/路由有效 contract）。`route_class=REQ_BLOCKER` 回需求修订并使下游 overview/detail 证据在需求 digest 变化后重跑，`review_result=clean/requirements-ready` 后才停下等待用户运行 `guru_gate.py confirm requirements <task_dir>`。requirements review 不使用 review-evidence Gate、不写 review_runs；`confirm requirements` / `check-start` 必须硬要求当前 digest clean/current requirements review，missing/deferred/blocked/stale 不得人工越过。需求发现阶段内置 Domain Grill，不再要求 post-draft grill Gate。
+  - `requirements`：结构 Gate 通过后按 route 选择默认 review。`full_chain` 且 `guru.supervision.adversarial_enabled=true` 时运行 `python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements <task_dir>` 做 opposite-provider 需求 review；`full_chain` 且配置为 false 时不默认 spawn adversarial worker，但仍要求当前 digest clean/current requirements review；`lite_task` 不进入该 Full requirements review/confirm path；`micro_task` / `small_inline` 默认不做 task-local requirements adversarial review（若后续需要 commit，先创建/路由有效 contract）。`route_class=REQ_BLOCKER` 回需求修订并使下游 overview/detail 证据在需求 digest 变化后重跑，`review_result=clean/requirements-ready` 后才停下等待用户运行 `guru_gate.py confirm requirements <task_dir>`。requirements review 不使用 review-evidence Gate、不写 review_runs；`confirm requirements` / `check-start` 必须硬要求当前 digest clean/current requirements review，missing/deferred/blocked/stale 不得人工越过。需求发现阶段内置 Domain Grill，不再要求 post-draft grill Gate。
   - `overview`：结构 Gate 通过 + 当前 digest 下两个不同 `run_id` 的 clean review（默认至少一条 reviewer 含 `adversarial`；若 `guru.supervision.adversarial_enabled=false`，只要求双 clean）后自动通过；`confirm overview` 必须失败。
   - `detail`：结构 Gate 通过 + 当前 digest 下两个不同 `run_id` 的 clean review（默认至少一条 reviewer 含 `adversarial`；若 `guru.supervision.adversarial_enabled=false`，只要求双 clean）后，用户运行 `guru_gate.py confirm detail <task_dir>`。
   - 配置 `guru.supervision.adversarial_enabled: false` 可临时关闭 `--adversarial` 的 opposite-provider worker；gate 会动态读取该配置：requirements 不再强制 opposite-provider adversarial clean，overview/detail 不再要求 adversarial reviewer，但仍要求当前 digest、双 clean review、用户确认以及没有 blocked/medium+ 当前证据。
-  - route-aware review policy 只放宽 adversarial 证据要求：`small_inline`/`micro_task` 不要求 requirements adversarial review；`lite_task` 采用 bounded review policy（requirements adversarial 可省略，overview/detail 仍要当前 digest 双 clean，但不强制 adversarial reviewer）；`full_chain` / `risk=unknown` / 缺失或非法 contract 保持 strict 路径，且仅当 `guru.supervision.adversarial_enabled=true` 时默认要求 requirements adversarial review。当前 digest 的 blocked、malformed、medium+ evidence 仍硬阻断。
+  - route-aware policy 必须匹配 delivery policy：`small_inline`/`micro_task` 不继承 Full planning review；`lite_task` 使用 compact intake + host-inline implementation，代码前不运行 requirements/Overview/Detail review Gate，只在代码后运行 `deterministic_final`；`full_chain` / `risk=unknown` / 缺失或非法 contract 才保持 strict planning/review 路径。Lite 若出现 high-risk 或 scope expansion，先重新 intake 并提升为 Full，不得在 Lite 内补跑 Full Gate。
   - **strict（默认）**：用户本人在交互式终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm requirements|detail`；agent 经工具运行因无 TTY 被拒。
   - **soft**：用户在对话中明确确认后，agent 运行 `guru_gate.py confirm requirements|detail --via-agent --user-quote "<用户确认原话>"` 代跑（`--user-quote` 必填，留痕标注 soft/agent + 用户原话）；**未获用户本轮明确确认不得执行**。
-  - 进度用 `guru_gate.py status <task_dir>` 查；最终以 `guru_gate.py check-start <task_dir>` 作为 `task.py start` 前强制复查。
-  - `check-start` 成功只产生 `START_READY`：下一步仅可运行 `task.py start`；实现/质检 worker 另由 `check-implementation` 要求 `task.json.status == in_progress`，提交另由 `check-commit` 校验 staged scope 与 implementation review。
+  - 进度用 `guru_gate.py status <task_dir>` 查；Full/high-risk 以 `guru_gate.py check-start <task_dir>` 作为 guarded activation 前复查。
+  - `check-start` 成功只产生 `START_READY`：Full/high-risk 下一步仅可运行已安装的 `python3 .trellis/scripts/guru/guru_task.py start ...` 并传入当前 gate/slice/risk/envelope/attestation digests；不得把 direct `task.py start` 当作 Full 正常入口。实现/质检 worker 另由 `check-implementation` 要求 `task.json.status == in_progress`，提交另由 `check-commit` 校验 staged scope 与 implementation review。
   - Full 在 detail review/confirm 前必须把按 slice 分组的完整 required critical/high decision universe 写入 `implement.md` 的唯一 `GURU:RISK_DECISION_INVENTORY` JSON fence；精确 schema、resolution evidence 和 Start Guard 重建规则只以 gate SSOT 为准。缺 inventory 或 unresolved 集合非空时不得启动。
 
 ### Planning Artifacts（guru 五阶段语义，双轨制）
@@ -88,7 +88,7 @@ Phase 3: Finish  → 验证（swift build/test）→ 萃取回写 spec → commi
 - 简单对话/小任务：先问是否需要建 Trellis 任务；用户说不需要则本轮跳过 Trellis。
 - 进入任务后第一步判定碰哪几层（只文案 → i18n 路径；只一个 ViewModel/View → 局部链；跨层 feature → 全链）与风险等级。
 - **核心玩法 / 付费内购 / 存档 / 涉权限或数据采集 / 跨 DDD 多层 → 默认推荐完整五阶段（full 链，目录级设计包）**；单层小改可走轻量链（prd 简版 + 所碰 doc_type 的详细合同 + 实现），但每步仍要 Gate。判轨结论落 task.json `guru_chain`（默认 full；降 light 需用户同意）和 `gate-contract.json`；非高风险选择较轻 route 时必须记录 `route_selection` 风险确认审计；高风险请求较轻 route 只能记录偏好，不能绕过 `full_chain`。
-- 建任务许可 ≠ 实现许可：实现必须等 requirements 确认、overview/detail 双 clean（默认各含 adversarial clean；`adversarial_enabled=false` 时不要求）、detail 确认后 `task.py start`。
+- 建任务许可 ≠ 实现许可：Full/high-risk 实现必须等 requirements、overview/detail 与 detail 确认后走 `guru_task.py start` guarded activation；Lite 不走这条 Full 链。
 
 [workflow-state:no_task]
 无任务：先分类请求并征得建任务同意。单层小改可不建；commit 需有效 contract；高风险或跨层默认 full_chain；选择较轻 route 必须记录 route_selection。
@@ -102,23 +102,23 @@ Phase 3: Finish  → 验证（swift build/test）→ 萃取回写 spec → commi
 - 1.3 概要设计 `[required · repeatable]`（`design.md` §1 + 概要 Gate）
 - 1.4 详细设计 `[required · repeatable]`（`design.md` §2 + `implement.md` + 详细 Gate）
 - 1.5 配置上下文 `[required · once]`（jsonl 必含 harness SSOT + iOS 项目约定）
-- 1.6 激活任务 `[required · once]`（review evidence + detail confirm → `task.py start`）
+- 1.6 激活任务 `[required · once]`（Full review/risk evidence + detail confirm → `guru_task.py start`）
 - 1.7 完成判定
 
 [workflow-state:planning]
-无需求→1.1；高风险决策 one-question：每轮 1 问，答后回写 prd/需求包；requirement-writing 只草拟，不代确认。无概要→1.3；无详细→1.4。Gate=route-aware req review+confirm→overview/detail 双 clean（full+配置开启含 adversarial；lite 不强制）→detail confirm；jsonl 齐后 start。
+先按 delivery policy route：Lite=compact intake→host-inline 实现→deterministic_final（不进 requirements/Overview/Detail review）；Full=需求确认→Overview/Detail clean→detail confirm→guarded activation；jsonl 齐后 start。
 [/workflow-state:planning]
 
 [workflow-state:planning-channel]
-无需求→1.1；高风险决策 one-question：每轮 1 问，答后回写 prd/需求包；requirement-writing 只草拟，不代确认。无概要→1.3；无详细→1.4。Gate=route-aware req review+confirm→overview/detail 双 clean（full+配置开启含 adversarial；lite 不强制）→detail confirm；主会话跑 guru_supervise。
+先按 delivery policy route：Lite=compact intake→host-inline 实现→deterministic_final（不进 requirements/Overview/Detail review）；Full=需求确认→Overview/Detail clean→detail confirm→guarded activation；主会话跑 guru_supervise。
 [/workflow-state:planning-channel]
 
 [workflow-state:planning-sub-agent]
-无需求→1.1；高风险决策 one-question：每轮 1 问，答后回写 prd/需求包；requirement-writing 只草拟，不代确认。无概要→1.3；无详细→1.4。Gate=route-aware req review+confirm→overview/detail 双 clean（full+配置开启含 adversarial；lite 不强制）→detail confirm；legacy sub-agent 用 Active task。
+先按 delivery policy route：Lite=compact intake→host-inline 实现→deterministic_final（不进 requirements/Overview/Detail review）；Full=需求确认→Overview/Detail clean→detail confirm→guarded activation；legacy sub-agent 用 Active task。
 [/workflow-state:planning-sub-agent]
 
 [workflow-state:planning-inline]
-无需求→1.1；高风险决策 one-question：每轮 1 问，答后回写 prd/需求包；requirement-writing 只草拟，不代确认。无概要→1.3；无详细→1.4。Gate=route-aware req review+confirm→overview/detail 双 clean（full+配置开启含 adversarial；lite 不强制）→detail confirm；inline 先 trellis-before-dev。
+先按 delivery policy route：Lite=compact intake→host-inline 实现→deterministic_final（不进 requirements/Overview/Detail review）；Full=需求确认→Overview/Detail clean→detail confirm→guarded activation；inline 先 trellis-before-dev。
 [/workflow-state:planning-inline]
 
 ### Phase 2: Execute（实现阶段）
@@ -128,14 +128,16 @@ Phase 3: Finish  → 验证（swift build/test）→ 萃取回写 spec → commi
 - 2.3 回退 `[on demand]`
 
 [workflow-state:in_progress]
-dispatch-mode aware：guru_supervise.py implement-slices <task-dir> --dry-run --backend auto；按 selected_backend 派发；sub-agent prompt 首行 Active task: <path>，worker 不得嵌套 spawn implement/check；channel 仅 selected_backend=channel 官方 implement-check；inline串行；decision=serial|blocked不并行；dispatch_now/deferred_slices；无验证不commit；设计缺陷回P1。
+route=`gate-contract.json.route`. lite_task: host-inline -> deterministic_final; no pre-code review/confirm/Worker. full_chain: guru_supervise.py implement-slices <task-dir> --dry-run --backend auto; dispatch only selected_backend.
 [/workflow-state:in_progress]
 
 [workflow-state:in_progress-channel]
+Lite 不进入 channel/Worker 路径；以下 channel 行为仅适用于 Full。
 实现→质检→spec回写→commit→finish。channel：主会话运行 guru_supervise.py implement-check（官方 trellis channel；必要时拆分 implement/check），注入存在的 jsonl/任务产物/Guru skill，等待 done/error/killed，失败先读 messages --raw 和 log；worker 不 commit/push/merge。
 [/workflow-state:in_progress-channel]
 
 [workflow-state:in_progress-sub-agent]
+Lite 不派 sub-agent；以下 sub-agent 行为仅适用于 Full。
 实现→质检→spec回写→commit→finish。legacy sub-agent：dispatch trellis-implement/check，prompt 以 Active task: <path> 开头；trace 记执行/swift build+test 证据/偏差；质检按 guru iOS 口径（分层律+DI+doc_type）；无 build/test 证据不 commit；设计缺陷回 Phase1。
 [/workflow-state:in_progress-sub-agent]
 
@@ -161,16 +163,18 @@ dispatch-mode aware：guru_supervise.py implement-slices <task-dir> --dry-run --
 2. `[required]` 步骤不可跳过；`[once]` 步骤产物已存在则跳过。
 3. 阶段可回退：下游发现上游缺陷 → 回上游阶段修订产物 → 重入下游。**禁止下游补造**（详细阶段不补归属、实现阶段不改设计语义）。
 4. 风险路由以 `.trellis/scripts/guru/guru_delivery_policy.py` + `.trellis/policy/delivery-policy.json` 为唯一可执行真源：`low/no commit -> small_inline`，`low + commit + explicit path scope -> micro_task`，`medium/unknown -> lite_task`，`high/unknown-high-signal -> full_chain`。Small/Micro/Lite 的目标是快速 first value；Full 的目标是实现前暴露风险。
-5. 轻量链允许 prd 简版 + 仅所碰 doc_type 的 design 合同，但 Gate 口径不降；预算耗尽只能 terminal stop 或 re-intake，不能跳过 Gate/review/confirmation。
+5. `guru_chain=light` 只描述精简产物形态；Lite 执行仍是 compact intake→host-inline→deterministic_final，不继承 Full Gate。预算耗尽只能 terminal stop 或 re-intake。
 6. doc_type 全程只用钉死七类（`viewmodel`/`usecase`/`repository`/`domain-model`/`view`/`coordinator`/`external`）；归属违反分层依赖律 = 直接 fail。
 
 ### Active Task Routing
+
+**所有平台块的 route 边界**：以 `gate-contract.json.route` 为准。Lite 始终 host-inline + deterministic_final；下文任何 `implement-slices`、implementation Worker 或 planning review 命令都仅适用于 Full。
 
 [Claude Code, Cursor, OpenCode, codex-channel, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi]
 
 - 需求不清 → `trellis-brainstorm`（前置探索）；full 链正式需求 → `requirement-writing` / `requirement-review`（guru-ai-guides）。
 - 概要/详细撰写 → `ios-design-overview-writing` / `ios-design-detail-writing`；Gate 判定 → 对应 `ios-design-overview-review` / `ios-design-detail-review`。
-- 需求发现 / Domain Grill → `trellis-brainstorm`；requirements review 默认按 route：full_chain+配置开启才运行 `guru_supervise.py --adversarial requirements`，lite bounded 可选，micro/small 默认不跑；overview/detail 自动 review/fix → `guru_supervise.py overview|detail`。
+- 需求发现 / Domain Grill → `trellis-brainstorm`；Full 的 requirements/overview/detail review → `guru_supervise.py`；Lite 跳过这些 pre-code review 并保持 host-inline。
 - `in_progress` 实现/质检 → 先运行 `python3 .trellis/scripts/guru/guru_supervise.py implement-slices <task-dir> --dry-run --backend auto` 读取 dispatcher plan；按 `selected_backend` 派发，`channel` 仅 `selected_backend=channel` 时使用官方 worker/`implement-check`，`sub-agent` 按返回 brief，`inline` 串行；worker 不嵌套 spawn implement/check、不 commit/push/merge。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`（萃取九段）。
 
@@ -179,7 +183,7 @@ dispatch-mode aware：guru_supervise.py implement-slices <task-dir> --dry-run --
 [codex-sub-agent]
 
 - 需求不清 → `trellis-brainstorm`；full 链正式需求 → `requirement-writing/review`；概要/详细 → `ios-design-*-writing/review`。
-- 需求发现 / Domain Grill → `trellis-brainstorm`；requirements review 默认按 route：full_chain+配置开启才运行 `guru_supervise.py --adversarial requirements`，lite bounded 可选，micro/small 默认不跑；overview/detail 自动 review/fix → `guru_supervise.py overview|detail`。
+- 需求发现 / Domain Grill → `trellis-brainstorm`；Full 的 requirements/overview/detail review → `guru_supervise.py`；Lite 跳过这些 pre-code review 并保持 host-inline。
 - `in_progress` 实现/质检 → 先运行 `python3 .trellis/scripts/guru/guru_supervise.py implement-slices <task-dir> --dry-run --backend auto`，只按返回的 `trellis-implement` / `trellis-check` brief 派发（口径 = `ios-implementation-guru-writing` / `ios-implementation-guru-review`，prompt 首行 `Active task: <path>`，worker 不嵌套 spawn implement/check）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`。
 
@@ -188,7 +192,7 @@ dispatch-mode aware：guru_supervise.py implement-slices <task-dir> --dry-run --
 [codex-inline, Kilo, Antigravity, Windsurf]
 
 - 需求不清 → `trellis-brainstorm`；full 链正式需求 → `requirement-writing/review`；概要/详细 → `ios-design-*-writing/review`。
-- 需求发现 / Domain Grill → `trellis-brainstorm`；requirements review 默认按 route：full_chain+配置开启才运行 `guru_supervise.py --adversarial requirements`，lite bounded 可选，micro/small 默认不跑；overview/detail 自动 review/fix → `guru_supervise.py overview|detail`。
+- 需求发现 / Domain Grill → `trellis-brainstorm`；Full 的 requirements/overview/detail review → `guru_supervise.py`；Lite 跳过这些 pre-code review 并保持 host-inline。
 - 编辑前 → `trellis-before-dev`（读 iOS spec）；编辑后 → `trellis-check`（口径 = `ios-implementation-guru-review`）。
 - 反复 debug → `trellis-break-loop`；spec 回写 → `trellis-update-spec`。
 
@@ -196,8 +200,8 @@ dispatch-mode aware：guru_supervise.py implement-slices <task-dir> --dry-run --
 
 ### Guardrails
 
-- 任务创建同意 ≠ 实现同意；实现等待 requirements 确认、overview/detail 双 clean（默认各含 adversarial clean；`adversarial_enabled=false` 时不要求）、detail 确认后的 `task.py start`。
-- 阶段跃迁必须经 `guru_gate.py confirm` 人工收口（strict=用户终端；soft=用户**本轮对话明确确认**后 agent 以 `--via-agent --user-quote "<用户原话>"` 代跑）；不得以自写 review 记录或机器检查通过替代；soft 下未获用户确认即代跑属违规（记录留痕可审计）。
+- 任务创建同意 ≠ 实现同意；Full/high-risk 等确认与 current digests 后必须走 guarded wrapper，direct `task.py start` 不是文档化的 Full 入口。
+- Full 的 planning 阶段跃迁必须经 `guru_gate.py confirm` 人工收口；Lite 不进入该确认路径，scope expansion/high-risk 必须 re-intake 为 Full。
 - 合规 STOP：任何可能违反 App Store 审核政策（如隐私清单 `PrivacyInfo.xcprivacy`、ATT、内购规则）或美国法规的不确定性 → 立即停止，输出风险点+替代方案+人类确认清单。
 - iOS 三条最高禁令（见 Trellis System 节）全程生效；planning 必须落盘到 task artifacts；完成报告前必须有 `swift build` + `swift test`（或 `xcodebuild test`）验证证据。
 - 产物语言中文优先（英文仅限标识符/命令/路径/协议字段/专有名词/缩写/原文引用）；面向用户的提问与结论一律中文。
@@ -212,18 +216,19 @@ python3 ./.trellis/scripts/get_context.py --mode phase --step <step>
 
 ## Phase 1 步骤细则
 
+**Route applicability**：1.1-1.7 的 PRD、Overview、Detail、confirm 与 activation 仅适用于 `full_chain`。`lite_task` 只做 compact intake，随后直接由主会话 host-inline 实现；不得执行本节来补 planning 产物。
+
 #### 1.0 创建任务 `[required · once]`
 
 与 Trellis 原版一致：`task.py create "<title>" --slug <name>`（仅 create，不 start）。多交付物用 parent/child 树。
-after_create 钩子默认写入 `guru_chain: full`；按 Request Triage 判定为单层小改且**用户同意**走轻量链时，才把 task.json 改为 `guru_chain: light` 并记录理由。
+after_create 按 delivery policy 写入 `gate-contract.json.route`，它是执行权威；`guru_chain` 只保留产物兼容信息，禁止用于推导 route。Lite 直接 host-inline，Full 才继续 1.1-1.7。
 
 #### 1.1 需求阶段 `[required · repeatable]`
 
 **full 链**：先加载 `requirement-writing`（guru-ai-guides，硬前置=其标准包 requirement-doc-standard 可读，缺即停）撰写/补齐**正式需求包草稿**（项目 docs 需求目录），全稿后加载 `requirement-review` 做门禁审核；review 通过后把行为规格抽取为任务内 `prd.md`（BHV 编号承接需求包场景）。`trellis-brainstorm` 的 one-question loop 仍是高风险产品/范围/风险确认合同；`requirement-writing` 只能生成 `ai_drafted` / `evidence_ready` / open questions，不得绕过用户逐项确认。
-**light 链**：加载 `trellis-brainstorm` 探索需求，直接产出 `prd.md`。
 两轨 `prd.md` 口径一致，**需求五要素**：① 行为规格（Given/When/Then，每条 `BHV-NNN` 标题）② 核心能力清单（P0/P1）③ 失败路径（含 `enum Error` 预期分支，如校验失败 / 持久化失败 / 网络失败）④ 验收场景（可被 `swift test` 断言的可验证信号）⑤ 显式未决问题（默认一次只问用户 1 个最高优先级问题；仅当用户当前消息明确要求“批量确认/一次性确认/这几个都按推荐处理”等覆盖多个 OQ/decision id 时，才可列出 2~4 个并逐项记录确认；模糊“继续/好/按推荐”回退为单个 next_question，其余保持 open）。
 prd 草稿成形后执行 Domain Grill：对照 golden-path/项目约定/既有 BHV 磨术语、压测边界、核对当前代码事实与用户意图，确认的长期术语/边界才回写长期知识，临时需求决策写入 prd。
-**需求 Gate**：五要素缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），按 route 选择 review 默认：`full_chain + guru.supervision.adversarial_enabled=true` 运行 `python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements <task_dir>`；`full_chain + adversarial_enabled=false` 不默认 spawn adversarial worker，但其余 strict gate 不降；`lite_task` 走 bounded requirements path，adversarial requirements review 可选；`micro_task`/`small_inline` 默认无 task-local requirements adversarial review（commit 前必须路由/创建有效 contract）。requirements review 如运行，必须先查 `prd.md`、正式需求包、task context 与 repo evidence；medium+ 需求阻断输出 `route_class=REQ_BLOCKER` 并留在 1.1 修订，需求 digest 变更后下游 overview/detail 证据需重跑；低严重度措辞 nit 不阻断；clean 输出 `review_result=clean/requirements-ready`。requirements review 不使用 review-evidence Gate、不写 review_runs、不代替人工确认；默认只有 clean/current 后才允许 **confirm 人工收口**（通道按 gate_mode，见 Trellis System 节），missing/deferred/blocked/stale 均硬阻断；配置关闭只动态放宽 adversarial review 要求，当前 digest 已有 blocked 或 medium+ 证据仍硬阻断。确认落盘后方可进 1.3。
+**需求 Gate**：五要素缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），按 route 选择 review 默认：`full_chain + guru.supervision.adversarial_enabled=true` 运行 `python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements <task_dir>`；`full_chain + adversarial_enabled=false` 不默认 spawn adversarial worker，但其余 strict gate 不降；`lite_task` 不进入该 Full requirements review/confirm path；`micro_task`/`small_inline` 默认无 task-local requirements adversarial review（commit 前必须路由/创建有效 contract）。requirements review 如运行，必须先查 `prd.md`、正式需求包、task context 与 repo evidence；medium+ 需求阻断输出 `route_class=REQ_BLOCKER` 并留在 1.1 修订，需求 digest 变更后下游 overview/detail 证据需重跑；低严重度措辞 nit 不阻断；clean 输出 `review_result=clean/requirements-ready`。requirements review 不使用 review-evidence Gate、不写 review_runs、不代替人工确认；默认只有 clean/current 后才允许 **confirm 人工收口**（通道按 gate_mode，见 Trellis System 节），missing/deferred/blocked/stale 均硬阻断；配置关闭只动态放宽 adversarial review 要求，当前 digest 已有 blocked 或 medium+ 证据仍硬阻断。确认落盘后方可进 1.3。
 
 #### 1.2 研究 `[optional · repeatable]`
 
@@ -238,7 +243,6 @@ prd 草稿成形后执行 Domain Grill：对照 golden-path/项目约定/既有 
 - **三问**：① 改动触达哪几层？② 是否新增/改动 Domain 契约（实体/`enum Error`/`IXxxRepository`）？③ 是否引入新外部依赖或新 `Container+*` DI 装配？
 - **承接索引**：逐文件列出"由哪个 BHV 驱动、对应哪个 doc_type、详细阶段在哪展开"，作为详细阶段 directory_precheck 的输入。
 **full 链**：建立设计包骨架（`README.md` + `design-main.md` + `chapters/`），把包路径写入 task.json `design_package`，产出 `design-main.md` 概要主定义（含架构就绪自检与逐文件承接索引）；任务内 `design.md` 写指针+摘要。
-**light 链**：产出 `design.md` **§1 概要设计**。
 **概要 Gate**：默认运行 `python3 .trellis/scripts/guru/guru_supervise.py overview <task_dir>`，该 supervisor action 必须在 write/repair 后运行 overview review/fix 并记录当前 digest clean；手动分步时，writing 结束后必须立刻加载 `ios-design-overview-review` 做 clean-context review，并用 `guru_gate.py record-review overview <task_dir> ...` 记录，不能先进入下一阶段。当前 digest 两个不同 `run_id` clean 后自动进入 1.4；默认还要求至少一次 reviewer 含 `adversarial`，缺 adversarial 时运行 `guru_supervise.py --adversarial overview <task_dir>`；若 `guru.supervision.adversarial_enabled=false`，只要求双 clean，不要求 adversarial reviewer。`confirm overview` 禁止。`REQ_BLOCKER` 回 1.1，`OVERVIEW_DEFECT` / `PROCESS_DEFECT` 修复后重审。**归属违反分层依赖律 = 直接 fail**（不放行、回本步重排归属）。
 
 #### 1.4 详细设计 `[required · repeatable]`
@@ -254,7 +258,6 @@ prd 草稿成形后执行 Domain Grill：对照 golden-path/项目约定/既有 
 7. 不适用场景 —— 明确本单元**不**承担什么（如 `view` 不做业务编排、`usecase` 不持 UI 状态）；
 8. Gate 判定 —— 本单元过详细 Gate 的判据（合同字段齐全、归属合法、可验证信号可执行）。
 **full 链**：directory_precheck（design-main 承接索引存在且非空，否则回退概要）→ chapter_loop **逐章/小批次**生成 `chapters/<slug>.md`（禁止一次性全量输出）；命中 pending L2 类型（`domain-model`/`view`/`coordinator`/`external`）须显式 `L2豁免：<doc_type> 理由：…` 或先补 L2（gate 拦截）。
-**light 链**：展开 `design.md` **§2 详细设计**（单文档多章节，逐 `UNIT-<slug>` 合同八问）。
 **详细 Gate**：默认运行 `python3 .trellis/scripts/guru/guru_supervise.py detail <task_dir>`，该 supervisor action 必须在 write/repair 后运行 detail review/fix 并记录当前 digest clean；手动分步时，writing 结束后必须立刻加载 `ios-design-detail-review` 做 clean-context review，并用 `guru_gate.py record-review detail <task_dir> ...` 记录，不能先请求用户确认。当前 digest 两个不同 `run_id` clean 后停下等待 `guru_gate.py confirm detail <task_dir>`；默认还要求至少一次 reviewer 含 `adversarial`，缺 adversarial 时运行 `guru_supervise.py --adversarial detail <task_dir>`；若 `guru.supervision.adversarial_enabled=false`，只要求双 clean，不要求 adversarial reviewer。`REQ_BLOCKER` 回 1.1，`OVERVIEW_DEFECT` 回 1.3，`DETAIL_DEFECT` / `PROCESS_DEFECT` 修复后重审。
 
 #### 1.5 配置上下文 `[required · once]`
@@ -263,24 +266,26 @@ prd 草稿成形后执行 Domain Grill：对照 golden-path/项目约定/既有 
 
 #### 1.6 激活任务 `[required · once]`
 
-前置 = requirements 已确认、overview/detail 当前 digest 双 clean（默认各含 adversarial clean；`adversarial_enabled=false` 时不要求）、detail 已确认（`guru_gate.py check-start <task_dir>` 通过）。这只代表 `START_READY`，然后运行 `task.py start <task-dir>`；before_start 钩子会再次强制校验，缺 evidence/缺确认直接失败。`START_READY` 不授权实现、质检 worker、git commit 或发布；此时运行 `guru_gate.py status <task_dir>` 按最早缺口恢复，禁止绕过。
+Full/high-risk 前置 = requirements 已确认、overview/detail 当前 digest 双 clean、detail 已确认，且 `guru_gate.py check-start <task_dir>` 通过。`START_READY` 后必须运行 `python3 .trellis/scripts/guru/guru_task.py start <task-dir> --slice <id> --gate-digest <sha256> --slice-packet-digest <sha256> --risk-packet-digest <sha256> --envelope-digest <sha256> --attestation-digest <sha256>`；wrapper 会在调用官方 task lifecycle 前校验 current bindings。官方 Core 的 direct `task.py start` 不能替代该 Full 入口。Lite 保持 delivery policy 的 host-inline 路径。
 
-#### 1.7 完成判定
+#### 1.7 Full planning 完成判定
 
 | 条件 | 必须 |
 |------|:---:|
-| 需求产物过需求 Gate + route-aware requirements review clean/current（full_chain 且配置开启要求 adversarial clean/requirements-ready；lite bounded 不强制 adversarial）+ 用户 confirm requirements（full 链含正式需求包 review 通过） | ✅ |
-| 概要主定义过概要 Gate + 当前 digest 两个不同 run-id clean review（默认至少一条 reviewer 含 adversarial；配置关闭时只要求双 clean；full=design-main.md；light=design.md §1；归属表无分层律违规） | ✅ |
-| 详细设计过详细 Gate + 当前 digest 两个不同 run-id clean review（默认至少一条 reviewer 含 adversarial；配置关闭时只要求双 clean）+ 用户 confirm detail（full=chapters/ 闭合；light=design.md §2；doc_type 限七类，pending 类已豁免或补 L2） | ✅ |
+| 需求产物过需求 Gate + route-aware requirements review clean/current（full_chain 且配置开启要求 adversarial clean/requirements-ready；Lite 不适用该 Full Gate）+ 用户 confirm requirements（full 链含正式需求包 review 通过） | ✅ |
+| 概要主定义过概要 Gate + 当前 digest 两个不同 run-id clean review；归属表无分层律违规 | ✅ |
+| 详细设计过详细 Gate + 当前 digest 两个不同 run-id clean review + 用户 confirm detail；doc_type 限七类 | ✅ |
 | `implement.md`（trace §1）存在 | ✅ |
 | jsonl 含 harness SSOT + golden-path + iOS 项目约定条目 | ✅（inline 平台除外） |
-| `task.py start` 已执行（before_start 校验通过） | ✅ |
+| Full/high-risk 的 `guru_task.py start` guarded activation 已验证；Lite 不适用 | ✅ |
 
 ---
 
 ## Phase 2 / Phase 3 步骤细则
 
-与 Trellis 原版同构（dispatch 协议、commit 批量确认流程、finish-work 收尾不变），仅口径替换为 iOS：
+Lite 直接 host-inline 实现并运行 scoped deterministic_final，确认 0、Worker 0、无 pre-code Gate。以下 2.1/2.2 的 `check-implementation`、dispatcher 和 Worker 协议仅适用于 Full。
+
+Full 与 Trellis 原版同构（dispatch 协议、commit 批量确认流程、finish-work 收尾不变），仅口径替换为 iOS：
 
 #### 2.1 实现 `[required · repeatable]`
 

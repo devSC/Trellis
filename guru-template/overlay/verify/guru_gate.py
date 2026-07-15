@@ -6,8 +6,8 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
 用法:
   python3 guru_gate.py auto [task_dir]            # 按 task.json status + artifact 渐进校验（worktree.yaml verify 用这个）
   python3 guru_gate.py requirements <task_dir>    # 需求 Gate：prd.md（含 BHV 编号纪律）
-  python3 guru_gate.py overview <task_dir>        # 概要 Gate：light=design.md §概要；full=设计包 design-main.md（结构+归属+索引）
-  python3 guru_gate.py detail <task_dir>          # 详细 Gate：light=design.md §详细；full=chapters/*.md（章节闭合+pending L2 拦截）+ implement.md
+  python3 guru_gate.py overview <task_dir>        # Full/legacy artifact Gate；lite_task 不调用
+  python3 guru_gate.py detail <task_dir>          # Full/legacy artifact Gate；lite_task 不调用
   python3 guru_gate.py implement <task_dir>       # 实现 Gate：implement.md trace 四节（切片挂 UNIT）
   python3 guru_gate.py trace-matrix <task_dir> [--write] [--strict] [--require-req-uc]
                                                   # 追溯矩阵：BHV × REQ-UC × owner × UNIT × 测试 × 切片 + 孤儿清单
@@ -50,10 +50,10 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
   UNIT-slug 设计单元编号。design.md §2 中以标题定义（如 `### UNIT-hammer-usecase`）；语义 slug。
   下游引用一律写裸编号（兼容未来的 [[file#BHV-001]] 双链包裹——解析按编号 token 识别）。
 
-双轨制:
-  task.json `guru_chain: full|light` 判轨（after_create 默认 full；light 须经分流+用户同意显式声明）。
+Route 与兼容产物:
+  `gate-contract.json.route` 是执行权威；禁止用 task.json `guru_chain` 推导 lite_task。
   full  完整五阶段链：目录级设计包（task.json `design_package` 指向，含 README.md/design-main.md/chapters/）。
-  light 轻量链：单文件 design.md §1/§2（存量兼容：两字段皆缺按 light 检查）。
+  light 仅是存量单文件 design.md §1/§2 的兼容产物形态，不等于 lite_task。
 
 退出码: 0=通过/合法跳过; 2=Gate 拦截(stderr 给缺口清单)。
 设计约束: 只查结构存在性与引用闭合, 不做语义判断——"判不动的规则不进脚本"。

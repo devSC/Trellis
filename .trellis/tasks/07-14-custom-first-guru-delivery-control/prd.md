@@ -34,6 +34,46 @@
 6. 用户确认必须批量、最少且不可重复；只有新增的不可逆产品取舍、真实外部信息缺口或扩张后的关键风险才允许再次询问。
 7. 用户于 2026-07-14 回复“好，接受”，确认上述架构基线并授权创建 full-chain Trellis task 进入规划。
 
+## Outcome-first Delivery Milestones
+
+本节自 2026-07-15 起是剩余工作的执行权威。原设计包中的六个内部 slice、bootstrap burn、Marketplace/WAL、trusted reviewer identity 和 generic replay framework 不再构成完成标准；只有下面里程碑对应的用户结果构成完成标准。
+
+### M0 — Custom V0 与自用生命周期（已完成）
+
+- 四路由 policy、Lite 直达代码合同、High-risk 风险前置、一次确认上限、exact evidence reuse 与一致性检查已落地。
+- Custom overlay 支持安装、owned partial-failure recovery、managed-asset unapply，并保留无关用户修改。
+- 证据：`de52458f`、`52e64185`、`apply_test.sh 101/0`、Custom overlay `564/0`、Core-zero、Codex-only。
+
+### M1 — 真实路由运行证明（candidate complete）
+
+- 在 disposable 官方 Trellis target 安装已提交 Custom 包，执行四路由矩阵。
+- 用两个历史失控会话分别执行 Lite 与 Full high-risk 最小 dogfood。
+- Lite 必须在 5 分钟级进入代码，确认 0、Worker 0、无 Overview/Detail planning loop。
+- Full high-risk 必须在实现前暴露风险，最多一次确认，确认后自主运行到 deterministic check。
+- 记录 TTFC、确认数、Worker 数、finding-to-fix cycles、full-suite run count 与 route wall time；全程不得出现 Claude event。
+- 结果证据：`M1_OPERATIONAL_ROUTE_PROOF.md`；Lite TTFC `18s`、确认 `0`、Worker `0`；Full/high-risk 缺 risk packet 时 `rc=2`、`start_attempts=0`；独立检查 `2 HIGH + 1 MEDIUM` 已单批修复；apply/consistency `109/0`；Core-zero、Codex-only。
+
+### M2 — 全意图成本递减与 Gate 净收益（candidate complete）
+
+- 覆盖 implementation、review-only、research/docs/config/ops 与 repeated-debug 的 first-value 和终态。
+- 相同 task fingerprint/digest 的 warm run 复用 evidence，受控 planning/context/token-budget proxy <= cold run 的 70%；digest 变化必须失效。
+- scope expansion 在继续实现前重判；相同确认不重复；Gate-caused rework < 10%。
+- 平台未提供真实 token telemetry 时标记 `unknown`，只能另列 proxy，不得冒充真实成本。
+- 结果证据：`M2_ALL_INTENT_COMPOUNDING_PROOF.md`；7/7 intent exact warm proxy 为 cold 的 70%，target 与 docs/code/test digest 漂移各 7/7 失效；scope expansion 在下一次写入前提升为 Full/high；相同 attestation 不产生第二确认 batch；Gate-caused rework 候选样本为 `0/4`，真实 provider token telemetry 仍为 `unknown`。
+
+### M3 — 官方 Custom 与 Template cutover readiness（candidate complete）
+
+- 验证官方 Workflow/Spec/Config/Template resolver，不依赖 fork package，不修改 Core。
+- 补齐只读 plan/status/verify 与兼容的 apply/upgrade/unapply 用户生命周期，复用现有 rollback bundle，不建设 WAL。
+- 仅产出最小 Template cutover mapping；官方工具未要求时不新建 manifest 或 Marketplace 引擎。
+- 结果证据：`M3_CUSTOM_TEMPLATE_CUTOVER_PROOF.md`；官方 Trellis `0.6.7` 四组 spec/workflow exact-byte 安装通过，blank fallback 被拒绝；Custom lifecycle `120/0`，catalog `18/0`；Codex review 的 1 个 HIGH 状态假绿已单批修复；Core-zero、Codex-only。
+
+### M4 — 最终一致性与任务收口（current）
+
+- 发布 hardened status，修复旧 V0 deferred 列表与当前实现不一致。
+- 完成 `REQ/BHV -> design -> code -> test` trace、按最终 diff 运行验证、一次 Codex check-only review、`trellis-update-spec` 和最终提交。
+- archive/finish 需要显式生命周期授权；不 push。
+
 ## Core Capabilities
 
 - **P0**：全任务类型的风险比例路由、TTFC/成本硬预算和 semantic-progress watchdog。
@@ -109,7 +149,7 @@
 
 ### R4. Minimal user confirmation
 
-- Micro 默认 0 次确认；Lite 最多 1 批；Full 最多 2 批，且相同输入不得重复询问。
+- Small/Inline、Micro、Lite 默认 0 次确认；Full high-risk 最多 1 批，且相同输入不得重复询问。
 - 每个确认项必须包含建议答案、影响和选择不同方案的代价。
 - 可由仓库事实、现有规范或可逆默认值决定的事项由 Agent 自主决定。
 
@@ -119,10 +159,10 @@
 - 仅真实依赖该变化的下游证据失效；无关章节、格式、时间戳和 append-only execution evidence 不得让上游 review 失效。
 - Lite `design.md §2` 变化不得使未变化的 `§1` Overview review stale。
 
-### R6. Independent and convergent review
+### R6. Honest and convergent review
 
-- Review evidence 记录 reviewer、worker、thread/context identity 和输入 digest；两个 run-id 不能替代独立 reviewer 证明。
-- Review 次数按风险配置：低风险零次或机械检查，Lite 最多一次独立语义 review，Full 仅在必要时两次独立 review。
+- Review evidence 记录 provider、worker、thread/context provenance 和输入 digest；两个 run-id 或 same-provider context 不能替代独立 reviewer 证明。
+- Review 次数按风险配置：低风险零次或机械检查，Lite 不设 pre-code planning review，Full 只在真实风险或最终实现快照需要时进行 bounded Codex check-only review。
 - 同一 finding 两轮没有新增证据或 semantic delta 时进入 STALLED，不得继续 review ping-pong。
 
 ### R7. Bounded supervisor state machine
@@ -176,9 +216,9 @@
 
 ### R15. Regression and benchmark suite
 
-- 将两个失控会话抽象为 replay fixture：digest 震荡、重复 review、scope 扩张、无业务 diff、长等待和上下文膨胀。
+- 从两个失控会话提取最小 deterministic dogfood/replay case：digest 震荡、重复 review、scope 扩张、无业务 diff、长等待和上下文膨胀；不建设 generic replay framework。
 - 建立 route matrix、digest metamorphic、reviewer independence、budget/stagnation、scope expansion、confirmation、context/token、reversibility、mirror/design-sync 测试。
-- 建立覆盖全部任务类型的端到端 benchmark；单元测试全绿但仍出现长时间 planning + 零业务 diff 时，发布失败。
+- 使用 M1/M2 operational proof 覆盖全部任务类型的 first-value、成本和终态；单元测试全绿但仍出现长时间 planning + 零业务 diff 时，发布失败。
 
 ## Acceptance Criteria
 

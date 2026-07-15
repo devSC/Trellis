@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# apply.sh 安装/升级器测试：三场景（通用项目 / 项目自带镜像 / 旧 core 警告）+ 幂等 + conventions 保护。
+# apply.sh 安装/升级器测试：blocking/official Core、项目镜像、幂等和可撤销 ownership。
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 APPLY="$HERE/../apply.sh"
@@ -92,6 +92,12 @@ grep -q "SENTINEL_KEEP_ME" "$T1/.trellis/spec/conventions/project-conventions.md
   && ok "场景1 project-conventions.md 未被覆盖" || bad "场景1 项目约定被覆盖！"
 
 grep -q "before_start" "$T1/.trellis/config.yaml" && ok "场景1 config.yaml before_start 接线" || bad "场景1 config 缺 before_start"
+[ -x "$T1/.trellis/scripts/guru/guru_task.py" ] \
+  && [ -f "$T1/.trellis/scripts/guru/guru_delivery_policy.py" ] \
+  && [ -f "$T1/.trellis/policy/delivery-policy.json" ] \
+  && grep -q "guru_after_start.py" "$T1/.trellis/config.yaml" \
+  && ok "场景1 delivery policy + guarded lifecycle runtime 已安装" \
+  || bad "场景1 缺 delivery policy/guard/after_start runtime"
 grep -qx ".claude/projects/" "$T1/.gitignore" \
   && grep -qx ".codex/sessions/" "$T1/.gitignore" \
   && grep -qx ".trellis/channels/" "$T1/.gitignore" \
@@ -180,11 +186,28 @@ out=$(cd "$T2" && bash "$APPLY" "$T2" 2>&1); rc=$?
   && ok "场景2 apply 未直写 .claude/skills（交镜像脚本管）" || bad "场景2 不应直写 .claude/skills"
 rm -f "$T2/MIRROR_SENTINEL"
 
-# ============ 场景 3：旧 core（缺 before_start 支持）→ 硬失败 exit 1（不再假安全，见 commit 258aca72）============
+# ============ 场景 3：official Core（无 blocking before_start）→ compensated Custom lifecycle ============
 T3=$(mk_target oldcore no)
 out=$(bash "$APPLY" "$T3" 2>&1); rc=$?
-[ "$rc" = 1 ] && ok "场景3 旧 core 硬失败 exit 1（不再假安全）" || bad "场景3 退出码应为 1 (rc=$rc)"
-printf '%s' "$out" | grep -q "硬 Gate 已接线但不会生效" && ok "场景3 输出含硬失败根因" || bad "场景3 缺核心警告"
+[ "$rc" = 0 ] && ok "场景3 official Core compensated apply 通过" || { bad "场景3 official Core apply 失败 (rc=$rc)"; echo "$out" | tail -10; }
+printf '%s' "$out" | grep -q "official Core compensated" \
+  && ok "场景3 明确报告 compensated capability" || bad "场景3 缺 compensated capability 报告"
+grep -q "guru_gate.py check-start" "$T3/.trellis/config.yaml" \
+  && bad "场景3 official Core 不得写入无效 before_start hard Gate" \
+  || ok "场景3 official Core 未伪装 before_start hard Gate"
+[ -x "$T3/.trellis/scripts/guru/guru_task.py" ] \
+  && [ -f "$T3/.trellis/scripts/guru/guru_delivery_policy.py" ] \
+  && [ -f "$T3/.trellis/policy/delivery-policy.json" ] \
+  && grep -q "guru_after_start.py" "$T3/.trellis/config.yaml" \
+  && ok "场景3 official Core 可运行 policy/guard/after_start" \
+  || bad "场景3 official Core compensated runtime 不完整"
+grep -q 'python3 .trellis/scripts/guru/guru_task.py start' "$T3/.trellis/workflow.md" \
+  && python3 "$T3/.trellis/scripts/guru/guru_task.py" start --help >/dev/null 2>&1 \
+  && ok "场景3 installed workflow 的 Full 正常入口可执行" \
+  || bad "场景3 installed workflow 未指向可执行 guarded wrapper"
+grep -q '下一步仅可运行 `task.py start`\|然后运行 `task.py start' "$T3/.trellis/workflow.md" \
+  && bad "场景3 installed workflow 仍把 direct task.py start 当 Full 正常入口" \
+  || ok "场景3 installed workflow 未绕过 guarded wrapper"
 
 # ============ 场景 4：skill 安装清理脏文件，.DS_Store 不泄漏进目标（修 C）============
 ds_src="$HERE/../agents-skills/requirement-writing/.DS_Store"; : > "$ds_src"   # 临时埋点（EXIT trap 兜底清理）
@@ -318,6 +341,54 @@ for line in open('$T14/.trellis/tasks/t1/implement.jsonl'):
         try: json.loads(line)
         except Exception: bad += 1
 sys.exit(1 if bad else 0)" && ok "场景14 after_create 不粘到无尾换行末行（#5）" || bad "场景14 jsonl 出现粘行非法 JSON"
+
+T14_HIGH=$(mk_target after-create-high-description yes)
+mkdir -p "$T14_HIGH/.trellis/tasks/t-high"
+printf '%s\n' '{"id":"t-high","title":"bounded cleanup","description":"change workflow hook gate runtime","affected_paths":[".trellis/workflow.md"],"commit_requested":true}' > "$T14_HIGH/.trellis/tasks/t-high/task.json"
+TASK_JSON_PATH="$T14_HIGH/.trellis/tasks/t-high/task.json" python3 "$HERE/../hooks/guru_after_create.py" >/dev/null 2>&1
+python3 - "$T14_HIGH/.trellis/tasks/t-high" <<'PY'
+import json
+import os
+import sys
+
+task_dir = sys.argv[1]
+task = json.load(open(os.path.join(task_dir, "task.json"), encoding="utf-8"))
+contract = json.load(open(os.path.join(task_dir, "gate-contract.json"), encoding="utf-8"))
+assert task["guru_chain"] == "full"
+assert contract["route"] == "full_chain"
+assert contract["risk"] == "high"
+assert contract["assessment"]["risk_flags"]
+assert "execution_policy" not in contract
+encoded = json.dumps(contract, sort_keys=True)
+assert "managed_parallel" not in encoded
+assert "capability_probe_digest" not in encoded
+assert '"enforcement_mode": "enforced"' not in encoded
+PY
+[ "$?" = 0 ] \
+  && ok "场景14 high-risk description 生成 honest full_chain/high contract" \
+  || bad "场景14 after_create 忽略 high-risk description 或伪造执行能力"
+
+T14_REJECTED=$(mk_target after-create-rejected-scope yes)
+mkdir -p "$T14_REJECTED/.trellis/tasks/t-rejected"
+printf '%s\n' '{"id":"t-rejected","title":"fix typo","affected_paths":["lib/a.dart","lib/a.dart"],"commit_requested":true}' > "$T14_REJECTED/.trellis/tasks/t-rejected/task.json"
+TASK_JSON_PATH="$T14_REJECTED/.trellis/tasks/t-rejected/task.json" python3 "$HERE/../hooks/guru_after_create.py" >/dev/null 2>&1
+python3 - "$T14_REJECTED/.trellis/tasks/t-rejected" <<'PY'
+import json
+import os
+import sys
+
+task_dir = sys.argv[1]
+task = json.load(open(os.path.join(task_dir, "task.json"), encoding="utf-8"))
+contract = json.load(open(os.path.join(task_dir, "gate-contract.json"), encoding="utf-8"))
+assert task["guru_chain"] == "full"
+assert contract["route"] == "full_chain"
+assert contract["risk"] == "unknown"
+assert contract["assessment"]["risk_flags"] == ["delivery_policy_rejected"]
+assert "duplicate affected paths" in contract["assessment"]["reasons"][0]
+PY
+[ "$?" = 0 ] \
+  && ok "场景14 rejected scope fail-closed 到 full_chain/unknown" \
+  || bad "场景14 rejected scope 错误回落到较轻 route"
 
 # ============ 场景 15：config.yaml 已有 marker 块外用户 hooks: 时警告（修 #2 重复键静默吞 hook）============
 T15=$(mk_target cfghooks yes)
@@ -615,9 +686,10 @@ T24_AFTER=$(snapshot "$T24")
 
 # ============ 场景 25：apply 自检失败自动恢复；并发目标漂移时 CAS 拒绝覆盖 ============
 T25=$(mk_target partial-apply-recovery no)
-mkdir -p "$T25/.git" "$T25/user-owned"
+mkdir -p "$T25/.git" "$T25/user-owned" "$T25/scripts"
 printf 'RECOVERY_INDEX_SENTINEL\n' > "$T25/.git/index"
 printf 'RECOVERY_USER_SENTINEL\n' > "$T25/user-owned/keep.txt"
+printf 'raise SystemExit(1)\n' > "$T25/scripts/check_workflow_compliance.py"
 T25_BEFORE=$(snapshot "$T25")
 T25_BUNDLE="$TMP/partial-apply-recovery-bundle"
 out=$(bash "$APPLY" "$T25" flutter --rollback-bundle "$T25_BUNDLE" 2>&1); rc=$?
@@ -706,6 +778,21 @@ else
 fi
 grep -q 'MANUAL RECOVERY REQUIRED' "$T26_OUT" \
   && ok "场景25 CAS 拒绝后输出明确人工恢复指引" || bad "场景25 CAS 拒绝后缺人工恢复指引"
+T26_STATUS_TARGET_BEFORE=$(exact_snapshot "$T26")
+T26_STATUS_BUNDLE_BEFORE=$(exact_snapshot "$T26_BUNDLE")
+status_out=$(bash "$APPLY" --status "$T26" "$T26_BUNDLE" 2>&1); status_rc=$?
+verify_out=$(bash "$APPLY" --verify "$T26" "$T26_BUNDLE" 2>&1); verify_rc=$?
+if [ "$status_rc" = 0 ] \
+  && [ "$verify_rc" != 0 ] \
+  && printf '%s' "$status_out" | grep -q '^status=drifted$' \
+  && printf '%s' "$verify_out" | grep -q '^status=drifted$' \
+  && [ "$T26_STATUS_TARGET_BEFORE" = "$(exact_snapshot "$T26")" ] \
+  && [ "$T26_STATUS_BUNDLE_BEFORE" = "$(exact_snapshot "$T26_BUNDLE")" ]
+then
+  ok "场景25 manual_required prepared bundle 报 drifted 且 status/verify 零 mutation"
+else
+  bad "场景25 manual_required prepared bundle 被假报 not-applied (status=$status_rc verify=$verify_rc)"
+fi
 T26_MANUAL_BEFORE=$(snapshot "$T26")
 out=$(bash "$APPLY" --unapply "$T26" "$T26_BUNDLE" 2>&1); rc=$?
 T26_MANUAL_AFTER=$(snapshot "$T26")
@@ -890,6 +977,146 @@ out=$(bash "$APPLY" --unapply "$T32" "$T32_BUNDLE" 2>&1); rc=$?
   && ok "场景31 legacy applied bundle 沿用 whole-target exact-digest unapply" \
   || { bad "场景31 legacy schema-v1 fallback 失效 (rc=$rc)"; echo "$out" | tail -8; }
 
+# ============ CUSTOM-LIFECYCLE：只读 plan/status/verify + 显式 upgrade 回滚到紧邻 pre-state ==========
+out=$(bash "$APPLY" --help 2>&1); rc=$?
+if [ "$rc" = 0 ]; then
+  help_ok=1
+  for token in --plan --status --verify --upgrade --unapply --rollback-bundle; do
+    printf '%s' "$out" | grep -q -- "$token" || help_ok=0
+  done
+  [ "$help_ok" = 1 ] && ok "Custom lifecycle help 完整列出兼容命令" || bad "Custom lifecycle help 缺命令"
+else
+  bad "Custom lifecycle --help 失败 (rc=$rc)"
+fi
+
+T33=$(mk_target custom-lifecycle yes)
+mkdir -p "$T33/user-owned"
+printf 'UPGRADE_USER_FILE\n' > "$T33/user-owned/keep.txt"
+T33_USAGE_BEFORE=$(exact_snapshot "$T33")
+out=$(bash "$APPLY" --upgrade "$T33" flutter 2>&1); rc=$?
+[ "$rc" = 2 ] \
+  && printf '%s' "$out" | grep -q -- '--upgrade 必须指定新的 --rollback-bundle' \
+  && [ "$T33_USAGE_BEFORE" = "$(exact_snapshot "$T33")" ] \
+  && ok "Custom lifecycle upgrade 缺新 bundle 时按 usage 阻断且零 mutation" \
+  || { bad "Custom lifecycle upgrade 缺 bundle 未阻断 (rc=$rc)"; echo "$out" | tail -8; }
+T33_PLAN_BUNDLE="$TMP/custom-lifecycle-plan-bundle"
+mkdir -p "$T33_PLAN_BUNDLE"
+T33_PLAN_TARGET_BEFORE=$(exact_snapshot "$T33")
+T33_PLAN_BUNDLE_BEFORE=$(exact_snapshot "$T33_PLAN_BUNDLE")
+out=$(bash "$APPLY" --plan "$T33" flutter --rollback-bundle "$T33_PLAN_BUNDLE" 2>&1); rc=$?
+if [ "$rc" = 0 ] \
+  && printf '%s' "$out" | grep -q '^status=ready$' \
+  && printf '%s' "$out" | grep -q '^mutation=none$' \
+  && [ "$T33_PLAN_TARGET_BEFORE" = "$(exact_snapshot "$T33")" ] \
+  && [ "$T33_PLAN_BUNDLE_BEFORE" = "$(exact_snapshot "$T33_PLAN_BUNDLE")" ]
+then
+  ok "Custom lifecycle plan 对 target/bundle 字节只读"
+else
+  bad "Custom lifecycle plan 非只读或输出不稳定 (rc=$rc)"
+  echo "$out" | tail -8
+fi
+
+T33_MISSING_BUNDLE="$TMP/custom-lifecycle-not-applied"
+T33_NOT_APPLIED_BEFORE=$(exact_snapshot "$T33")
+out=$(bash "$APPLY" --status "$T33" "$T33_MISSING_BUNDLE" 2>&1); rc=$?
+[ "$rc" = 0 ] \
+  && printf '%s' "$out" | grep -q '^status=not-applied$' \
+  && [ "$T33_NOT_APPLIED_BEFORE" = "$(exact_snapshot "$T33")" ] \
+  && [ ! -e "$T33_MISSING_BUNDLE" ] \
+  && ok "Custom lifecycle status 对未安装 target 稳定只读" \
+  || { bad "Custom lifecycle not-applied status 错误 (rc=$rc)"; echo "$out" | tail -8; }
+
+T33_BUNDLE="$TMP/custom-lifecycle-apply-bundle"
+out=$(bash "$APPLY" "$T33" flutter --rollback-bundle "$T33_BUNDLE" 2>&1); rc=$?
+[ "$rc" = 0 ] || { bad "Custom lifecycle 基线 apply 失败 (rc=$rc)"; echo "$out" | tail -10; }
+T33_CURRENT_TARGET_BEFORE=$(exact_snapshot "$T33")
+T33_CURRENT_BUNDLE_BEFORE=$(exact_snapshot "$T33_BUNDLE")
+status_out=$(bash "$APPLY" --status "$T33" "$T33_BUNDLE" 2>&1); status_rc=$?
+verify_out=$(bash "$APPLY" --verify "$T33" "$T33_BUNDLE" 2>&1); verify_rc=$?
+if [ "$status_rc" = 0 ] \
+  && [ "$verify_rc" = 0 ] \
+  && printf '%s' "$status_out" | grep -q '^status=installed-current$' \
+  && printf '%s' "$verify_out" | grep -q '^status=installed-current$' \
+  && [ "$T33_CURRENT_TARGET_BEFORE" = "$(exact_snapshot "$T33")" ] \
+  && [ "$T33_CURRENT_BUNDLE_BEFORE" = "$(exact_snapshot "$T33_BUNDLE")" ]
+then
+  ok "Custom lifecycle status/verify 复用 managed evidence 且字节只读"
+else
+  bad "Custom lifecycle installed-current status/verify 失败 (status=$status_rc verify=$verify_rc)"
+  echo "$status_out" | tail -5
+  echo "$verify_out" | tail -5
+fi
+
+printf '\nUPGRADE_PRESTATE_MANAGED_DRIFT\n' >> "$T33/.trellis/scripts/guru/guru_gate.py"
+printf '\nSLOT-99: UPGRADE_CONVENTION_KEEP\n' >> "$T33/.trellis/spec/conventions/project-conventions.md"
+printf '\nuser_upgrade_setting: keep\n' >> "$T33/.trellis/config.yaml"
+T33_DRIFT_TARGET_BEFORE=$(exact_snapshot "$T33")
+T33_DRIFT_BUNDLE_BEFORE=$(exact_snapshot "$T33_BUNDLE")
+status_out=$(bash "$APPLY" --status "$T33" "$T33_BUNDLE" 2>&1); status_rc=$?
+verify_out=$(bash "$APPLY" --verify "$T33" "$T33_BUNDLE" 2>&1); verify_rc=$?
+if [ "$status_rc" = 0 ] \
+  && [ "$verify_rc" != 0 ] \
+  && printf '%s' "$status_out" | grep -q '^status=drifted$' \
+  && printf '%s' "$verify_out" | grep -q '^status=drifted$' \
+  && [ "$T33_DRIFT_TARGET_BEFORE" = "$(exact_snapshot "$T33")" ] \
+  && [ "$T33_DRIFT_BUNDLE_BEFORE" = "$(exact_snapshot "$T33_BUNDLE")" ]
+then
+  ok "Custom lifecycle managed drift：status 报告、verify 非零、双方零 mutation"
+else
+  bad "Custom lifecycle managed drift 未被只读检测 (status=$status_rc verify=$verify_rc)"
+  echo "$status_out" | tail -5
+  echo "$verify_out" | tail -5
+fi
+
+T33_PRE_UPGRADE=$(exact_snapshot "$T33")
+T33_UPGRADE_BUNDLE="$TMP/custom-lifecycle-upgrade-bundle"
+out=$(bash "$APPLY" --upgrade "$T33" flutter --rollback-bundle "$T33_UPGRADE_BUNDLE" 2>&1); rc=$?
+if [ "$rc" = 0 ] \
+  && printf '%s' "$out" | grep -q 'guru overlay 显式升级' \
+  && grep -q 'UPGRADE_CONVENTION_KEEP' "$T33/.trellis/spec/conventions/project-conventions.md" \
+  && grep -q 'user_upgrade_setting: keep' "$T33/.trellis/config.yaml" \
+  && ! grep -q 'UPGRADE_PRESTATE_MANAGED_DRIFT' "$T33/.trellis/scripts/guru/guru_gate.py"
+then
+  ok "Custom lifecycle upgrade 复用 apply 并保留用户 config/conventions"
+else
+  bad "Custom lifecycle upgrade 未刷新 managed 内容或丢用户约定 (rc=$rc)"
+  echo "$out" | tail -10
+fi
+out=$(bash "$APPLY" --verify "$T33" "$T33_UPGRADE_BUNDLE" 2>&1); rc=$?
+[ "$rc" = 0 ] && printf '%s' "$out" | grep -q '^status=installed-current$' \
+  && ok "Custom lifecycle upgrade bundle 可立即 verify" \
+  || { bad "Custom lifecycle upgrade verify 失败 (rc=$rc)"; echo "$out" | tail -8; }
+out=$(bash "$APPLY" --unapply "$T33" "$T33_UPGRADE_BUNDLE" 2>&1); rc=$?
+[ "$rc" = 0 ] \
+  && [ "$T33_PRE_UPGRADE" = "$(exact_snapshot "$T33")" ] \
+  && grep -q 'UPGRADE_PRESTATE_MANAGED_DRIFT' "$T33/.trellis/scripts/guru/guru_gate.py" \
+  && grep -q 'UPGRADE_CONVENTION_KEEP' "$T33/.trellis/spec/conventions/project-conventions.md" \
+  && grep -q 'user_upgrade_setting: keep' "$T33/.trellis/config.yaml" \
+  && ok "Custom lifecycle upgrade->unapply 精确恢复紧邻升级前状态" \
+  || { bad "Custom lifecycle upgrade rollback 未恢复 immediate pre-state (rc=$rc)"; echo "$out" | tail -8; }
+
+T34=$(mk_target custom-lifecycle-tamper yes)
+T34_BUNDLE="$TMP/custom-lifecycle-tamper-bundle"
+bash "$APPLY" "$T34" flutter --rollback-bundle "$T34_BUNDLE" >/dev/null 2>&1
+printf ' ' >> "$T34_BUNDLE/managed-assets.json"
+T34_TARGET_BEFORE=$(exact_snapshot "$T34")
+T34_BUNDLE_BEFORE=$(exact_snapshot "$T34_BUNDLE")
+status_out=$(bash "$APPLY" --status "$T34" "$T34_BUNDLE" 2>&1); status_rc=$?
+verify_out=$(bash "$APPLY" --verify "$T34" "$T34_BUNDLE" 2>&1); verify_rc=$?
+if [ "$status_rc" = 0 ] \
+  && [ "$verify_rc" != 0 ] \
+  && printf '%s' "$status_out" | grep -q '^status=drifted$' \
+  && printf '%s' "$verify_out" | grep -q 'managed manifest integrity 不匹配' \
+  && [ "$T34_TARGET_BEFORE" = "$(exact_snapshot "$T34")" ] \
+  && [ "$T34_BUNDLE_BEFORE" = "$(exact_snapshot "$T34_BUNDLE")" ]
+then
+  ok "Custom lifecycle bundle tamper：status/verify 检出且零 mutation"
+else
+  bad "Custom lifecycle bundle tamper 未 fail-closed (status=$status_rc verify=$verify_rc)"
+  echo "$status_out" | tail -5
+  echo "$verify_out" | tail -5
+fi
+
 v0_consistency_check() { # v0_consistency_check <guru-template-root> [events-jsonl]
   python3 - "$1" "${2:-}" <<'PY'
 import json
@@ -899,12 +1126,22 @@ from pathlib import PurePosixPath
 
 root, events = sys.argv[1:3]
 matrix = {
-    "docs": ["overlay/README.md"],
+    "docs": [
+        "overlay/README.md",
+        "workflows/guru-client-workflow.md",
+        "workflows/guru-go-workflow.md",
+        "workflows/guru-h5-workflow.md",
+        "workflows/guru-ios-workflow.md",
+        "overlay/agents-skills/client-small-iteration-dev/SKILL.md",
+        "overlay/agents-skills/go-small-iteration-dev/SKILL.md",
+        "overlay/agents-skills/h5-small-iteration-dev/SKILL.md",
+    ],
     "code": [
         "overlay/apply.sh",
         "overlay/policy/delivery-policy.json",
         "overlay/verify/guru_contract.py",
         "overlay/verify/guru_delivery_policy.py",
+        "overlay/verify/guru_gate.py",
     ],
     "tests": [
         "overlay/tests/apply_test.sh",
@@ -916,14 +1153,77 @@ missing = [f"{layer}:{rel}" for layer, paths in matrix.items() for rel in paths
 if missing:
     raise SystemExit("docs/code/tests mismatch: " + ",".join(missing))
 
+for workflow in (
+    "workflows/guru-client-workflow.md",
+    "workflows/guru-go-workflow.md",
+    "workflows/guru-h5-workflow.md",
+    "workflows/guru-ios-workflow.md",
+):
+    content = open(os.path.join(root, workflow), encoding="utf-8").read()
+    if "python3 .trellis/scripts/guru/guru_task.py start" not in content:
+        raise SystemExit(f"docs/code/tests mismatch: {workflow} missing guarded Full entry")
+    if "下一步仅可运行 `task.py start`" in content or "然后运行 `task.py start" in content:
+        raise SystemExit(f"docs/code/tests mismatch: {workflow} documents direct Full start")
+    if "Lite 保持" not in content or "host-inline" not in content:
+        raise SystemExit(f"docs/code/tests mismatch: {workflow} lost Lite fast path")
+    if "overview/detail 仍要当前 digest 双 clean" in content:
+        raise SystemExit(f"docs/code/tests mismatch: {workflow} restored stale Lite planning review")
+    for stale in ("lite 不强制", "lite bounded", "轻量链允许", "Gate 口径不降"):
+        if stale in content:
+            raise SystemExit(f"docs/code/tests mismatch: {workflow} restored stale Lite Full-Gate phrase {stale}")
+    if "代码前不运行 requirements/Overview/Detail review Gate" not in content:
+        raise SystemExit(f"docs/code/tests mismatch: {workflow} missing Lite no-precode-Gate contract")
+    for required in (
+        "以 `gate-contract.json.route` 为准",
+        "1.1-1.7 的 PRD、Overview、Detail、confirm 与 activation 仅适用于 `full_chain`",
+        "Lite 直接 host-inline 实现并运行 scoped deterministic_final",
+        "以下 2.1/2.2 的 `check-implementation`、dispatcher 和 Worker 协议仅适用于 Full",
+    ):
+        if required not in content:
+            raise SystemExit(f"docs/code/tests mismatch: {workflow} missing route boundary: {required}")
+    for stale in ("**light 链**", "light=design.md", "默认写入 `guru_chain: full`"):
+        if stale in content:
+            raise SystemExit(f"docs/code/tests mismatch: {workflow} retains contradictory Lite planning path: {stale}")
+
+for skill in (
+    "overlay/agents-skills/client-small-iteration-dev/SKILL.md",
+    "overlay/agents-skills/go-small-iteration-dev/SKILL.md",
+    "overlay/agents-skills/h5-small-iteration-dev/SKILL.md",
+):
+    content = open(os.path.join(root, skill), encoding="utf-8").read()
+    for required in (
+        "以 `gate-contract.json.route` 为执行权威",
+        "compact intake → host-inline → scoped deterministic_final",
+        "确认 0、Worker 0、无 requirements/Overview/Detail/check-implementation",
+        "只有 Full 才执行需求澄清、Overview、Detail、合同八问及其 review/confirm",
+    ):
+        if required not in content:
+            raise SystemExit(f"docs/code/tests mismatch: {skill} missing Lite route contract: {required}")
+    for stale in (
+        "overview/detail 仍需当前 digest 两条 clean",
+        "进入轻量链（prd 简版 + 所碰层 design 合同 + 实现/验证）",
+        "每步人工 Gate",
+    ):
+        if stale in content:
+            raise SystemExit(f"docs/code/tests mismatch: {skill} retains Lite Full-Gate path: {stale}")
+
+gate_help = open(os.path.join(root, "overlay/verify/guru_gate.py"), encoding="utf-8").read()
+if "`gate-contract.json.route` 是执行权威" not in gate_help or "light 仅是存量" not in gate_help:
+    raise SystemExit("docs/code/tests mismatch: guru_gate usage still derives Lite from guru_chain/light")
+if "after_create 默认 full" in gate_help:
+    raise SystemExit("docs/code/tests mismatch: guru_gate usage retains obsolete after_create default")
+
 readme = open(os.path.join(root, "overlay/README.md"), encoding="utf-8").read()
 apply_source = open(os.path.join(root, "overlay/apply.sh"), encoding="utf-8").read()
 test_source = open(os.path.join(root, "overlay/tests/apply_test.sh"), encoding="utf-8").read()
-for token in ("--rollback-bundle", "--unapply", "apply_test.sh"):
+for token in ("--plan", "--status", "--verify", "--upgrade", "--rollback-bundle", "--unapply", "apply_test.sh"):
     if token not in readme:
         raise SystemExit(f"docs/code/tests mismatch: README missing {token}")
-if "--unapply" not in apply_source or "V0-ROUNDTRIP" not in test_source:
-    raise SystemExit("docs/code/tests mismatch: unapply code/test coverage missing")
+for token in ("--plan", "--status", "--verify", "--upgrade", "--unapply"):
+    if token not in apply_source:
+        raise SystemExit(f"docs/code/tests mismatch: apply.sh missing {token}")
+if "V0-ROUNDTRIP" not in test_source or "CUSTOM-LIFECYCLE" not in test_source:
+    raise SystemExit("docs/code/tests mismatch: lifecycle code/test coverage missing")
 if any("manual_required" not in source for source in (readme, apply_source, test_source)):
     raise SystemExit("docs/code/tests mismatch: failed-apply recovery coverage missing")
 if any("managed-assets.json" not in source for source in (readme, apply_source, test_source)):
@@ -978,6 +1278,16 @@ GURU_TEMPLATE_ROOT="$(cd "$HERE/../.." && pwd)"
 v0_consistency_check "$GURU_TEMPLATE_ROOT" \
   && ok "V0 docs/code/tests consistency + 四路由 policy smoke" \
   || bad "V0 consistency/policy smoke 未通过"
+
+V0_STALE="$TMP/v0-stale-lite-contract"
+mkdir -p "$V0_STALE"
+cp -R "$GURU_TEMPLATE_ROOT/." "$V0_STALE/"
+printf '\noverview/detail 仍需当前 digest 两条 clean\n' >> "$V0_STALE/overlay/agents-skills/client-small-iteration-dev/SKILL.md"
+if v0_consistency_check "$V0_STALE" >/dev/null 2>&1; then
+  bad "V0 stale Lite Full-Gate contract 未被阻断"
+else
+  ok "V0 stale Lite Full-Gate contract fail-closed"
+fi
 
 V0_FAKE="$TMP/v0-consistency-mismatch"; mkdir -p "$V0_FAKE"
 if v0_consistency_check "$V0_FAKE" >/dev/null 2>&1; then
