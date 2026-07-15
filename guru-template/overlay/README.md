@@ -20,6 +20,20 @@
 apply.sh 负责 guru 定制内容的完整安装与升级刷新：skills（.agents + 平台镜像）、gate/hook 脚本、
 settings.json 接线、workflow.md、harness/guides SSOT、config 接线，并在装配后自检。
 
+需要可撤销安装时，rollback bundle 必须放在目标项目外部。恢复使用 post-apply digest 做
+CAS；apply 后若目标发生任何非 Git 漂移，unapply 会拒绝覆盖用户新改动。`.git` 从不进入
+bundle，也不会被 unapply 读取或修改：
+
+```bash
+bash /path/to/guru-template/overlay/apply.sh /path/to/project flutter \
+  --rollback-bundle /tmp/guru-overlay-rollback
+bash /path/to/guru-template/overlay/apply.sh --unapply /path/to/project \
+  /tmp/guru-overlay-rollback
+```
+
+V0 的 docs/code/tests 一致性、四路由 policy smoke、Codex-only event 负例与 apply/unapply
+round-trip 由 `bash guru-template/overlay/tests/apply_test.sh` 一次性验证。
+
 不负责（边界）：
 - **CLI core 脚本**（task.py/common/*）：归 `trellis update` 的 hash 三方合并；apply.sh 只检测
   before_start 支持并警告。

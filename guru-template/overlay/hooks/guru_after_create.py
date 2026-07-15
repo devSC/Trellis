@@ -11,8 +11,7 @@
   1. 项目约定硬前置：.trellis/spec/conventions/project-conventions.md 缺失 → stderr 警告（不阻塞主流程，
      但 Gate 与各 skill 硬前置会拦）。
   2. 往 implement.jsonl / check.jsonl 追加基线条目（已存在的路径跳过，幂等）。
-  3. task.json 默认写入 guru_chain=full（双轨制安全默认：完整五阶段链）。降为 light 必须
-     经 client-small-iteration-dev 分流且获用户同意后显式改写。
+  3. 由官方 Custom delivery policy 写入 route；只有 high-risk 才 fail-closed 到 full。
 """
 
 import json
@@ -25,6 +24,10 @@ try:
     import guru_contract  # noqa: E402
 except Exception:  # pragma: no cover - source-tree fallback, installed overlay has same-dir module
     guru_contract = None
+try:
+    import guru_delivery_policy  # noqa: E402
+except Exception:  # pragma: no cover - older installs may not have delivery policy yet
+    guru_delivery_policy = None
 
 BASELINE = [
     {"file": ".trellis/spec/conventions/project-conventions.md",
@@ -113,7 +116,7 @@ def main() -> int:
     a = append_unique(os.path.join(task_dir, "implement.jsonl"), BASELINE + bylayer)
     b = append_unique(os.path.join(task_dir, "check.jsonl"), BASELINE + CHECK_EXTRA + bylayer)
 
-    # 判轨安全默认：guru_chain=full（轻量链须显式降级）
+    # 单一 policy 判轨；无法证明非 high 时才保守回落 full。
     chain_note = ""
     contract_note = ""
     try:
@@ -121,8 +124,25 @@ def main() -> int:
             data = json.load(f)
         if not isinstance(data, dict):
             raise ValueError("task.json 根节点必须是对象")
+        selection = None
+        if guru_delivery_policy is not None:
+            try:
+                raw_paths = data.get("affected_paths")
+                affected_paths = tuple(raw_paths) if isinstance(raw_paths, list) else ()
+                selection = guru_delivery_policy.resolve_delivery_selection(
+                    guru_delivery_policy.IntakeRequest(
+                        description=str(data.get("title") or data.get("name") or ""),
+                        affected_paths=affected_paths,
+                        commit_requested=bool(data.get("commit_requested", True)),
+                    ),
+                    capability_report={},
+                )
+            except Exception as exc:
+                contract_note = f"；delivery policy 保守回落 full（{exc}）"
+        selected_route = selection.execution_route if selection is not None else "full_chain"
+        selected_risk = selection.risk if selection is not None else data.get("risk_level", "unknown")
         if data.get("guru_chain") not in ("full", "light"):
-            data["guru_chain"] = "full"
+            data["guru_chain"] = "full" if selected_route == "full_chain" else "light"
             # 原子写：先写临时文件再 replace，中断不会留下半截 task.json
             tmp_path = f"{task_json}.tmp.{os.getpid()}"
             try:
@@ -133,16 +153,18 @@ def main() -> int:
             finally:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
-            chain_note = "；guru_chain 默认 full（可按分流+用户确认改 light）"
+            chain_note = f"；guru_chain={data['guru_chain']}（route={selected_route}）"
         if guru_contract is not None and not os.path.exists(os.path.join(task_dir, guru_contract.CONTRACT_FILE)):
             contract = guru_contract.default_contract(
-                guru_contract.ROUTE_FULL_CHAIN,
-                data.get("risk_level", "unknown"),
+                selected_route,
+                selected_risk,
                 created_by="guru_after_create",
             )
-            contract["assessment"]["reasons"] = ["conservative default: new Guru tasks start with full_chain selected route"]
+            contract["assessment"]["reasons"] = ["selected by Custom delivery policy"]
+            if selection is not None:
+                contract.update(guru_delivery_policy.selection_to_contract_patch(selection))
             guru_contract.write_contract(task_dir, contract)
-            contract_note = "；gate-contract 默认 full_chain（可经 route_selection 改 micro/lite）"
+            contract_note += f"；gate-contract route={selected_route}"
     except (ValueError, OSError) as e:
         # ValueError 覆盖 json.JSONDecodeError（其子类）与非对象根节点；保持 best-effort 不阻塞主流程
         sys.stderr.write(f"[guru-after-create] 警告：guru_chain 写入失败（{e}）\n")

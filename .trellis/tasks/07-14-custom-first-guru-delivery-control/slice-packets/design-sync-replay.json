@@ -1,0 +1,192 @@
+{
+  "schema_version": 1,
+  "slice_id": "design-sync-replay",
+  "owner_unit": "UNIT-design-sync",
+  "target_kind": "implementation",
+  "target_paths": [
+    "guru-template/overlay/README.md",
+    "guru-template/overlay/benchmarks/fixtures/full-zero-implementation.json",
+    "guru-template/overlay/benchmarks/fixtures/gate-rework-attribution.json",
+    "guru-template/overlay/benchmarks/fixtures/lite-planning-loop.json",
+    "guru-template/overlay/benchmarks/run_replay.py",
+    "guru-template/overlay/docs/delivery-control-plane.md",
+    "guru-template/overlay/trellis-local/SKILL.md",
+    "guru-template/overlay/verify/guru_design_sync.py",
+    "guru-template/overlay/verify/baselines/legacy-bundled-v1.json",
+    "guru-template/overlay/verify/guru_metrics_adapter.py",
+    "guru-template/overlay/verify/guru_replay.py",
+    "guru-template/overlay/verify/tests/test_design_sync.py",
+    "guru-template/overlay/verify/tests/test_replay_benchmark.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "design_sync",
+    "release_benchmark",
+    "metric_integrity"
+  ],
+  "depends_on": [
+    "marketplace-catalog",
+    "extension-manager",
+    "delivery-control",
+    "semantic-review",
+    "bounded-context"
+  ],
+  "deterministic_checks": [
+    "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_design_sync.py'",
+    "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_replay_benchmark.py'",
+    "python3 guru-template/overlay/benchmarks/run_replay.py --protocol v2 --evidence-mode recorded-trace",
+    "python3 guru-template/overlay/verify/guru_design_sync.py verify-legacy-transition --baseline guru-template/overlay/verify/baselines/legacy-bundled-v1.json",
+    "bash guru-template/overlay/tests/official_067_e2e.sh --release",
+    "test -z \"$(git status --porcelain=v1 --untracked-files=all -- packages/cli/src packages/core)\"",
+    "node .gitnexus/run.cjs detect-changes --repo \"$PWD\" --scope compare --base-ref main"
+  ],
+  "release_checks": [
+    "python3 guru-template/overlay/verify/guru_replay.py run --suite delivery-control --protocol v2 --evidence-mode live-provider --max-live-runs 30"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "optional"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "marketplace",
+      ".trellis/tasks/07-14-custom-first-guru-delivery-control/check.jsonl",
+      ".trellis/tasks/07-14-custom-first-guru-delivery-control/implement.jsonl"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-SYNC-001",
+      "rule": "highest-priority impact signal must-not be overridden by no-doc-impact",
+      "source": "design-package/chapters/design-sync.md#9",
+      "owner": "UNIT-design-sync",
+      "positive_case": "contract-impact classification wins when any higher-priority evidence is present",
+      "negative_case": "a formatting or no-doc-impact claim hides an API, schema, lifecycle, or behavior change",
+      "route_if_missing": "block final sync",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_design_sync.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-SYNC-002",
+      "rule": "task-local design must-not substitute missing project-current SSOT",
+      "source": "design-package/chapters/design-sync.md#9",
+      "owner": "UNIT-design-sync",
+      "positive_case": "project-current source is discovered through explicit config or a version-selected manifest",
+      "negative_case": "a historical or task-local design package is labeled project-current",
+      "route_if_missing": "ProjectDesignMissing",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_design_sync.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-SYNC-003",
+      "rule": "missing module/symbol/test evidence must-not be marked covered",
+      "source": "design-package/chapters/design-sync.md#9",
+      "owner": "UNIT-design-sync",
+      "positive_case": "trace remains pending until current code and test evidence digests exist",
+      "negative_case": "planning prose alone changes a trace row to covered or done",
+      "route_if_missing": "block trace status",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_design_sync.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-SYNC-004",
+      "rule": "Custom-v2 consistency must-not require mutating/falling back to legacy v1 or misclassify pinned debt as green/SDK-ready",
+      "source": "design-package/chapters/design-sync.md#9",
+      "owner": "UNIT-design-sync",
+      "positive_case": "exact inventory and failure fingerprints classify known debt non-green while Core-zero, v2 closure and no-fallback E2E pass",
+      "negative_case": "a count-only waiver, changed legacy failure, Core edit, runtime fallback or SDK-ready claim is accepted",
+      "route_if_missing": "block declared release domain",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_design_sync.py'",
+        "python3 guru-template/overlay/verify/guru_design_sync.py verify-legacy-transition --baseline guru-template/overlay/verify/baselines/legacy-bundled-v1.json",
+        "bash guru-template/overlay/tests/official_067_e2e.sh --release"
+      ]
+    },
+    {
+      "invariant_id": "INV-REPLAY-001",
+      "rule": "applicable TTFC, first-verified, terminal time, canonical context bytes and provider total input tokens must each independently meet warm/cold <=0.70",
+      "source": "design-package/chapters/replay-benchmark.md#9",
+      "owner": "UNIT-replay-benchmark",
+      "positive_case": "every applicable live median ratio passes",
+      "negative_case": "an average or model-cycle substitute hides one regression",
+      "route_if_missing": "fail fixture",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_replay_benchmark.py'",
+        "python3 guru-template/overlay/benchmarks/run_replay.py --protocol v2 --evidence-mode recorded-trace",
+        "python3 guru-template/overlay/verify/guru_replay.py run --suite delivery-control --protocol v2 --evidence-mode live-provider --max-live-runs 30"
+      ]
+    },
+    {
+      "invariant_id": "INV-REPLAY-002",
+      "rule": "a baseline below floor or fewer than five valid live pairs must-not produce a relative pass",
+      "source": "design-package/chapters/replay-benchmark.md#9",
+      "owner": "UNIT-replay-benchmark",
+      "positive_case": "BASELINE_TOO_SMALL or SampleIncomplete blocks",
+      "negative_case": "tiny denominator or partial sample is marketed as saving",
+      "route_if_missing": "replace fixture or complete evidence",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_replay_benchmark.py'",
+        "python3 guru-template/overlay/benchmarks/run_replay.py --protocol v2 --evidence-mode recorded-trace",
+        "python3 guru-template/overlay/verify/guru_replay.py run --suite delivery-control --protocol v2 --evidence-mode live-provider --max-live-runs 30"
+      ]
+    },
+    {
+      "invariant_id": "INV-REPLAY-003",
+      "rule": "any hard budget, drift, trace, official-install or unapply failure must-not release",
+      "source": "design-package/chapters/replay-benchmark.md#9",
+      "owner": "UNIT-replay-benchmark",
+      "positive_case": "all current deterministic and live release invariants are green",
+      "negative_case": "unit tests override a red end-to-end invariant",
+      "route_if_missing": "release fail",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_replay_benchmark.py'",
+        "python3 guru-template/overlay/benchmarks/run_replay.py --protocol v2 --evidence-mode recorded-trace",
+        "bash guru-template/overlay/tests/official_067_e2e.sh --release"
+      ]
+    },
+    {
+      "invariant_id": "INV-REPLAY-004",
+      "rule": "live metrics must include provider-adapter provenance, explicit cached-input semantics, uncached/cached/output/total tokens, actual/duplicate reads, cache hits and model/tool/wait counters without unknown-as-zero substitution",
+      "source": "design-package/chapters/replay-benchmark.md#9",
+      "owner": "UNIT-replay-benchmark",
+      "positive_case": "raw capture normalizes every mandatory metric and digest",
+      "negative_case": "prose, aggregate-only telemetry or missing cache/read semantics is accepted",
+      "route_if_missing": "MetricUnknown or provenance block",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_replay_benchmark.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-REPLAY-005",
+      "rule": "avoidable Gate-caused active time, total token cost and model cycles must each remain strictly below ten percent with useful findings, false positives and semantic changes attributed independently",
+      "source": "design-package/chapters/replay-benchmark.md#9",
+      "owner": "UNIT-replay-benchmark",
+      "positive_case": "all three known ratios are below 0.10 and semantic-change pairs restart",
+      "negative_case": "ratios are averaged, unknown is zero, useful defects are false positives or semantic change shrinks only numerator",
+      "route_if_missing": "Gate rework block or fail",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_replay_benchmark.py'",
+        "python3 guru-template/overlay/benchmarks/run_replay.py --protocol v2 --evidence-mode recorded-trace"
+      ]
+    },
+    {
+      "invariant_id": "INV-REPLAY-006",
+      "rule": "recorded or synthetic evidence and live schedules exceeding the global cap must-not masquerade as a real five-pair current provider proof",
+      "source": "design-package/chapters/replay-benchmark.md#9",
+      "owner": "UNIT-replay-benchmark",
+      "positive_case": "two live fixtures complete five pairs within cap and CI traces remain labeled non-live",
+      "negative_case": "recorded trace is called live, pair count is reduced or provider calls continue past cap/blocker",
+      "route_if_missing": "block performance evidence",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_replay_benchmark.py'",
+        "python3 guru-template/overlay/benchmarks/run_replay.py --protocol v2 --evidence-mode recorded-trace"
+      ]
+    }
+  ]
+}

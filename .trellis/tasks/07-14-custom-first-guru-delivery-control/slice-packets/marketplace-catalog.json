@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "slice_id": "marketplace-catalog",
+  "owner_unit": "UNIT-marketplace-catalog",
+  "target_kind": "implementation",
+  "target_paths": [
+    "guru-template/index.json",
+    "guru-template/overlay/tests/https_git_fixture.py",
+    "guru-template/overlay/tests/official_067_e2e.sh",
+    "guru-template/overlay/verify/guru_catalog.py",
+    "guru-template/overlay/verify/tests/test_guru_catalog.py",
+    "guru-template/overlay/verify/tests/test_https_git_fixture.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "marketplace_contract",
+    "distribution_boundary",
+    "no_bundled_fallback"
+  ],
+  "depends_on": [],
+  "deterministic_checks": [
+    "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_guru_catalog.py'",
+    "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_https_git_fixture.py'",
+    "bash guru-template/overlay/tests/official_067_e2e.sh --catalog"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "optional"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "marketplace",
+      ".trellis/tasks/07-14-custom-first-guru-delivery-control/check.jsonl",
+      ".trellis/tasks/07-14-custom-first-guru-delivery-control/implement.jsonl"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-CATALOG-001",
+      "rule": "official resolution failure must-not read bundled Guru",
+      "source": "design-package/chapters/marketplace-catalog.md#9",
+      "owner": "UNIT-marketplace-catalog",
+      "positive_case": "explicit SourceUnavailable and bundled access counter remains zero",
+      "negative_case": "bundled fixture is returned after official source failure",
+      "route_if_missing": "block catalog/release Gate",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_guru_catalog.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-CATALOG-002",
+      "rule": "workflow/spec must-not use one homogeneous path rule",
+      "source": "design-package/chapters/marketplace-catalog.md#9",
+      "owner": "UNIT-marketplace-catalog",
+      "positive_case": "workflow resolves one Markdown file while spec resolves an ordered directory tree",
+      "negative_case": "spec is treated as a Markdown file or workflow path is recursively expanded",
+      "route_if_missing": "block schema validation",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_guru_catalog.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-CATALOG-003",
+      "rule": "resolved path must-not escape dedicated root",
+      "source": "design-package/chapters/marketplace-catalog.md#9",
+      "owner": "UNIT-marketplace-catalog",
+      "positive_case": "fenced repository-relative path resolves under guru-template root",
+      "negative_case": "absolute, parent traversal, or symlink escape leaves the dedicated root",
+      "route_if_missing": "block entry and report path",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_guru_catalog.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-CATALOG-004",
+      "rule": "official E2E must use exact `@mindfoldhq/trellis@0.6.7` binary and a path-consistent dedicated source root",
+      "source": "design-package/chapters/marketplace-catalog.md#9",
+      "owner": "UNIT-marketplace-catalog",
+      "positive_case": "package/version/binary realpath and dedicated source-root assertions pass for all four stacks",
+      "negative_case": "current fork or monorepo-root path mismatch produces a green install",
+      "route_if_missing": "block release",
+      "test_evidence": [
+        "bash guru-template/overlay/tests/official_067_e2e.sh --catalog"
+      ]
+    },
+    {
+      "invariant_id": "INV-CATALOG-005",
+      "rule": "official E2E source must use a hermetic HTTPS smart Git remote whose unique advertised ref resolves to the current candidate before invocation",
+      "source": "design-package/chapters/marketplace-catalog.md#9",
+      "owner": "UNIT-marketplace-catalog",
+      "positive_case": "local CA, smart HTTP log, ls-remote tag and recloned content digest all match current commit",
+      "negative_case": "file/local source, unadvertised tag, reused old remote/ref or stale content proves release",
+      "route_if_missing": "HermeticFixtureInvalid and block release",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_https_git_fixture.py'",
+        "bash guru-template/overlay/tests/official_067_e2e.sh --catalog"
+      ]
+    }
+  ]
+}

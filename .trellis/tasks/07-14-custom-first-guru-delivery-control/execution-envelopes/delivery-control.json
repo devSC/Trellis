@@ -1,0 +1,50 @@
+{
+  "budget": {
+    "confirmation_batches": 2,
+    "duplicate_reads": 12,
+    "first_value_deadline_seconds": 900,
+    "idle_seconds": 300,
+    "live_workers": 2,
+    "model_cycles": 32,
+    "no_progress_cycles": 4,
+    "observed_context_bytes": 2359296,
+    "planned_context_bytes": 1572864,
+    "planning_deadline_seconds": 900,
+    "repairs": 3,
+    "started_workers": 4,
+    "terminal_deadline_seconds": 5400,
+    "tool_calls": 144,
+    "wait_calls": 8
+  },
+  "enforcement_mode": "enforced",
+  "envelope_id": "env-ecd0a02e918c721f-1",
+  "execution_route": "full_chain",
+  "first_value_kind": "first_scoped_code_diff",
+  "intent": "implementation",
+  "policy_snapshot_digest": "d9fda7ff286f8da91762f3b80f84177ce44eab4c06f415f2f8edd7edc16de7cd",
+  "required_gate_ids": [
+    "requirements_confirmed",
+    "overview_review_clean",
+    "detail_review_clean",
+    "detail_confirmed",
+    "selected_slice_packet",
+    "risk_packet",
+    "start_guard"
+  ],
+  "risk_packet_digest": "d72c94b691748ed8d7b7b9a6b0338706472cd670ef3cdd7b34aaad2b50535378",
+  "schema_version": 1,
+  "scope_fingerprint": "ecd0a02e918c721fdbe59b353ff75b77b857778d3d8925da3ed73469acc38922",
+  "scope_max_files": null,
+  "selection_generation": 1,
+  "slice_id": "delivery-control",
+  "slice_packet_digest": "53a528c8327df89f4b80f7017684c92f7422c407d6458540d9ac9e33f75676cb",
+  "task_id": "custom-first-guru-delivery-control",
+  "terminal_conditions": [
+    "first_value_deadline",
+    "terminal_deadline",
+    "budget_exceeded",
+    "required_gate_failed"
+  ],
+  "topology": "managed_single",
+  "write_capability": "scoped_repository"
+}

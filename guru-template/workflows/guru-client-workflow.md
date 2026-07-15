@@ -36,6 +36,7 @@
   - **soft**：用户在对话中明确确认后，agent 运行 `guru_gate.py confirm requirements|detail --via-agent --user-quote "<用户确认原话>"` 代跑（`--user-quote` 必填，留痕标注 soft/agent + 用户原话）；**未获用户本轮明确确认不得执行**。
   - 进度用 `guru_gate.py status <task_dir>` 查；最终以 `guru_gate.py check-start <task_dir>` 作为 `task.py start` 前强制复查。
   - `check-start` 成功只产生 `START_READY`：下一步仅可运行 `task.py start`；实现/质检 worker 另由 `check-implementation` 要求 `task.json.status == in_progress`，提交另由 `check-commit` 校验 staged scope 与 implementation review。
+  - Full 在 detail review/confirm 前必须把按 slice 分组的完整 required critical/high decision universe 写入 `implement.md` 的唯一 `GURU:RISK_DECISION_INVENTORY` JSON fence；精确 schema、resolution evidence 和 Start Guard 重建规则只以 gate SSOT 为准。缺 inventory 或 unresolved 集合非空时不得启动。
 - **风险路由合同**：收到任务后先收集任务/路径/差异证据并输出推荐 route。固定推荐表为 `low -> small_inline`、`low + commit -> micro_task`、`medium -> lite_task`、`high -> full_chain`。`gate-contract.json` 与 `gate-degradations.jsonl` 均位于任务目录；前者记录本任务 selected route、recommended route、route_selection 审计与 gate 条件，后者只能记录真实发生的 gate/tool 失败和补偿检查，是事实证据，不是预授权。非高风险 work 可在合法 user override 审计后选择受支持的较轻 route；高风险 work 的 override 只记录用户偏好，不能授权 `lite_task` 或 `micro_task`，Gate 必须要求 `full_chain`。route policy 只能放宽 adversarial 证据要求，不能绕过结构 Gate、人工确认、当前 blocked/medium+ 证据、staged scope 或 implementation review digest。
 
 ### Planning Artifacts（guru 五阶段语义，双轨制）
@@ -148,7 +149,8 @@ dispatch-mode aware：guru_supervise.py implement-slices <task-dir> --dry-run --
 1. 先定位当前 Phase 与步骤（planning 期按 artifact/章节存在性），从下一步继续。
 2. `[required]` 步骤不可跳过；`[once]` 步骤产物已存在则跳过。
 3. 阶段可回退：下游发现上游缺陷 → 回上游阶段修订产物 → 重入下游。**禁止下游补造**（详细阶段不补归属、实现阶段不改设计语义）。
-4. 风险路由固定为 `low -> small_inline`、`low + commit -> micro_task`、`medium -> lite_task`、`high -> full_chain`。轻量链允许 prd 简版 + 仅所碰层的 design 合同，但 Gate 口径不降；`gate-degradations.jsonl` 只记录事实证据，不授权绕过。
+4. 风险路由以 `.trellis/scripts/guru/guru_delivery_policy.py` + `.trellis/policy/delivery-policy.json` 为唯一可执行真源：`low/no commit -> small_inline`，`low + commit + explicit path scope -> micro_task`，`medium/unknown -> lite_task`，`high/unknown-high-signal -> full_chain`。Small/Micro/Lite 的目标是快速 first value；Full 的目标是实现前暴露风险。
+5. 轻量链允许 prd 简版 + 仅所碰层的 design 合同，但 Gate 口径不降；`gate-degradations.jsonl` 只记录事实证据，不授权绕过。预算耗尽只能 terminal stop 或 re-intake，不能跳过 Gate/review/confirmation。
 
 ### Active Task Routing
 

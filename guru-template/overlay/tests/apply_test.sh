@@ -559,5 +559,130 @@ PY
 [ "$rc" != 0 ] && [ "$old_guard_hash" = "$new_guard_hash" ] \
   && ok "场景23 hooks.json 替换失败恢复既有 Codex guard" || { bad "场景23 hooks.json 替换失败未恢复既有 Codex guard (rc=$rc)"; echo "$out" | head -4; }
 
+# ============ V0-ROUNDTRIP：可撤销 Custom 安装 + 一致性/policy/Codex-only smoke ============
+T24=$(mk_target v0-roundtrip yes)
+mkdir -p "$T24/.git" "$T24/user-owned"
+printf 'REAL_INDEX_SENTINEL\n' > "$T24/.git/index"
+printf 'USER_FILE_SENTINEL\n' > "$T24/user-owned/keep.txt"
+printf 'user config\n' > "$T24/unrelated.conf"
+T24_BEFORE=$(snapshot "$T24")
+T24_BUNDLE="$TMP/v0-roundtrip-bundle"
+out=$(bash "$APPLY" "$T24" flutter --rollback-bundle "$T24_BUNDLE" 2>&1); rc=$?
+[ "$rc" = 0 ] && [ -f "$T24/.trellis/scripts/guru/guru_gate.py" ] \
+  && ok "V0 rollback-bundle apply 安装 Custom overlay" \
+  || { bad "V0 rollback-bundle apply 失败 (rc=$rc)"; echo "$out" | tail -10; }
+out=$(bash "$APPLY" --unapply "$T24" "$T24_BUNDLE" 2>&1); rc=$?
+T24_AFTER=$(snapshot "$T24")
+[ "$rc" = 0 ] && [ "$T24_BEFORE" = "$T24_AFTER" ] \
+  && grep -qx 'REAL_INDEX_SENTINEL' "$T24/.git/index" \
+  && grep -qx 'USER_FILE_SENTINEL' "$T24/user-owned/keep.txt" \
+  && grep -qx 'user config' "$T24/unrelated.conf" \
+  && ok "V0 unapply 字节恢复且保留 user-owned/.git" \
+  || { bad "V0 unapply 未完整恢复 preimage (rc=$rc)"; echo "$out" | tail -10; }
+
+v0_consistency_check() { # v0_consistency_check <guru-template-root> [events-jsonl]
+  python3 - "$1" "${2:-}" <<'PY'
+import json
+import os
+import sys
+from pathlib import PurePosixPath
+
+root, events = sys.argv[1:3]
+matrix = {
+    "docs": ["overlay/README.md"],
+    "code": [
+        "overlay/apply.sh",
+        "overlay/policy/delivery-policy.json",
+        "overlay/verify/guru_contract.py",
+        "overlay/verify/guru_delivery_policy.py",
+    ],
+    "tests": [
+        "overlay/tests/apply_test.sh",
+        "overlay/verify/tests/test_delivery_policy.py",
+    ],
+}
+missing = [f"{layer}:{rel}" for layer, paths in matrix.items() for rel in paths
+           if not os.path.isfile(os.path.join(root, rel))]
+if missing:
+    raise SystemExit("docs/code/tests mismatch: " + ",".join(missing))
+
+readme = open(os.path.join(root, "overlay/README.md"), encoding="utf-8").read()
+apply_source = open(os.path.join(root, "overlay/apply.sh"), encoding="utf-8").read()
+test_source = open(os.path.join(root, "overlay/tests/apply_test.sh"), encoding="utf-8").read()
+for token in ("--rollback-bundle", "--unapply", "apply_test.sh"):
+    if token not in readme:
+        raise SystemExit(f"docs/code/tests mismatch: README missing {token}")
+if "--unapply" not in apply_source or "V0-ROUNDTRIP" not in test_source:
+    raise SystemExit("docs/code/tests mismatch: unapply code/test coverage missing")
+
+index = json.load(open(os.path.join(root, "index.json"), encoding="utf-8"))
+for entry in index.get("templates", []):
+    if not os.path.exists(os.path.join(root, entry["path"])):
+        raise SystemExit(f"docs/code/tests mismatch: missing index target {entry['path']}")
+
+verify = os.path.join(root, "overlay/verify")
+sys.path.insert(0, verify)
+import guru_contract
+import guru_delivery_policy as policy
+
+capability = policy.managed_capability_report(parallel=False)
+loaded = policy.load_policy(os.path.join(root, "overlay/policy/delivery-policy.json"))
+requests = {
+    "small_inline": policy.IntakeRequest(
+        description="fix typo", affected_paths=(PurePosixPath("lib/ui/label.dart"),)),
+    "micro_task": policy.IntakeRequest(
+        description="fix typo", affected_paths=(PurePosixPath("lib/ui/label.dart"),), commit_requested=True),
+    "lite_task": policy.IntakeRequest(description="bounded behavior change", commit_requested=True),
+    "full_chain": policy.IntakeRequest(
+        description="change workflow hook gate runtime",
+        affected_paths=(PurePosixPath(".trellis/workflow.md"),), commit_requested=True),
+}
+rows = {name: policy.resolve_delivery_selection(req, loaded, capability_report=capability)
+        for name, req in requests.items()}
+expected = {
+    "small_inline": guru_contract.ROUTE_SMALL_INLINE,
+    "micro_task": guru_contract.ROUTE_MICRO_TASK,
+    "lite_task": guru_contract.ROUTE_LITE_TASK,
+    "full_chain": guru_contract.ROUTE_FULL_CHAIN,
+}
+for name, selection in rows.items():
+    if selection.execution_route != expected[name]:
+        raise SystemExit(f"route smoke mismatch: {name} -> {selection.execution_route}")
+if rows["full_chain"].risk != guru_contract.RISK_HIGH or "risk_packet" not in rows["full_chain"].required_gate_ids:
+    raise SystemExit("route smoke mismatch: full/high risk packet missing")
+
+if events:
+    for number, line in enumerate(open(events, encoding="utf-8"), 1):
+        if line.strip():
+            json.loads(line)
+            if "claude" in line.lower():
+                raise SystemExit(f"claude plan/event forbidden at line {number}")
+PY
+}
+
+GURU_TEMPLATE_ROOT="$(cd "$HERE/../.." && pwd)"
+v0_consistency_check "$GURU_TEMPLATE_ROOT" \
+  && ok "V0 docs/code/tests consistency + 四路由 policy smoke" \
+  || bad "V0 consistency/policy smoke 未通过"
+
+V0_FAKE="$TMP/v0-consistency-mismatch"; mkdir -p "$V0_FAKE"
+if v0_consistency_check "$V0_FAKE" >/dev/null 2>&1; then
+  bad "V0 consistency mismatch 未被阻断"
+else
+  ok "V0 consistency mismatch fail-closed"
+fi
+
+V0_CODEX_EVENTS="$TMP/v0-codex-events.jsonl"
+V0_CLAUDE_EVENTS="$TMP/v0-claude-events.jsonl"
+printf '{"kind":"plan","provider":"codex"}\n' > "$V0_CODEX_EVENTS"
+printf '{"kind":"event","provider":"claude"}\n' > "$V0_CLAUDE_EVENTS"
+v0_consistency_check "$GURU_TEMPLATE_ROOT" "$V0_CODEX_EVENTS" \
+  && ok "V0 Codex plan/event 放行" || bad "V0 Codex plan/event 被误拦"
+if v0_consistency_check "$GURU_TEMPLATE_ROOT" "$V0_CLAUDE_EVENTS" >/dev/null 2>&1; then
+  bad "V0 Claude plan/event 未被阻断"
+else
+  ok "V0 Claude plan/event fail-closed"
+fi
+
 echo "----"; echo "结果: $pass 通过 / $failn 失败"
 [ "$failn" = 0 ]

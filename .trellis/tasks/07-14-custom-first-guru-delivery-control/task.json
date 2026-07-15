@@ -1,0 +1,322 @@
+{
+  "id": "custom-first-guru-delivery-control",
+  "name": "custom-first-guru-delivery-control",
+  "title": "Custom-first Guru delivery control plane",
+  "description": "以官方 Custom-first、功能阶段 Trellis Core 零修改、完整可卸载为边界，重构所有任务类型的路由、预算、风险暴露、确认、监督、Gate、证据、知识复用和文档代码测试一致性，并用两个失控会话做回归基准。",
+  "status": "in_progress",
+  "guru_chain": "full",
+  "design_package": ".trellis/tasks/07-14-custom-first-guru-delivery-control/design-package",
+  "requirement_package": ".trellis/tasks/07-14-custom-first-guru-delivery-control/requirement-package",
+  "require_req_uc": true,
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-07-14",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/preserve-guru-target-wip-75887690",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {},
+  "guru_gates": {
+    "review_runs": {
+      "overview": [
+        {
+          "run_id": "37290c5f-a8c3-45ad-9139-0a399ac7ac2c",
+          "reviewer": "clean-context-codex-bar-raiser-a-untrusted-v1",
+          "recorded_at": "2026-07-14T17:19:00+08:00",
+          "artifact_digest": "a516d57a21c7fd7c1c7bc4a708c2ab306323c3e2455f646f8cabb4b7a45b7382",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "OV-H1 gate-rework metric absent; OV-H2 live cycle/tool/wait/read budgets absent; OV-H3 trusted identity not bound to semantic verdict",
+          "finding_class": "OVERVIEW_DEFECT"
+        },
+        {
+          "run_id": "0620d3e4-1ff9-4e6c-a77f-e10d2eb0ba13",
+          "reviewer": "clean-context-codex-bar-raiser-b-untrusted-v1",
+          "recorded_at": "2026-07-14T17:19:00+08:00",
+          "artifact_digest": "a516d57a21c7fd7c1c7bc4a708c2ab306323c3e2455f646f8cabb4b7a45b7382",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "Route-specific execution topology missing; trusted identity adapter unavailable; context/token hard-fence backend undefined",
+          "finding_class": "OVERVIEW_DEFECT"
+        },
+        {
+          "run_id": "overview-current-20260714-1832-a",
+          "reviewer": "clean-context-root-local-bar-raiser-overview-a",
+          "recorded_at": "2026-07-14T18:31:41+08:00",
+          "artifact_digest": "61d060cf835990f95511e857236688080ac45bc486bf9d3dcd0028277528e420",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Current overview digest 61d060cf835990f95511e857236688080ac45bc486bf9d3dcd0028277528e420 reviewed after requirements confirmation. Evidence: guru_gate overview/detail/implement pass; trace-matrix strict require-req-uc closed; packet aggregation 6 packets/64 unique targets/56 invariant triples/0 target overlap; bootstrap SHA fixed and placeholder removed; release_checks documented final-release-only; no product code or Core path modified."
+        },
+        {
+          "run_id": "overview-current-20260714-1832-b",
+          "reviewer": "clean-context-root-local-bar-raiser-overview-b",
+          "recorded_at": "2026-07-14T18:31:41+08:00",
+          "artifact_digest": "61d060cf835990f95511e857236688080ac45bc486bf9d3dcd0028277528e420",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Second clean-context-labeled local pass against same current overview digest 61d060cf835990f95511e857236688080ac45bc486bf9d3dcd0028277528e420. Checked Custom-first/Core-zero boundary, route-specific topology, ManagedProviderRunner advisory/enforced distinction, bootstrap exception limits, packet target overlap=0, and current Gate structure. No medium+ overview blocker found; official channel worker path failed because overview agent is unavailable and is not counted as managed evidence."
+        },
+        {
+          "run_id": "overview-current-20260714-1852-c",
+          "reviewer": "clean-context-root-local-bar-raiser-overview-c",
+          "recorded_at": "2026-07-14T18:58:03+08:00",
+          "artifact_digest": "9b251fdfe89dcca513de4d01fd970f7e45ad9518201b9fb5bf8fff9fbc9a0b99",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Current overview digest 9b251fdfe89dcca513de4d01fd970f7e45ad9518201b9fb5bf8fff9fbc9a0b99 reviewed after bootstrap repair. Delta is limited to one-shot bootstrap dirty-scope exception plus reviewed SHA update. Evidence: guru_gate requirements/overview/detail/implement pass; bootstrap tests pass 9/9; exception only admits task-local bootstrap source/test dirty paths and removes only corresponding SCOPE_INVALID blockers; no product target scope or Core path added."
+        },
+        {
+          "run_id": "overview-current-20260714-1852-d",
+          "reviewer": "clean-context-root-local-bar-raiser-overview-d",
+          "recorded_at": "2026-07-14T18:58:03+08:00",
+          "artifact_digest": "9b251fdfe89dcca513de4d01fd970f7e45ad9518201b9fb5bf8fff9fbc9a0b99",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Second clean-context-labeled review for current overview digest 9b251fdfe89dcca513de4d01fd970f7e45ad9518201b9fb5bf8fff9fbc9a0b99. Checked that bootstrap exception is not a reusable route policy, does not use dirty_state.unrelated, preserves Custom-first/Core-zero boundary, and only enables audited migration preflight for reviewed task-local bootstrap files. No medium+ overview blocker found."
+        },
+        {
+          "run_id": "overview-current-20260714-1918-e",
+          "reviewer": "clean-context-root-local-bar-raiser-overview-e",
+          "recorded_at": "2026-07-14T19:25:18+08:00",
+          "artifact_digest": "878b89b19bca8aa9a2417284b7bde14aed648c24abb2ad89c90b145ff87d8ce8",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Current overview digest 878b89b19bca8aa9a2417284b7bde14aed648c24abb2ad89c90b145ff87d8ce8 reviewed after bootstrap recovery protocol update. Evidence: bootstrap tests pass 11/11; py_compile passes; guru_gate requirements/overview/detail/implement pass; retry is limited to prior failed_compensated with exact restored lifecycle surfaces; no product slice scope, route policy, or Core-zero boundary widened."
+        },
+        {
+          "run_id": "overview-current-20260714-1918-f",
+          "reviewer": "clean-context-root-local-bar-raiser-overview-f",
+          "recorded_at": "2026-07-14T19:25:18+08:00",
+          "artifact_digest": "878b89b19bca8aa9a2417284b7bde14aed648c24abb2ad89c90b145ff87d8ce8",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Second clean-context-labeled review for overview digest 878b89b19bca8aa9a2417284b7bde14aed648c24abb2ad89c90b145ff87d8ce8. Checked hash-chain transitions prepared/consumed/retry_prepared/retry_consumed/burned, source supersession only after clean compensation, and exact postcheck dirty exception limited to bootstrap source/test/evidence. No medium+ overview blocker found."
+        },
+        {
+          "run_id": "overview-current-20260714-2000-g",
+          "reviewer": "clean-context-root-local-bar-raiser-overview-g",
+          "recorded_at": "2026-07-14T19:56:06+08:00",
+          "artifact_digest": "0f0b9d47aacfbd3a2bce2a4dbde1e4d792633a13ce3263fbf22c25cdc9f24740",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Current overview digest 0f0b9d47aacfbd3a2bce2a4dbde1e4d792633a13ce3263fbf22c25cdc9f24740 reviewed after adding validation for blocked delivery-control implementation-review evidence. Evidence: bootstrap tests pass 11/11; guru_gate requirements/overview/detail/implement pass; dirty exception remains exact and validates implementation-review lines are blocked SCOPE_INVALID for slice:delivery-control with target_paths empty."
+        },
+        {
+          "run_id": "overview-current-20260714-2000-h",
+          "reviewer": "clean-context-root-local-bar-raiser-overview-h",
+          "recorded_at": "2026-07-14T19:56:06+08:00",
+          "artifact_digest": "0f0b9d47aacfbd3a2bce2a4dbde1e4d792633a13ce3263fbf22c25cdc9f24740",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Second clean-context-labeled overview review for digest 0f0b9d47aacfbd3a2bce2a4dbde1e4d792633a13ce3263fbf22c25cdc9f24740. Checked no product target or Core-zero scope widened, failed audit chain preserved, and retry remains gated by exact compensation plus exact evidence validation. No medium+ overview blocker found."
+        },
+        {
+          "run_id": "overview-final-20260714-reviewer-a",
+          "reviewer": "clean-context-independent-bounded-reviewer-a",
+          "recorded_at": "2026-07-15T01:23:11+08:00",
+          "artifact_digest": "d9f3fb206c597334daa9ffbe358e9c481174492d087603aae6ff44b4f0f08298",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Current Overview digest d9f3fb206c597334daa9ffbe358e9c481174492d087603aae6ff44b4f0f08298 is clean. Verified current verifier SHA ae857b13f76ba5471016cc3671c9e3fc0a71e4e298eb85defa0ad85398c52a08, final validators precede final chain/archive bind, and Custom-first/Core-zero/all-task boundaries remain intact."
+        },
+        {
+          "run_id": "overview-final-20260714-reviewer-b",
+          "reviewer": "clean-context-independent-adversarial-reviewer-b",
+          "recorded_at": "2026-07-15T01:23:12+08:00",
+          "artifact_digest": "d9f3fb206c597334daa9ffbe358e9c481174492d087603aae6ff44b4f0f08298",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Current Overview digest d9f3fb206c597334daa9ffbe358e9c481174492d087603aae6ff44b4f0f08298 is clean. Reviewed all nine ownership chapters: six outcomes retain fail-closed owners, all task routes are covered, high risk remains Full, and no SDK fork, unbounded loop, duplicate confirmation, or false cost/rework claim was introduced."
+        },
+        {
+          "run_id": "overview-frozen-r1-20260715",
+          "reviewer": "clean-context-codex-r1",
+          "recorded_at": "2026-07-15T08:55:01+08:00",
+          "artifact_digest": "9187af5c5e8354dcec029bfbab08175be0495b8ec53b8759c0079e8f29db4049",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Frozen digests recomputed exactly. Six outcomes remain owned across requirement scenarios and route policy: bounded Lite entry, high-risk promotion before write, bounded autonomous closure, verified reuse, docs-code-test consistency, convergent evidence, and reversible Custom-first/Core-zero distribution. Delivery-control ordering keeps one final reconfirmation before current risk/envelope rebuild, target-only Codex review, and burn."
+        },
+        {
+          "run_id": "overview-frozen-r2-20260715",
+          "reviewer": "clean-context-codex-r2",
+          "recorded_at": "2026-07-15T08:55:02+08:00",
+          "artifact_digest": "9187af5c5e8354dcec029bfbab08175be0495b8ec53b8759c0079e8f29db4049",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Independent frozen-snapshot review recomputed all three digests exactly. Seven scenarios preserve fast bounded entry, pre-execution high-risk promotion, few-confirmation autonomy, cheaper verified repetition, cross-artifact consistency, evidence convergence and reversible distribution. Exact route budgets have single ownership and the ordered final review/reconfirmation path does not multiply user confirmation."
+        }
+      ],
+      "detail": [
+        {
+          "run_id": "671d6f4b-f379-4e86-aab6-795322ac1acd",
+          "reviewer": "clean-context-codex-bar-raiser-a-untrusted-v1",
+          "recorded_at": "2026-07-14T17:19:00+08:00",
+          "artifact_digest": "d245226a6ec0894f13727fb8432e9f14d4bc51261d778a9f35590ed008700f37",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "DT-H1 TTFC/token/rework schema gap; DT-H2 live budgets; DT-H3 unsigned verdict envelope; DT-M1 current_run; DT-M2 dirty baseline; DT-M3 command drift",
+          "finding_class": "DETAIL_DEFECT"
+        },
+        {
+          "run_id": "291fa953-47c8-4e91-814d-03ba4498e797",
+          "reviewer": "clean-context-codex-bar-raiser-b-untrusted-v1",
+          "recorded_at": "2026-07-14T17:19:01+08:00",
+          "artifact_digest": "d245226a6ec0894f13727fb8432e9f14d4bc51261d778a9f35590ed008700f37",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "Low-route topology, provider capability, benchmark metrics, upstream blank fallback, and executable bootstrap writer gaps",
+          "finding_class": "DETAIL_DEFECT"
+        },
+        {
+          "run_id": "detail-current-20260714-1834-a",
+          "reviewer": "clean-context-root-local-bar-raiser-detail-a",
+          "recorded_at": "2026-07-14T18:32:08+08:00",
+          "artifact_digest": "555f1f2df90719c1b08911e11fa00a3161584c0c4a696bdc1d19e96fa7b80d06",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Current detail digest 555f1f2df90719c1b08911e11fa00a3161584c0c4a696bdc1d19e96fa7b80d06 reviewed after overview clean x2. Evidence: guru_gate detail/implement pass; bootstrap unit tests pass 8/8; py_compile passes; placeholder removed; packet DAG has no missing/self/cycle; 64 unique targets, 56 invariant triples, 0 overlap, no Core target paths; release_checks final-only and live-provider cap 30 documented.",
+          "deletion_audit": "No contract loss detected. Obsolete bootstrap SHA placeholder replaced by reviewed fixed SHA. No requirement, UNIT, invariant, slice, or validation contract was deleted; release live-provider check was explicitly moved to final-release-only semantics, not removed. Official channel worker failure recorded as process evidence, not hidden."
+        },
+        {
+          "run_id": "detail-current-20260714-1834-b",
+          "reviewer": "clean-context-root-local-bar-raiser-detail-b",
+          "recorded_at": "2026-07-14T18:32:08+08:00",
+          "artifact_digest": "555f1f2df90719c1b08911e11fa00a3161584c0c4a696bdc1d19e96fa7b80d06",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Second clean-context-labeled local pass against current detail digest 555f1f2df90719c1b08911e11fa00a3161584c0c4a696bdc1d19e96fa7b80d06. Checked V1-to-V2 cutover order, Supervisor cutover order, ManagedProviderRunner ownership, official 0.6.7 HTTPS fixture, gate rework attribution, bootstrap SHA/status/run/burn boundary, dirty-state limits, and forbidden Core/SDK modification boundary. No medium+ detail blocker found.",
+          "deletion_audit": "No obsolete facts removed without replacement. Placeholder-to-fixed-SHA update is replacement evidence. No chapter or packet invariant deleted; added targets from semantic-review, marketplace-catalog, extension-manager, bounded-context and design-sync-replay are represented in implement/detail. Remaining START_READY blockers are confirmation/review lifecycle, not missing detail content."
+        },
+        {
+          "run_id": "detail-current-20260714-1853-c",
+          "reviewer": "clean-context-root-local-bar-raiser-detail-c",
+          "recorded_at": "2026-07-14T18:58:18+08:00",
+          "artifact_digest": "604120acb0c790ef67a438783362b812dddca40686dacdbcd48a34bfb0a2a7c5",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Current detail digest 604120acb0c790ef67a438783362b812dddca40686dacdbcd48a34bfb0a2a7c5 reviewed after bootstrap repair. Evidence: bootstrap tests pass 9/9; SHA updated to 83e9c4d240d58b5b28e2a73e1fa14ab11d92dd8a7270f87318b20971f67d2c46; preflight exception is exact set {bootstrap_start.py,test_bootstrap_start.py}; it only drops matching SCOPE_INVALID for task-local bootstrap dirty files and preserves all dependency/parallel blockers otherwise.",
+          "deletion_audit": "No contract was deleted. The reviewed SHA value replaced the prior reviewed SHA because bootstrap source changed to handle the audited migration exception. The exception is narrower than dirty_state.unrelated and does not remove product target, invariant, route, confirmation, review, release, or Core-zero contracts."
+        },
+        {
+          "run_id": "detail-current-20260714-1853-d",
+          "reviewer": "clean-context-root-local-bar-raiser-detail-d",
+          "recorded_at": "2026-07-14T18:58:18+08:00",
+          "artifact_digest": "604120acb0c790ef67a438783362b812dddca40686dacdbcd48a34bfb0a2a7c5",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Second clean-context-labeled review for current detail digest 604120acb0c790ef67a438783362b812dddca40686dacdbcd48a34bfb0a2a7c5. Checked bootstrap run failure root cause, exact exception implementation, test coverage for dirty bootstrap scope, unchanged slice target graph, no Core-zero violation, no pycache, and no widening of managed/product execution authority. No medium+ detail blocker found.",
+          "deletion_audit": "No obsolete facts removed without replacement. The old SHA was intentionally superseded by the new reviewed SHA. Dirty-scope blocker handling is documented as one-shot bootstrap behavior and not moved into slice packet dirty_state. Remaining need is user strict detail reconfirmation for the changed digest."
+        },
+        {
+          "run_id": "detail-current-20260714-1919-e",
+          "reviewer": "clean-context-root-local-bar-raiser-detail-e",
+          "recorded_at": "2026-07-14T19:25:36+08:00",
+          "artifact_digest": "f21a5cc7abad2e58a2a8312bf744b03ed6c01d02b4fe88224a858c09baaec33c",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Current detail digest f21a5cc7abad2e58a2a8312bf744b03ed6c01d02b4fe88224a858c09baaec33c reviewed after bootstrap retry/recovery update. Evidence: tests pass 11/11, py_compile passes, retry allowed only after failed_compensated and clean compensation, manual_recovery remains terminal, exact postcheck dirty exception is only bootstrap-exception.jsonl plus bootstrap source/test. No product target scope or Core path added.",
+          "deletion_audit": "No contract deleted. Normal prepared->consumed->burned contract was refined to include a one-time clean-compensated retry chain. Old SHA replaced by new reviewed SHA. Failed audit evidence is preserved, not deleted; burn still requires verified latest consumed event and wrapper evidence."
+        },
+        {
+          "run_id": "detail-current-20260714-1919-f",
+          "reviewer": "clean-context-root-local-bar-raiser-detail-f",
+          "recorded_at": "2026-07-14T19:25:36+08:00",
+          "artifact_digest": "f21a5cc7abad2e58a2a8312bf744b03ed6c01d02b4fe88224a858c09baaec33c",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Second clean-context-labeled detail review for digest f21a5cc7abad2e58a2a8312bf744b03ed6c01d02b4fe88224a858c09baaec33c. Checked chain parser transition matrix, bind_chain current-source handling, bootstrap_scope_only exact list parser, retry after source change, duplicate/manual recovery rejection, and docs/implement SHA sync. No medium+ detail blocker found.",
+          "deletion_audit": "No obsolete facts removed without replacement. Retry semantics are additive and narrower than deleting the failed record. Dirty exception remains task-local and exact; slice packet dirty_state and Guru product scopes are unchanged. Remaining blocker is strict user detail reconfirmation for this changed digest."
+        },
+        {
+          "run_id": "detail-current-20260714-2001-g",
+          "reviewer": "clean-context-root-local-bar-raiser-detail-g",
+          "recorded_at": "2026-07-14T19:56:24+08:00",
+          "artifact_digest": "e0a984c069d45919e08ce96d663a7ea9db731848559538c55e1e2ae786f1d586",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Current detail digest e0a984c069d45919e08ce96d663a7ea9db731848559538c55e1e2ae786f1d586 reviewed after exact implementation-review evidence validation. Evidence: tests pass 11/11; py_compile pass; implementation-review exception is accepted only when each JSONL line is blocked SCOPE_INVALID for slice:delivery-control and target_paths is empty; malformed or broader review evidence remains fail-closed.",
+          "deletion_audit": "No contract deleted. The dirty exception contract was narrowed by content validation for implementation-reviews.jsonl. SHA updated to e6dbcc3b6c341902e4024af2690ca39d41f6112e12caaca31b509dc311d4c0e3. Failed bootstrap audit record remains preserved."
+        },
+        {
+          "run_id": "detail-current-20260714-2001-h",
+          "reviewer": "clean-context-root-local-bar-raiser-detail-h",
+          "recorded_at": "2026-07-14T19:56:24+08:00",
+          "artifact_digest": "e0a984c069d45919e08ce96d663a7ea9db731848559538c55e1e2ae786f1d586",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Second clean-context-labeled detail review for digest e0a984c069d45919e08ce96d663a7ea9db731848559538c55e1e2ae786f1d586. Checked dirty_exception_allowed, bootstrap_scope_only, retry chain parser, source-supersession binding, manual recovery terminal behavior, and docs/implement sync. No medium+ detail blocker found.",
+          "deletion_audit": "No obsolete fact removed without replacement. Added validation for blocked implementation-review evidence; retry semantics remain additive and narrower than deleting failed records. Remaining blocker is strict user detail reconfirmation for changed digest."
+        },
+        {
+          "run_id": "detail-final-20260714-reviewer-a",
+          "reviewer": "clean-context-independent-bounded-reviewer-a",
+          "recorded_at": "2026-07-15T01:23:12+08:00",
+          "artifact_digest": "c59d8b6d28b71461c18899011b7d3887b074d95eef397fe9def67a3f9de07aa6",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Current Detail digest c59d8b6d28b71461c18899011b7d3887b074d95eef397fe9def67a3f9de07aa6 is clean. Completed extension-manager, context-reuse, design-sync and replay-benchmark ownership/test mappings; final archive bind follows every final validator; append/replace/delete mutation regression preserves consumed and blocks burn.",
+          "deletion_audit": "All 10 Detail chapters exist with one UNIT owner each; six packets have 65 unique targets and zero overlap. Legacy apply copy/ownership behavior is replaced by ExtensionManager WAL/CAS while retaining only a thin compatibility wrapper. SDK-v1 remains frozen audit input, historical bootstrap remains immutable evidence, and no duplicate owner or unreplaced contract deletion was found."
+        },
+        {
+          "run_id": "detail-final-20260714-reviewer-b",
+          "reviewer": "clean-context-independent-adversarial-reviewer-b",
+          "recorded_at": "2026-07-15T01:23:12+08:00",
+          "artifact_digest": "c59d8b6d28b71461c18899011b7d3887b074d95eef397fe9def67a3f9de07aa6",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Current Detail digest c59d8b6d28b71461c18899011b7d3887b074d95eef397fe9def67a3f9de07aa6 is clean. Prior archive CAS MEDIUM is closed: final Detail/artifact/review validators complete before chain plus bind_chain re-hashes archive; second-review injection covers append/replace/delete; bootstrap suite is 20/20.",
+          "deletion_audit": "The repair reuses chain, bind_chain and the implementation-review digest path. It adds no second archive identity, parallel Gate, supervisor, or permanent control plane. The exact post-final-validator mutation harness is necessary regression evidence; no control can be deleted without losing the final-CAS guarantee."
+        },
+        {
+          "run_id": "detail-frozen-r1-20260715",
+          "reviewer": "clean-context-codex-r1",
+          "recorded_at": "2026-07-15T08:55:02+08:00",
+          "artifact_digest": "887ec536922ad91b59a7ea19786addc6389ef3ce24dbe7bfefed3143b9138e8f",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Current supervisor binds the exact pre-launch target digest through deterministic checks, immutable invocation prompt, official parse/normalize record append, post-worker digest and final CAS. Burn requires default official run-derived Codex channel lineage, one check worker and event sequence, canonical seven-field verdict equality, current in_progress lifecycle, repeat verification, and only then appends burned. No V2 independence claim is made.",
+          "deletion_audit": "D9 none: no requirement, invariant, owner, validation, history, provider, or rollback contract was removed. All REQ/BHV and ten UNIT owners remain; immutable verified-consumed source, compensation order, normal provider boundary, per-slice rollback, Core-zero and bypass limits remain explicit."
+        },
+        {
+          "run_id": "detail-frozen-r2-20260715",
+          "reviewer": "clean-context-codex-r2",
+          "recorded_at": "2026-07-15T08:55:02+08:00",
+          "artifact_digest": "887ec536922ad91b59a7ea19786addc6389ef3ce24dbe7bfefed3143b9138e8f",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Verifier 88b8d467 and Custom supervisor 40fe4af0 close the repaired batch: pre/deterministic/prompt/record/post/final digest CAS; official default Codex control-plane facts with single check worker; exact final seven-field verdict normalized and canonically equal to the record; initial and final in_progress lifecycle plus full input re-read before burn. Focused regressions cover drift and false-lineage cases.",
+          "deletion_audit": "D9 none: all seven REQ-UC contracts, ten UNIT owners and ten detail chapters remain. Delivery-control policy/start invariants, provider and trust limits, historical four-event chain, immutable archived source, rollback order, final reconfirmation and no-bypass constraints remain present."
+        }
+      ]
+    },
+    "requirements": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-15T07:21:48+08:00",
+      "confirmation_scope": "requirements_gate_only",
+      "allowed_next_action": "overview_design",
+      "prompt_summary": "Requirements confirmation allows overview/detail planning only",
+      "artifact_digest": "09a2a08bd75b538f11b8d2bdae1d1bf3c91cea289a9161ba5e2a5509a6a04041"
+    },
+    "detail": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-15T07:21:50+08:00",
+      "confirmation_scope": "detail_gate_only",
+      "allowed_next_action": "task_start",
+      "prompt_summary": "Detail confirmation allows task.py start only",
+      "artifact_digest": "c59d8b6d28b71461c18899011b7d3887b074d95eef397fe9def67a3f9de07aa6"
+    }
+  }
+}

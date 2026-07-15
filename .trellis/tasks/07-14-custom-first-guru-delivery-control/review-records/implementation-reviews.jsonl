@@ -1,0 +1,3 @@
+{"repairable": false, "review_result": "blocked", "review_target": "slice:delivery-control", "route_class": "none", "run_id": "20260714110619-15043-check-1", "slice_id": "delivery-control", "supervisor_failure": "SCOPE_INVALID", "target_paths": []}
+{"repairable": false, "review_result": "blocked", "review_target": "slice:delivery-control", "route_class": "none", "run_id": "20260714115831-55138-check-1", "slice_id": "delivery-control", "supervisor_failure": "SCOPE_INVALID", "target_paths": []}
+{"repairable": false, "review_result": "blocked", "review_target": "slice:delivery-control", "route_class": "none", "run_id": "20260714115921-64101-check-1", "slice_id": "delivery-control", "supervisor_failure": "SCOPE_INVALID", "target_paths": []}

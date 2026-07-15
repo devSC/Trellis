@@ -1566,6 +1566,25 @@ def check_overview(task_dir: str) -> int:
     return fail("overview", problems) if problems else ok("overview")
 
 
+def _decision_inventory_problem(task_dir: str) -> str:
+    contract, contract_error = guru_contract.load_contract(task_dir)
+    if contract_error:
+        return f"RISK_DECISION_INVENTORY_POLICY_INVALID: {contract_error}"
+    policy_problem = guru_contract.decision_inventory_policy_problem(contract)
+    if policy_problem:
+        return policy_problem
+    if not guru_contract.decision_inventory_required(contract):
+        return ""
+    task_data = _task_json_of(task_dir)
+    task_id = str(task_data.get("id") or task_data.get("name") or os.path.basename(os.path.normpath(task_dir)))
+    try:
+        artifacts = collect_gate_artifacts(task_dir, "detail", _config_root_for_task(task_dir))
+        guru_contract.load_detail_decision_inventory(task_dir, task_id, artifacts)
+    except (OSError, ValueError, guru_contract.ContractError) as exc:
+        return str(exc)
+    return ""
+
+
 def check_detail(task_dir: str) -> int:
     """详细 Gate：UNIT 编号 + 合同八问标记 + implement.md + 承接断链拦截。
     full 链按 chapters/*.md 逐章承载（章节闭合 + pending L2 豁免拦截）。"""
@@ -1588,6 +1607,9 @@ def check_detail(task_dir: str) -> int:
             problems += analyze_detail_chapter_skeleton(name, text)
     if not read(os.path.join(task_dir, "implement.md")):
         problems.append("implement.md（trace §1 实现计划）不存在")
+    inventory_problem = _decision_inventory_problem(task_dir)
+    if inventory_problem:
+        problems.append(inventory_problem)
     # 承接断链拦截（编号闭合）
     t = build_trace(task_dir)
     if t["behaviors"] or t["units"]:
@@ -2402,6 +2424,13 @@ def _record_review(task_dir: str, gate: str, options: dict) -> int:
     if manifest_problem:
         sys.stderr.write(f"[guru-gate:record-review] {manifest_problem}\n")
         return BLOCK
+    if gate == "detail":
+        inventory_problem = _decision_inventory_problem(task_dir)
+        if inventory_problem:
+            sys.stderr.write(
+                f"[guru-gate:record-review] 拒绝写入：Detail decision inventory 未就绪：{inventory_problem}\n"
+            )
+            return BLOCK
     data = _task_data_for_write(task_dir, "record-review")
     if data is None:
         return BLOCK

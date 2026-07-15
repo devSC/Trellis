@@ -15,6 +15,10 @@ SCHEMA_VERSION = 1
 CONTRACT_FILE = "gate-contract.json"
 DEGRADATIONS_FILE = "gate-degradations.jsonl"
 EVIDENCE_DIR = "gate-evidence"
+POLICY_VERSION_V1 = "guru-risk-contract-v1"
+POLICY_VERSION_V2 = "guru-risk-contract-v2"
+DECISION_INVENTORY_START = "<!-- GURU:RISK_DECISION_INVENTORY:START -->"
+DECISION_INVENTORY_END = "<!-- GURU:RISK_DECISION_INVENTORY:END -->"
 
 ROUTE_SMALL_INLINE = "small_inline"
 ROUTE_MICRO_TASK = "micro_task"
@@ -220,9 +224,14 @@ def default_contract(route: str, risk: str, *, created_by: str = "intake") -> di
             "require_clean_implementation_review": require_clean_review,
             "allow_task_artifacts_only": False,
         },
+        "risk_decision_inventory": {
+            "schema_version": 1,
+            "required": route == ROUTE_FULL_CHAIN and risk in {RISK_HIGH, RISK_UNKNOWN},
+            "source": "implement.md",
+        },
         "created_by": created_by,
         "created_at": _now_iso(),
-        "policy_version": "guru-risk-contract-v1",
+        "policy_version": POLICY_VERSION_V2,
     }
 
 
@@ -236,6 +245,256 @@ def contract_risk(contract: dict | None) -> str:
     if not isinstance(contract, dict):
         return RISK_UNKNOWN
     return normalize_risk(contract.get("risk"))
+
+
+def decision_inventory_policy_problem(contract: dict | None) -> str:
+    """Return a v2 inventory policy error without changing legacy v1 behavior."""
+    if not isinstance(contract, dict) or contract.get("policy_version") != POLICY_VERSION_V2:
+        return ""
+    policy = contract.get("risk_decision_inventory")
+    if not isinstance(policy, dict):
+        return "RISK_DECISION_INVENTORY_POLICY_INVALID: v2 contract requires risk_decision_inventory"
+    if policy.get("schema_version") != 1 or policy.get("source") != "implement.md":
+        return "RISK_DECISION_INVENTORY_POLICY_INVALID: expected schema_version=1 and source=implement.md"
+    should_require = (
+        contract_route(contract) == ROUTE_FULL_CHAIN
+        and contract_risk(contract) in {RISK_HIGH, RISK_UNKNOWN}
+    )
+    if policy.get("required") is not should_require:
+        return "RISK_DECISION_INVENTORY_POLICY_INVALID: required flag disagrees with route/risk"
+    return ""
+
+
+def decision_inventory_required(contract: dict | None) -> bool:
+    return (
+        decision_inventory_policy_problem(contract) == ""
+        and isinstance(contract, dict)
+        and contract.get("policy_version") == POLICY_VERSION_V2
+        and isinstance(contract.get("risk_decision_inventory"), dict)
+        and contract["risk_decision_inventory"].get("required") is True
+    )
+
+
+def canonical_decision_universe(
+    raw_items,
+    invariant_ids,
+    *,
+    artifact_text_by_key: dict | None = None,
+) -> tuple[dict, ...]:
+    """Validate and canonicalize one slice's required critical/high decisions."""
+    if not isinstance(raw_items, (list, tuple)):
+        raise ContractError("RISK_DECISION_INVENTORY_INVALID: slice decisions must be an array")
+    allowed_invariants = set(invariant_ids)
+    universe = []
+    seen_ids = set()
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: decision entries must be objects")
+        item = dict(raw)
+        fields = (
+            "decision_id",
+            "severity",
+            "status",
+            "recommendation",
+            "alternatives",
+            "impact",
+            "irreversible",
+            "invariant_ids",
+            "required",
+        )
+        if any(field not in item for field in fields):
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: decision shape is incomplete")
+        decision_id = item["decision_id"]
+        if (
+            not isinstance(decision_id, str)
+            or not decision_id.strip()
+            or decision_id in seen_ids
+        ):
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: decision ids must be unique non-empty strings")
+        seen_ids.add(decision_id)
+        if item["required"] is not True or item["severity"] not in {"critical", "high"}:
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: only required critical/high decisions are allowed")
+        if item["status"] not in {"unresolved", "resolved"}:
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: decision status must be unresolved or resolved")
+        if not isinstance(item["irreversible"], bool):
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: irreversible must be boolean")
+        if not all(
+            isinstance(item[field], str) and item[field].strip()
+            for field in ("recommendation", "impact")
+        ):
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: decision text fields must be non-empty")
+        alternatives = item["alternatives"]
+        if (
+            not isinstance(alternatives, list)
+            or not alternatives
+            or not all(isinstance(value, str) and value.strip() for value in alternatives)
+        ):
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: alternatives must be non-empty strings")
+        item_invariants = item["invariant_ids"]
+        if (
+            not isinstance(item_invariants, list)
+            or not item_invariants
+            or not all(isinstance(value, str) and value.strip() for value in item_invariants)
+            or not set(item_invariants).issubset(allowed_invariants)
+        ):
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: invariant bindings are invalid")
+        resolution = item.get("resolution")
+        if item["status"] == "resolved":
+            if not isinstance(resolution, dict) or not all(
+                isinstance(resolution.get(field), str) and resolution[field].strip()
+                for field in ("choice", "evidence")
+            ):
+                raise ContractError("RISK_DECISION_INVENTORY_INVALID: resolved decisions need choice/evidence")
+        elif resolution not in (None, {}):
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: unresolved decisions cannot carry resolution")
+
+        if artifact_text_by_key is not None:
+            source_refs = item.get("source_refs")
+            if not isinstance(source_refs, list) or not source_refs:
+                raise ContractError("RISK_DECISION_INVENTORY_INVALID: every decision needs source_refs")
+            canonical_refs = []
+            seen_refs = set()
+            for ref in source_refs:
+                if not isinstance(ref, dict) or set(ref) != {"artifact_key", "anchor"}:
+                    raise ContractError("RISK_DECISION_INVENTORY_INVALID: source_refs need artifact_key/anchor")
+                artifact_key = ref.get("artifact_key")
+                anchor = ref.get("anchor")
+                if (
+                    not isinstance(artifact_key, str)
+                    or artifact_key not in artifact_text_by_key
+                    or not isinstance(anchor, str)
+                    or decision_id not in anchor
+                ):
+                    raise ContractError("RISK_DECISION_INVENTORY_INVALID: source_ref is not detail-bound")
+                pair = (artifact_key, anchor)
+                if pair in seen_refs or artifact_text_by_key[artifact_key].count(anchor) != 1:
+                    raise ContractError("RISK_DECISION_INVENTORY_INVALID: source_ref anchor must exist exactly once")
+                seen_refs.add(pair)
+                canonical_refs.append({"artifact_key": artifact_key, "anchor": anchor})
+            item["source_refs"] = sorted(canonical_refs, key=lambda row: (row["artifact_key"], row["anchor"]))
+        universe.append(item)
+    universe.sort(key=lambda item: item["decision_id"])
+    return tuple(universe)
+
+
+def load_detail_decision_inventory(
+    task_dir: str,
+    task_id: str,
+    artifacts: list,
+    *,
+    expected_slice_id: str | None = None,
+) -> dict:
+    """Load the unique detail-bound inventory and validate every declared slice."""
+    artifact_path_by_key = {}
+    for entry in artifacts:
+        if not isinstance(entry, dict):
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: detail artifact row is malformed")
+        key = entry.get("key")
+        path = entry.get("path")
+        if not isinstance(key, str) or not isinstance(path, str) or key in artifact_path_by_key:
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: detail artifact keys are invalid")
+        artifact_path_by_key[key] = path
+    implement_path = artifact_path_by_key.get("task:implement.md") or artifact_path_by_key.get("implement.md")
+    if implement_path is None:
+        raise ContractError("RISK_DECISION_INVENTORY_MISSING: implement.md is not in detail artifacts")
+    try:
+        with open(implement_path, encoding="utf-8") as fh:
+            implement = fh.read()
+    except OSError as exc:
+        raise ContractError("RISK_DECISION_INVENTORY_MISSING: cannot read task:implement.md") from exc
+    artifact_text_by_key = {}
+    for key, path in artifact_path_by_key.items():
+        if key in {
+            "prd.md",
+            "design.md",
+            "implement.md",
+            "task:prd.md",
+            "task:design.md",
+            "task:implement.md",
+        }:
+            continue
+        try:
+            with open(path, encoding="utf-8") as fh:
+                artifact_text_by_key[key] = fh.read()
+        except OSError as exc:
+            raise ContractError(f"RISK_DECISION_INVENTORY_INVALID: cannot read detail artifact {key}") from exc
+    if implement.count(DECISION_INVENTORY_START) != 1 or implement.count(DECISION_INVENTORY_END) != 1:
+        raise ContractError("RISK_DECISION_INVENTORY_MISSING: markers must appear exactly once")
+    start = implement.index(DECISION_INVENTORY_START) + len(DECISION_INVENTORY_START)
+    end = implement.index(DECISION_INVENTORY_END, start)
+    lines = [line.rstrip() for line in implement[start:end].strip().splitlines()]
+    if (
+        len(lines) < 3
+        or lines[0].strip() != "```json"
+        or lines[-1].strip() != "```"
+        or any(line.strip().startswith("```") for line in lines[1:-1])
+    ):
+        raise ContractError("RISK_DECISION_INVENTORY_INVALID: expected one JSON fence")
+    try:
+        inventory = json.loads("\n".join(lines[1:-1]))
+    except json.JSONDecodeError as exc:
+        raise ContractError("RISK_DECISION_INVENTORY_INVALID: JSON cannot be parsed") from exc
+    if not isinstance(inventory, dict) or set(inventory) != {"schema_version", "task_id", "scope", "slices"}:
+        raise ContractError("RISK_DECISION_INVENTORY_INVALID: root shape is invalid")
+    if inventory.get("schema_version") != 1 or inventory.get("task_id") != task_id:
+        raise ContractError("RISK_DECISION_INVENTORY_INVALID: schema/task binding is invalid")
+    scope = inventory.get("scope")
+    expected_scope_keys = {
+        "selected_slice_id",
+        "official_start_authority",
+        "later_slice_authority",
+    }
+    if not isinstance(scope, dict) or set(scope) != expected_scope_keys:
+        raise ContractError("RISK_DECISION_INVENTORY_INVALID: scope shape is invalid")
+    selected_slice_id = scope.get("selected_slice_id")
+    if (
+        not isinstance(selected_slice_id, str)
+        or not selected_slice_id
+        or scope.get("official_start_authority") != "selected_slice_only"
+        or scope.get("later_slice_authority") != "supervisor_fail_closed"
+        or (expected_slice_id is not None and selected_slice_id != expected_slice_id)
+    ):
+        raise ContractError("RISK_DECISION_INVENTORY_INVALID: selected-slice authority is invalid")
+    slices = inventory.get("slices")
+    if not isinstance(slices, dict) or selected_slice_id not in slices:
+        raise ContractError("RISK_DECISION_INVENTORY_INVALID: selected slice is absent")
+
+    universes = {}
+    all_decision_ids = set()
+    for slice_id, raw_items in slices.items():
+        if not isinstance(slice_id, str) or not slice_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for ch in slice_id):
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: slice id is invalid")
+        packet_path = os.path.join(task_dir, "slice-packets", f"{slice_id}.json")
+        try:
+            with open(packet_path, encoding="utf-8") as fh:
+                packet = json.load(fh)
+        except (OSError, ValueError) as exc:
+            raise ContractError(f"RISK_DECISION_INVENTORY_INVALID: slice packet missing/invalid: {slice_id}") from exc
+        if not isinstance(packet, dict) or packet.get("slice_id") != slice_id:
+            raise ContractError(f"RISK_DECISION_INVENTORY_INVALID: slice packet binding mismatch: {slice_id}")
+        invariant_ids = [
+            row.get("invariant_id")
+            for row in packet.get("invariants", [])
+            if isinstance(row, dict) and isinstance(row.get("invariant_id"), str) and row.get("invariant_id")
+        ]
+        if len(invariant_ids) != len(packet.get("invariants", [])) or len(invariant_ids) != len(set(invariant_ids)):
+            raise ContractError(f"RISK_DECISION_INVENTORY_INVALID: packet invariants invalid: {slice_id}")
+        universe = canonical_decision_universe(
+            raw_items,
+            invariant_ids,
+            artifact_text_by_key=artifact_text_by_key,
+        )
+        decision_ids = {item["decision_id"] for item in universe}
+        if all_decision_ids & decision_ids:
+            raise ContractError("RISK_DECISION_INVENTORY_INVALID: decision ids must be unique across slices")
+        all_decision_ids.update(decision_ids)
+        universes[slice_id] = universe
+    return {
+        "inventory": inventory,
+        "selected_slice_id": selected_slice_id,
+        "decision_universe": universes[selected_slice_id],
+        "universes": universes,
+    }
 
 
 def _route_rank(route: str) -> int:

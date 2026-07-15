@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "source": "task.json.design_package",
+  "overview": {
+    "selection": "explicit",
+    "files": [
+      "design-main.md"
+    ]
+  },
+  "detail": {
+    "selection": "design-main chapter_target closure",
+    "files": [
+      "chapters/marketplace-catalog.md",
+      "chapters/extension-manager.md",
+      "chapters/delivery-policy.md",
+      "chapters/semantic-digest.md",
+      "chapters/review-identity.md",
+      "chapters/bounded-supervisor.md",
+      "chapters/start-guard.md",
+      "chapters/context-reuse.md",
+      "chapters/design-sync.md",
+      "chapters/replay-benchmark.md"
+    ]
+  },
+  "canonicalization_profile": "guru-design-artifacts-v2",
+  "excluded": [
+    "README.md"
+  ]
+}

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/cli/backend/guru-overlay-gates.md", "reason": "Executable Guru gate, route, packet, evidence, and commit-boundary contracts."}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Python CLI and script design conventions for the Custom extension runtime."}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "Repository quality, dependency, and forbidden-pattern constraints."}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Focused regression and deterministic test conventions."}
+{"file": ".trellis/tasks/07-14-custom-first-guru-delivery-control/evidence-inventory.md", "reason": "Bounded live evidence for official Custom contracts, known defects, frozen v1 debt, and dirty exclusions."}

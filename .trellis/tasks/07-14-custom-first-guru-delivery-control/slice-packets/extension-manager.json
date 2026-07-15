@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "slice_id": "extension-manager",
+  "owner_unit": "UNIT-extension-manager",
+  "target_kind": "implementation",
+  "target_paths": [
+    "guru-template/overlay/apply.sh",
+    "guru-template/overlay/extension-manifest.json",
+    "guru-template/overlay/tests/apply_test.sh",
+    "guru-template/overlay/verify/guru_config_patch.py",
+    "guru-template/overlay/verify/guru_install_journal.py",
+    "guru-template/overlay/verify/guru_official_install.py",
+    "guru-template/overlay/verify/guru_overlay.py",
+    "guru-template/overlay/verify/tests/test_extension_manager.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "installer_transaction",
+    "config_mutation",
+    "reversible_unapply"
+  ],
+  "depends_on": [
+    "marketplace-catalog"
+  ],
+  "deterministic_checks": [
+    "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_extension_manager.py'",
+    "bash guru-template/overlay/tests/apply_test.sh",
+    "bash guru-template/overlay/tests/official_067_e2e.sh --extension"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "optional"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "marketplace",
+      ".trellis/tasks/07-14-custom-first-guru-delivery-control/check.jsonl",
+      ".trellis/tasks/07-14-custom-first-guru-delivery-control/implement.jsonl"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-EXT-001",
+      "rule": "first target write must-not occur before durable backups and PREPARED journal file+directory fsync",
+      "source": "design-package/chapters/extension-manager.md#9",
+      "owner": "UNIT-extension-manager",
+      "positive_case": "durable transaction id exists before the first target mutation",
+      "negative_case": "a crash occurs after a target write with no durable journal",
+      "route_if_missing": "block apply/upgrade and release",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_extension_manager.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-EXT-002",
+      "rule": "unapply must-not delete CAS/hash-mismatched user content",
+      "source": "design-package/chapters/extension-manager.md#9",
+      "owner": "UNIT-extension-manager",
+      "positive_case": "user-modified content is preserved and reported as an ownership conflict",
+      "negative_case": "unapply deletes or restores over a user edit",
+      "route_if_missing": "recovery_required and hard release failure",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_extension_manager.py'",
+        "bash guru-template/overlay/tests/apply_test.sh"
+      ]
+    },
+    {
+      "invariant_id": "INV-EXT-003",
+      "rule": "plan/status/verify must-not write target/state/temp/lock",
+      "source": "design-package/chapters/extension-manager.md#9",
+      "owner": "UNIT-extension-manager",
+      "positive_case": "write syscall spy remains at zero for every read-only operation",
+      "negative_case": "status creates a lock, migration, backup, temp file, or repaired state",
+      "route_if_missing": "block command",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_extension_manager.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-EXT-004",
+      "rule": "adopted/project-owned Template content must-not be treated as created Extension content",
+      "source": "design-package/chapters/extension-manager.md#9",
+      "owner": "UNIT-extension-manager",
+      "positive_case": "unapply removes ownership metadata while retaining adopted or project-owned content",
+      "negative_case": "an adopted or project-owned Template file is deleted as Extension-created",
+      "route_if_missing": "rollback and ownership defect",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_extension_manager.py'",
+        "bash guru-template/overlay/tests/apply_test.sh"
+      ]
+    },
+    {
+      "invariant_id": "INV-EXT-005",
+      "rule": "every target mutation must revalidate target/ancestor identity and node CAS at use time",
+      "source": "design-package/chapters/extension-manager.md#9",
+      "owner": "UNIT-extension-manager",
+      "positive_case": "symlink swap, target replacement and path race are rejected before mutation",
+      "negative_case": "a preflight realpath passes and a later write escapes or overwrites changed state",
+      "route_if_missing": "recovery/security blocker",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_extension_manager.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-EXT-006",
+      "rule": "config unapply must preserve missing/null/value, stable list identity and unrelated edits",
+      "source": "design-package/chapters/extension-manager.md#9",
+      "owner": "UNIT-extension-manager",
+      "positive_case": "exact owned nodes restore while unrelated text and adopted equal values remain",
+      "negative_case": "marker, list index or whole-file restore loses user data",
+      "route_if_missing": "ownership conflict and release failure",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_extension_manager.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-EXT-007",
+      "rule": "Guru official-install wrapper must preflight and stage exact 0.6.7 output, verify content postconditions and convert raw rc0 blank fallback or cleanup failure to nonzero without target pollution",
+      "source": "design-package/chapters/extension-manager.md#11",
+      "owner": "UNIT-extension-manager",
+      "positive_case": "current HTTPS ref stages exact Template, cleanup succeeds, then WAL publishes project assertions and Extension nodes",
+      "negative_case": "raw rc0, blank/mismatched stage, stale ref or failed cleanup is treated as success or mutates the real target",
+      "route_if_missing": "unchanged target or committed cleanup_required; block release",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_extension_manager.py'",
+        "bash guru-template/overlay/tests/official_067_e2e.sh --extension"
+      ]
+    }
+  ]
+}

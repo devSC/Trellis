@@ -2,7 +2,9 @@
 set -euo pipefail
 # guru-template overlay 安装/升级器：装配官方 init -t/--workflow 覆盖不到的部分，
 # 并负责 guru 定制内容（workflow/harness SSOT/skills/hooks/settings 接线）的后续升级刷新。
-# 用法: ./apply.sh <目标项目路径>
+# 用法:
+#   ./apply.sh <目标项目路径> [flutter|go|ios|h5] [--rollback-bundle <外部目录>]
+#   ./apply.sh --unapply <目标项目路径> <rollback-bundle>
 # 前提: 目标项目已 trellis init（存在 .trellis/）。幂等：重复执行不产生额外变化。
 #
 # 边界（本脚本不做）：
@@ -12,9 +14,178 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"   # guru-template/
-TARGET="${1:?用法: apply.sh <目标项目路径>}"
+
+tree_digest() { # tree_digest <target>; excludes Git internals by contract
+  python3 - "$1" <<'PYEOF'
+import hashlib
+import os
+import stat
+import sys
+
+root = os.path.realpath(sys.argv[1])
+digest = hashlib.sha256()
+for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+    dirnames[:] = sorted(name for name in dirnames if not (dirpath == root and name == ".git"))
+    filenames = sorted(name for name in filenames if not (dirpath == root and name == ".git"))
+    for name in [*dirnames, *filenames]:
+        path = os.path.join(dirpath, name)
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        info = os.lstat(path)
+        if stat.S_ISLNK(info.st_mode):
+            kind, payload = "link", os.readlink(path).encode("utf-8", "surrogateescape")
+        elif stat.S_ISDIR(info.st_mode):
+            kind, payload = "dir", b""
+        elif stat.S_ISREG(info.st_mode):
+            kind = "file"
+            with open(path, "rb") as fh:
+                payload = fh.read()
+        else:
+            kind, payload = "other", b""
+        digest.update(f"{rel}\0{kind}\0{stat.S_IMODE(info.st_mode):o}\0".encode())
+        digest.update(payload)
+        digest.update(b"\0")
+print(digest.hexdigest())
+PYEOF
+}
+
+create_rollback_bundle() { # create_rollback_bundle <target> <external-bundle>
+  local digest
+  digest="$(tree_digest "$1")"
+  python3 - "$1" "$2" "$digest" <<'PYEOF'
+import json
+import os
+import shutil
+import sys
+
+target = os.path.realpath(sys.argv[1])
+bundle = os.path.abspath(sys.argv[2])
+digest = sys.argv[3]
+try:
+    inside_target = os.path.commonpath((target, bundle)) == target
+except ValueError:
+    inside_target = False
+if inside_target:
+    raise SystemExit("ERROR: rollback bundle 必须位于目标项目外部")
+if os.path.exists(bundle) and os.listdir(bundle):
+    raise SystemExit(f"ERROR: rollback bundle 必须不存在或为空: {bundle}")
+os.makedirs(bundle, exist_ok=True)
+preimage = os.path.join(bundle, "preimage")
+shutil.copytree(
+    target,
+    preimage,
+    symlinks=True,
+    ignore=lambda path, names: [".git"] if os.path.realpath(path) == target and ".git" in names else [],
+)
+manifest = {
+    "schema_version": 1,
+    "state": "prepared",
+    "target": target,
+    "pre_apply_digest": digest,
+    "post_apply_digest": None,
+    "git_internals_owned": False,
+}
+with open(os.path.join(bundle, "manifest.json"), "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, ensure_ascii=False, indent=2, sort_keys=True)
+    fh.write("\n")
+PYEOF
+}
+
+finalize_rollback_bundle() { # finalize_rollback_bundle <target> <bundle>
+  local digest
+  digest="$(tree_digest "$1")"
+  python3 - "$1" "$2" "$digest" <<'PYEOF'
+import json
+import os
+import sys
+
+target, bundle, digest = os.path.realpath(sys.argv[1]), os.path.abspath(sys.argv[2]), sys.argv[3]
+path = os.path.join(bundle, "manifest.json")
+with open(path, encoding="utf-8") as fh:
+    manifest = json.load(fh)
+if manifest.get("state") != "prepared" or manifest.get("target") != target:
+    raise SystemExit("ERROR: rollback bundle 状态或目标不匹配")
+manifest["state"] = "applied"
+manifest["post_apply_digest"] = digest
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, ensure_ascii=False, indent=2, sort_keys=True)
+    fh.write("\n")
+PYEOF
+}
+
+restore_rollback_bundle() { # restore_rollback_bundle <target> <bundle>
+  local digest
+  digest="$(tree_digest "$1")"
+  python3 - "$1" "$2" "$digest" <<'PYEOF'
+import json
+import os
+import shutil
+import sys
+
+target, bundle, digest = os.path.realpath(sys.argv[1]), os.path.abspath(sys.argv[2]), sys.argv[3]
+manifest_path = os.path.join(bundle, "manifest.json")
+preimage = os.path.join(bundle, "preimage")
+with open(manifest_path, encoding="utf-8") as fh:
+    manifest = json.load(fh)
+if manifest.get("schema_version") != 1 or manifest.get("state") != "applied":
+    raise SystemExit("ERROR: rollback bundle 未处于 applied 状态")
+if manifest.get("target") != target:
+    raise SystemExit("ERROR: rollback bundle 不属于该目标项目")
+if manifest.get("post_apply_digest") != digest:
+    raise SystemExit("ERROR: apply 后目标已有漂移；拒绝覆盖用户新改动")
+if not os.path.isdir(preimage):
+    raise SystemExit("ERROR: rollback preimage 缺失")
+for name in os.listdir(target):
+    if name == ".git":
+        continue
+    path = os.path.join(target, name)
+    if os.path.islink(path) or not os.path.isdir(path):
+        os.unlink(path)
+    else:
+        shutil.rmtree(path)
+for name in os.listdir(preimage):
+    source, destination = os.path.join(preimage, name), os.path.join(target, name)
+    if os.path.islink(source):
+        os.symlink(os.readlink(source), destination)
+    elif os.path.isdir(source):
+        shutil.copytree(source, destination, symlinks=True)
+    else:
+        shutil.copy2(source, destination, follow_symlinks=False)
+manifest["state"] = "restored"
+with open(manifest_path, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, ensure_ascii=False, indent=2, sort_keys=True)
+    fh.write("\n")
+PYEOF
+}
+
+if [ "${1:-}" = "--unapply" ]; then
+  [ "$#" = 3 ] || { echo "用法: apply.sh --unapply <目标项目路径> <rollback-bundle>"; exit 2; }
+  TARGET="$(cd "$2" && pwd)"
+  [ -d "$TARGET/.trellis" ] || { echo "ERROR: $TARGET 不是 Trellis 项目（缺 .trellis/）"; exit 1; }
+  restore_rollback_bundle "$TARGET" "$3"
+  echo "== guru overlay 已从 rollback bundle 恢复；.git 未被读取或修改 =="
+  exit 0
+fi
+
+TARGET="${1:?用法: apply.sh <目标项目路径> [platform] [--rollback-bundle <外部目录>]}"
 TARGET="$(cd "$TARGET" && pwd)"
 [ -d "$TARGET/.trellis" ] || { echo "ERROR: $TARGET 不是 Trellis 项目（缺 .trellis/），先 trellis init"; exit 1; }
+shift
+PLATFORM="flutter"
+if [ "$#" -gt 0 ] && [ "${1#--}" = "$1" ]; then
+  PLATFORM="$1"
+  shift
+fi
+ROLLBACK_BUNDLE=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --rollback-bundle)
+      [ "$#" -ge 2 ] || { echo "ERROR: --rollback-bundle 缺目录参数"; exit 2; }
+      ROLLBACK_BUNDLE="$2"
+      shift 2
+      ;;
+    *) echo "ERROR: 未知参数: $1"; exit 2 ;;
+  esac
+done
 GURU_WITH_GITNEXUS="${GURU_WITH_GITNEXUS:-0}"
 GURU_ADVERSARIAL_ENABLED="${GURU_ADVERSARIAL_ENABLED:-}"
 
@@ -56,8 +227,7 @@ for event, entries in hooks.items():
 PYEOF
 fi
 
-# 平台选择（第二位置参数，默认 flutter）：决定 spec 包 / workflow / verify analyze 命令。
-PLATFORM="${2:-flutter}"
+# 平台选择：决定 spec 包 / workflow / verify analyze 命令。
 case "$PLATFORM" in
   flutter) SPEC_NAME="guru-flutter-client"; WF_NAME="guru-client"; ANALYZE_CMD="flutter analyze"; LAYERS="flutter service shared"; SKILL_GLOBS="client-* flutter-implementation-guru-*"; XTRA_HOOKS="block-l10n-sync.sh" ;;
   go)      SPEC_NAME="guru-go-backend";     WF_NAME="guru-go";     ANALYZE_CMD="go build ./... && go vet ./..."; LAYERS="backend shared"; SKILL_GLOBS="go-*"; XTRA_HOOKS="" ;;
@@ -238,6 +408,10 @@ case ",${detect_hint}," in
   *",${PLATFORM},"*) ;;           # 一致
   *) echo "  ⚠ 平台校验：传入平台 '${PLATFORM}' 与检测到的项目类型（${detect_hint}）不符——确认第二位置参数是否传错（apply.sh <目标> <flutter|go|ios|h5>）" ;;
 esac
+
+if [ -n "$ROLLBACK_BUNDLE" ]; then
+  create_rollback_bundle "$TARGET" "$ROLLBACK_BUNDLE"
+fi
 
 echo "== guru overlay 装配 → ${TARGET} （平台: ${PLATFORM} → spec=${SPEC_NAME} workflow=${WF_NAME}）=="
 ensure_local_runtime_gitignore
@@ -959,6 +1133,10 @@ echo ""
 if [ "$FAIL" != 0 ]; then
   echo "== 装配完成但自检存在失败项（见上 ✗），请处理后重跑 =="
   exit 1
+fi
+if [ -n "$ROLLBACK_BUNDLE" ]; then
+  finalize_rollback_bundle "$TARGET" "$ROLLBACK_BUNDLE"
+  echo "  rollback: 已生成外部 preimage + post-apply CAS bundle（不包含 .git）"
 fi
 echo "== 装配完成，自检通过。剩余人工事项 =="
 echo "1) 项目约定：确认 $TARGET/.trellis/spec/conventions/project-conventions.md 已按模板填写（缺失时从 .template/样例取值建立）"

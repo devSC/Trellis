@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "policy_version": "guru-delivery-policy-v1",
+  "intent_profiles": {
+    "implementation": {
+      "write_capability": "scoped_repository",
+      "first_value_kind": "first_scoped_code_diff"
+    },
+    "review": {
+      "write_capability": "none",
+      "first_value_kind": "first_verified_evidence"
+    },
+    "research": {
+      "write_capability": "none",
+      "first_value_kind": "first_verified_evidence"
+    },
+    "debug": {
+      "write_capability": "scoped_repository",
+      "first_value_kind": "first_scoped_code_diff"
+    },
+    "docs": {
+      "write_capability": "scoped_repository",
+      "first_value_kind": "first_accepted_artifact"
+    },
+    "config": {
+      "write_capability": "scoped_repository",
+      "first_value_kind": "first_scoped_code_diff"
+    },
+    "ops": {
+      "write_capability": "task_artifacts",
+      "first_value_kind": "first_verified_evidence"
+    }
+  },
+  "route_profiles": {
+    "small_inline": {
+      "planning_deadline_seconds": 45,
+      "first_value_deadline_seconds": 120,
+      "terminal_deadline_seconds": 600,
+      "model_cycles": 4,
+      "tool_calls": 16,
+      "wait_calls": 0,
+      "planned_context_bytes": 65536,
+      "observed_context_bytes": 98304,
+      "duplicate_reads": 2,
+      "repairs": 1,
+      "live_workers": 0,
+      "started_workers": 0,
+      "idle_seconds": 60,
+      "no_progress_cycles": 2,
+      "confirmation_batches": 0
+    },
+    "micro_task": {
+      "planning_deadline_seconds": 120,
+      "first_value_deadline_seconds": 300,
+      "terminal_deadline_seconds": 1200,
+      "model_cycles": 8,
+      "tool_calls": 32,
+      "wait_calls": 2,
+      "planned_context_bytes": 262144,
+      "observed_context_bytes": 393216,
+      "duplicate_reads": 4,
+      "repairs": 1,
+      "live_workers": 1,
+      "started_workers": 1,
+      "idle_seconds": 120,
+      "no_progress_cycles": 3,
+      "confirmation_batches": 0
+    },
+    "lite_task": {
+      "planning_deadline_seconds": 240,
+      "first_value_deadline_seconds": 300,
+      "terminal_deadline_seconds": 1800,
+      "model_cycles": 14,
+      "tool_calls": 64,
+      "wait_calls": 4,
+      "planned_context_bytes": 524288,
+      "observed_context_bytes": 786432,
+      "duplicate_reads": 6,
+      "repairs": 2,
+      "live_workers": 0,
+      "started_workers": 0,
+      "idle_seconds": 180,
+      "no_progress_cycles": 3,
+      "confirmation_batches": 0
+    },
+    "full_chain": {
+      "planning_deadline_seconds": 900,
+      "first_value_deadline_seconds": 900,
+      "terminal_deadline_seconds": 5400,
+      "model_cycles": 32,
+      "tool_calls": 144,
+      "wait_calls": 8,
+      "planned_context_bytes": 1572864,
+      "observed_context_bytes": 2359296,
+      "duplicate_reads": 12,
+      "repairs": 3,
+      "live_workers": 2,
+      "started_workers": 4,
+      "idle_seconds": 300,
+      "no_progress_cycles": 4,
+      "confirmation_batches": 1
+    },
+    "read_only_cap": {
+      "planning_deadline_seconds": 300,
+      "first_value_deadline_seconds": 300,
+      "terminal_deadline_seconds": 1800,
+      "model_cycles": 10,
+      "tool_calls": 40,
+      "wait_calls": 3,
+      "planned_context_bytes": 393216,
+      "observed_context_bytes": 589824,
+      "duplicate_reads": 4,
+      "repairs": 1,
+      "live_workers": 1,
+      "started_workers": 2,
+      "idle_seconds": 120,
+      "no_progress_cycles": 3,
+      "confirmation_batches": 2
+    }
+  },
+  "route_gates": {
+    "small_inline": ["deterministic_final"],
+    "micro_task": ["micro_contract", "deterministic_final"],
+    "lite_task": ["deterministic_final"],
+    "full_chain": ["requirements_confirmed", "overview_review_clean", "detail_review_clean", "detail_confirmed", "selected_slice_packet", "risk_packet", "start_guard", "deterministic_final"]
+  },
+  "read_only_route_gates": {
+    "small_inline": ["verified_evidence"],
+    "micro_task": ["verified_evidence"],
+    "lite_task": ["evidence_package", "implementation_review"],
+    "full_chain": ["requirements_confirmed", "overview_review_clean", "detail_review_clean", "evidence_package"]
+  },
+  "risk_rules": {
+    "high_or_unknown_high_signal_route": "full_chain",
+    "unknown_default_route": "lite_task",
+    "medium_default_route": "lite_task",
+    "low_commit_route": "micro_task",
+    "low_no_commit_route": "small_inline"
+  },
+  "topology_rules": {
+    "small_inline": ["host_inline"],
+    "micro_task": ["host_inline", "managed_single"],
+    "lite_task": ["host_inline", "managed_single"],
+    "full_chain": ["managed_single", "managed_parallel"]
+  },
+  "confirmation_rules": {
+    "max_batches_by_route": {
+      "small_inline": 0,
+      "micro_task": 0,
+      "lite_task": 0,
+      "full_chain": 1
+    }
+  },
+  "evidence_reuse": {
+    "max_planning_cost_ratio_percent": 70,
+    "required_outcome": "passed",
+    "cost_budget_keys": ["model_cycles", "tool_calls", "planned_context_bytes", "observed_context_bytes", "duplicate_reads"]
+  }
+}

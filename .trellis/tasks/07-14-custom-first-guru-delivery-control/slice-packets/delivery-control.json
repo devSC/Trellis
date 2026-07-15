@@ -1,0 +1,192 @@
+{
+  "schema_version": 1,
+  "slice_id": "delivery-control",
+  "owner_unit": "UNIT-delivery-policy",
+  "target_kind": "implementation",
+  "target_paths": [
+    "guru-template/overlay/hooks/guru_after_create.py",
+    "guru-template/overlay/hooks/guru_after_start.py",
+    "guru-template/overlay/hooks/guru_task.py",
+    "guru-template/overlay/policy/delivery-policy.json",
+    "guru-template/overlay/verify/guru_contract.py",
+    "guru-template/overlay/verify/guru_delivery_policy.py",
+    "guru-template/overlay/verify/guru_gate.py",
+    "guru-template/overlay/verify/guru_risk.py",
+    "guru-template/overlay/verify/guru_supervise.py",
+    "guru-template/overlay/verify/tests/run_tests.sh",
+    "guru-template/overlay/verify/tests/test_delivery_policy.py",
+    "guru-template/overlay/verify/tests/test_start_guard.py",
+    "guru-template/specs/guru-flutter-client/harness/gate/gate-confirmation-model.md",
+    "guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md",
+    "guru-template/specs/guru-go-backend/harness/gate/gate-confirmation-model.md",
+    "guru-template/specs/guru-go-backend/harness/implementation/implementation-trace-contract.md",
+    "guru-template/specs/guru-h5-web/harness/gate/gate-confirmation-model.md",
+    "guru-template/specs/guru-h5-web/harness/implementation/implementation-trace-contract.md",
+    "guru-template/specs/guru-ios-native/harness/gate/gate-confirmation-model.md",
+    "guru-template/specs/guru-ios-native/harness/implementation/implementation-trace-contract.md",
+    "guru-template/workflows/guru-client-workflow.md",
+    "guru-template/workflows/guru-go-workflow.md",
+    "guru-template/workflows/guru-h5-workflow.md",
+    "guru-template/workflows/guru-ios-workflow.md"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "route_policy",
+    "trusted_confirmation",
+    "start_guard"
+  ],
+  "depends_on": [],
+  "deterministic_checks": [
+    "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_delivery_policy.py'",
+    "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_start_guard.py'",
+    "bash guru-template/overlay/verify/tests/run_tests.sh"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "optional"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "marketplace",
+      ".trellis/tasks/07-14-custom-first-guru-delivery-control/check.jsonl",
+      ".trellis/tasks/07-14-custom-first-guru-delivery-control/implement.jsonl"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-POLICY-001",
+      "rule": "high/unknown-high-signal must-not resolve below full_chain",
+      "source": "design-package/chapters/delivery-policy.md#9",
+      "owner": "UNIT-delivery-policy",
+      "positive_case": "high or unknown-high-signal request produces a Full delivery snapshot",
+      "negative_case": "a high-risk request accepts a Lite or Micro route preference",
+      "route_if_missing": "block intake/start",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_delivery_policy.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-POLICY-002",
+      "rule": "execution route must-not grant capability forbidden by intent",
+      "source": "design-package/chapters/delivery-policy.md#9",
+      "owner": "UNIT-delivery-policy",
+      "positive_case": "a Full review remains read-only",
+      "negative_case": "review or research intent launches a repository writer",
+      "route_if_missing": "split/block intent",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_delivery_policy.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-POLICY-003",
+      "rule": "budget expiry must-not remove required Gate/review/confirmation",
+      "source": "design-package/chapters/delivery-policy.md#9",
+      "owner": "UNIT-delivery-policy",
+      "positive_case": "budget expiry produces a terminal report with Gate requirements unchanged",
+      "negative_case": "execution continues by skipping a required Gate or confirmation",
+      "route_if_missing": "hard process defect",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_delivery_policy.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-POLICY-004",
+      "rule": "each route envelope must use only its conditional task/slice/packet/risk/confirmation fields and exact Gate allow-list",
+      "source": "design-package/chapters/delivery-policy.md#9",
+      "owner": "UNIT-delivery-policy",
+      "positive_case": "Small, Micro and Lite omit Full-only fields and Gates while a Full writer binds its current selected packet",
+      "negative_case": "a lower route inherits a Full Gate or a worker guesses a missing envelope id",
+      "route_if_missing": "block envelope/write",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_delivery_policy.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-POLICY-005",
+      "rule": "live budget counters must use the exact policy values and carry cumulative usage across retry/run/resume",
+      "source": "design-package/chapters/delivery-policy.md#9",
+      "owner": "UNIT-delivery-policy",
+      "positive_case": "observed attempts, reads and repairs consume one immutable selection-generation budget",
+      "negative_case": "a new run or provider resets usage or planned context bytes replace actual reads",
+      "route_if_missing": "budget terminal or re-intake",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_delivery_policy.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-POLICY-006",
+      "rule": "host_inline must remain advisory and managed enforcement must require the matching actively probed runner capability",
+      "source": "design-package/chapters/delivery-policy.md#9",
+      "owner": "UNIT-delivery-policy",
+      "positive_case": "an unsupported counter is unknown or advisory, or the managed launch blocks",
+      "negative_case": "a host, legacy path or local string is reported as hard enforced or trusted identity",
+      "route_if_missing": "block hard-budget claim",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_delivery_policy.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-START-001",
+      "rule": "guarded wrapper must-not call official start unless all START_READY/risk/confirmation preconditions are current",
+      "source": "design-package/chapters/start-guard.md#9",
+      "owner": "UNIT-start-guard",
+      "positive_case": "exact current tuple reaches one official call",
+      "negative_case": "stale packet or attestation reaches official start",
+      "route_if_missing": "block guarded start",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_start_guard.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-START-002",
+      "rule": "guarded start must-not use pre-lock lifecycle snapshot without post-lock CAS and durable attempt",
+      "source": "design-package/chapters/start-guard.md#9",
+      "owner": "UNIT-start-guard",
+      "positive_case": "status, pointer, context and digests are re-read and attempt is fsynced before official call",
+      "negative_case": "a check/use race or missing durable attempt reaches official start",
+      "route_if_missing": "abort and re-read",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_start_guard.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-START-003",
+      "rule": "wrapper compensation must restore every official surface it can prove, while direct official start must-not guess unknown pre-state",
+      "source": "design-package/chapters/start-guard.md#9",
+      "owner": "UNIT-start-guard",
+      "positive_case": "wrapper status/pointer are restored by CAS and direct bypass remains advisory",
+      "negative_case": "status-only rollback or an invented previous pointer is written",
+      "route_if_missing": "manual recovery defect",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_start_guard.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-START-004",
+      "rule": "official task lifecycle must-not own or fabricate Supervisor run state",
+      "source": "design-package/chapters/start-guard.md#9",
+      "owner": "UNIT-start-guard",
+      "positive_case": "Supervisor alone creates run state after a verified guarded result",
+      "negative_case": "wrapper, hook or task.py writes previous/current run",
+      "route_if_missing": "block start/run integration",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_start_guard.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-START-005",
+      "rule": "bootstrap exception must remain one exclusive hash-chained task/digest/slice event and burn after wrapper verification",
+      "source": "design-package/chapters/start-guard.md#9",
+      "owner": "UNIT-start-guard",
+      "positive_case": "exact prepared, consumed and burned chain binds current Gates, reviews, confirmation, contract, packet and postchecks for this task and delivery-control only",
+      "negative_case": "a missing, corrupt or reused record, invented TTY ref, bypassed postcheck or official hard-enforcement claim is accepted",
+      "route_if_missing": "block bootstrap and future start",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_start_guard.py'"
+      ]
+    }
+  ]
+}

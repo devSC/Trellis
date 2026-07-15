@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/cli/backend/guru-overlay-gates.md", "reason": "Verify executable Guru gate, packet, evidence, and release-boundary behavior."}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "Verify repository quality and forbidden-pattern compliance."}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Verify focused and negative-path test coverage."}
+{"file": ".trellis/tasks/07-14-custom-first-guru-delivery-control/evidence-inventory.md", "reason": "Compare implementation claims with frozen baselines and official Custom evidence."}

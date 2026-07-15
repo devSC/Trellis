@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "slice_id": "bounded-context",
+  "owner_unit": "UNIT-bounded-supervisor",
+  "target_kind": "implementation",
+  "target_paths": [
+    "guru-template/overlay/verify/guru_context.py",
+    "guru-template/overlay/verify/guru_delivery_state.py",
+    "guru-template/overlay/verify/guru_provider_runner.py",
+    "guru-template/overlay/verify/guru_supervise.py",
+    "guru-template/overlay/verify/tests/test_bounded_supervisor.py",
+    "guru-template/overlay/verify/tests/test_context_reuse.py",
+    "guru-template/overlay/verify/tests/test_provider_runner.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "worker_lifecycle",
+    "budget_enforcement",
+    "context_boundary"
+  ],
+  "depends_on": [
+    "semantic-review"
+  ],
+  "deterministic_checks": [
+    "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_bounded_supervisor.py'",
+    "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_context_reuse.py'",
+    "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_provider_runner.py'",
+    "bash guru-template/overlay/verify/tests/run_tests.sh"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "optional"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "marketplace",
+      ".trellis/tasks/07-14-custom-first-guru-delivery-control/check.jsonl",
+      ".trellis/tasks/07-14-custom-first-guru-delivery-control/implement.jsonl"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-SUP-001",
+      "rule": "terminal run must-not transition to a different state or running",
+      "source": "design-package/chapters/bounded-supervisor.md#9",
+      "owner": "UNIT-bounded-supervisor",
+      "positive_case": "same terminal digest finalization returns the original report idempotently",
+      "negative_case": "a terminal run reopens or changes terminal state",
+      "route_if_missing": "block state write",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_bounded_supervisor.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-SUP-002",
+      "rule": "wait/poll/log must-not count as semantic progress",
+      "source": "design-package/chapters/bounded-supervisor.md#9",
+      "owner": "UNIT-bounded-supervisor",
+      "positive_case": "only business, test, risk, artifact, or decision delta advances progress",
+      "negative_case": "logs, waits, polls, or heartbeats extend the run indefinitely",
+      "route_if_missing": "stalled/budget terminal",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_bounded_supervisor.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-SUP-003",
+      "rule": "budget exhaustion must-not remove a Gate/confirmation/invariant",
+      "source": "design-package/chapters/bounded-supervisor.md#9",
+      "owner": "UNIT-bounded-supervisor",
+      "positive_case": "budget exhaustion emits a terminal stop report with Gate state unchanged",
+      "negative_case": "supervisor continues by bypassing a Gate, confirmation, or packet invariant",
+      "route_if_missing": "process defect",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_bounded_supervisor.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-SUP-004",
+      "rule": "official lifecycle and StartGuard must-not create or own Supervisor run state",
+      "source": "design-package/chapters/bounded-supervisor.md#9",
+      "owner": "UNIT-bounded-supervisor",
+      "positive_case": "Supervisor creates run under its own generation after verified guarded or bootstrap result",
+      "negative_case": "task.py, wrapper or hook writes previous/current run",
+      "route_if_missing": "block run launch",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_bounded_supervisor.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-SUP-005",
+      "rule": "packet dispatch must-not bypass dependencies/order or launder predecessor dirty outputs into writable scope",
+      "source": "design-package/chapters/bounded-supervisor.md#9",
+      "owner": "UNIT-bounded-supervisor",
+      "positive_case": "complete graph validation emits stable eligible waves and current digest-bound predecessor outputs remain read-only baseline",
+      "negative_case": "a dependent or cyclic slice launches, stale predecessor output is accepted, or dirty_state.unrelated grants writes",
+      "route_if_missing": "block dispatch",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_bounded_supervisor.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-SUP-006",
+      "rule": "managed budget enforcement must consume runner-observed events and require the matching actively probed provider capability",
+      "source": "design-package/chapters/bounded-supervisor.md#9",
+      "owner": "UNIT-bounded-supervisor",
+      "positive_case": "framed cycle, tool, wait, read and worker events drive immutable counters",
+      "negative_case": "a host, legacy path or adapter claim creates hard enforcement or resets usage",
+      "route_if_missing": "block launch/claim",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_bounded_supervisor.py'",
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_provider_runner.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-SUP-007",
+      "rule": "pre-task unrelated and predecessor state must remain exact read-only bytes/modes and submodule gitlink/HEAD/dirty state through every launch and finalize",
+      "source": "design-package/chapters/bounded-supervisor.md#9",
+      "owner": "UNIT-bounded-supervisor",
+      "positive_case": "typed snapshots are unchanged and only the active target set has a delta",
+      "negative_case": "a path-only unrelated entry hides a content, mode or submodule mutation",
+      "route_if_missing": "freeze/cancel and block finalize",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_bounded_supervisor.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-CONTEXT-001",
+      "rule": "no family match must-not trigger memory/history scan",
+      "source": "design-package/chapters/context-reuse.md#9",
+      "owner": "UNIT-context-reuse",
+      "positive_case": "no family match makes zero memory and history calls",
+      "negative_case": "planner performs broad recall or history scan after a miss",
+      "route_if_missing": "local-only mode",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_context_reuse.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-CONTEXT-002",
+      "rule": "deterministic trimming must-not drop required artifacts",
+      "source": "design-package/chapters/context-reuse.md#9",
+      "owner": "UNIT-context-reuse",
+      "positive_case": "required artifact overflow is reported explicitly instead of silently trimmed",
+      "negative_case": "task contract, current Gate, selected packet, blocker, or required design input is hidden",
+      "route_if_missing": "block phase",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_context_reuse.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-CONTEXT-003",
+      "rule": "memory/reuse must-not override live repository truth",
+      "source": "design-package/chapters/context-reuse.md#9",
+      "owner": "UNIT-context-reuse",
+      "positive_case": "stale candidates are excluded when live digests or repository facts disagree",
+      "negative_case": "an older summary replaces current repository evidence",
+      "route_if_missing": "block reuse candidate",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_context_reuse.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-CONTEXT-004",
+      "rule": "every context input must-not bypass repository-relative path fencing and deterministic depth/file/byte/kind limits",
+      "source": "design-package/chapters/context-reuse.md#9",
+      "owner": "UNIT-context-reuse",
+      "positive_case": "one planner enforces path, race, type and size limits in stable order",
+      "negative_case": "absolute URI traversal symlink binary or direct read enters worker context",
+      "route_if_missing": "block phase",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_context_reuse.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-CONTEXT-005",
+      "rule": "planned context manifest bytes must-not be reported as observed actual reads or token telemetry",
+      "source": "design-package/chapters/context-reuse.md#9",
+      "owner": "UNIT-context-reuse",
+      "positive_case": "managed read events count delivered bytes while host inline remains unknown",
+      "negative_case": "planned totals become actual zero or passing evidence",
+      "route_if_missing": "block hard budget/benchmark verdict",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_context_reuse.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-CONTEXT-006",
+      "rule": "hard context fencing must require a managed backend with both filesystem isolation and ContextPlanner-owned read proxy",
+      "source": "design-package/chapters/context-reuse.md#9",
+      "owner": "UNIT-context-reuse",
+      "positive_case": "an unplanned managed read is denied and audited",
+      "negative_case": "a host, legacy or unisolated worker is called hard fenced",
+      "route_if_missing": "block launch/claim",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_context_reuse.py'",
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_provider_runner.py'"
+      ]
+    }
+  ]
+}

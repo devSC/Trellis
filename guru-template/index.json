@@ -10,12 +10,60 @@
       "tags": ["flutter", "guru", "harness"]
     },
     {
+      "id": "guru-go-backend",
+      "type": "spec",
+      "name": "Guru Go Backend Harness Spec",
+      "description": "Go backend harness SSOT for architecture, service, repository, API, quality, and project conventions",
+      "path": "specs/guru-go-backend",
+      "tags": ["go", "backend", "guru", "harness"]
+    },
+    {
+      "id": "guru-h5-web",
+      "type": "spec",
+      "name": "Guru H5 Web Harness Spec",
+      "description": "H5 web harness SSOT for frontend, backend, type-safety, quality, and project conventions",
+      "path": "specs/guru-h5-web",
+      "tags": ["h5", "web", "guru", "harness"]
+    },
+    {
+      "id": "guru-ios-native",
+      "type": "spec",
+      "name": "Guru iOS Native Harness Spec",
+      "description": "iOS native harness SSOT for Swift, navigation, DI, repository, quality, and project conventions",
+      "path": "specs/guru-ios-native",
+      "tags": ["ios", "swift", "guru", "harness"]
+    },
+    {
       "id": "guru-client",
       "type": "workflow",
       "name": "Guru Client 5-Phase Workflow",
       "description": "需求→概要→详细→实现→审核 五阶段（requirements/detail 人工 Gate + overview/detail 双 clean review + verify 强制）",
       "path": "workflows/guru-client-workflow.md",
       "tags": ["flutter", "guru", "workflow"]
+    },
+    {
+      "id": "guru-go",
+      "type": "workflow",
+      "name": "Guru Go 5-Phase Workflow",
+      "description": "Go backend requirements, overview, detail, implementation, and verification workflow",
+      "path": "workflows/guru-go-workflow.md",
+      "tags": ["go", "backend", "guru", "workflow"]
+    },
+    {
+      "id": "guru-h5",
+      "type": "workflow",
+      "name": "Guru H5 5-Phase Workflow",
+      "description": "H5 web requirements, overview, detail, implementation, and verification workflow",
+      "path": "workflows/guru-h5-workflow.md",
+      "tags": ["h5", "web", "guru", "workflow"]
+    },
+    {
+      "id": "guru-ios",
+      "type": "workflow",
+      "name": "Guru iOS 5-Phase Workflow",
+      "description": "iOS native requirements, overview, detail, implementation, and verification workflow",
+      "path": "workflows/guru-ios-workflow.md",
+      "tags": ["ios", "swift", "guru", "workflow"]
     }
   ]
 }

@@ -1,0 +1,33 @@
+{
+  "artifact_digest": "2ceb5aac9c689ebd39513c39542560e7e23e9a45e3ce58ab928bbfe93f0ec62b",
+  "confirmation_required": false,
+  "decision_items": [],
+  "decision_set_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "decision_universe_digest": "6e35c57efc732da97c7615a01739ba7fc12b97e959c984164ad181622c6bc8bd",
+  "detail_artifact_digest": "c59d8b6d28b71461c18899011b7d3887b074d95eef397fe9def67a3f9de07aa6",
+  "intent": "implementation",
+  "invariant_ids": [
+    "INV-POLICY-001",
+    "INV-POLICY-002",
+    "INV-POLICY-003",
+    "INV-POLICY-004",
+    "INV-POLICY-005",
+    "INV-POLICY-006",
+    "INV-START-001",
+    "INV-START-002",
+    "INV-START-003",
+    "INV-START-004",
+    "INV-START-005"
+  ],
+  "owner_unit": "UNIT-delivery-policy",
+  "packet_id": "risk-ecd0a02e918c721f",
+  "policy_snapshot_digest": "d9fda7ff286f8da91762f3b80f84177ce44eab4c06f415f2f8edd7edc16de7cd",
+  "policy_version": "guru-delivery-policy-v1",
+  "risk": "high",
+  "route": "full_chain",
+  "schema_version": 1,
+  "scope_fingerprint": "ecd0a02e918c721fdbe59b353ff75b77b857778d3d8925da3ed73469acc38922",
+  "slice_id": "delivery-control",
+  "slice_packet_digest": "53a528c8327df89f4b80f7017684c92f7422c407d6458540d9ac9e33f75676cb",
+  "task_id": "custom-first-guru-delivery-control"
+}

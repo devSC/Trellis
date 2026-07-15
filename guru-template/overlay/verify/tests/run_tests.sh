@@ -16,6 +16,19 @@ export PYTHONDONTWRITEBYTECODE=1  # 测试不得在可打包 overlay 中留下 _
 trap 'rm -rf "$TMP"' EXIT
 pass=0; failn=0
 
+run_unittest_file() { # run_unittest_file <pattern>
+  pattern="$1"
+  out=$(PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$HERE" -p "$pattern" 2>&1); rc=$?
+  if [ "$rc" = 0 ]; then
+    pass=$((pass+1)); echo "PASS  unittest $pattern"
+  else
+    failn=$((failn+1)); echo "FAIL  unittest $pattern (rc=$rc)"; printf '%s\n' "$out" | head -12
+  fi
+}
+
+run_unittest_file 'test_delivery_policy.py'
+run_unittest_file 'test_start_guard.py'
+
 append_detail_chapter() { # append_detail_chapter <file> [unit] [type_heading] [test_hint]
   file="$1"
   unit="${2:-UNIT-order-usecase}"
@@ -316,14 +329,18 @@ write_plain_clean_reviews() { # write_plain_clean_reviews <gate> <task_dir>
   fi
 }
 
-write_route_contract() { # write_route_contract <task_dir> <route> <risk>
-  python3 - "$GATE" "$1" "$2" "$3" <<'PY'
+write_route_contract() { # write_route_contract <task_dir> <route> <risk> [policy_version]
+  python3 - "$GATE" "$1" "$2" "$3" "${4:-}" <<'PY'
 import os, sys
-gate, task_dir, route, risk = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+gate, task_dir, route, risk, policy_version = sys.argv[1:6]
 sys.path.insert(0, os.path.dirname(gate))
 import guru_contract
 contract = guru_contract.default_contract(route, risk, created_by="fixture")
 contract["assessment"]["reasons"] = [f"fixture route={route}"]
+if policy_version:
+    contract["policy_version"] = policy_version
+    if policy_version == "guru-risk-contract-v1":
+        contract.pop("risk_decision_inventory", None)
 if route == guru_contract.ROUTE_MICRO_TASK:
     contract["scope"] = {"allowed_paths": ["lib"], "forbidden_path_patterns": [], "max_files": 3}
 elif route == guru_contract.ROUTE_LITE_TASK:
@@ -1613,7 +1630,7 @@ else failn=$((failn+1)); echo "FAIL  commit-plan lite_task stage plan 错误 (rc
 
 CG_MULTI_PAIR=$(mk_commit_gate_case commit-multi-review-set in_progress "lib/a.dart")
 CG_MULTI_ROOT="${CG_MULTI_PAIR%%|*}"; CG_MULTI_TASK="${CG_MULTI_PAIR#*|}"
-write_route_contract "$CG_MULTI_TASK" full_chain high
+write_route_contract "$CG_MULTI_TASK" full_chain high guru-risk-contract-v1
 printf 'code b\n' > "$CG_MULTI_ROOT/lib/b.dart"
 python3 - "$CG_MULTI_TASK" "$CG_MULTI_ROOT" "$GATE" <<'PY'
 import json, os, sys
@@ -1689,7 +1706,7 @@ else failn=$((failn+1)); echo "FAIL  commit-plan 多 slice review-set coverage �
 
 CG_MULTI_MISS_PAIR=$(mk_commit_gate_case commit-multi-missing-review in_progress "lib/a.dart")
 CG_MULTI_MISS_ROOT="${CG_MULTI_MISS_PAIR%%|*}"; CG_MULTI_MISS_TASK="${CG_MULTI_MISS_PAIR#*|}"
-write_route_contract "$CG_MULTI_MISS_TASK" full_chain high
+write_route_contract "$CG_MULTI_MISS_TASK" full_chain high guru-risk-contract-v1
 printf 'code b\n' > "$CG_MULTI_MISS_ROOT/lib/b.dart"
 python3 - "$CG_MULTI_MISS_TASK" "$CG_MULTI_MISS_ROOT" "$GATE" <<'PY'
 import json, os, sys
@@ -4129,7 +4146,46 @@ with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
     rc = gs.run_implementation_review(args)
 ok("P1c implementation-review --platform cli 使用 Trellis check skill dry-run",
    rc == 0 and "Guru cli skill(s): trellis-check" in out.getvalue()
-   and "implementation-review" in out.getvalue())
+   and "implementation-review" in out.getvalue()
+   and "review_invocation_contract=" in out.getvalue()
+   and f"reviewed_target_digest={R.target_snapshot_digest(root, ['lib/x.dart'], 'index')}" in out.getvalue())
+
+real_exec, real_det = gs._execute_plan, R.run_deterministic_checks
+try:
+    root, tdir = mkgit("high"); write_packet(tdir, "U", risk="high")
+    os.makedirs(os.path.join(root, "lib"), exist_ok=True)
+    target = os.path.join(root, "lib/x.dart")
+    open(target, "w", encoding="utf-8").write("target")
+    subprocess.run(["git", "-C", root, "add", "lib/x.dart"], check=True)
+    spawned = []
+    def mutate_during_deterministic(_checks, _root):
+        open(target, "w", encoding="utf-8").write("changed during deterministic")
+        subprocess.run(["git", "-C", root, "add", "lib/x.dart"], check=True)
+        return "passed", []
+    R.run_deterministic_checks = mutate_during_deterministic
+    gs._execute_plan = lambda plan, cfg: (spawned.append(plan), (0, "done", current_txt))[1]
+    rc, _o, _e = run_ir(tdir, root, dry_run=False)
+    rec = jsonl_last(tdir)
+    ok("P1c pre-launch digest 在 deterministic 后变化则 worker 前硬停",
+       rc == 2 and not spawned and rec and rec["supervisor_failure"] == "SCOPE_INVALID")
+
+    root, tdir = mkgit("high"); write_packet(tdir, "U", risk="high")
+    os.makedirs(os.path.join(root, "lib"), exist_ok=True)
+    target = os.path.join(root, "lib/x.dart")
+    open(target, "w", encoding="utf-8").write("target")
+    subprocess.run(["git", "-C", root, "add", "lib/x.dart"], check=True)
+    R.run_deterministic_checks = lambda _checks, _root: ("passed", [])
+    def mutate_during_worker(_plan, _cfg):
+        open(target, "w", encoding="utf-8").write("changed during worker")
+        subprocess.run(["git", "-C", root, "add", "lib/x.dart"], check=True)
+        return 0, "done", current_txt
+    gs._execute_plan = mutate_during_worker
+    rc, _o, _e = run_ir(tdir, root, dry_run=False)
+    rec = jsonl_last(tdir)
+    ok("P1c pre-launch digest 在 worker 期间变化则 record 前硬停",
+       rc == 2 and rec and rec["supervisor_failure"] == "SCOPE_INVALID")
+finally:
+    gs._execute_plan, R.run_deterministic_checks = real_exec, real_det
 
 root, tdir = mkgit("high"); write_packet(tdir, "U", risk="high")
 os.makedirs(os.path.join(root, "lib"), exist_ok=True)
@@ -4392,9 +4448,11 @@ os.makedirs(os.path.join(root, "lib"), exist_ok=True)
 open(os.path.join(root, "lib/x.dart"), "w", encoding="utf-8").write("target")
 subprocess.run(["git", "-C", root, "add", "lib/x.dart"], check=True)
 brief = gs._staged_review_target(Path(tdir), Path(root)).active_brief
+brief_digest = R.target_snapshot_digest(root, ["lib/x.dart"], "index")
 ok("P1c staged implementation-review brief 明示 synthetic invariant id",
    "expected_invariants:" in brief and "staged_scope_reviewed" in brief
-   and "不要从其他 slice packet 借 id" in brief)
+   and "不要从其他 slice packet 借 id" in brief
+   and f"reviewed_target_digest={brief_digest}" in brief)
 
 # ============ R1 (codex P1-impl 对抗审查) 修复回归 ============
 def err(fn):  # 捕获 ReviewRecordError → True(packet/append 非法负例)
@@ -4814,6 +4872,91 @@ with open(os.path.join(path, f"{unit}.json"), "w", encoding="utf-8") as fh:
 PY
 }
 
+# V2 Full/high Detail inventory must block every review/start entry before implementation.
+INV_TASK=$(mk_pkg v2-decision-inventory)
+python3 - "$GATE" "$INV_TASK" <<'PY'
+import os, sys
+gate, task = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.dirname(gate))
+import guru_contract
+contract = guru_contract.default_contract("full_chain", "high", created_by="v2-inventory-fixture")
+guru_contract.write_contract(task, contract)
+PY
+write_slice_packet "$INV_TASK" delivery-control "lib/a.dart" high
+expect_rc_grep "v2 full/high Detail 缺 decision inventory 前置阻断" 2 "RISK_DECISION_INVENTORY" python3 "$GATE" detail "$INV_TASK"
+expect_rc_grep "v2 full/high record-review detail 不得绕过 inventory" 2 "RISK_DECISION_INVENTORY" python3 "$GATE" record-review detail "$INV_TASK" --result findings --max-severity high --reviewer fixture-reviewer --run-id inventory-missing --evidence "inventory missing" --finding-class DETAIL_DEFECT
+expect_rc_grep "v2 full/high 真 check-start 缺 inventory 前置阻断" 2 "RISK_DECISION_INVENTORY" python3 "$GATE" check-start "$INV_TASK"
+
+printf '\nGURU-DECISION:DEC-FIXTURE-001\n' >> "$INV_TASK-docs/chapters/order-usecase.md"
+python3 - "$INV_TASK" <<'PY'
+import json, os, sys
+task = sys.argv[1]
+inventory = {
+    "schema_version": 1,
+    "task_id": os.path.basename(task),
+    "scope": {
+        "selected_slice_id": "delivery-control",
+        "official_start_authority": "selected_slice_only",
+        "later_slice_authority": "supervisor_fail_closed",
+    },
+    "slices": {
+        "delivery-control": [{
+            "decision_id": "DEC-FIXTURE-001",
+            "severity": "high",
+            "status": "resolved",
+            "recommendation": "Keep the Full/high path fail closed before implementation.",
+            "alternatives": ["Allow review/start without the inventory."],
+            "impact": "Proves the selected risk decision is reviewed before code.",
+            "irreversible": False,
+            "invariant_ids": ["INV-delivery-control"],
+            "required": True,
+            "resolution": {
+                "choice": "Require the inventory.",
+                "evidence": "Fixture detail anchor and v2 contract.",
+            },
+            "source_refs": [{
+                "artifact_key": "order-usecase.md",
+                "anchor": "GURU-DECISION:DEC-FIXTURE-001",
+            }],
+        }],
+    },
+}
+path = os.path.join(task, "implement.md")
+with open(path, "a", encoding="utf-8") as fh:
+    fh.write("\n<!-- GURU:RISK_DECISION_INVENTORY:START -->\n```json\n")
+    fh.write(json.dumps(inventory, ensure_ascii=False, indent=2, sort_keys=True))
+    fh.write("\n```\n<!-- GURU:RISK_DECISION_INVENTORY:END -->\n")
+PY
+expect "v2 full/high 合法 decision inventory 通过 Detail 结构 Gate" 0 python3 "$GATE" detail "$INV_TASK"
+write_new_gate_ready "$INV_TASK"
+expect "v2 full/high 合法 decision inventory 通过真 check-start" 0 python3 "$GATE" check-start "$INV_TASK"
+
+# Namespaced tasks must not use the inventory block in task:implement.md as its own Detail evidence.
+INV_REQ_PKG="$INV_TASK-reqpkg"
+mkdir -p "$INV_REQ_PKG"
+printf '# Requirement package\n' > "$INV_REQ_PKG/README.md"
+python3 - "$INV_TASK" "$INV_REQ_PKG" <<'PY'
+import json, os, sys
+task, req_pkg = sys.argv[1], sys.argv[2]
+task_json = os.path.join(task, "task.json")
+with open(task_json, encoding="utf-8") as fh:
+    task_data = json.load(fh)
+task_data["requirement_package"] = req_pkg
+with open(task_json, "w", encoding="utf-8") as fh:
+    json.dump(task_data, fh)
+    fh.write("\n")
+
+implement_path = os.path.join(task, "implement.md")
+with open(implement_path, encoding="utf-8") as fh:
+    implement = fh.read()
+old = '"artifact_key": "order-usecase.md"'
+assert implement.count(old) == 1, implement
+implement = implement.replace(old, '"artifact_key": "task:implement.md"')
+with open(implement_path, "w", encoding="utf-8") as fh:
+    fh.write(implement)
+PY
+expect_rc_grep "v2 full/high namespaced inventory 不得循环引用 task:implement.md" 2 "source_ref is not detail-bound" python3 "$GATE" detail "$INV_TASK"
+
 IC_TASK="$TMP/init-contract-task"; mkdir -p "$IC_TASK"
 out=$(python3 "$GATE" init-contract "$IC_TASK" --route micro_task --risk low --allowed-path lib/ui/dot.dart --max-files 1 --reason fixture --risk-flag low-risk 2>&1); rc=$?
 if [ "$rc" = 0 ] && SUMMARY="$out" TASK="$IC_TASK" python3 - <<'PY'
@@ -4825,6 +4968,8 @@ assert contract["route"] == "micro_task", contract
 assert contract["risk"] == "low", contract
 assert contract["scope"]["allowed_paths"] == ["lib/ui/dot.dart"], contract
 assert contract["scope"]["max_files"] == 1, contract
+assert contract["policy_version"] == "guru-risk-contract-v2", contract
+assert contract["risk_decision_inventory"]["required"] is False, contract
 PY
 then pass=$((pass+1)); echo "PASS  init-contract 生成 micro_task 合同"
 else failn=$((failn+1)); echo "FAIL  init-contract 生成 micro_task 合同 (rc=$rc)"; echo "$out" | head -8; fi
@@ -4855,6 +5000,8 @@ assert contract["route"] == "micro_task", contract
 assert contract["scope"]["allowed_paths"] == ["lib/ui/unread_dot.dart"], contract
 assert contract["scope"]["max_files"] == 1, contract
 assert {row["gate"] for row in contract["allowed_degradations"]} == {"gitnexus_impact", "gitnexus_detect_changes"}, contract
+assert contract["policy_version"] == "guru-risk-contract-v2", contract
+assert contract["risk_decision_inventory"]["required"] is False, contract
 assert task["guru_chain"] == "light" and task["meta"]["route"] == "micro_task", task
 PY
 then pass=$((pass+1)); echo "PASS  intake low/commit 写入 micro_task 合同和 task metadata"
@@ -4870,6 +5017,8 @@ task = json.load(open(os.path.join(os.environ["TASK"], "task.json"), encoding="u
 assert summary["route"] == "full_chain" and summary["risk"] == "high", summary
 assert contract["route"] == "full_chain" and contract["risk"] == "high", contract
 assert contract["allowed_degradations"] == [], contract
+assert contract["policy_version"] == "guru-risk-contract-v2", contract
+assert contract["risk_decision_inventory"]["required"] is True, contract
 assert task["guru_chain"] == "full" and task["meta"]["route"] == "full_chain", task
 PY
 then pass=$((pass+1)); echo "PASS  intake high 写入 full_chain 合同且不允许降级"

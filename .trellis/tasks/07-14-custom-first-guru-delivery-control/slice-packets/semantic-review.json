@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "slice_id": "semantic-review",
+  "owner_unit": "UNIT-semantic-digest",
+  "target_kind": "implementation",
+  "target_paths": [
+    "guru-template/overlay/verify/guru_digest.py",
+    "guru-template/overlay/verify/guru_review_cutover.py",
+    "guru-template/overlay/verify/guru_review_identity.py",
+    "guru-template/overlay/verify/guru_review_record.py",
+    "guru-template/overlay/verify/guru_review_runner.py",
+    "guru-template/overlay/verify/tests/test_review_cutover.py",
+    "guru-template/overlay/verify/tests/test_review_identity.py",
+    "guru-template/overlay/verify/tests/test_semantic_digest.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "gate_digest",
+    "review_identity",
+    "evidence_invalidation"
+  ],
+  "depends_on": [
+    "delivery-control"
+  ],
+  "deterministic_checks": [
+    "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_semantic_digest.py'",
+    "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_review_identity.py'",
+    "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_review_cutover.py'",
+    "bash guru-template/overlay/verify/tests/run_tests.sh"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "opposite",
+    "ocr": "optional"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "marketplace",
+      ".trellis/tasks/07-14-custom-first-guru-delivery-control/check.jsonl",
+      ".trellis/tasks/07-14-custom-first-guru-delivery-control/implement.jsonl"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-DIGEST-001",
+      "rule": "append-only execution evidence must-not change planning digests",
+      "source": "design-package/chapters/semantic-digest.md#9",
+      "owner": "UNIT-semantic-digest",
+      "positive_case": "implementation and verification JSONL append leaves all planning digests stable",
+      "negative_case": "mutable execution evidence makes requirements, overview, detail, or implement review stale",
+      "route_if_missing": "block digest rollout",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_semantic_digest.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-DIGEST-002",
+      "rule": "Full selection failure must-not fall back to light design.md",
+      "source": "design-package/chapters/semantic-digest.md#9",
+      "owner": "UNIT-semantic-digest",
+      "positive_case": "missing or invalid Full manifest blocks with an artifact error",
+      "negative_case": "the task-local pointer design.md is silently hashed as Full detail",
+      "route_if_missing": "artifact error",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_semantic_digest.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-DIGEST-003",
+      "rule": "canonicalization profile change must-not reuse older digest as current",
+      "source": "design-package/chapters/semantic-digest.md#9",
+      "owner": "UNIT-semantic-digest",
+      "positive_case": "older profile evidence remains auditable but stale",
+      "negative_case": "a v1 digest is silently accepted as v2 current clean evidence",
+      "route_if_missing": "block evidence reuse",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_semantic_digest.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-DIGEST-004",
+      "rule": "artifact/section boundary parsing and semantic changes must-not invalidate unrelated gates or preserve dependent gates",
+      "source": "design-package/chapters/semantic-digest.md#9",
+      "owner": "UNIT-semantic-digest",
+      "positive_case": "fence-aware unfenced section boundaries plus the declared artifact-key matrix invalidate only descendants",
+      "negative_case": "a fenced ## §2 splits Lite sections, Lite detail stales Overview, or Overview change leaves Detail current",
+      "route_if_missing": "block digest rollout",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_semantic_digest.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-DIGEST-005",
+      "rule": "v1-to-v2 review cutover must freeze v1 and require managed-adapter v2 re-review of unchanged predecessor/self snapshots without auto-migration, dual write or mixed readiness",
+      "source": "design-package/chapters/semantic-digest.md#9",
+      "owner": "UNIT-semantic-digest",
+      "positive_case": "read-only plan and CAS activation switch one authority before current V2 reviews",
+      "negative_case": "V1 rows are promoted, V1 and V2 each contribute a clean, or changed bridge snapshots are accepted",
+      "route_if_missing": "block cutover and downstream slices",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_review_cutover.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-REVIEW-001",
+      "rule": "records sharing a trusted reviewer principal or trusted context principal must-not count as independent",
+      "source": "design-package/chapters/review-identity.md#9",
+      "owner": "UNIT-review-identity",
+      "positive_case": "both provider-scoped reviewer and context principals differ and all attestations are current",
+      "negative_case": "same reviewer with new worker, thread or run id, or a different reviewer in the same context, counts twice",
+      "route_if_missing": "block readiness",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_review_identity.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-REVIEW-002",
+      "rule": "prose-only finding changes must-not reset stagnation",
+      "source": "design-package/chapters/review-identity.md#9",
+      "owner": "UNIT-review-identity",
+      "positive_case": "finding fingerprint remains stable across wording and line-shift changes",
+      "negative_case": "message rewriting is treated as a new finding and restarts repair budget",
+      "route_if_missing": "STALLED",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_review_identity.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-REVIEW-003",
+      "rule": "tampered/stale records must-not count as current clean",
+      "source": "design-package/chapters/review-identity.md#9",
+      "owner": "UNIT-review-identity",
+      "positive_case": "record chain, trusted identity and reviewed digest all validate",
+      "negative_case": "edited, reordered, deleted, stale, or self-attested review record counts as clean",
+      "route_if_missing": "hard review block",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_review_identity.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-REVIEW-004",
+      "rule": "review record durability must-not be described as malicious-rewrite security or bypass lock/hash-chain/fsync",
+      "source": "design-package/chapters/review-identity.md#9",
+      "owner": "UNIT-review-identity",
+      "positive_case": "authority is validated separately while framed append detects torn, reordered or accidental edits",
+      "negative_case": "a recomputed task JSON chain authenticates a reviewer or a concurrent/torn write counts clean",
+      "route_if_missing": "hard review block",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_review_identity.py'"
+      ]
+    },
+    {
+      "invariant_id": "INV-REVIEW-005",
+      "rule": "TrustedReviewEnvelopeV1 must bind trusted runner/platform authority plus task, gate, artifact, policy, inventory, result, severity and findings digest without self-reported identity fallback",
+      "source": "design-package/chapters/review-identity.md#9",
+      "owner": "UNIT-review-identity",
+      "positive_case": "pinned capable adapter captures platform control-plane identity and every envelope binding matches",
+      "negative_case": "assistant prose, --as, unsupported adapter or a mutated binding counts as independent clean",
+      "route_if_missing": "capability or envelope hard block",
+      "test_evidence": [
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_review_identity.py'",
+        "python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_review_cutover.py'"
+      ]
+    }
+  ]
+}
