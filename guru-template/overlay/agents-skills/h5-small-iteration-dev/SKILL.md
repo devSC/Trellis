@@ -21,22 +21,22 @@ description: H5/Next.js 小需求端到端闭环编排：按入口决策树分�
    - 整段页面或新 route feature → route + server-component/client-component + 所需下层全链。
 
    同时判定风险并按固定表路由：
-   - `low -> small_inline`：局部 UI / 文案 / 注释 / 格式 / 非共享配置等低风险小改，且未命中高风险信号时，默认本轮 inline 处理，不创建完整 Trellis task，不要求 full Guru gate。
-   - `low + commit -> micro_task`：同一低风险小改一旦需要 commit，必须创建或复用最小任务，写入任务目录 `gate-contract.json`，只承载 scoped commit contract，不进入完整规划链。
-   - `medium -> lite_task`：局部业务行为、单层逻辑、小范围多文件或需要可复跑验证的变更，只做 compact intake，然后由当前主会话 host-inline 实现并运行 scoped deterministic_final；不生成 PRD/Overview/Detail，不确认，不派 Worker。
+   - `small_inline`：需求完全明确、机械且不改变行为合同的局部 UI / 文案 / 注释 / 格式变更；默认不创建完整 task。commit 是交付动作，初始要求 commit 时只补最小提交合同。
+   - `micro_task`：需求完全明确、低风险、路径有界，但改变一个局部行为合同；创建或复用最小任务和 `gate-contract.json`，不进入完整规划链。
+   - `lite_task`：无 High-risk 的局部业务行为、单层逻辑或小范围多文件变更，但仓库取证后仍可能有产品/范围/验收歧义。必须用官方 `task.py create` 建标准 Trellis task，任务内维护 compact `prd.md`；必要时 bounded Brainstorm，用户确认当前 requirements digest 一次后 host-inline 实现并运行 scoped deterministic_final，Worker 0、无 Overview/Detail planning review。
    - `high -> full_chain`：认证/会话、支付、权限/隐私或数据采集、server-action 写入、DB/schema、内容源迁移、缓存/`revalidate` 语义、跨层协议、workflow/hook/gate/runtime 或发布交付链，默认推荐完整五阶段（full 链，目录级设计包）；即使用户要求 `lite_task` 或 `micro_task`，也必须写入偏好审计并保持 `full_chain`；override 不能授权高风险降级。
 
-   **判轨落盘**：`guru_chain` 仍只表达 `full|light` 的既有 Guru 产物形态；`gate-contract.json.route` 记录实际执行 route（`micro_task|lite_task|full_chain`），`assessment.recommended_route` 记录风险系统推荐，`route_selection` 记录用户选择、推荐值、风险确认与用户原话。`gate-degradations.jsonl` 只能追加真实发生的 gate/tool 失败与补偿检查证据，是事实记录，不是预授权绕行单。非高风险 route 可在合法 user override 审计后选择更轻 route；高风险 override 只记录用户偏好，不能授权 `lite_task` 或 `micro_task`，后续 Gate 必须要求 `full_chain`。
+   **判轨落盘**：`gate-contract.json` 记录 selected/recommended Route、`selection_source`、`selection_generation` 与 `scope_fingerprint`。更重 override 直接允许；更轻 override 必须满足目标 eligibility；High-risk/unknown-high 不能降级。首次写入前可合法降级，首次写入后只允许升级。
 
-   **route review policy**：以 `gate-contract.json.route` 为执行权威。`small_inline` / `micro_task` 不进入 Full planning review；`lite_task` 固定为 compact intake → host-inline → scoped deterministic_final，确认 0、Worker 0、无 requirements/Overview/Detail/check-implementation；只有 `full_chain`、`risk=unknown`、缺失或非法 contract 进入 strict Gate。Lite 发现 scope expansion 或 high-risk 时先 re-intake 为 Full，不在 Lite 内补跑 Full Gate。
+   **route review policy**：Small/Micro 确认 0；Lite=标准 task→repo evidence→必要 Brainstorm→compact requirements→确认一次→host-inline→scoped deterministic_final，Worker 0、无 Overview/Detail/check-implementation；Full 在实现前完成 current risk/decision evidence 与一批确认。Lite 发现 scope expansion 或 High-risk 时在下一次写入前升级 Full。
 
-2. **Lite 执行**：记录 compact intake 和精确 scope，立即 host-inline 修改真实代码，执行与改动匹配的 focused check 并写入 mutable evidence。只有新增 high-risk 或 scope expansion 才停止并提升为 Full。
+2. **Lite 执行**：官方创建标准任务，先查 repo evidence；只对真实歧义运行 bounded Brainstorm。compact requirements 与 Brainstorm Evidence 写入 task-local `prd.md`，用户确认当前 digest 后自动 start、host-inline 实现、focused check、mutable evidence、Spec 同步和可逆 commit-ready。
 
-3. **Full 需求与设计**：只有 Full 才执行需求澄清、Overview、Detail、合同八问及其 review/confirm。
+3. **Full 需求与设计**：只有 Full 才执行正式需求、Overview、Detail 与风险包；实现前把当前需求、critical/high risk 和关键不可逆设计决定合并为一批用户确认。
 
 4. **实现与验证**：按 `h5-implementation-guru-writing` 执行（含 `implement.md` / implementation-trace、逐片验证、存量违例处置、server/client 边界与 secret 合规）。
 
-5. **人工 Gate**：只在 Full/high-risk 的批量风险确认与不可逆边界使用；Lite 不逐步询问。
+5. **人工 Gate**：Small/Micro/Lite/Full=`0/0/1/1 batch`；Lite/Full 确认后自动推进，只有 scope/digest 实质变化、新 High-risk 或新不可逆决定才重新确认。
 
 6. **收口输出**：结论 → 改动 → 验证证据 → 风险 → 下一步。
 

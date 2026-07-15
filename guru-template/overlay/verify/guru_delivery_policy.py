@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import glob
 import hashlib
 import json
 import os
@@ -20,11 +21,30 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import guru_contract  # noqa: E402
 import guru_risk  # noqa: E402
+import guru_review_record  # noqa: E402
 
 SCHEMA_VERSION = 1
 DEFAULT_POLICY_RELS = (
     os.path.join("..", "policy", "delivery-policy.json"),
     os.path.join("..", "..", "policy", "delivery-policy.json"),
+)
+INSTALLED_CONSISTENCY_PATHS = (
+    ".trellis/policy/delivery-policy.json",
+    ".trellis/workflow.md",
+    ".trellis/scripts/guru/guru_contract.py",
+    ".trellis/scripts/guru/guru_delivery_policy.py",
+    ".trellis/scripts/guru/guru_gate.py",
+    ".trellis/scripts/guru/guru_risk.py",
+)
+SOURCE_CONSISTENCY_PATHS = (
+    "guru-template/overlay/README.md",
+    "guru-template/overlay/policy/delivery-policy.json",
+    "guru-template/overlay/verify/guru_contract.py",
+    "guru-template/overlay/verify/guru_delivery_policy.py",
+    "guru-template/overlay/verify/guru_gate.py",
+    "guru-template/overlay/verify/guru_risk.py",
+    "guru-template/overlay/tests/apply_test.sh",
+    "guru-template/overlay/verify/tests/test_delivery_policy.py",
 )
 
 INTENTS = {"implementation", "review", "research", "debug", "docs", "config", "ops"}
@@ -87,6 +107,13 @@ class IntakeRequest:
     read_only_requested: bool = False
     preferred_route: str | None = None
     max_files: int | None = None
+    requirements_clear: bool | None = None
+    coupling: str = "unknown"
+    reversible: bool | None = None
+    verification_scope: str = "unknown"
+    prior_route: str | None = None
+    prior_selection_generation: int | None = None
+    first_write_started: bool = False
 
 
 @dataclass(frozen=True)
@@ -113,6 +140,11 @@ class DeliverySelection:
     planning_cost_ratio_percent: int
     route_acceptance: dict[str, Any]
     delivery_metrics: tuple[str, ...]
+    recommended_route: str
+    selected_route: str
+    selection_source: str
+    selection_generation: int
+    brainstorm_required: bool
 
 
 def _canonical_json(value: Any) -> str:
@@ -141,6 +173,88 @@ def _repo_rel(path: PurePosixPath | str) -> str:
     if any(part in {"", ".", ".."} for part in parts) or re.match(r"^[A-Za-z]:", parts[0]):
         raise DeliveryPolicyError(f"ScopeUnbounded: unsafe scope path: {text!r}")
     return text
+
+
+def project_docs_code_test_digest(project_root: str) -> str | None:
+    """Bind evidence reuse to the installed or source Custom contract snapshot."""
+    root = os.path.abspath(project_root)
+    for candidates in (INSTALLED_CONSISTENCY_PATHS, SOURCE_CONSISTENCY_PATHS):
+        if all(os.path.isfile(os.path.join(root, rel)) for rel in candidates):
+            try:
+                return guru_review_record.target_snapshot_digest(root, list(candidates), "worktree")
+            except guru_review_record.ReviewRecordError:
+                return None
+    return None
+
+
+def delivery_evidence_cache_key(
+    *,
+    policy_version: str,
+    intent: str,
+    execution_route: str,
+    scope_fingerprint: str,
+    target_digest: str,
+    docs_code_test_digest: str,
+) -> str:
+    return _digest({
+        "policy_version": policy_version,
+        "intent": intent,
+        "execution_route": execution_route,
+        "scope_fingerprint": scope_fingerprint,
+        "target_digest": target_digest,
+        "docs_code_test_digest": docs_code_test_digest,
+    })
+
+
+def _project_evidence_inputs(project_root: str, paths: tuple[str, ...]) -> dict[str, Any]:
+    if not paths:
+        return {}
+    try:
+        target_digest = guru_review_record.target_snapshot_digest(
+            os.path.abspath(project_root),
+            list(paths),
+            "worktree",
+        )
+    except guru_review_record.ReviewRecordError:
+        return {}
+    consistency_digest = project_docs_code_test_digest(project_root)
+    if not HEX_DIGEST.fullmatch(str(consistency_digest or "")):
+        return {}
+    return {
+        "target_digest": target_digest,
+        "docs_code_test_digest": consistency_digest,
+    }
+
+
+def _find_project_reuse_candidate(
+    project_root: str,
+    *,
+    evidence_cache_key: str,
+    target_digest: str,
+    docs_code_test_digest: str,
+) -> dict | None:
+    root = os.path.abspath(project_root)
+    patterns = (
+        os.path.join(root, ".trellis", "tasks", "*", "verification-evidence.jsonl"),
+        os.path.join(root, ".trellis", "tasks", "archive", "*", "*", "verification-evidence.jsonl"),
+    )
+    for path in reversed(sorted({item for pattern in patterns for item in glob.glob(pattern)})):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                rows = [json.loads(line) for line in fh if line.strip()]
+        except (OSError, json.JSONDecodeError):
+            continue
+        for row in reversed(rows):
+            if not isinstance(row, dict) or row.get("kind") != "delivery_evidence_cache":
+                continue
+            if (
+                row.get("evidence_cache_key") == evidence_cache_key
+                and row.get("target_digest") == target_digest
+                and row.get("docs_code_test_digest") == docs_code_test_digest
+                and row.get("outcome") == "passed"
+            ):
+                return row
+    return None
 
 
 def load_policy(path: str | None = None) -> dict:
@@ -186,6 +300,37 @@ def validate_policy(policy: dict) -> None:
     read_only_gates = policy.get("read_only_route_gates")
     if not isinstance(read_only_gates, dict) or not guru_contract.ROUTES.issubset(read_only_gates):
         raise DeliveryPolicyError("PolicySchemaInvalid: read_only_route_gates incomplete")
+    risk_rules = policy.get("risk_rules")
+    if not isinstance(risk_rules, dict):
+        raise DeliveryPolicyError("PolicySchemaInvalid: risk_rules missing")
+    if {"low_commit_route", "low_no_commit_route"}.intersection(risk_rules):
+        raise DeliveryPolicyError("PolicySchemaInvalid: risk_rules cannot classify complexity from commit intent")
+    required_risk_rules = {
+        "high_or_unknown_high_signal_route",
+        "unknown_default_route",
+        "medium_default_route",
+        "mechanical_change_route",
+        "bounded_local_change_route",
+        "ambiguous_requirements_route",
+    }
+    if not required_risk_rules.issubset(risk_rules):
+        raise DeliveryPolicyError("PolicySchemaInvalid: risk_rules difficulty evidence table incomplete")
+    topology_rules = policy.get("topology_rules")
+    if not isinstance(topology_rules, dict) or not guru_contract.ROUTES.issubset(topology_rules):
+        raise DeliveryPolicyError("PolicySchemaInvalid: topology_rules incomplete")
+    for inline_route in (
+        guru_contract.ROUTE_SMALL_INLINE,
+        guru_contract.ROUTE_MICRO_TASK,
+        guru_contract.ROUTE_LITE_TASK,
+    ):
+        if topology_rules.get(inline_route) != ["host_inline"]:
+            raise DeliveryPolicyError(
+                f"PolicySchemaInvalid: {inline_route} topology must be host_inline only"
+            )
+    if topology_rules.get(guru_contract.ROUTE_FULL_CHAIN) != ["managed_single", "managed_parallel"]:
+        raise DeliveryPolicyError(
+            "PolicySchemaInvalid: full_chain topology must allow managed_single and managed_parallel"
+        )
 
 
 def _infer_intent(request: IntakeRequest) -> str:
@@ -214,6 +359,78 @@ def _route_rank(route: str) -> int:
     return guru_contract.ROUTE_RANK.get(guru_contract.normalize_route(route), -1)
 
 
+def _route_eligible(route: str, request: IntakeRequest, assessment: dict) -> bool:
+    route = guru_contract.normalize_route(route)
+    if route == guru_contract.ROUTE_FULL_CHAIN:
+        return True
+    if guru_contract.normalize_risk(assessment.get("risk")) == guru_contract.RISK_HIGH:
+        return False
+    if route == guru_contract.ROUTE_LITE_TASK:
+        return True
+    if route == guru_contract.ROUTE_MICRO_TASK:
+        return (
+            request.requirements_clear is True
+            and str(request.coupling).strip().lower().replace("-", "_") == "local"
+            and request.reversible is True
+            and str(request.verification_scope).strip().lower().replace("-", "_") == "focused"
+            and 0 < len(request.affected_paths) <= 3
+        )
+    if route == guru_contract.ROUTE_SMALL_INLINE:
+        return "mechanical_change" in set(assessment.get("risk_flags") or [])
+    return False
+
+
+def _resolve_route_transition(
+    request: IntakeRequest,
+    assessment: dict,
+    recommended: str,
+    *,
+    force_full: bool,
+) -> tuple[str, str, int, tuple[str, ...]]:
+    prior = guru_contract.normalize_route(request.prior_route)
+    preferred = guru_contract.normalize_route(request.preferred_route)
+    prior_generation = request.prior_selection_generation
+    if prior and (
+        not isinstance(prior_generation, int)
+        or isinstance(prior_generation, bool)
+        or prior_generation <= 0
+    ):
+        raise DeliveryPolicyError("RouteTransitionInvalid: prior route requires a positive selection generation")
+
+    reasons: list[str] = []
+    source = "recommended"
+    if force_full:
+        selected = guru_contract.ROUTE_FULL_CHAIN
+        source = "risk_promotion"
+        reasons.append("high_or_unknown_high_signal_requires_full_chain")
+    elif preferred:
+        if _route_rank(preferred) < _route_rank(recommended) and not _route_eligible(preferred, request, assessment):
+            raise DeliveryPolicyError(
+                f"RouteDowngradeUnproven: {preferred} eligibility was not proven from clarity, coupling, reversibility and verification scope"
+            )
+        selected = preferred
+        source = "user_override"
+    else:
+        selected = recommended
+
+    if prior and request.first_write_started and _route_rank(selected) < _route_rank(prior):
+        raise DeliveryPolicyError(
+            f"RouteDowngradeAfterWrite: cannot change {prior} to {selected} after the first repository write"
+        )
+    if prior and selected != prior:
+        generation = int(prior_generation) + 1
+        if _route_rank(selected) > _route_rank(prior):
+            source = "risk_promotion" if force_full else "scope_reassessment"
+            reasons.append(f"route_promoted_{prior}_to_{selected}")
+        elif source != "user_override":
+            source = "prewrite_reassessment"
+    elif prior:
+        generation = int(prior_generation)
+    else:
+        generation = 1
+    return selected, source, generation, tuple(reasons)
+
+
 def _resolve_topology(route: str, capability_report: dict | None) -> tuple[str, str, str | None]:
     capability_report = capability_report if isinstance(capability_report, dict) else {}
     active_probes_raw = capability_report.get("active_probes")
@@ -233,13 +450,11 @@ def _resolve_topology(route: str, capability_report: dict | None) -> tuple[str, 
     )
     probe_digest = _digest({"generation": generation, "active_probes": sorted(active_probes)}) if managed else None
     route = guru_contract.normalize_route(route)
-    if route == guru_contract.ROUTE_SMALL_INLINE:
-        return "host_inline", "advisory", None
-    if route == guru_contract.ROUTE_LITE_TASK:
-        return "host_inline", "advisory", None
-    if route == guru_contract.ROUTE_MICRO_TASK:
-        if enforced:
-            return "managed_single", "enforced", probe_digest
+    if route in {
+        guru_contract.ROUTE_SMALL_INLINE,
+        guru_contract.ROUTE_MICRO_TASK,
+        guru_contract.ROUTE_LITE_TASK,
+    }:
         return "host_inline", "advisory", None
     if route == guru_contract.ROUTE_FULL_CHAIN and not enforced:
         missing = sorted(all_hard_probes - active_probes)
@@ -262,7 +477,10 @@ def _required_artifacts(intent: str, route: str) -> tuple[str, ...]:
     if route == guru_contract.ROUTE_MICRO_TASK:
         return ("gate_contract", "scoped_diff", "deterministic_check")
     if route == guru_contract.ROUTE_LITE_TASK:
-        return ("scoped_diff", "deterministic_check")
+        return (
+            "task_json", "prd", "implement_context", "check_context", "gate_contract",
+            "task_evidence", "scoped_diff", "deterministic_check",
+        )
     return ("requirements", "overview", "detail", "slice_packet", "risk_packet", "guarded_start", "implementation_review")
 
 
@@ -303,23 +521,26 @@ def resolve_delivery_selection(
     symlink_paths = {str(item) for item in evidence.get("symlink_paths", []) if isinstance(item, str)}
     if symlink_paths.intersection(paths):
         raise DeliveryPolicyError("ScopeUnbounded: scope contains a symlink path")
-    assessment = guru_risk.assess_intake(request.description, paths, commit_requested=request.commit_requested)
+    assessment = guru_risk.assess_intake(
+        request.description,
+        paths,
+        commit_requested=request.commit_requested,
+        requirements_clear=request.requirements_clear,
+        coupling=request.coupling,
+        reversible=request.reversible,
+        verification_scope=request.verification_scope,
+    )
     risk = guru_contract.normalize_risk(evidence.get("risk") or assessment.get("risk"))
     recommended = guru_contract.normalize_route(assessment.get("route")) or guru_contract.recommended_route_for_risk(risk)
-    preferred = guru_contract.normalize_route(request.preferred_route)
     high_signals = set(assessment.get("risk_flags") or [])
     high_signals.update(str(flag) for flag in evidence.get("high_signals", []) if flag)
     unknown_high_signal = "unknown-high-signal" in high_signals or "unknown_high_signal" in high_signals
-    promotion_reasons: list[str] = []
-    if risk == guru_contract.RISK_HIGH or unknown_high_signal:
-        route = guru_contract.ROUTE_FULL_CHAIN
-        promotion_reasons.append("high_or_unknown_high_signal_requires_full_chain")
-    elif preferred and _route_rank(preferred) >= _route_rank(recommended):
-        route = preferred
-    else:
-        route = recommended
-        if preferred and _route_rank(preferred) < _route_rank(recommended):
-            promotion_reasons.append(f"preferred_route_{preferred}_below_minimum_{recommended}")
+    route, selection_source, selection_generation, promotion_reasons = _resolve_route_transition(
+        request,
+        assessment,
+        recommended,
+        force_full=risk == guru_contract.RISK_HIGH or unknown_high_signal,
+    )
     if intent in READ_ONLY_INTENTS:
         write_capability = "none"
     else:
@@ -339,10 +560,12 @@ def resolve_delivery_selection(
             raise DeliveryPolicyError("ScopeUnbounded: micro_task max_files is smaller than concrete scope")
     scope_payload = {
         "paths": sorted(paths),
-        "route": route,
         "intent": intent,
-        "commit_requested": bool(request.commit_requested),
-        "max_files": scope_max_files,
+        "requested_max_files": request.max_files,
+        "requirements_clear": request.requirements_clear,
+        "coupling": str(request.coupling).strip().lower().replace("-", "_"),
+        "reversible": request.reversible,
+        "verification_scope": str(request.verification_scope).strip().lower().replace("-", "_"),
         "layers": sorted(str(item) for item in evidence.get("layers", []) if item),
         "contracts": sorted(str(item) for item in evidence.get("contracts", []) if item),
     }
@@ -393,6 +616,8 @@ def resolve_delivery_selection(
         "metrics_enforcement": "advisory" if route == guru_contract.ROUTE_LITE_TASK else "enforced",
         "provider": "codex",
         "claude_forbidden": True,
+        "brainstorm_mode": "conditional" if route == guru_contract.ROUTE_LITE_TASK else "not_required",
+        "brainstorm_required": bool(assessment.get("brainstorm_required")) if route == guru_contract.ROUTE_LITE_TASK else False,
     }
     return DeliverySelection(
         intent=intent,
@@ -417,6 +642,47 @@ def resolve_delivery_selection(
         planning_cost_ratio_percent=ratio,
         route_acceptance=route_acceptance,
         delivery_metrics=DELIVERY_METRICS,
+        recommended_route=recommended,
+        selected_route=route,
+        selection_source=selection_source,
+        selection_generation=selection_generation,
+        brainstorm_required=route_acceptance["brainstorm_required"],
+    )
+
+
+def resolve_project_delivery_selection(
+    request: IntakeRequest,
+    project_root: str,
+    policy: dict | None = None,
+    *,
+    capability_report: dict | None = None,
+) -> DeliverySelection:
+    """Resolve through the official project entrypoint and reuse exact passed evidence."""
+    policy = policy or load_policy()
+    report = capability_report if capability_report is not None else managed_capability_report()
+    paths = tuple(_repo_rel(path) for path in request.affected_paths)
+    evidence = _project_evidence_inputs(project_root, paths)
+    cold = resolve_delivery_selection(
+        request,
+        policy,
+        evidence=evidence,
+        capability_report=report,
+    )
+    if not cold.evidence_cache_key:
+        return cold
+    candidate = _find_project_reuse_candidate(
+        project_root,
+        evidence_cache_key=cold.evidence_cache_key,
+        target_digest=evidence["target_digest"],
+        docs_code_test_digest=evidence["docs_code_test_digest"],
+    )
+    if candidate is None:
+        return cold
+    return resolve_delivery_selection(
+        request,
+        policy,
+        evidence={**evidence, "reuse_candidate": candidate},
+        capability_report=report,
     )
 
 
@@ -503,23 +769,32 @@ def build_execution_envelope(
     slice_packet_digest: str | None = None,
     risk_packet_digest: str | None = None,
     confirmation_attestation_digest: str | None = None,
+    requirements_digest: str | None = None,
     confirmation_required: bool = False,
-    selection_generation: int = 1,
+    selection_generation: int | None = None,
 ) -> dict:
     route = selection.execution_route
     writable = selection.write_capability != "none"
     confirmation_required = confirmation_required or (
-        writable and route == guru_contract.ROUTE_FULL_CHAIN and selection.risk == guru_contract.RISK_HIGH
+        writable
+        and (
+            route == guru_contract.ROUTE_LITE_TASK
+            or (route == guru_contract.ROUTE_FULL_CHAIN and selection.risk == guru_contract.RISK_HIGH)
+        )
     )
+    if selection_generation is None:
+        selection_generation = selection.selection_generation
     if not isinstance(selection_generation, int) or isinstance(selection_generation, bool) or selection_generation <= 0:
         raise DeliveryPolicyError("EnvelopeFieldIllegal: selection_generation must be positive")
-    if route == guru_contract.ROUTE_SMALL_INLINE and any([task_id, slice_id, slice_packet_digest, risk_packet_digest, confirmation_attestation_digest]):
+    if route == guru_contract.ROUTE_SMALL_INLINE and any([task_id, slice_id, slice_packet_digest, risk_packet_digest, confirmation_attestation_digest, requirements_digest]):
         raise DeliveryPolicyError("EnvelopeFieldIllegal: small_inline cannot carry task or Full bindings")
-    if route == guru_contract.ROUTE_MICRO_TASK and any([slice_id, slice_packet_digest, risk_packet_digest, confirmation_attestation_digest]):
+    if route == guru_contract.ROUTE_MICRO_TASK and any([slice_id, slice_packet_digest, risk_packet_digest, confirmation_attestation_digest, requirements_digest]):
         raise DeliveryPolicyError("EnvelopeFieldIllegal: micro_task cannot carry slice/packet/risk/confirmation bindings")
     if route == guru_contract.ROUTE_LITE_TASK:
         if writable and not task_id:
             raise DeliveryPolicyError("EnvelopeFieldIllegal: writable lite_task requires task_id")
+        if writable and not HEX_DIGEST.fullmatch(str(requirements_digest or "")):
+            raise DeliveryPolicyError("EnvelopeFieldIllegal: writable lite_task requires a sha256 requirements_digest")
         if slice_packet_digest or risk_packet_digest:
             raise DeliveryPolicyError("EnvelopeFieldIllegal: lite_task cannot carry Full packet/risk bindings")
     if route == guru_contract.ROUTE_FULL_CHAIN:
@@ -550,6 +825,9 @@ def build_execution_envelope(
         "schema_version": SCHEMA_VERSION,
         "envelope_id": f"env-{selection.scope_fingerprint[:16]}-{selection_generation}",
         "selection_generation": selection_generation,
+        "recommended_route": selection.recommended_route,
+        "selected_route": selection.selected_route,
+        "selection_source": selection.selection_source,
         "intent": selection.intent,
         "execution_route": route,
         "topology": selection.topology,
@@ -575,6 +853,7 @@ def build_execution_envelope(
         "slice_packet_digest": slice_packet_digest,
         "risk_packet_digest": risk_packet_digest,
         "confirmation_attestation_digest": confirmation_attestation_digest,
+        "requirements_digest": requirements_digest,
     }.items():
         if value is not None:
             envelope[name] = value
@@ -588,6 +867,10 @@ def selection_to_contract_patch(selection: DeliverySelection) -> dict:
             "policy_version": selection.policy_version,
             "intent": selection.intent,
             "route": selection.execution_route,
+            "recommended_route": selection.recommended_route,
+            "selected_route": selection.selected_route,
+            "selection_source": selection.selection_source,
+            "selection_generation": selection.selection_generation,
             "risk": selection.risk,
             "first_value_metric": selection.first_value_metric,
             "required_gate_ids": list(selection.required_gate_ids),
@@ -603,7 +886,16 @@ def selection_to_contract_patch(selection: DeliverySelection) -> dict:
             "planning_cost_ratio_percent": selection.planning_cost_ratio_percent,
             "route_acceptance": selection.route_acceptance,
             "delivery_metrics": list(selection.delivery_metrics),
-        }
+            "brainstorm_required": selection.brainstorm_required,
+        },
+        "commit_policy": {
+            "require_in_progress": selection.execution_route in {
+                guru_contract.ROUTE_LITE_TASK,
+                guru_contract.ROUTE_FULL_CHAIN,
+            },
+            "require_clean_implementation_review": selection.execution_route == guru_contract.ROUTE_FULL_CHAIN,
+            "allow_task_artifacts_only": False,
+        },
     }
 
 
@@ -616,6 +908,13 @@ def _request_from_args(args: argparse.Namespace) -> IntakeRequest:
         read_only_requested=args.read_only,
         preferred_route=args.preferred_route,
         max_files=args.max_files,
+        requirements_clear=args.requirements_clear,
+        coupling=args.coupling,
+        reversible=args.reversible,
+        verification_scope=args.verification_scope,
+        prior_route=args.prior_route,
+        prior_selection_generation=args.prior_selection_generation,
+        first_write_started=args.first_write_started,
     )
 
 
@@ -628,12 +927,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--read-only", action="store_true")
     parser.add_argument("--preferred-route", default=None)
     parser.add_argument("--max-files", type=int, default=None)
+    parser.add_argument("--requirements-clear", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--coupling", choices=("local", "cross_layer", "unknown"), default="unknown")
+    parser.add_argument("--reversible", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--verification-scope", choices=("focused", "broad", "unknown"), default="unknown")
+    parser.add_argument("--prior-route", default=None)
+    parser.add_argument("--prior-selection-generation", type=int, default=None)
+    parser.add_argument("--first-write-started", action="store_true")
     parser.add_argument("--policy", default=None)
     args = parser.parse_args(argv)
     try:
         policy = load_policy(args.policy)
-        selection = resolve_delivery_selection(
+        selection = resolve_project_delivery_selection(
             _request_from_args(args),
+            os.getcwd(),
             policy,
             capability_report=managed_capability_report(parallel=True),
         )

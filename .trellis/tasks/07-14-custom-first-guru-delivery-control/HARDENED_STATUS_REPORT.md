@@ -1,12 +1,14 @@
 # Guru Custom Delivery Control Hardened Status
 
-Status: **hardened candidate for self-use; M4 candidate pass with final commit authorized**.
+Status: **historical M4 hardened candidate; superseded by current M5/M6 amendment**.
 This report does not claim production packaging, archive or finish-work completion.
+
+Supersession note: this report is the immutable M4 snapshot. The user-approved M5/M6 amendment replaces the current Lite `confirmation=0` contract with a standard Trellis task, conditional repository-first Brainstorm, one current requirements confirmation and autonomous closure. The measurements below remain historical evidence and must not be presented as the new contract.
 
 Recorded at: `2026-07-15T15:01:27+08:00`
 
-The execution authority is the confirmed M0-M4 outcome-first milestone set in `prd.md` and the
-requirement package. Bootstrap burn, six independent slices, Marketplace/WAL infrastructure,
+The current execution authority is the confirmed M0-M6 outcome-first milestone set in `prd.md` and
+the requirement package; this report remains the immutable M4 evidence snapshot. Bootstrap burn, six independent slices, Marketplace/WAL infrastructure,
 trusted reviewer identity and a generic replay framework are not completion criteria.
 
 ## Final Exact Snapshot

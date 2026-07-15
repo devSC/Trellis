@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "policy_version": "guru-delivery-policy-v1",
+  "policy_version": "guru-delivery-policy-v2",
   "intent_profiles": {
     "implementation": {
       "write_capability": "scoped_repository",
@@ -60,8 +60,8 @@
       "observed_context_bytes": 393216,
       "duplicate_reads": 4,
       "repairs": 1,
-      "live_workers": 1,
-      "started_workers": 1,
+      "live_workers": 0,
+      "started_workers": 0,
       "idle_seconds": 120,
       "no_progress_cycles": 3,
       "confirmation_batches": 0
@@ -81,7 +81,7 @@
       "started_workers": 0,
       "idle_seconds": 180,
       "no_progress_cycles": 3,
-      "confirmation_batches": 0
+      "confirmation_batches": 1
     },
     "full_chain": {
       "planning_deadline_seconds": 900,
@@ -121,8 +121,8 @@
   "route_gates": {
     "small_inline": ["deterministic_final"],
     "micro_task": ["micro_contract", "deterministic_final"],
-    "lite_task": ["deterministic_final"],
-    "full_chain": ["requirements_confirmed", "overview_review_clean", "detail_review_clean", "detail_confirmed", "selected_slice_packet", "risk_packet", "start_guard", "deterministic_final"]
+    "lite_task": ["requirements_confirmed", "deterministic_final"],
+    "full_chain": ["overview_review_clean", "detail_review_clean", "selected_slice_packet", "risk_packet", "confirmation_batch_current", "start_guard", "deterministic_final"]
   },
   "read_only_route_gates": {
     "small_inline": ["verified_evidence"],
@@ -134,20 +134,21 @@
     "high_or_unknown_high_signal_route": "full_chain",
     "unknown_default_route": "lite_task",
     "medium_default_route": "lite_task",
-    "low_commit_route": "micro_task",
-    "low_no_commit_route": "small_inline"
+    "mechanical_change_route": "small_inline",
+    "bounded_local_change_route": "micro_task",
+    "ambiguous_requirements_route": "lite_task"
   },
   "topology_rules": {
     "small_inline": ["host_inline"],
-    "micro_task": ["host_inline", "managed_single"],
-    "lite_task": ["host_inline", "managed_single"],
+    "micro_task": ["host_inline"],
+    "lite_task": ["host_inline"],
     "full_chain": ["managed_single", "managed_parallel"]
   },
   "confirmation_rules": {
     "max_batches_by_route": {
       "small_inline": 0,
       "micro_task": 0,
-      "lite_task": 0,
+      "lite_task": 1,
       "full_chain": 1
     }
   },

@@ -19,7 +19,8 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
                                                   # 默认仅扫 .trellis/tasks/<task>；--include-completed 加扫 archive/<YYYY-MM>/<task>
                                                   # fail-closed：traceability 不在 manifest canonical_excludes 时拒写（避免触发 requirements digest）
   python3 guru_gate.py confirm [requirements|detail] [task_dir] [--via-agent]
-                                                  # 人工确认 Gate（需求确认 + 详细设计 review 双 clean 后确认）
+                                                  # route-aware 人工确认：Lite 只确认 requirements 一次；Full v2 一次批量确认 requirements + risk + 不可逆设计
+                                                  # Full v2 使用省略 gate 的 confirm（confirm detail 仅兼容）；legacy 才保留 requirements/detail 分阶段确认
                                                   # strict 模式（默认）：仅限用户本人在交互式终端运行，agent 代跑被拒
                                                   # soft 模式（config guru.gate_mode: soft）：用户对话确认后 agent 以 --via-agent 代跑（记录留痕标注）
   python3 guru_gate.py record-review <overview|detail> <task_dir> --result clean|findings --max-severity none|low|medium|high|critical --reviewer clean-context --run-id <id> --evidence <text> [--finding-class <class>] [--deletion-audit <summary>]
@@ -32,8 +33,8 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
   python3 guru_gate.py check-start [task_dir]     # before_start 钩子用：只证明 START_READY（下一步仅 task.py start）
   python3 guru_gate.py check [task_dir]           # 兼容别名：等同 check-start，不代表实现/提交放行
   python3 guru_gate.py check-implementation [task_dir]
-                                                  # 实现/检查 worker 前置：START_READY + task.json.status == in_progress
-  python3 guru_gate.py check-commit [task_dir]    # 提交前置：check-implementation + staged scope + implementation review clean
+                                                  # Full 实现/检查 Worker 前置；Lite 不需要 Worker（该命令只保留兼容只读校验）
+  python3 guru_gate.py check-commit [task_dir]    # route-aware 提交前置：Lite 校验标准任务/当前确认/in_progress/合同 scope；Full 另需 implementation review clean
   python3 guru_gate.py commit-plan [task_dir] [--write]
                                                   # 输出提交计划 JSON；--write 同步写 task-local commit-plan.json mutable evidence
   python3 guru_gate.py intake [task_dir] --description "<需求>" [--path <path> ...] [--commit-requested] [--write-contract]
@@ -61,6 +62,7 @@ Route 与兼容产物:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -74,6 +76,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import guru_risk  # noqa: E402
 import guru_contract  # noqa: E402
+import guru_delivery_policy  # noqa: E402
 import guru_review_record  # noqa: E402
 
 PASS, BLOCK = 0, 2
@@ -1396,6 +1399,22 @@ def _requirement_package_problem(task_dir: str, repo_root: str = None) -> str:
     return ""
 
 
+def _task_requires_brainstorm_evidence(task_dir: str) -> bool:
+    route = _contract_route_for_review_policy(task_dir)
+    if route != guru_contract.ROUTE_LITE_TASK:
+        return True
+    contract, error = guru_contract.load_contract(task_dir)
+    if error or not isinstance(contract, dict):
+        return True
+    execution_policy = contract.get("execution_policy")
+    required = (
+        execution_policy.get("brainstorm_required")
+        if isinstance(execution_policy, dict)
+        else None
+    )
+    return required if isinstance(required, bool) else True
+
+
 def check_requirements(task_dir: str) -> int:
     """需求 Gate：行为规格(BHV 编号标题) / P0 P1 / 失败路径 / 验收 / 未决问题。"""
     prd = read(os.path.join(task_dir, "prd.md"))
@@ -1420,10 +1439,11 @@ def check_requirements(task_dir: str) -> int:
         problems.append("缺验收场景/标准章节")
     if not re.search(r"未决|open question|待确认", prd, re.I):
         problems.append("缺未决问题章节（无未决也须显式声明）")
-    brainstorm_problems = _brainstorm_evidence_problems(prd)
-    if brainstorm_problems:
-        problems.extend(brainstorm_problems)
-        problems.append(f"恢复步骤：{BRAINSTORM_RECOVERY}")
+    if _task_requires_brainstorm_evidence(task_dir):
+        brainstorm_problems = _brainstorm_evidence_problems(prd)
+        if brainstorm_problems:
+            problems.extend(brainstorm_problems)
+            problems.append(f"恢复步骤：{BRAINSTORM_RECOVERY}")
     return fail("requirements", problems) if problems else ok("requirements")
 
 
@@ -1899,6 +1919,32 @@ def requirements_digest(task_dir: str, repo_root: str = None) -> str:
     supervise 写入的 review digest 永久 stale。gate 自身命令 cwd==root，默认 None。
     """
     return _gate_digest(task_dir, "requirements", repo_root)
+
+
+def requirements_confirmation_digest(task_dir: str, repo_root: str = None) -> str:
+    """Bind Lite confirmation to the current PRD, route, risk, and semantic scope."""
+    artifact_digest = requirements_digest(task_dir, repo_root)
+    contract, error = guru_contract.load_contract(task_dir)
+    if error or not isinstance(contract, dict):
+        return artifact_digest
+    route = guru_contract.contract_route(contract)
+    if route != guru_contract.ROUTE_LITE_TASK:
+        return artifact_digest
+    execution_policy = contract.get("execution_policy")
+    scope_fingerprint = (
+        execution_policy.get("scope_fingerprint")
+        if isinstance(execution_policy, dict)
+        else None
+    )
+    payload = {
+        "requirements_digest": artifact_digest,
+        "route": route,
+        "risk": guru_contract.contract_risk(contract),
+        "scope_fingerprint": scope_fingerprint,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _risk_level(task_dir: str) -> str:
@@ -2487,6 +2533,122 @@ def _record_review(task_dir: str, gate: str, options: dict) -> int:
     return PASS
 
 
+def _full_v2_confirmation_required(task_dir: str) -> bool:
+    contract, error = guru_contract.load_contract(task_dir)
+    return bool(
+        not error
+        and isinstance(contract, dict)
+        and guru_contract.contract_route(contract) == guru_contract.ROUTE_FULL_CHAIN
+        and contract.get("policy_version") == guru_contract.POLICY_VERSION_V2
+    )
+
+
+def _full_confirmation_batch_inputs(task_dir: str) -> tuple[dict | None, str]:
+    risk_dir = os.path.join(task_dir, "risk-packets")
+    if not os.path.isdir(risk_dir):
+        return None, "Full confirmation batch requires current risk-packets/*.json before confirmation"
+    risk_entries = []
+    for name in sorted(os.listdir(risk_dir)):
+        path = os.path.join(risk_dir, name)
+        if not name.endswith(".json") or not os.path.isfile(path):
+            continue
+        content = read(path)
+        if not content.strip():
+            return None, f"Full confirmation batch risk packet is empty: {name}"
+        risk_entries.append({
+            "name": name,
+            "digest": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        })
+    if not risk_entries:
+        return None, "Full confirmation batch requires at least one current risk packet"
+    try:
+        payload = {
+            "requirements_digest": requirements_digest(task_dir),
+            "detail_artifact_digest": _gate_digest(task_dir, "detail"),
+            "risk_packet_set_digest": hashlib.sha256(
+                json.dumps(risk_entries, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+        }
+    except (GateArtifactError, RequirementManifestError, OSError, ValueError) as exc:
+        return None, f"Full confirmation batch inputs unavailable: {exc}"
+    payload["confirmation_batch_digest"] = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return payload, ""
+
+
+def _record_full_confirmation_batch(task_dir: str, via: str, user_quote=None) -> int:
+    inputs, problem = _full_confirmation_batch_inputs(task_dir)
+    if problem or not isinstance(inputs, dict):
+        sys.stderr.write(f"[guru-gate:confirm] 拦截：{problem or 'Full confirmation batch inputs missing'}\n")
+        return BLOCK
+    data = _task_data_for_write(task_dir, "confirm")
+    if data is None:
+        return BLOCK
+    gates = data.setdefault(GATES_KEY, {})
+    batch_digest = inputs["confirmation_batch_digest"]
+    batch_id = f"confirm-{batch_digest[:16]}"
+    base = {
+        "confirmed_by": _developer_name(),
+        "confirmed_at": _now_iso(),
+        "confirmation_scope": "full_requirements_risk_irreversible_design_batch",
+        "allowed_next_action": "task_start_and_autonomous_close",
+        "prompt_summary": "One Full confirmation binds requirements, current risk packets and irreversible design",
+        "confirmation_batch_id": batch_id,
+        "confirmation_batch_digest": batch_digest,
+        "requirements_digest": inputs["requirements_digest"],
+        "detail_artifact_digest": inputs["detail_artifact_digest"],
+        "risk_packet_set_digest": inputs["risk_packet_set_digest"],
+    }
+    turn_ref = _turn_ref()
+    if turn_ref:
+        base["turn_ref"] = turn_ref
+    if via == "agent":
+        base["mode"] = "soft"
+        base["via"] = "agent"
+        if user_quote:
+            base["user_quote"] = user_quote[:500]
+    gates["requirements"] = {
+        **base,
+        "artifact_digest": inputs["requirements_digest"],
+    }
+    gates["detail"] = {
+        **base,
+        "artifact_digest": inputs["detail_artifact_digest"],
+    }
+    task_json_path = _write_task_data_atomic(task_dir, data)
+    print(
+        f"[guru-gate:confirm] Full 单批确认已写入 requirements/detail 共享 batch={batch_id}"
+        f"（{task_json_path}）"
+    )
+    return PASS
+
+
+def _full_confirmation_batch_problem(task_dir: str) -> str:
+    inputs, problem = _full_confirmation_batch_inputs(task_dir)
+    if problem or not isinstance(inputs, dict):
+        return problem or "Full confirmation batch inputs missing"
+    states = _gate_states(task_dir)
+    requirements = states.get("requirements")
+    detail = states.get("detail")
+    if not all(isinstance(record, dict) and record.get("confirmed_by") for record in (requirements, detail)):
+        return "Full confirmation batch missing requirements/detail records"
+    expected = inputs["confirmation_batch_digest"]
+    recorded = {
+        requirements.get("confirmation_batch_digest"),
+        detail.get("confirmation_batch_digest"),
+    }
+    if recorded != {expected}:
+        return "Full confirmation batch stale: requirements, risk packet, or irreversible design changed"
+    if requirements.get("confirmation_batch_id") != detail.get("confirmation_batch_id"):
+        return "Full confirmation batch records do not share one batch id"
+    if requirements.get("artifact_digest") != inputs["requirements_digest"]:
+        return "Full confirmation batch stale: requirements digest changed"
+    if detail.get("artifact_digest") != inputs["detail_artifact_digest"]:
+        return "Full confirmation batch stale: detail digest changed"
+    return ""
+
+
 def _record_confirm(task_dir: str, gate: str, via: str, user_quote=None) -> int:
     """写入单个 Gate 的确认记录（严格 JSON 守卫 + 原子写）。via ∈ tty|agent。"""
     data = _task_data_for_write(task_dir, "confirm")
@@ -2494,18 +2656,36 @@ def _record_confirm(task_dir: str, gate: str, via: str, user_quote=None) -> int:
         return BLOCK
     gates = data.setdefault(GATES_KEY, {})
     previous = gates.get(gate)
+    route = _contract_route_for_review_policy(task_dir)
+    lite_requirements = route == guru_contract.ROUTE_LITE_TASK and gate == "requirements"
     record = {
         "confirmed_by": _developer_name(),
         "confirmed_at": _now_iso(),
-        "confirmation_scope": "requirements_gate_only" if gate == "requirements" else "detail_gate_only",
-        "allowed_next_action": "overview_design" if gate == "requirements" else "task_start",
+        "confirmation_scope": (
+            "lite_prd_route_risk_scope"
+            if lite_requirements
+            else ("requirements_gate_only" if gate == "requirements" else "detail_gate_only")
+        ),
+        "allowed_next_action": (
+            "task_start_and_autonomous_close"
+            if lite_requirements
+            else ("overview_design" if gate == "requirements" else "task_start")
+        ),
         "prompt_summary": (
-            "Requirements confirmation allows overview/detail planning only"
-            if gate == "requirements"
-            else "Detail confirmation allows task.py start only"
+            "Lite confirmation binds PRD, route, risk and scope; implementation through check closes autonomously"
+            if lite_requirements
+            else (
+                "Requirements confirmation allows overview/detail planning only"
+                if gate == "requirements"
+                else "Detail confirmation allows task.py start only"
+            )
         ),
         # 确认快照：check 时比对，产物在确认后被修改 → 要求重新确认
-        "artifact_digest": _gate_digest(task_dir, gate),
+        "artifact_digest": (
+            requirements_confirmation_digest(task_dir)
+            if lite_requirements
+            else _gate_digest(task_dir, gate)
+        ),
     }
     turn_ref = _turn_ref()
     if turn_ref:
@@ -2662,10 +2842,21 @@ def _pending_gates(task_dir: str) -> list:
     """按阶段顺序列出待人工确认 Gate（未确认 / 缺快照 / 快照失配）。"""
     states = _gate_states(task_dir)
     pending = []
-    for g in HUMAN_GATES:
+    route = _contract_route_for_review_policy(task_dir)
+    target_gates = ("requirements",) if route == guru_contract.ROUTE_LITE_TASK else HUMAN_GATES
+    if route in {guru_contract.ROUTE_SMALL_INLINE, guru_contract.ROUTE_MICRO_TASK}:
+        target_gates = ()
+    if _full_v2_confirmation_required(task_dir):
+        return ["detail"] if _full_confirmation_batch_problem(task_dir) else []
+    for g in target_gates:
         s = states.get(g)
+        current_digest = (
+            requirements_confirmation_digest(task_dir)
+            if route == guru_contract.ROUTE_LITE_TASK and g == "requirements"
+            else _gate_digest(task_dir, g)
+        )
         ok_record = (isinstance(s, dict) and s.get("confirmed_by")
-                     and s.get("artifact_digest") == _gate_digest(task_dir, g))
+                     and s.get("artifact_digest") == current_digest)
         if not ok_record:
             pending.append(g)
     return pending
@@ -2684,6 +2875,23 @@ def cmd_confirm(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None
     if not task_dir:
         sys.stderr.write("[guru-gate:confirm] 无法定位任务目录，请显式传 task_dir\n")
         return BLOCK
+    route = _contract_route_for_review_policy(task_dir)
+    if route == guru_contract.ROUTE_LITE_TASK and gate_arg == "detail":
+        sys.stderr.write("[guru-gate:confirm] lite_task 只有一次 requirements 确认，不存在 detail 人工确认\n")
+        return BLOCK
+    if route in {guru_contract.ROUTE_SMALL_INLINE, guru_contract.ROUTE_MICRO_TASK}:
+        print(f"[guru-gate:confirm] route={route} 不需要用户确认（{task_dir}）")
+        return PASS
+    if _full_v2_confirmation_required(task_dir) and gate_arg == "requirements":
+        sys.stderr.write(
+            "[guru-gate:confirm] Full v2 只允许一次批量确认；先完成 requirements、risk packet、"
+            "Overview/Detail review，再运行不带 gate 参数的 confirm 或 confirm detail\n"
+        )
+        return BLOCK
+    if route == guru_contract.ROUTE_LITE_TASK:
+        standard_problems = _lite_standard_task_problems(task_dir)
+        if standard_problems:
+            return fail("confirm", standard_problems)
     # manifest fail-closed：确认快照 digest 累积 requirements 产物（含正式需求包），非法 manifest 先拦
     manifest_problem = _requirement_package_problem(task_dir)
     if manifest_problem:
@@ -2692,6 +2900,38 @@ def cmd_confirm(gate_arg, task_dir_arg, via_agent: bool = False, user_quote=None
     allowed, interactive, mode = _authorize_gate_write("confirm", via_agent, user_quote)
     if not allowed:
         return BLOCK
+    if _full_v2_confirmation_required(task_dir):
+        for label, checker in (
+            ("requirements", check_requirements),
+            ("overview", check_overview),
+            ("detail", check_detail),
+        ):
+            if checker(task_dir) != PASS:
+                sys.stderr.write(f"[guru-gate:confirm] Full 单批确认前 {label} 结构 Gate 未通过\n")
+                return BLOCK
+        if _block_requirements_review("confirm", task_dir) != PASS:
+            return BLOCK
+        for review_gate in REVIEW_GATES:
+            if not _review_state(task_dir, review_gate)["ready"]:
+                return _block_review("confirm", task_dir, review_gate)
+        inputs, batch_problem = _full_confirmation_batch_inputs(task_dir)
+        if batch_problem or not isinstance(inputs, dict):
+            sys.stderr.write(f"[guru-gate:confirm] 拦截：{batch_problem}\n")
+            return BLOCK
+        if interactive:
+            print("即将一次确认 requirements、当前风险包和不可逆设计，确认后自动执行到 check。")
+            try:
+                answer = input("确认请输入 yes/y（其他=取消）：").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = ""
+            if answer not in ("yes", "y"):
+                print("已取消，未写入 Full confirmation batch。")
+                return BLOCK
+        return _record_full_confirmation_batch(
+            task_dir,
+            "tty" if interactive else "agent",
+            user_quote=user_quote,
+        )
     targets = [gate_arg] if gate_arg else _pending_gates(task_dir)
     if not targets:
         print(f"[guru-gate:confirm] 需求/详细两个人工 Gate 均已确认且快照一致（{task_dir}），无需操作")
@@ -2889,7 +3129,26 @@ def cmd_status(task_dir_arg) -> int:
         return BLOCK
     states = _gate_states(task_dir)
     print(f"任务：{task_dir}")
-    print(f"  Brainstorm Evidence — {_brainstorm_status_mark(task_dir)}")
+    route = _contract_route_for_review_policy(task_dir)
+    if route == guru_contract.ROUTE_LITE_TASK and not _task_requires_brainstorm_evidence(task_dir):
+        print("  Brainstorm Evidence — not required (requirements already clear)")
+    else:
+        print(f"  Brainstorm Evidence — {_brainstorm_status_mark(task_dir)}")
+    if route == guru_contract.ROUTE_LITE_TASK:
+        standard_problems = _lite_standard_task_problems(task_dir)
+        if standard_problems:
+            print("  Lite standard task — invalid: " + "; ".join(standard_problems[:4]))
+            return BLOCK
+        confirmation_problem = _requirements_confirmation_problem(task_dir, route)
+        if confirmation_problem:
+            print(f"  Lite requirements confirmation — pending: {confirmation_problem}")
+            print(f"下一步：python3 .trellis/scripts/guru/guru_gate.py confirm requirements {task_dir}")
+        else:
+            print("  Lite requirements confirmation — current (PRD + route + risk + scope)")
+            print(f"下一步：python3 .trellis/scripts/task.py start {task_dir}")
+        print("  Overview/Detail reviews — not required")
+        print("  Implementation Worker — not required; host continues autonomously through check")
+        return PASS
     confirm_pending = []
     for g in HUMAN_GATES:
         s = states.get(g)
@@ -2996,6 +3255,69 @@ def cmd_status(task_dir_arg) -> int:
     return PASS
 
 
+def _lite_standard_task_problems(task_dir: str) -> list:
+    problems = []
+    for name in ("task.json", "prd.md", "implement.jsonl", "check.jsonl", guru_contract.CONTRACT_FILE):
+        path = os.path.join(task_dir, name)
+        if not os.path.isfile(path):
+            problems.append(f"Lite standard task artifact missing: {name}")
+    if os.path.isfile(os.path.join(task_dir, "prd.md")) and not read(os.path.join(task_dir, "prd.md")).strip():
+        problems.append("Lite standard task prd.md must be non-empty")
+    task_data = _task_json_of(task_dir)
+    if not str(task_data.get("id") or task_data.get("name") or "").strip():
+        problems.append("Lite standard task task.json must contain id or name")
+    contract, error = guru_contract.load_contract(task_dir)
+    if error:
+        problems.append(error)
+        return problems
+    if not isinstance(contract, dict):
+        problems.append("Lite standard task gate-contract.json missing or malformed")
+        return problems
+    contract_problems = guru_contract.validate_contract(contract)
+    if contract_problems:
+        problems.extend(f"Lite gate contract invalid: {problem}" for problem in contract_problems)
+    if guru_contract.contract_route(contract) != guru_contract.ROUTE_LITE_TASK:
+        problems.append("Lite standard task requires gate-contract.json route=lite_task")
+    if guru_contract.contract_risk(contract) not in {guru_contract.RISK_LOW, guru_contract.RISK_MEDIUM}:
+        problems.append("Lite standard task risk must be low or medium")
+    execution_policy = contract.get("execution_policy")
+    scope_fingerprint = (
+        execution_policy.get("scope_fingerprint")
+        if isinstance(execution_policy, dict)
+        else None
+    )
+    if not re.fullmatch(r"[0-9a-f]{64}", str(scope_fingerprint or "")):
+        problems.append("Lite execution_policy.scope_fingerprint must be a sha256 digest")
+    generation = execution_policy.get("selection_generation") if isinstance(execution_policy, dict) else None
+    if not isinstance(generation, int) or isinstance(generation, bool) or generation <= 0:
+        problems.append("Lite execution_policy.selection_generation must be a positive integer")
+    brainstorm_required = (
+        execution_policy.get("brainstorm_required")
+        if isinstance(execution_policy, dict)
+        else None
+    )
+    if not isinstance(brainstorm_required, bool):
+        problems.append("Lite execution_policy.brainstorm_required must be boolean")
+    return problems
+
+
+def _requirements_confirmation_problem(task_dir: str, route: str) -> str:
+    state = _gate_states(task_dir).get("requirements")
+    if not (isinstance(state, dict) and state.get("confirmed_by")):
+        return "需求 Gate 未确认"
+    current = (
+        requirements_confirmation_digest(task_dir)
+        if route == guru_contract.ROUTE_LITE_TASK
+        else _gate_digest(task_dir, "requirements")
+    )
+    recorded = state.get("artifact_digest")
+    if not recorded:
+        return "需求 Gate 缺确认快照"
+    if recorded != current:
+        return "需求 Gate 确认快照失配（PRD、route、risk 或 scope 在确认后变化）"
+    return ""
+
+
 def cmd_check_start(task_dir_arg, channel: str = "check-start") -> int:
     task_dir = resolve_task_dir(task_dir_arg)
     if not task_dir:
@@ -3003,7 +3325,31 @@ def cmd_check_start(task_dir_arg, channel: str = "check-start") -> int:
         # before_start 注入 TASK_JSON_PATH、hook 透传命令参数，正常路径都可定位。
         sys.stderr.write(f"[guru-gate:{channel}] 无法定位任务目录，请显式传 task_dir 或确保 TASK_JSON_PATH 已注入\n")
         return BLOCK
-    # 结构 Gate 复跑：防止"确认后再改产物"带病 start（确认只代表确认时点的状态）
+    route = _contract_route_for_review_policy(task_dir)
+    if route == guru_contract.ROUTE_LITE_TASK:
+        standard_problems = _lite_standard_task_problems(task_dir)
+        if standard_problems:
+            return fail(channel, standard_problems)
+        if check_requirements(task_dir) != PASS:
+            sys.stderr.write(f"[guru-gate:{channel}] 拦截：Lite requirements 结构 Gate 当前未通过。\n")
+            return BLOCK
+        if _block_requirements_review(channel, task_dir) != PASS:
+            return BLOCK
+        confirmation_problem = _requirements_confirmation_problem(task_dir, route)
+        if confirmation_problem:
+            sys.stderr.write(f"[guru-gate:{channel}] 拦截：{confirmation_problem}\n")
+            sys.stderr.write(f"  python3 .trellis/scripts/guru/guru_gate.py confirm requirements {task_dir}\n")
+            return BLOCK
+        print(
+            f"[guru-gate:{channel}] START_READY: Lite 标准任务 + 当前 requirements 确认有效；"
+            "跳过 Overview/Detail review 和 implementation Worker，start 后自动执行到 check。"
+        )
+        return PASS
+    if route in {guru_contract.ROUTE_SMALL_INLINE, guru_contract.ROUTE_MICRO_TASK}:
+        print(f"[guru-gate:{channel}] START_READY: route={route} 无人工确认或 Overview/Detail Gate")
+        return PASS
+
+    # Full/legacy 结构 Gate 复跑：防止"确认后再改产物"带病 start（确认只代表确认时点的状态）
     for gate, checker in (("requirements", check_requirements),
                           ("overview", check_overview),
                           ("detail", check_detail)):
@@ -3020,6 +3366,22 @@ def cmd_check_start(task_dir_arg, channel: str = "check-start") -> int:
     states = _gate_states(task_dir)
     if _block_requirements_review(channel, task_dir) != PASS:
         return BLOCK
+    if _full_v2_confirmation_required(task_dir):
+        for gate in REVIEW_GATES:
+            if not _review_state(task_dir, gate)["ready"]:
+                return _block_review(channel, task_dir, gate)
+        batch_problem = _full_confirmation_batch_problem(task_dir)
+        if batch_problem:
+            sys.stderr.write(f"[guru-gate:{channel}] 拦截：{batch_problem}\n")
+            sys.stderr.write(
+                f"  python3 .trellis/scripts/guru/guru_gate.py confirm {task_dir}\n"
+            )
+            return BLOCK
+        print(
+            f"[guru-gate:{channel}] START_READY: Full requirements + risk packet + irreversible design "
+            f"共享一次 current confirmation batch（{task_dir}）。"
+        )
+        return PASS
     req = states.get("requirements")
     if not (isinstance(req, dict) and req.get("confirmed_by")):
         sys.stderr.write(f"[guru-gate:{channel}] 拦截：需求 Gate 未确认（任务 {task_dir}）\n")
@@ -3074,8 +3436,9 @@ def cmd_check_implementation(task_dir_arg) -> int:
         return BLOCK
     if cmd_check_start(task_dir, "check-implementation") != PASS:
         return BLOCK
+    route = _contract_route_for_review_policy(task_dir)
     status = _task_status(task_dir)
-    if status != "in_progress":
+    if route in {guru_contract.ROUTE_LITE_TASK, guru_contract.ROUTE_FULL_CHAIN} and status != "in_progress":
         sys.stderr.write(
             f"[guru-gate:check-implementation] 拦截：task.json.status={status!r}，"
             "实现/检查 worker 只能在 task.py start 后运行。\n"
@@ -3085,11 +3448,12 @@ def cmd_check_implementation(task_dir_arg) -> int:
                 f"当前只达到 START_READY；下一步运行：python3 .trellis/scripts/task.py start {task_dir}\n"
             )
         return BLOCK
-    packet_problem = _implementation_packet_preflight_problem(task_dir)
-    if packet_problem:
-        sys.stderr.write(f"[guru-gate:check-implementation] 拦截：{packet_problem}\n")
-        sys.stderr.write(f"下一步：python3 .trellis/scripts/guru/guru_gate.py slice-plan {task_dir}\n")
-        return BLOCK
+    if route == guru_contract.ROUTE_FULL_CHAIN:
+        packet_problem = _implementation_packet_preflight_problem(task_dir)
+        if packet_problem:
+            sys.stderr.write(f"[guru-gate:check-implementation] 拦截：{packet_problem}\n")
+            sys.stderr.write(f"下一步：python3 .trellis/scripts/guru/guru_gate.py slice-plan {task_dir}\n")
+            return BLOCK
     print(f"[guru-gate:check-implementation] IMPLEMENTATION_READY: task status is in_progress（{task_dir}）")
     return PASS
 
@@ -3595,8 +3959,6 @@ def _finish_commit_plan(plan: dict) -> dict:
     plan["suggested_stage_commands"] = suggested
     if plan.get("split_required"):
         plan["commit_mode"] = "split_required"
-    if plan.get("can_commit_now") and not plan.get("required_user_confirmations"):
-        plan["required_user_confirmations"] = ["confirm_commit"]
     return plan
 
 
@@ -3645,13 +4007,21 @@ def _contract_bool(value) -> bool:
     return False
 
 
-def _contract_for_intake(assessment: dict, paths: list, *, created_by: str = "intake") -> tuple[dict | None, list]:
+def _contract_for_intake(
+    assessment: dict,
+    paths: list,
+    *,
+    created_by: str = "intake",
+    selection: guru_delivery_policy.DeliverySelection | None = None,
+) -> tuple[dict | None, list]:
     route = guru_contract.normalize_route(assessment.get("route"))
     risk = guru_contract.normalize_risk(assessment.get("risk"))
     problems = []
     if route == guru_contract.ROUTE_SMALL_INLINE:
         return None, ["small_inline has no commit contract; use --commit-requested to route a commit through micro_task"]
     contract = guru_contract.default_contract(route, risk, created_by=created_by)
+    if selection is not None:
+        contract.update(guru_delivery_policy.selection_to_contract_patch(selection))
     contract["assessment"] = {
         "confidence": assessment.get("confidence"),
         "reasons": assessment.get("reasons") if isinstance(assessment.get("reasons"), list) else [],
@@ -3662,13 +4032,18 @@ def _contract_for_intake(assessment: dict, paths: list, *, created_by: str = "in
     }
     contract["route_selection"] = {
         "selected_route": route,
-        "source": "recommended",
+        "source": selection.selection_source if selection is not None else "recommended",
         "recommended_route": contract["assessment"]["recommended_route"],
         "risk_acknowledged": False,
         "user_quote": "",
-        "selected_by": "system",
+        "selected_by": "user" if selection is not None and selection.selection_source == "user_override" else "system",
         "selected_at": _now_iso(),
     }
+    if selection is not None:
+        contract["route_selection"].update({
+            "selection_generation": selection.selection_generation,
+            "scope_fingerprint": selection.scope_fingerprint,
+        })
     clean_paths = [str(path).strip() for path in paths if str(path).strip()]
     if clean_paths:
         contract.setdefault("scope", {})["allowed_paths"] = clean_paths
@@ -3687,7 +4062,12 @@ def _contract_for_intake(assessment: dict, paths: list, *, created_by: str = "in
     return contract, problems
 
 
-def _update_task_route_metadata(task_dir: str, route: str, risk: str) -> None:
+def _update_task_route_metadata(
+    task_dir: str,
+    route: str,
+    risk: str,
+    selection: guru_delivery_policy.DeliverySelection | None = None,
+) -> None:
     path = os.path.join(task_dir, "task.json")
     if not os.path.isfile(path):
         return
@@ -3706,6 +4086,12 @@ def _update_task_route_metadata(task_dir: str, route: str, risk: str) -> None:
     if isinstance(meta, dict):
         meta["route"] = route
         meta["risk"] = risk
+        if selection is not None:
+            meta["recommended_route"] = selection.recommended_route
+            meta["selected_route"] = selection.selected_route
+            meta["selection_source"] = selection.selection_source
+            meta["selection_generation"] = selection.selection_generation
+            meta["scope_fingerprint"] = selection.scope_fingerprint
     data["route"] = route
     data["risk"] = risk
     tmp = f"{path}.tmp.{os.getpid()}"
@@ -3719,7 +4105,10 @@ def _intake_suggested_commands(assessment: dict, paths: list, task_dir: str | No
     route = guru_contract.normalize_route(assessment.get("route"))
     risk = guru_contract.normalize_risk(assessment.get("risk"))
     if route == guru_contract.ROUTE_SMALL_INLINE:
-        return ["inline implementation allowed; if commit is needed, rerun intake with --commit-requested and write a micro_task contract"]
+        return [
+            "inline implementation and a reversible scoped commit are allowed; "
+            "rerun intake only if semantic scope, risk, coupling, or verification cost expands"
+        ]
     display_task = _display_task_dir(task_dir, root) if task_dir else "<task-dir>"
     commands = []
     if not task_dir:
@@ -3746,6 +4135,16 @@ def cmd_intake(task_dir_arg, options: dict) -> int:
     task_dir = resolve_task_dir(task_dir_arg, allow_unique_planning_fallback=False) if task_dir_arg else None
     if not task_dir and task_dir_arg and os.path.isdir(task_dir_arg):
         task_dir = os.path.abspath(task_dir_arg)
+    previous = None
+    if task_dir:
+        previous, read_error = guru_contract.load_contract(task_dir)
+        if read_error:
+            print(json.dumps({
+                "schema_version": 1,
+                "blocking_reasons": [f"existing contract unreadable: {read_error}"],
+                "contract_written": False,
+            }, ensure_ascii=False, indent=2, sort_keys=True))
+            return BLOCK
     paths = [path for path in (options.get("paths") or []) if path]
     if options.get("use_staged"):
         staged_paths, staged_error = _git_staged_paths(root)
@@ -3763,9 +4162,103 @@ def cmd_intake(task_dir_arg, options: dict) -> int:
             paths = staged_paths
     description = str(options.get("description") or "")
     commit_requested = bool(options.get("commit_requested"))
-    assessment = guru_risk.assess_intake(description, paths, commit_requested=commit_requested)
-    route = guru_contract.normalize_route(assessment.get("route"))
-    risk = guru_contract.normalize_risk(assessment.get("risk"))
+    requirements_clear = options.get("requirements_clear")
+    coupling = str(options.get("coupling") or "unknown")
+    reversible = options.get("reversible")
+    verification_scope = str(options.get("verification_scope") or "unknown")
+    prior_generation = options.get("prior_selection_generation")
+    if isinstance(prior_generation, str) and prior_generation.strip():
+        try:
+            prior_generation = int(prior_generation)
+        except ValueError:
+            prior_generation = 0
+    prior_route = options.get("prior_route")
+    first_write_started = bool(options.get("first_write_started"))
+    if isinstance(previous, dict):
+        execution_policy = previous.get("execution_policy")
+        execution_policy = execution_policy if isinstance(execution_policy, dict) else {}
+        stored_route = guru_contract.contract_route(previous)
+        stored_generation = execution_policy.get("selection_generation")
+        transition_problems = []
+        if prior_route and prior_route != stored_route:
+            transition_problems.append(
+                f"prior route {prior_route!r} conflicts with existing contract route {stored_route!r}"
+            )
+        if prior_generation is not None and prior_generation != stored_generation:
+            transition_problems.append(
+                "prior selection generation conflicts with existing contract generation "
+                f"{stored_generation!r}"
+            )
+        if transition_problems:
+            print(json.dumps({
+                "schema_version": 1,
+                "blocking_reasons": transition_problems,
+                "contract_written": False,
+            }, ensure_ascii=False, indent=2, sort_keys=True))
+            return BLOCK
+        prior_route = stored_route
+        prior_generation = stored_generation
+        first_write_started = first_write_started or _task_status(task_dir) in {
+            "in_progress", "completed",
+        }
+        for evidence_name in ("implementation-evidence.jsonl", "verification-evidence.jsonl"):
+            evidence_path = os.path.join(task_dir, evidence_name)
+            first_write_started = first_write_started or (
+                os.path.isfile(evidence_path) and os.path.getsize(evidence_path) > 0
+            )
+        previous_scope = previous.get("scope")
+        previous_scope = previous_scope if isinstance(previous_scope, dict) else {}
+        allowed_paths = previous_scope.get("allowed_paths", [])
+        if isinstance(allowed_paths, list) and allowed_paths:
+            try:
+                first_write_started = first_write_started or bool(
+                    set(allowed_paths) & guru_risk.scan_paths(root)
+                )
+            except guru_risk.RiskScanError:
+                pass
+    assessment = guru_risk.assess_intake(
+        description,
+        paths,
+        commit_requested=commit_requested,
+        requirements_clear=requirements_clear,
+        coupling=coupling,
+        reversible=reversible,
+        verification_scope=verification_scope,
+    )
+    try:
+        selection = guru_delivery_policy.resolve_project_delivery_selection(
+            guru_delivery_policy.IntakeRequest(
+                description=description,
+                affected_paths=tuple(paths),
+                commit_requested=commit_requested,
+                preferred_route=options.get("preferred_route"),
+                requirements_clear=requirements_clear,
+                coupling=coupling,
+                reversible=reversible,
+                verification_scope=verification_scope,
+                prior_route=prior_route,
+                prior_selection_generation=prior_generation,
+                first_write_started=first_write_started,
+            ),
+            root,
+            capability_report=guru_delivery_policy.managed_capability_report(),
+        )
+    except guru_delivery_policy.DeliveryPolicyError as exc:
+        payload = {
+            "schema_version": 1,
+            "risk": guru_contract.normalize_risk(assessment.get("risk")),
+            "recommended_route": guru_contract.normalize_route(assessment.get("route")),
+            "blocking_reasons": [str(exc)],
+            "contract_written": False,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        return BLOCK
+    route = selection.selected_route
+    risk = selection.risk
+    assessment = dict(assessment)
+    assessment["route"] = route
+    assessment["risk"] = risk
+    assessment["recommended_contract"] = selection.recommended_route
     payload = {
         "schema_version": 1,
         "task_dir": _display_task_dir(task_dir, root) if task_dir else "",
@@ -3782,6 +4275,15 @@ def cmd_intake(task_dir_arg, options: dict) -> int:
         "risk_flags": assessment.get("risk_flags") if isinstance(assessment.get("risk_flags"), list) else [],
         "needs_user_choice": bool(assessment.get("needs_user_choice")),
         "recommended_contract": assessment.get("recommended_contract"),
+        "recommended_route": selection.recommended_route,
+        "selected_route": selection.selected_route,
+        "selection_source": selection.selection_source,
+        "selection_generation": selection.selection_generation,
+        "scope_fingerprint": selection.scope_fingerprint,
+        "brainstorm_required": selection.brainstorm_required,
+        "evidence_cache_key": selection.evidence_cache_key,
+        "evidence_reused": selection.evidence_reused,
+        "planning_cost_ratio_percent": selection.planning_cost_ratio_percent,
         "task_needed": route != guru_contract.ROUTE_SMALL_INLINE,
         "commit_contract_required": route != guru_contract.ROUTE_SMALL_INLINE,
         "suggested_commands": _intake_suggested_commands(assessment, paths, task_dir, root),
@@ -3794,19 +4296,19 @@ def cmd_intake(task_dir_arg, options: dict) -> int:
         payload["blocking_reasons"] = ["--write-contract requires a task_dir for micro_task/lite_task/full_chain routes"]
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return BLOCK
-    contract, problems = _contract_for_intake(assessment, paths, created_by="intake")
+    contract, problems = _contract_for_intake(
+        assessment,
+        paths,
+        created_by="intake",
+        selection=selection,
+    )
     if problems or not isinstance(contract, dict):
         payload["blocking_reasons"] = problems or ["cannot build intake contract"]
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return BLOCK
-    previous, read_error = guru_contract.load_contract(task_dir)
-    if read_error:
-        payload["blocking_reasons"] = [f"existing contract unreadable: {read_error}"]
-        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
-        return BLOCK
     try:
         guru_contract.write_contract(task_dir, contract)
-        _update_task_route_metadata(task_dir, route, risk)
+        _update_task_route_metadata(task_dir, route, risk, selection)
     except OSError as exc:
         payload["blocking_reasons"] = [f"write gate-contract.json failed: {exc}"]
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
@@ -3824,6 +4326,10 @@ def cmd_init_contract(task_dir_arg, options: dict) -> int:
         task_dir = os.path.abspath(task_dir_arg)
     if not task_dir:
         sys.stderr.write("[guru-gate:init-contract] 无法定位任务目录，请显式传 task_dir\n")
+        return BLOCK
+    previous, read_error = guru_contract.load_contract(task_dir)
+    if read_error:
+        sys.stderr.write(f"[guru-gate:init-contract] existing contract unreadable: {read_error}\n")
         return BLOCK
 
     route = str(options.get("route") or "").strip()
@@ -3868,6 +4374,70 @@ def cmd_init_contract(task_dir_arg, options: dict) -> int:
         "selected_at": _now_iso(),
     }
 
+    selection = None
+    if selected_route:
+        allowed_paths = tuple(scope.get("allowed_paths") or [])
+        if selected_route == guru_contract.ROUTE_FULL_CHAIN:
+            selection_description = "change workflow gate runtime"
+            requirements_clear = False
+            coupling = "cross_layer"
+            reversible = False
+            verification_scope = "broad"
+        elif selected_route == guru_contract.ROUTE_LITE_TASK:
+            selection_description = "change local behavior"
+            requirements_clear = False
+            coupling = "unknown"
+            reversible = None
+            verification_scope = "unknown"
+        else:
+            selection_description = "change local behavior"
+            requirements_clear = True
+            coupling = "local"
+            reversible = True
+            verification_scope = "focused"
+        previous_route = guru_contract.contract_route(previous) if isinstance(previous, dict) else None
+        previous_execution = previous.get("execution_policy") if isinstance(previous, dict) else None
+        previous_generation = (
+            previous_execution.get("selection_generation")
+            if isinstance(previous_execution, dict)
+            else None
+        )
+        request_kwargs = {
+            "description": selection_description,
+            "affected_paths": allowed_paths,
+            "requirements_clear": requirements_clear,
+            "coupling": coupling,
+            "reversible": reversible,
+            "verification_scope": verification_scope,
+            "max_files": max_files,
+            "prior_route": previous_route,
+            "prior_selection_generation": previous_generation,
+            "first_write_started": bool(previous_route and _task_status(task_dir) == "in_progress"),
+        }
+        try:
+            selection = guru_delivery_policy.resolve_delivery_selection(
+                guru_delivery_policy.IntakeRequest(**request_kwargs),
+                capability_report=guru_delivery_policy.managed_capability_report(),
+            )
+            if selection.selected_route != selected_route:
+                selection = guru_delivery_policy.resolve_delivery_selection(
+                    guru_delivery_policy.IntakeRequest(
+                        **request_kwargs,
+                        preferred_route=selected_route,
+                    ),
+                    capability_report=guru_delivery_policy.managed_capability_report(),
+                )
+            contract.update(guru_delivery_policy.selection_to_contract_patch(selection))
+            execution_policy = contract["execution_policy"]
+            execution_policy["recommended_route"] = recommended_route
+            execution_policy["selection_source"] = selection_source
+            contract["route_selection"].update({
+                "selection_generation": execution_policy["selection_generation"],
+                "scope_fingerprint": execution_policy["scope_fingerprint"],
+            })
+        except guru_delivery_policy.DeliveryPolicyError as exc:
+            problems.append(str(exc))
+
     problems.extend(guru_contract.validate_contract(contract))
     if problems:
         sys.stderr.write("[guru-gate:init-contract] 拒绝写入 gate-contract.json：\n")
@@ -3875,12 +4445,9 @@ def cmd_init_contract(task_dir_arg, options: dict) -> int:
             sys.stderr.write(f"  - {problem}\n")
         return BLOCK
 
-    previous, read_error = guru_contract.load_contract(task_dir)
-    if read_error:
-        sys.stderr.write(f"[guru-gate:init-contract] existing contract unreadable: {read_error}\n")
-        return BLOCK
     old_route = guru_contract.contract_route(previous) if isinstance(previous, dict) else ""
     guru_contract.write_contract(task_dir, contract)
+    _update_task_route_metadata(task_dir, contract["route"], contract["risk"], selection)
     summary = {
         "schema_version": 1,
         "task_dir": _display_task_dir(task_dir, _repo_root()),
@@ -4564,6 +5131,67 @@ def _implementation_review_coverage(review_path: str, staged_paths: list, task_d
     return coverage, "", False
 
 
+def _lite_deterministic_evidence_problem(
+    task_dir: str,
+    contract: dict,
+    staged_paths: list,
+    root: str,
+) -> str:
+    path = os.path.join(task_dir, "verification-evidence.jsonl")
+    if not os.path.isfile(path):
+        return "Lite deterministic verification evidence missing: verification-evidence.jsonl"
+    latest = None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for lineno, line in enumerate(fh, 1):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    row = json.loads(stripped)
+                except json.JSONDecodeError as exc:
+                    return f"Lite verification evidence line {lineno} invalid JSON: {exc}"
+                if isinstance(row, dict) and row.get("kind") == "deterministic_final":
+                    latest = row
+    except OSError as exc:
+        return f"cannot read Lite verification evidence: {exc}"
+    if not isinstance(latest, dict):
+        return "Lite verification evidence has no deterministic_final record"
+    if str(latest.get("status", "")).strip().lower() != "passed":
+        return "Lite latest deterministic_final evidence is not passed"
+
+    execution_policy = contract.get("execution_policy")
+    if not isinstance(execution_policy, dict):
+        return "Lite contract execution_policy missing"
+    if latest.get("selection_generation") != execution_policy.get("selection_generation"):
+        return "Lite deterministic evidence selection_generation is stale"
+    if latest.get("scope_fingerprint") != execution_policy.get("scope_fingerprint"):
+        return "Lite deterministic evidence scope_fingerprint is stale"
+    if str(latest.get("docs_code_test_consistency", "")).strip().lower() != "passed":
+        return "Lite deterministic evidence lacks passed docs/code/tests consistency"
+    if str(latest.get("spec_sync", "")).strip().lower() not in {"passed", "not_required"}:
+        return "Lite deterministic evidence lacks passed/not_required Spec sync"
+
+    code_paths = [
+        path
+        for path in staged_paths
+        if not guru_contract.is_task_artifact_path(path, task_dir, root)
+    ]
+    target_paths = latest.get("target_paths")
+    if not isinstance(target_paths, list) or sorted(target_paths) != sorted(code_paths):
+        return "Lite deterministic evidence target_paths do not match the exact staged implementation scope"
+    target_digest = latest.get("target_digest")
+    if not isinstance(target_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", target_digest):
+        return "Lite deterministic evidence target_digest must be sha256"
+    try:
+        current_digest = guru_review_record.target_snapshot_digest(root, target_paths, "index")
+    except guru_review_record.ReviewRecordError as exc:
+        return f"cannot compute Lite staged target digest: {exc}"
+    if current_digest != target_digest:
+        return "Lite deterministic evidence is stale for the exact staged target digest"
+    return ""
+
+
 def _commit_plan_payload(task_dir_arg) -> dict:
     root = _repo_root()
     staged_paths, staged_error = _git_staged_paths(root)
@@ -4614,8 +5242,8 @@ def _commit_plan_payload(task_dir_arg) -> dict:
                 "create or select a micro_task/lite_task/full_chain task, then rerun commit-plan"
             )
         else:
-            block(_post_implementation_recovery_reason("no active task contract"))
-            plan["required_commands"].extend(_micro_recovery_commands(staged_paths, root))
+            plan["can_commit_now"] = True
+            plan["commit_mode"] = "direct"
         plan["suggested_stage_commands"] = _stage_command(plan["allowed_stage_paths"])
         return _finish_commit_plan(plan)
 
@@ -4685,6 +5313,57 @@ def _commit_plan_payload(task_dir_arg) -> dict:
         else:
             plan["can_commit_now"] = True
         plan["suggested_stage_commands"] = _stage_command(plan["allowed_stage_paths"])
+        return _finish_commit_plan(plan)
+
+    if route == guru_contract.ROUTE_LITE_TASK:
+        plan["commit_mode"] = "implementation"
+        standard_problems = _lite_standard_task_problems(task_dir)
+        for problem in standard_problems:
+            block(problem)
+        confirmation_problem = _requirements_confirmation_problem(task_dir, route)
+        if confirmation_problem:
+            block(confirmation_problem)
+            plan["required_user_confirmations"].append("requirements")
+            plan["required_commands"].append(
+                f"python3 .trellis/scripts/guru/guru_gate.py confirm requirements "
+                f"{shlex.quote(_display_task_dir(task_dir, root))}"
+            )
+        status = _task_status(task_dir)
+        if status != "in_progress":
+            block(f"lite_task requires task.json.status=in_progress before commit; got {status!r}")
+            if status == "planning":
+                plan["required_commands"].append(
+                    f"python3 .trellis/scripts/task.py start {shlex.quote(_display_task_dir(task_dir, root))}"
+                )
+        if contract_problems:
+            block("; ".join(contract_problems[:5]))
+        if (
+            not standard_problems
+            and not confirmation_problem
+            and status == "in_progress"
+            and not contract_problems
+            and isinstance(contract, dict)
+        ):
+            evidence_problem = _lite_deterministic_evidence_problem(
+                task_dir,
+                contract,
+                staged_paths,
+                root,
+            )
+            if evidence_problem:
+                block(evidence_problem)
+                plan["required_commands"].append(
+                    "run the focused checks and append a current deterministic_final record to "
+                    f"{shlex.quote(_display_task_dir(task_dir, root))}/verification-evidence.jsonl"
+                )
+        plan["review_coverage"] = _empty_review_coverage()
+        plan["review_coverage"]["source"] = "not-required-for-lite_task"
+        plan["suggested_stage_commands"] = _stage_command(plan["allowed_stage_paths"])
+        if plan["blocking_reasons"]:
+            if not plan["required_commands"]:
+                plan["required_commands"].append(_gate_command("auto", task_dir, root))
+        else:
+            plan["can_commit_now"] = True
         return _finish_commit_plan(plan)
 
     implementation_problem = _captured_gate_problem("check-implementation", task_dir, root)
@@ -4763,6 +5442,78 @@ def cmd_commit_plan(task_dir_arg, write: bool = False) -> int:
     return PASS
 
 
+def _record_lite_delivery_evidence_cache(task_dir_arg, root: str) -> tuple[str, str]:
+    task_dir = resolve_task_dir(task_dir_arg, allow_unique_planning_fallback=False)
+    if not task_dir:
+        return "", "cannot resolve Lite task for evidence cache"
+    contract, read_error = guru_contract.load_contract(task_dir)
+    if read_error or not isinstance(contract, dict):
+        return "", read_error or "Lite contract missing for evidence cache"
+    execution_policy = contract.get("execution_policy")
+    if not isinstance(execution_policy, dict):
+        return "", "Lite execution_policy missing for evidence cache"
+    evidence_path = os.path.join(task_dir, "verification-evidence.jsonl")
+    latest = None
+    existing_cache_keys = set()
+    try:
+        with open(evidence_path, encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    continue
+                if row.get("kind") == "deterministic_final":
+                    latest = row
+                if row.get("kind") == "delivery_evidence_cache" and isinstance(
+                    row.get("evidence_cache_key"), str
+                ):
+                    existing_cache_keys.add(row["evidence_cache_key"])
+    except (OSError, json.JSONDecodeError) as exc:
+        return "", f"cannot read Lite evidence cache source: {exc}"
+    if not isinstance(latest, dict):
+        return "", "Lite deterministic_final evidence missing for evidence cache"
+    target_digest = latest.get("target_digest")
+    target_paths = latest.get("target_paths")
+    docs_digest = guru_delivery_policy.project_docs_code_test_digest(root)
+    values = {
+        "policy_version": execution_policy.get("policy_version"),
+        "intent": execution_policy.get("intent"),
+        "execution_route": execution_policy.get("route"),
+        "scope_fingerprint": execution_policy.get("scope_fingerprint"),
+        "target_digest": target_digest,
+        "docs_code_test_digest": docs_digest,
+    }
+    if not all(isinstance(value, str) and value for value in values.values()):
+        return "", "Lite evidence cache binding fields are incomplete"
+    if not isinstance(target_paths, list) or not target_paths:
+        return "", "Lite evidence cache target_paths missing"
+    cache_key = guru_delivery_policy.delivery_evidence_cache_key(**values)
+    if cache_key in existing_cache_keys:
+        return cache_key, ""
+    record = {
+        "schema_version": 1,
+        "kind": "delivery_evidence_cache",
+        "status": "passed",
+        "outcome": "passed",
+        "evidence_cache_key": cache_key,
+        "policy_version": values["policy_version"],
+        "intent": values["intent"],
+        "route": values["execution_route"],
+        "selection_generation": execution_policy.get("selection_generation"),
+        "scope_fingerprint": values["scope_fingerprint"],
+        "target_paths": target_paths,
+        "target_digest": target_digest,
+        "docs_code_test_digest": docs_digest,
+    }
+    try:
+        with open(evidence_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    except OSError as exc:
+        return "", f"cannot append Lite evidence cache: {exc}"
+    return cache_key, ""
+
+
 def cmd_check_commit(task_dir_arg) -> int:
     plan = _commit_plan_payload(task_dir_arg)
     if not plan.get("can_commit_now"):
@@ -4792,6 +5543,16 @@ def cmd_check_commit(task_dir_arg) -> int:
         print("[guru-gate:check-commit] COMMIT_READY: direct small_inline scoped low-risk commit")
     elif route == guru_contract.ROUTE_MICRO_TASK:
         print(f"[guru-gate:check-commit] COMMIT_READY: micro_task contract allows scoped low-risk commit（{task_dir}）")
+    elif route == guru_contract.ROUTE_LITE_TASK:
+        cache_key, cache_error = _record_lite_delivery_evidence_cache(task_dir_arg, _repo_root())
+        if cache_error:
+            sys.stderr.write(f"[guru-gate:check-commit] evidence cache warning: {cache_error}\n")
+        print(
+            f"[guru-gate:check-commit] COMMIT_READY: Lite standard task + current requirements confirmation "
+            f"+ in_progress + scoped deterministic contract evidence（{task_dir}）；"
+            "implementation Worker/review not required"
+            + (f"；evidence_cache_key={cache_key}" if cache_key else "")
+        )
     else:
         print(f"[guru-gate:check-commit] COMMIT_READY: staged scope has current clean implementation review coverage（{task_dir}）")
     return PASS
@@ -4809,6 +5570,24 @@ def auto(task_dir_arg) -> int:
             status = json.loads(tj).get("status", "planning")
         except json.JSONDecodeError:
             pass
+    route = _contract_route_for_review_policy(task_dir)
+    if route == guru_contract.ROUTE_LITE_TASK:
+        if cmd_check_start(task_dir, "auto") != PASS:
+            return BLOCK
+        if status == "planning":
+            return PASS
+        if status != "in_progress":
+            sys.stderr.write(
+                f"[guru-gate:auto] 拦截：Lite task.json.status={status!r}；"
+                "只允许 planning START_READY 或 in_progress deterministic check。\n"
+            )
+            return BLOCK
+        return ok(
+            "auto",
+            "Lite 标准任务/当前确认/合同 scope 均有效；host 直接完成 deterministic check，无 implementation Worker/review",
+        )
+    if route in {guru_contract.ROUTE_SMALL_INLINE, guru_contract.ROUTE_MICRO_TASK}:
+        return ok("auto", f"route={route} 无 Full planning Gate")
     if status in ("planning",):
         rc = check_requirements(task_dir)
         if rc != PASS:
@@ -4923,6 +5702,11 @@ def main() -> int:
     intake_options = {
         "description": _pop_value_option(argv, "--description"),
         "paths": _pop_all_value_options(argv, "--path"),
+        "preferred_route": _pop_value_option(argv, "--preferred-route"),
+        "coupling": _pop_value_option(argv, "--coupling"),
+        "verification_scope": _pop_value_option(argv, "--verification-scope"),
+        "prior_route": _pop_value_option(argv, "--prior-route"),
+        "prior_selection_generation": _pop_value_option(argv, "--prior-selection-generation"),
     }
     degradation_options = {
         "gate": _pop_value_option(argv, "--gate"),
@@ -4938,6 +5722,15 @@ def main() -> int:
     intake_options["commit_requested"] = "--commit-requested" in flags
     intake_options["write_contract"] = "--write-contract" in flags
     intake_options["use_staged"] = "--staged" in flags
+    intake_options["requirements_clear"] = (
+        True if "--requirements-clear" in flags
+        else (False if "--requirements-ambiguous" in flags else None)
+    )
+    intake_options["reversible"] = (
+        True if "--reversible" in flags
+        else (False if "--irreversible" in flags else None)
+    )
+    intake_options["first_write_started"] = "--first-write-started" in flags
     arg = rest[0] if rest else None
     table = {
         "requirements": check_requirements,

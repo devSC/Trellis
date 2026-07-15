@@ -17,6 +17,7 @@ HIGH_RISK_REVIEW_PROVIDER_POLICY_PATH = (
     "supervision",
     "high_risk_review_provider_policy",
 )
+ADVERSARIAL_ENABLED_PATH = ("guru", "supervision", "adversarial_enabled")
 DEFAULTS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("codex", "dispatch_mode"), "sub-agent"),
     (("channel", "worker_guard", "idle_timeout"), "10m"),
@@ -25,8 +26,7 @@ DEFAULTS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("guru", "supervision", "implement_timeout"), "45m"),
     (("guru", "supervision", "check_timeout"), "30m"),
     (("guru", "supervision", "warn_before"), "5m"),
-    (("guru", "supervision", "adversarial_enabled"), "true"),
-    (("guru", "supervision", "adversarial_claude_model"), "claude-sonnet-4-6"),
+    (ADVERSARIAL_ENABLED_PATH, "false"),
     (("guru", "supervision", "adversarial_codex_model"), "gpt-5.4"),
     (("guru", "supervision", "adversarial_codex_reasoning_effort"), "high"),
     (("guru", "supervision", "high_risk_review_provider_policy"), "current"),
@@ -254,6 +254,14 @@ def patch_config_text(
     warnings: list[str] = []
 
     for path, value in DEFAULTS:
+        if path == ADVERSARIAL_ENABLED_PATH:
+            _set_scalar(
+                lines,
+                path,
+                _config_bool_string(adversarial_enabled or "false"),
+                actions,
+            )
+            continue
         if (
             path == HIGH_RISK_REVIEW_PROVIDER_POLICY_PATH
             and _find_key(lines, path) is not None
@@ -270,14 +278,6 @@ def patch_config_text(
         warnings,
         warn_if_different=True,
     )
-    if adversarial_enabled is not None:
-        _set_scalar(
-            lines,
-            ("guru", "supervision", "adversarial_enabled"),
-            _config_bool_string(adversarial_enabled),
-            actions,
-        )
-
     patched = "\n".join(lines).rstrip() + "\n"
     return patched, PatchResult(changed=patched != text, actions=actions, warnings=warnings)
 

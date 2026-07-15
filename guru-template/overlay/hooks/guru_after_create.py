@@ -144,14 +144,30 @@ def main() -> int:
             )
         if guru_delivery_policy is not None and assessment.get("risk") != "high":
             try:
-                selection = guru_delivery_policy.resolve_delivery_selection(
-                    guru_delivery_policy.IntakeRequest(
+                request = guru_delivery_policy.IntakeRequest(
                         description=description,
                         affected_paths=affected_paths,
                         commit_requested=commit_requested,
-                    ),
+                    )
+                selection = guru_delivery_policy.resolve_project_delivery_selection(
+                    request,
+                    project_root,
                     capability_report={},
                 )
+                # small_inline deliberately has no task-local contract. Reaching
+                # after_create proves the user chose a standard task, so retain
+                # that explicit heavier boundary as a zero-confirmation Micro.
+                if selection.execution_route == guru_contract.ROUTE_SMALL_INLINE:
+                    selection = guru_delivery_policy.resolve_project_delivery_selection(
+                        guru_delivery_policy.IntakeRequest(
+                            description=description,
+                            affected_paths=affected_paths,
+                            commit_requested=commit_requested,
+                            preferred_route=guru_contract.ROUTE_MICRO_TASK,
+                        ),
+                        project_root,
+                        capability_report={},
+                    )
             except Exception as exc:
                 # Rejected scope is not evidence for a cheaper route. Keep task
                 # creation usable, but require strict planning before any work.

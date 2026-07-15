@@ -34,7 +34,10 @@ This is an executable gate surface. Changes must be fail-closed by default, mirr
   - `python3 guru_gate.py intake [task_dir] --description <text> [--path <path> ...] [--staged] [--commit-requested] [--write-contract]`
   - Without `task_dir`, the command must not bind to the active task; it only emits the route recommendation and suggested commands for the current request.
   - With `--write-contract`, an explicit task directory is required for `micro_task`, `lite_task`, or `full_chain`; the command writes `gate-contract.json` and updates task route metadata.
-  - `small_inline` has no commit contract. If commit is requested, intake must route to `micro_task`.
+  - `small_inline` has no commit contract. A commit request is a delivery action,
+    not an intrinsic difficulty signal; it may add the minimal commit contract or
+    select `micro_task` without reclassifying the underlying work as behaviorally
+    more difficult.
 
 - Task-local contract files:
   - `gate-contract.json`
@@ -84,10 +87,21 @@ This is an executable gate surface. Changes must be fail-closed by default, mirr
   - Explicit null, empty, whitespace-only, non-string, or unknown policy values fail before worker-plan construction.
 
 - Route-aware review policy:
-  - `small_inline`: no task-local requirements adversarial review is required; if the work later needs commit, create/route to `micro_task`.
+  - `small_inline`: mechanical, explicit, low-risk work with no behavior-contract
+    change; no full task, confirmation, or Worker is required by default.
   - `micro_task`: requirements adversarial review and overview/detail adversarial reviewer evidence are not required; commit remains bounded by explicit scope, file limits, and contract evidence. It is never valid for high-risk work.
-- `lite_task`: implementation is `host_inline` with zero confirmation batches, zero Workers, no pre-code requirements/overview/detail/implementation-review Gate, and one scoped `deterministic_final` after code. If an operator explicitly invokes a legacy overview/detail review command, that command still validates current evidence strictly; it is not part of the Lite implementation route.
-  - `full_chain`, `risk=unknown`, or missing/invalid contract: strict default policy. Requirements review is required when `adversarial_enabled=true`, and overview/detail require at least one counted adversarial clean review.
+  - `lite_task`: official `task.py create` standard task, task-local compact
+    `prd.md`, repo evidence first, bounded Brainstorm only for unresolved product,
+    scope, failure-path, or acceptance ambiguity, one digest-bound requirements
+    confirmation, zero Workers, no Overview/Detail planning review, host-inline
+    execution, and one scoped `deterministic_final` after code. Commit-ready
+    requires a passed task-local `verification-evidence.jsonl` record whose
+    `selection_generation`, `scope_fingerprint`, exact `target_paths` and staged
+    `target_digest` are current; `docs_code_test_consistency` must be `passed` and
+    `spec_sync` must be `passed` or `not_required`.
+  - `full_chain`, `risk=unknown-high`, or missing/invalid contract: strict default
+    policy. Current requirements, critical/high risks, and key irreversible design
+    decisions are exposed before any implement Worker and confirmed in one batch.
 
 ### 3. Contracts
 
@@ -98,6 +112,10 @@ This is an executable gate surface. Changes must be fail-closed by default, mirr
 - `route`: selected runtime/commit route. `small_inline` is not a valid commit contract.
 - `assessment.recommended_route`: normalized recommendation derived from risk assessment, for example `full_chain`.
 - `route_selection`: selection audit block containing `selected_route`, `source`, `recommended_route`, `risk_acknowledged`, `user_quote`, `selected_by`, and `selected_at`.
+- `route_selection.selection_generation`: positive monotonic generation for route changes.
+- `route_selection.scope_fingerprint`: exact fingerprint of the selected scope.
+- `route_selection.first_repository_write_at`: absent before the first repository
+  write; once present, all subsequent route transitions are upgrade-only.
 - `scope.allowed_paths`: explicit non-empty paths for `micro_task`; repo root is not allowed for `micro_task`.
 - `scope.max_files`: positive integer for `micro_task`.
 - `allowed_degradations`: rows with `gate` and non-empty `fallback_checks`.
@@ -133,7 +151,7 @@ contracts. Dirty scope is advisory for planning and blocking when it proves the
 selected packet is not isolated.
 
 Route policy may relax only adversarial reviewer requirements. It must not bypass
-requirements/detail human confirmations, current-digest checks, structure gates,
+the route's single confirmation batch, current-digest checks, structure gates,
 medium+ findings, blocked requirements evidence, staged-scope validation, or
 implementation review digest checks. `adversarial_enabled=false` has the same
 limited scope: it removes the adversarial reviewer requirement only and never
@@ -174,8 +192,11 @@ assumptions as `user_confirmed`.
 | `adversarial_enabled=false` with current blocked requirements review | Block |
 | `adversarial_enabled=false` with missing adversarial reviewer only | Allow if other current clean-review/digest gates pass |
 | `micro_task` with no requirements adversarial review | Allow; continue enforcing structure/confirmation only when that command is explicitly used |
-| `lite_task` with no requirements adversarial review | Allow under bounded policy if risk is known and no current blocked/malformed/medium+ requirements evidence exists |
-| `lite_task` implementation before code | Allow host-inline without requirements/overview/detail review; require only scoped deterministic final after code |
+| `lite_task` without an official standard task or task-local compact `prd.md` | Block before the first repository write |
+| `lite_task` with no requirements adversarial review | Allow; Lite uses repo-first evidence, conditional Brainstorm, and one current requirements confirmation instead |
+| `lite_task` implementation with missing/stale confirmation digest, route, risk, or scope fingerprint | Block before the first repository write |
+| `lite_task` implementation after current confirmation | Allow host-inline without Overview/Detail planning review; require focused checks and scoped deterministic final after code |
+| `lite_task` commit with missing, failed, or stale `deterministic_final` evidence | Block without requesting another user confirmation; rerun focused checks and append current exact task-local evidence |
 | `lite_task` with current requirements `blocked` or clean `max_severity=medium+` | Block |
 | `lite_task` review discovers high-risk or expanded scope | Stop for user confirmation; do not silently promote evidence-ready scope to user-confirmed |
 | `risk=unknown` or invalid `gate-contract.json` | Strict default policy; do not apply route-aware adversarial relaxation |
@@ -190,7 +211,8 @@ assumptions as `user_confirmed`.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: a low-risk single-path UI/text change uses `micro_task` only when commit is requested, with explicit scope, positive `max_files`, and deterministic compensating checks for optional GitNexus degradation.
+- Good: a low-risk mechanical UI/text change remains intrinsically Small when
+  commit is requested; the delivery action adds only the minimal commit contract.
 - Good: a high-risk request is recommended `full_chain`, and `gate-contract.json` records `route=full_chain` even if the user asked for a lower route.
 - Good: a high-risk `micro_task` or `lite_task` user override is rejected before commit, check-implementation, or slice-plan can treat it as selected-route authority.
 - Good: a high-risk full-chain runtime task writes a slice packet before implementation, runs `slice-plan`, then launches one explicit slice.
@@ -204,7 +226,8 @@ assumptions as `user_confirmed`.
 Guru overlay verify tests must cover:
 
 - Low request with no paths is not `small_inline`; it must route to medium/lite or require user choice.
-- Low plus commit routes to `micro_task`.
+- Commit intent alone does not change intrinsic difficulty; the selected delivery
+  route may add only the minimal commit contract required by the commit boundary.
 - Medium local behavior changes route to `lite_task`.
 - Payment, ads, privacy, permission, schema, workflow, hook, gate, runtime, storage, or cross-layer signals route to `full_chain`.
 - `intake` without task_dir must not bind the active task; low/no-commit emits `small_inline` and no commit contract.
@@ -215,7 +238,10 @@ Guru overlay verify tests must cover:
 - `check-commit` blocks staged task artifacts, out-of-scope staged paths, non-full high-risk paths, high-risk non-full contracts even with valid override audit, and missing compensating evidence.
 - `check-commit` rejects high-risk path signals inside confirmed non-full scope when the contract itself is high-risk, even if valid user override audit is present.
 - `adversarial_enabled=false` allows double ordinary clean reviews to proceed, but does not bypass current blocked or medium+ review evidence.
-- Route-aware execution policy: `micro_task` uses a bounded micro contract, `lite_task` reaches host-inline code without pre-code planning review, and `full_chain` keeps strict requirements/overview/detail/risk/start gates.
+- Route-aware execution policy: `micro_task` uses a bounded micro contract;
+  `lite_task` uses an official task, task-local compact requirements, conditional
+  Brainstorm, one confirmation, zero Workers, and no Overview/Detail planning
+  review; `full_chain` exposes risk before Workers and uses one confirmation batch.
 - `init-contract` generates valid micro/lite/full contracts and blocks high-risk non-full selected routes even with valid user override audit.
 - `check-implementation` and `guru_supervise.py implement-check` block high-risk selected full-chain tasks with no slice packet before worker launch.
 - `check-implementation` treats high-risk selected lite/micro contracts as invalid and requires full-chain routing before implementation.
@@ -328,15 +354,26 @@ unless the official CLI can no longer consume that registry.
 
 Route contracts:
 
-- `small_inline`: first value within 120 seconds, no task ceremony, no Worker,
-  no confirmation, final deterministic evidence only.
-- `micro_task`: explicit bounded paths/max files, first value within 300 seconds,
-  no confirmation, at most one Worker, micro contract plus deterministic final.
-- `lite_task`: host-inline code within 300 seconds, zero confirmation, zero
-  Worker, zero pre-code planning/review Gates, deterministic final after code.
-- `full_chain`: high/unknown-high-signal work, current requirements/overview/
-  detail/risk/slice/start evidence before implementation, at most one confirmation
-  batch, and deterministic final.
+- `small_inline`: mechanical, explicit, low-risk work with no behavior-contract
+  change; no full task, zero confirmations, zero Workers, and focused evidence.
+- `micro_task`: explicit low-risk local behavior change with bounded paths/max
+  files, a minimal task contract, zero confirmations, zero Workers by default,
+  and a focused deterministic final.
+- `lite_task`: official `task.py create` standard task, repo evidence first,
+  conditional bounded Brainstorm, task-local compact `prd.md`, one confirmation
+  binding the current requirements digest/route/risk/scope fingerprint, zero
+  Workers, no Overview/Detail planning review, and host-inline deterministic final.
+- `full_chain`: high/unknown-high work with current requirements/risk/design
+  evidence before every implement Worker, one confirmation batch, guarded
+  activation, managed implementation, and deterministic final.
+
+Route difficulty is determined by requirements clarity, risk, coupling,
+reversibility, and verification cost. Commit intent is orthogonal. The Agent
+recommends the lowest legal route; users may select a heavier route freely or a
+lighter route only when target eligibility passes. High/unknown-high can never
+downgrade from Full. Route changes bind monotonic `selection_generation` and
+`scope_fingerprint`; before the first repository write evidence may justify a
+downgrade, while after the first write transitions are upgrade-only.
 
 Evidence reuse requires the same policy version, intent/route, scope fingerprint,
 target digest, docs-code-test digest, and a passed prior outcome. An exact hit
@@ -362,7 +399,9 @@ Lifecycle contracts:
 
 | Condition | Required behavior |
 | --- | --- |
-| Lite implementation request with no high-risk signal | Route `lite_task`; no confirmation/Worker/pre-code review; implement next action |
+| Lite implementation request with no high-risk signal | Route `lite_task`; create an official standard task, gather repo evidence, run bounded Brainstorm only for true ambiguity, then request one requirements confirmation |
+| Lite current confirmation is missing or stale | Block before the first repository write |
+| Lite current confirmation is valid | Automatically start, host-inline implement, run focused checks, append evidence, sync Spec, and reach reversible commit-ready with zero Workers |
 | High-risk path or signal | Route `full_chain`; risk packet and guarded start before any implement Worker |
 | Exact prior evidence and both digests unchanged | Reuse evidence and apply 70 percent controllable proxy |
 | Target or docs-code-test digest changed | Do not reuse evidence |
@@ -377,8 +416,10 @@ Lifecycle contracts:
 
 ### 5. Good/Base/Bad Cases
 
-- Good: a bounded behavior change resolves to Lite, reaches a scoped code diff
-  without Overview/Detail loops, then runs only the deterministic final check.
+- Good: a bounded behavior change resolves to Lite, creates a standard task,
+  answers repository-resolvable questions before asking the user, conditionally
+  Brainstorms real ambiguity, receives one requirements confirmation, and then
+  closes autonomously without Overview/Detail loops or Workers.
 - Good: workflow/runtime scope promotes to Full before code and fails closed if
   the risk packet is absent.
 - Base: a successful apply has a current schema-v2 managed-assets receipt;
@@ -393,6 +434,12 @@ Lifecycle contracts:
 - Policy unit tests cover all intent profiles, four routes, first-value/terminal
   budgets, exact reuse, both digest invalidations, high-risk promotion, and the
   one-batch confirmation ceiling.
+- Route transition tests cover heavier override, target-eligible lighter
+  override, high-risk downgrade rejection, monotonic selection generation,
+  commit-intent orthogonality, pre-write downgrade, and post-write upgrade-only.
+- Lite task tests cover official task creation, task-local compact requirements,
+  repo-first evidence, conditional Brainstorm, current/stale confirmation
+  binding, zero Workers, no Overview/Detail planning review, and autonomous close.
 - Start-guard tests prove missing/stale risk, envelope, slice, or confirmation
   evidence blocks before the official subprocess.
 - `apply_test.sh` snapshots target and bundle around every read-only command,
@@ -415,8 +462,8 @@ upgrade -> reuse the first-install rollback receipt
 #### Correct
 
 ```text
-lite_task -> host-inline code -> scoped deterministic_final
-full/high -> current risk + one confirmation batch + guarded start -> code/check
+lite_task -> official task -> repo evidence -> conditional Brainstorm -> compact prd -> one confirmation -> host-inline -> deterministic_final
+full/high -> current requirements+risk+design -> one confirmation batch -> guarded start -> code/check
 prepared rollback receipt -> status=drifted, verify nonzero, zero mutation
 upgrade -> fresh external bundle -> unapply restores immediate pre-upgrade state
 ```

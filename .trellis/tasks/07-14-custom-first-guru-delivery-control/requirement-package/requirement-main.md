@@ -98,7 +98,7 @@ These milestones are the execution authority for the remainder of the task. Inte
 ### M0 - Custom V0 foundation and self-use lifecycle (`completed`)
 
 - One policy resolves `small_inline`, `micro_task`, `lite_task` and `full_chain` high-risk work.
-- Lite is host-inline with zero confirmation, zero Worker and no pre-code planning-review Gate.
+- Historical M0 Lite was host-inline with zero confirmation, zero Worker and no pre-code planning-review Gate; M5 supersedes only the confirmation/task-container contract while preserving the zero-Worker/no-Overview/Detail fast path.
 - High-risk work fails closed before implementation without current risk and confirmation evidence.
 - Exact fingerprint/digest evidence reuse applies the declared 70% planning/token-budget proxy and invalidates on digest drift.
 - The Custom overlay installs, recovers from owned partial failure, and performs managed-asset unapply while preserving unrelated user work.
@@ -109,7 +109,7 @@ These milestones are the execution authority for the remainder of the task. Inte
 - Install the committed Custom package into one disposable official Trellis target.
 - Run a deterministic four-route matrix and real Lite/full-high-risk dogfood derived from sessions `019f5b42-b507-7801-96ef-50b1ed01c863` and `019f5f27-045d-7fc1-b84d-5ce21e8c8358`.
 - Record `time_to_first_code`, confirmation count, Worker count, finding-to-fix cycles, full-suite count and wall time per route.
-- Acceptance: Lite reaches code in five-minute class with 0 confirmations/0 Workers; full-high-risk exposes risk before code, uses at most one confirmation and then continues through deterministic check; no Claude event exists.
+- Historical acceptance: Lite reached code in five-minute class with 0 confirmations/0 Workers. Current M5 acceptance measures five-minute-class first code after the one current Lite requirements confirmation; Full exposes risk before code, uses one batch and then continues through deterministic check; no Claude event exists.
 - Evidence: `M1_OPERATIONAL_ROUTE_PROOF.md`; Lite TTFC `18s`, confirmations `0`, Workers `0`; Full/high missing-risk `rc=2` with `start_attempts=0`; independent `2 HIGH + 1 MEDIUM` findings repaired in one batch; apply/consistency `109/0`.
 
 ### M2 - All-intent compounding and Gate value (`candidate complete`)
@@ -128,17 +128,29 @@ These milestones are the execution authority for the remainder of the task. Inte
 - Acceptance: source, installed assets, docs and tests match; native Trellis remains usable after unapply; Core-zero remains true.
 - Evidence: `M3_CUSTOM_TEMPLATE_CUTOVER_PROOF.md`; official Trellis `0.6.7` installed all four exact spec/workflow stacks and rejected blank fallback; lifecycle `120/0`, catalog `18/0`; one Codex HIGH false-state finding was repaired in one batch; Core-zero and Codex-only remain true.
 
-### M4 - Final consistency and task closure (`current`)
+### M4 - Final consistency and task closure (`historical candidate pass`)
 
 - Publish a hardened status report so V0 deferrals no longer contradict implemented recovery, managed unapply and the full suite.
 - Update `REQ/BHV -> design -> code -> test` traceability with actual paths and results.
 - Run checks proportional to the final diff, one final Codex check-only review, `trellis-update-spec`, final commit and readback.
 - Archive/finish only with explicit lifecycle authorization; do not push.
 
+### M5 - Difficulty routing and standard Lite task (`current`)
+
+- Route difficulty is derived from clarity, risk, coupling, reversibility and verification cost; commit intent is not the complexity owner.
+- Auto recommendation and user override share one audited selection contract. Heavier overrides pass; lighter overrides must satisfy target eligibility; high/unknown-high never downgrades.
+- Lite uses official Trellis task creation, task-local compact requirements and conditional repository-first Brainstorm. Its one current requirements confirmation authorizes autonomous start, implementation, check, evidence/spec sync and reversible commit-ready closure.
+- Confirmation budgets are Small/Micro/Lite/Full `0/0/1/1 batch`; Full risk/requirements/design decisions are confirmed as one pre-implementation batch.
+
+### M6 - Route replay and final candidate closure (`pending`)
+
+- Prove four-route selection/switching, Lite standard-task lifecycle, stale-confirmation rejection, Full pre-worker risk, exact reuse/invalidation and docs/code/test consistency on a disposable target.
+- Replay the two historical failure modes without generic replay infrastructure; run one complete overlay suite, one official Custom lifecycle and one final Codex check-only review.
+
 ## 6. Completion Rule
 
-The task is complete only when M1-M4 pass. Marketplace catalog, ExtensionManager WAL, trusted reviewer identity, generic replay infrastructure, bootstrap burn and six-slice execution are explicitly non-requirements and cannot block completion.
+The task is complete only when M1-M6 pass. M0-M4 evidence remains historical and honest; M5/M6 supersede the old Lite zero-confirmation current contract. Marketplace catalog, ExtensionManager WAL, trusted reviewer identity, generic replay infrastructure, bootstrap burn and six-slice execution are explicitly non-requirements and cannot block completion.
 
 ## 7. Open Questions
 
-No unresolved product or scope question is currently known. M1-M4 proceed without another planning-review cycle. A new review or confirmation is allowed only when execution discovers a new irreversible product choice, a real external-information gap, or expanded critical/high risk; it may not silently change these approved scenarios.
+No unresolved product or scope question is currently known. The user confirmed M5/M6 on 2026-07-15; implementation proceeds without another planning-review cycle. A new confirmation is allowed only when execution discovers a new irreversible product choice, a real external-information gap, or expanded critical/high risk; it may not silently change these approved scenarios.

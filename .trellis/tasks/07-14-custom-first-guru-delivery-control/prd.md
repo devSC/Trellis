@@ -33,6 +33,7 @@
 5. Guru 定制必须支持 dry-run、安装、状态检查、卸载和安装后验证；卸载不得破坏用户修改。
 6. 用户确认必须批量、最少且不可重复；只有新增的不可逆产品取舍、真实外部信息缺口或扩张后的关键风险才允许再次询问。
 7. 用户于 2026-07-14 回复“好，接受”，确认上述架构基线并授权创建 full-chain Trellis task 进入规划。
+8. 用户于 2026-07-15 确认 M5/M6 路由修订：四路由按需求清晰度、风险、耦合、可逆性与验证成本分工；Lite 必须创建标准 Trellis task、必要时进入有界 Brainstorm、确认一次需求后自主闭环；用户可指定 Route，但 High-risk 不得降级。
 
 ## Outcome-first Delivery Milestones
 
@@ -48,7 +49,7 @@
 
 - 在 disposable 官方 Trellis target 安装已提交 Custom 包，执行四路由矩阵。
 - 用两个历史失控会话分别执行 Lite 与 Full high-risk 最小 dogfood。
-- Lite 必须在 5 分钟级进入代码，确认 0、Worker 0、无 Overview/Detail planning loop。
+- 历史 M1 基线要求 Lite 在 5 分钟级进入代码、确认 0、Worker 0、无 Overview/Detail planning loop；其中确认 0 已由 M5 当前合同明确取代，TTFC/Worker/无 Full planning loop 证据继续保留。
 - Full high-risk 必须在实现前暴露风险，最多一次确认，确认后自主运行到 deterministic check。
 - 记录 TTFC、确认数、Worker 数、finding-to-fix cycles、full-suite run count 与 route wall time；全程不得出现 Claude event。
 - 结果证据：`M1_OPERATIONAL_ROUTE_PROOF.md`；Lite TTFC `18s`、确认 `0`、Worker `0`；Full/high-risk 缺 risk packet 时 `rc=2`、`start_attempts=0`；独立检查 `2 HIGH + 1 MEDIUM` 已单批修复；apply/consistency `109/0`；Core-zero、Codex-only。
@@ -68,11 +69,27 @@
 - 仅产出最小 Template cutover mapping；官方工具未要求时不新建 manifest 或 Marketplace 引擎。
 - 结果证据：`M3_CUSTOM_TEMPLATE_CUTOVER_PROOF.md`；官方 Trellis `0.6.7` 四组 spec/workflow exact-byte 安装通过，blank fallback 被拒绝；Custom lifecycle `120/0`，catalog `18/0`；Codex review 的 1 个 HIGH 状态假绿已单批修复；Core-zero、Codex-only。
 
-### M4 — 最终一致性与任务收口（current）
+### M4 — 最终一致性与任务收口（historical candidate pass）
 
 - 发布 hardened status，修复旧 V0 deferred 列表与当前实现不一致。
 - 完成 `REQ/BHV -> design -> code -> test` trace、按最终 diff 运行验证、一次 Codex check-only review、`trellis-update-spec` 和最终提交。
 - archive/finish 需要显式生命周期授权；不 push。
+- M4 的旧 Lite `confirmation=0` 证明保留为历史快路径基线，不再代表当前 Route 合同；本轮修订由 M5/M6 接管，历史报告不得改写为仿佛当时已经要求 Lite 确认。
+
+### M5 — 难度路由、标准 Lite task 与一次确认（current）
+
+- 自动 Intake 选择满足安全边界的最低成本 Route；用户可升级到更重 Route，向下降级必须证明目标 Route 准入条件，High-risk/unknown-high 永远保持 Full。
+- `commit_requested` 是交付动作，不得单独决定任务难度；Small 可在初始提交授权下建立最小提交合同而不伪装为更复杂任务。
+- Lite 使用官方 `task.py create` 创建标准 Trellis task，任务目录内管理 `task.json`、`gate-contract.json`、compact `prd.md`、Trellis jsonl 上下文与 mutable execution evidence。
+- Lite 先查仓库证据，仅在真实产品/范围/失败路径/验收歧义存在时进入 bounded Brainstorm；用户确认当前 requirements digest 一次后，自动 start、实现、检查、证据/Spec 同步和可逆 commit-ready。
+- Small/Micro/Lite/Full 的确认预算分别为 `0/0/1/1 batch`；Full 一批确认覆盖当前需求、风险和关键设计决定，Runtime 不得再要求 requirements/detail/commit 三轮重复确认。
+- Route selection 记录 recommendation、selection source、generation 与 scope fingerprint；首次写入前可基于证据合法降级，首次写入后只能升级。
+
+### M6 — 路由矩阵回放与最终候选收口（pending）
+
+- 在 disposable target 验证四 Route、Lite 标准任务创建/确认/autoclose、Full 风险前置、合法 override、非法降级、evidence reuse 与 consistency drift。
+- 回放两个历史失控会话的关键失败模式；Lite 从需求确认到 first code 保持 5 分钟级，Full 在 implement Worker 前持有 current risk/decision evidence，全程 Claude event 为 0。
+- 只跑一次完整 overlay suite、一次官方 Custom apply/unapply、一次 Codex check-only final review；非 acceptance blocker 不扩展范围。
 
 ## Core Capabilities
 
@@ -127,6 +144,18 @@
 - **When** 用户运行 status/unapply
 - **Then** 系统只撤销仍由 Guru 拥有且 hash 匹配的内容，保留并报告用户冲突，恢复 native Trellis 可用状态
 
+### BHV-008 [REQ-UC-008] 自动推荐与受约束 Route override
+
+- **Given** Intake 已获得仓库证据、需求清晰度、风险、耦合、可逆性和验证成本
+- **When** Agent 自动推荐 Route 或用户指定不同 Route
+- **Then** 系统选择最低合法 Route；向上切换直接允许，向下切换须满足目标准入条件，High-risk/unknown-high 不得降级，并持久化 generation 与 scope fingerprint
+
+### BHV-009 [REQ-UC-009] Lite 标准任务与一次确认后自动闭环
+
+- **Given** 任务被选为 Lite 且不存在 High-risk
+- **When** 官方 Trellis task 已创建、仓库证据已检查、必要 Brainstorm 已关闭、用户确认当前 compact requirements digest
+- **Then** 系统无需 Overview/Detail planning review 或实现 Worker，自动完成 start、实现、focused check、task-local evidence、Spec 同步和可逆 commit-ready，除真实 scope/high-risk/不可逆变化外不再确认
+
 ## Requirements
 
 ### R1. Universal risk-proportional routing
@@ -149,7 +178,9 @@
 
 ### R4. Minimal user confirmation
 
-- Small/Inline、Micro、Lite 默认 0 次确认；Full high-risk 最多 1 批，且相同输入不得重复询问。
+- Small/Inline、Micro、Lite、Full 的确认预算分别为 `0/0/1/1 batch`，且相同 route/scope/requirements/risk 输入不得重复询问。
+- Lite 的唯一确认绑定 task-local `prd.md`、selected route、risk 与 scope fingerprint；运行证据追加、focused repair 和 Spec 同步不得使该确认失效。
+- Full 的唯一批量确认覆盖当前需求、critical/high risk 与关键不可逆设计决策；不得再拆成 requirements、detail 与可逆 commit 三轮确认。
 - 每个确认项必须包含建议答案、影响和选择不同方案的代价。
 - 可由仓库事实、现有规范或可逆默认值决定的事项由 Agent 自主决定。
 
@@ -220,6 +251,18 @@
 - 建立 route matrix、digest metamorphic、reviewer independence、budget/stagnation、scope expansion、confirmation、context/token、reversibility、mirror/design-sync 测试。
 - 使用 M1/M2 operational proof 覆盖全部任务类型的 first-value、成本和终态；单元测试全绿但仍出现长时间 planning + 零业务 diff 时，发布失败。
 
+### R16. Difficulty routing and user override
+
+- Route 难度按需求清晰度、风险、耦合、可逆性与验证成本判断；文件数和 commit intent 只能作为辅助输入。
+- 自动推荐使用最低合法 Route；用户选择更重 Route 直接接受，选择更轻 Route 时重新验证目标 eligibility，失败时返回唯一 blocker 和可降级条件。
+- Route selection 使用单调 `selection_generation`；首次写入前允许合法降级，首次写入后只允许升级，事后 relabel 不得满足缺失 Gate。
+
+### R17. Standard Lite task and task-local authority
+
+- Lite 必须复用官方 `task.py create`，不得新建并行 task framework；Custom 只负责 route contract、confirmation 和 task-local evidence 扩展。
+- Compact requirements、Brainstorm Evidence、实现/验证证据、commit plan 与实际 review record 全部位于 Lite task 目录；不得只存在于聊天或仓库外临时文件。
+- Lite 默认不创建正式 Overview/Detail；若局部设计扩大为跨层、公共契约或 High-risk，必须在下一次写入前升级 Full。
+
 ## Acceptance Criteria
 
 - [ ] 功能实现期间 `git diff -- packages/cli/src packages/core` 无新增 Guru 功能修改。
@@ -228,11 +271,14 @@
 - [ ] Extension 支持 `plan/apply/status/unapply/verify`，重复 apply 幂等，修改过的用户文件不会在卸载时删除。
 - [ ] `apply -> verify -> unapply` 在 fixture 项目中恢复安装前等价状态。
 - [ ] Inline/Micro/Lite/Full/Review/Research/Repeated Debug 均有明确 artifact、预算、确认和停止策略。
+- [ ] Lite 由官方 `task.py create` 产生标准 Trellis task，任务目录内存在 current compact requirements、route contract 和 mutable execution evidence。
+- [ ] Lite 缺失或 stale requirements confirmation 时首次 repository write fail closed；确认后实现、检查、证据/Spec 同步和可逆 commit-ready 不产生第二次确认。
+- [ ] 自动推荐、用户向上切换、合法向下降级、High-risk 降级拒绝和 first-write 后降级拒绝均有可执行回归。
 - [ ] Lite detail-only 修改不改变 Overview digest；真实上游变化按依赖图精确失效。
 - [ ] 同一 reviewer/context 伪造两个 run-id 不能满足独立 review。
 - [ ] Scope/layer/risk 扩张会在继续实现前触发重新 intake，并只请求新增决定。
 - [ ] 两个失控会话 replay 在预算内进入真实代码或返回明确终止状态，不再出现 98 分钟 planning + 零业务 diff。
-- [ ] Micro 默认 0 次确认、Lite <= 1 批、Full <= 2 批；相同输入确认不会重复。
+- [ ] Small/Micro/Lite/Full 分别为 0/0/1/1 confirmation batch；相同输入确认不会重复。
 - [ ] 第二个相同任务族的 planning 时间、上下文读取和 token 不高于首个基准的 70%。
 - [ ] 契约性变更具备 requirement/design/code/test 映射，Template/Extension/安装后文件无未解释漂移。
 - [ ] 相同 digest evidence 100% 复用，Overview/Detail review ping-pong 为 0，Gate-caused rework 目标 < 10%。
@@ -285,12 +331,16 @@
   - DEC-001: all-task scope、Custom-first、功能阶段 Core zero-addition、reversible extension、de-fork later 作为统一架构基线
     - user_quote: "好，接受"
     - confirmed_ref: current-session architecture-baseline approval on 2026-07-14
+  - DEC-002: 四级难度分工、自动推荐和受约束 override、Lite 标准 Trellis task、条件式 Brainstorm、Lite/Full 各一次确认后自动闭环
+    - user_quote: "已确认"
+    - confirmed_ref: current-session complete-adjustment-plan approval on 2026-07-15
 
 ### Question Loop Log
 
 | oq_id | asked_at | question | recommended_answer | tradeoff | user_quote | resolved_decision | artifact_update |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | OQ-001 | 2026-07-14 | 是否接受“官方 Custom-first、功能阶段 Core 零修改、扩展包完整可卸载、最终另行删除现有 SDK 耦合”并允许创建 full-chain task？ | 接受；这是摆脱 fork 且保持硬 Gate 的最小可行边界 | 不接受则继续依赖 fork，升级和撤销成本持续增加 | 好，接受 | DEC-001 | prd.md、gate-contract.json |
+| OQ-002 | 2026-07-15 | 是否确认四级难度路由、Lite 标准任务、条件式 Brainstorm、一次确认后自动闭环与受约束 Route override 的完整调整方案？ | 确认并作为 M5/M6 唯一当前合同 | 不确认则保留 Lite 0-confirmation 的历史合同，继续存在需求误解风险 | 已确认 | DEC-002 | prd.md、requirement package、design.md、implement.md |
 
 - Open product/scope/risk questions: none — 当前架构、范围、风险容忍和任务创建均已确认；新不可逆决定才允许再次询问。
 

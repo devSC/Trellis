@@ -1,6 +1,10 @@
 import dataclasses
+import contextlib
+import io
+import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path, PurePosixPath
 from unittest import mock
@@ -11,6 +15,7 @@ if VERIFY_DIR not in sys.path:
 
 import guru_contract
 import guru_delivery_policy as policy
+import guru_gate
 import guru_supervise
 
 
@@ -26,6 +31,74 @@ class DeliveryPolicyTests(unittest.TestCase):
             capability_report=policy.managed_capability_report(parallel=True),
         )
 
+    def make_lite_task(
+        self,
+        root: Path,
+        *,
+        status: str = "planning",
+        brainstorm_required: bool = False,
+    ) -> Path:
+        task_dir = root / "07-15-lite-runtime"
+        task_dir.mkdir()
+        contract = guru_contract.default_contract(
+            guru_contract.ROUTE_LITE_TASK,
+            guru_contract.RISK_MEDIUM,
+            created_by="test",
+        )
+        contract.update({
+            "execution_policy": {
+                "scope_fingerprint": "d" * 64,
+                "selection_generation": 1,
+                "brainstorm_required": brainstorm_required,
+            },
+            "commit_policy": {
+                "require_in_progress": True,
+                "require_clean_implementation_review": False,
+                "allow_task_artifacts_only": False,
+            },
+        })
+        contract["scope"]["allowed_paths"] = ["lib/ui/button.dart"]
+        contract["scope"]["max_files"] = 1
+        (task_dir / "prd.md").write_text("# Requirement\n\nAccepted local behavior.\n", encoding="utf-8")
+        (task_dir / "implement.jsonl").write_text("", encoding="utf-8")
+        (task_dir / "check.jsonl").write_text("", encoding="utf-8")
+        (task_dir / "gate-contract.json").write_text(json.dumps(contract), encoding="utf-8")
+        task_data = {"id": "lite-runtime", "status": status, "guru_chain": "light"}
+        (task_dir / "task.json").write_text(json.dumps(task_data), encoding="utf-8")
+        task_data["guru_gates"] = {
+            "requirements": {
+                "confirmed_by": "user",
+                "artifact_digest": guru_gate.requirements_confirmation_digest(str(task_dir)),
+            }
+        }
+        (task_dir / "task.json").write_text(json.dumps(task_data), encoding="utf-8")
+        return task_dir
+
+    def make_full_task(self, root: Path) -> Path:
+        task_dir = root / "07-15-full-runtime"
+        task_dir.mkdir()
+        contract = guru_contract.default_contract(
+            guru_contract.ROUTE_FULL_CHAIN,
+            guru_contract.RISK_HIGH,
+            created_by="test",
+        )
+        (task_dir / "gate-contract.json").write_text(json.dumps(contract), encoding="utf-8")
+        (task_dir / "prd.md").write_text("# Requirements\n\nConfirmed behavior.\n", encoding="utf-8")
+        (task_dir / "design.md").write_text("# Overview\n\n# Detail\n\nIrreversible decisions.\n", encoding="utf-8")
+        (task_dir / "implement.md").write_text("# Plan\n\nImplementation and tests.\n", encoding="utf-8")
+        (task_dir / "task.json").write_text(json.dumps({
+            "id": "full-runtime",
+            "status": "planning",
+            "guru_chain": "light",
+        }), encoding="utf-8")
+        risk_dir = task_dir / "risk-packets"
+        risk_dir.mkdir()
+        (risk_dir / "delivery-control.json").write_text(
+            json.dumps({"risk": "high", "decisions": ["D1"]}),
+            encoding="utf-8",
+        )
+        return task_dir
+
     def test_low_copy_change_without_commit_enters_small_inline(self):
         selection = self.select(
             description="fix typo in button label text",
@@ -37,34 +110,610 @@ class DeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(selection.required_gate_ids, ("deterministic_final",))
         self.assertEqual(selection.topology, "host_inline")
 
-    def test_low_commit_enters_micro_with_scope(self):
-        selection = self.select(
+    def test_low_mechanical_change_stays_small_when_commit_is_requested(self):
+        without_commit = self.select(
+            description="fix typo in button label text",
+            affected_paths=(PurePosixPath("lib/ui/title.dart"),),
+            commit_requested=False,
+        )
+        with_commit = self.select(
             description="fix typo in button label text",
             affected_paths=(PurePosixPath("lib/ui/title.dart"),),
             commit_requested=True,
         )
+        self.assertEqual(without_commit.execution_route, guru_contract.ROUTE_SMALL_INLINE)
+        self.assertEqual(with_commit.execution_route, guru_contract.ROUTE_SMALL_INLINE)
+        self.assertEqual(with_commit.scope_fingerprint, without_commit.scope_fingerprint)
+
+    def test_clear_local_reversible_focused_behavior_change_enters_micro(self):
+        selection = self.select(
+            description="change local button behavior",
+            affected_paths=(PurePosixPath("lib/ui/button.dart"),),
+            requirements_clear=True,
+            coupling="local",
+            reversible=True,
+            verification_scope="focused",
+            commit_requested=True,
+        )
         self.assertEqual(selection.execution_route, guru_contract.ROUTE_MICRO_TASK)
         self.assertIn("gate_contract", selection.required_artifacts)
-        self.assertEqual(selection.resolved_budget["model_cycles"], 8)
-
-    def test_commit_without_concrete_low_risk_scope_routes_lite_not_micro(self):
-        selection = self.select(description="fix typo", commit_requested=True)
-        self.assertEqual(selection.execution_route, guru_contract.ROUTE_LITE_TASK)
-        self.assertEqual(selection.required_gate_ids, ("deterministic_final",))
-
-    def test_lite_enters_implementation_without_precode_gate_confirmation_or_worker(self):
-        selection = self.select(description="change local button behavior", commit_requested=True)
-        self.assertEqual(selection.execution_route, guru_contract.ROUTE_LITE_TASK)
-        self.assertEqual(selection.required_gate_ids, ("deterministic_final",))
-        self.assertEqual(selection.required_artifacts, ("scoped_diff", "deterministic_check"))
-        self.assertLessEqual(selection.resolved_budget["first_value_deadline_seconds"], 300)
         self.assertEqual(selection.resolved_budget["confirmation_batches"], 0)
         self.assertEqual(selection.resolved_budget["live_workers"], 0)
         self.assertEqual(selection.resolved_budget["started_workers"], 0)
         self.assertEqual(selection.topology, "host_inline")
         self.assertEqual(selection.enforcement_mode, "advisory")
         self.assertIsNone(selection.capability_probe_digest)
+        self.assertEqual(self.policy["topology_rules"]["micro_task"], ["host_inline"])
+
+    def test_commit_without_concrete_low_risk_scope_routes_lite_not_micro(self):
+        selection = self.select(description="fix typo", commit_requested=True)
+        self.assertEqual(selection.execution_route, guru_contract.ROUTE_LITE_TASK)
+        self.assertEqual(selection.required_gate_ids, ("requirements_confirmed", "deterministic_final"))
+
+    def test_lite_requires_one_prewrite_requirements_confirmation_and_zero_workers(self):
+        selection = self.select(
+            description="change local button behavior",
+            requirements_clear=False,
+            commit_requested=True,
+        )
+        self.assertEqual(selection.execution_route, guru_contract.ROUTE_LITE_TASK)
+        self.assertEqual(selection.required_gate_ids, ("requirements_confirmed", "deterministic_final"))
+        self.assertEqual(selection.required_artifacts, (
+            "task_json", "prd", "implement_context", "check_context", "gate_contract",
+            "task_evidence", "scoped_diff", "deterministic_check",
+        ))
+        self.assertLessEqual(selection.resolved_budget["first_value_deadline_seconds"], 300)
+        self.assertEqual(selection.resolved_budget["confirmation_batches"], 1)
+        self.assertEqual(selection.resolved_budget["live_workers"], 0)
+        self.assertEqual(selection.resolved_budget["started_workers"], 0)
+        self.assertEqual(selection.topology, "host_inline")
+        self.assertEqual(selection.enforcement_mode, "advisory")
+        self.assertIsNone(selection.capability_probe_digest)
         self.assertEqual(selection.route_acceptance["metrics_enforcement"], "advisory")
+        self.assertTrue(selection.route_acceptance["brainstorm_required"])
+
+    def test_explicitly_ambiguous_text_requires_lite_brainstorm_across_risk_keywords(self):
+        for description, paths in (
+            ("fix unclear behavior", ()),
+            ("fix unclear typo text", (PurePosixPath("lib/ui/title.dart"),)),
+            ("修复需求不明确的行为", ()),
+        ):
+            with self.subTest(description=description):
+                selection = self.select(description=description, affected_paths=paths)
+                self.assertEqual(selection.execution_route, guru_contract.ROUTE_LITE_TASK)
+                self.assertTrue(selection.route_acceptance["brainstorm_required"])
+                self.assertEqual(selection.route_acceptance["confirmation_limit"], 1)
+                self.assertEqual(selection.resolved_budget["started_workers"], 0)
+
+        high = self.select(description="fix unclear workflow behavior")
+        self.assertEqual(high.execution_route, guru_contract.ROUTE_FULL_CHAIN)
+        self.assertEqual(high.risk, guru_contract.RISK_HIGH)
+
+    def test_keyword_boundaries_and_mixed_risk_never_hide_behavior_changes_as_small(self):
+        context_behavior = self.select(
+            description="fix context behavior",
+            affected_paths=(PurePosixPath("lib/ui/context.dart"),),
+        )
+        mixed = self.select(
+            description="update text behavior contract",
+            affected_paths=(PurePosixPath("lib/ui/title.dart"),),
+        )
+        self.assertEqual(context_behavior.execution_route, guru_contract.ROUTE_LITE_TASK)
+        self.assertEqual(mixed.execution_route, guru_contract.ROUTE_LITE_TASK)
+        self.assertFalse(context_behavior.brainstorm_required)
+
+    def test_official_project_resolver_reuses_exact_cache_and_invalidates_target_drift(self):
+        request = policy.IntakeRequest(
+            description="change local button behavior",
+            affected_paths=(PurePosixPath("lib/ui/button.dart"),),
+        )
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(
+                policy.guru_review_record,
+                "target_snapshot_digest",
+                return_value="a" * 64,
+            ),
+            mock.patch.object(
+                policy,
+                "project_docs_code_test_digest",
+                return_value="b" * 64,
+            ),
+        ):
+            root = Path(tmp)
+            cold = policy.resolve_project_delivery_selection(
+                request,
+                str(root),
+                self.policy,
+                capability_report=policy.managed_capability_report(),
+            )
+            self.assertFalse(cold.evidence_reused)
+            cache_dir = root / ".trellis" / "tasks" / "prior"
+            cache_dir.mkdir(parents=True)
+            (cache_dir / "verification-evidence.jsonl").write_text(json.dumps({
+                "kind": "delivery_evidence_cache",
+                "outcome": "passed",
+                "evidence_cache_key": cold.evidence_cache_key,
+                "target_digest": "a" * 64,
+                "docs_code_test_digest": "b" * 64,
+            }) + "\n", encoding="utf-8")
+            warm = policy.resolve_project_delivery_selection(
+                request,
+                str(root),
+                self.policy,
+                capability_report=policy.managed_capability_report(),
+            )
+            self.assertTrue(warm.evidence_reused)
+            self.assertEqual(warm.planning_cost_ratio_percent, 70)
+
+            with mock.patch.object(
+                policy.guru_review_record,
+                "target_snapshot_digest",
+                return_value="c" * 64,
+            ):
+                drift = policy.resolve_project_delivery_selection(
+                    request,
+                    str(root),
+                    self.policy,
+                    capability_report=policy.managed_capability_report(),
+                )
+            self.assertFalse(drift.evidence_reused)
+            self.assertEqual(drift.planning_cost_ratio_percent, 100)
+
+    def test_writable_lite_envelope_requires_task_requirements_and_confirmation_bindings(self):
+        selection = self.select(
+            description="change local button behavior",
+            requirements_clear=False,
+        )
+        with self.assertRaisesRegex(policy.DeliveryPolicyError, "task_id"):
+            policy.build_execution_envelope(selection)
+        with self.assertRaisesRegex(policy.DeliveryPolicyError, "requirements_digest"):
+            policy.build_execution_envelope(selection, task_id="task-1")
+        with self.assertRaisesRegex(policy.DeliveryPolicyError, "confirmation attestation"):
+            policy.build_execution_envelope(
+                selection,
+                task_id="task-1",
+                requirements_digest="a" * 64,
+            )
+        envelope = policy.build_execution_envelope(
+            selection,
+            task_id="task-1",
+            requirements_digest="a" * 64,
+            confirmation_attestation_digest="b" * 64,
+        )
+        self.assertTrue(envelope["confirmation_required"])
+        self.assertEqual(envelope["requirements_digest"], "a" * 64)
+        self.assertEqual(envelope["confirmation_attestation_digest"], "b" * 64)
+
+    def test_route_override_and_generation_transition_rules(self):
+        heavier = self.select(
+            description="fix typo in label",
+            affected_paths=(PurePosixPath("lib/ui/title.dart"),),
+            preferred_route="lite_task",
+        )
+        self.assertEqual(heavier.recommended_route, guru_contract.ROUTE_SMALL_INLINE)
+        self.assertEqual(heavier.selected_route, guru_contract.ROUTE_LITE_TASK)
+        self.assertEqual(heavier.selection_source, "user_override")
+
+        eligible_prewrite = self.select(
+            description="change local button behavior",
+            affected_paths=(PurePosixPath("lib/ui/button.dart"),),
+            requirements_clear=True,
+            coupling="local",
+            reversible=True,
+            verification_scope="focused",
+            prior_route="lite_task",
+            prior_selection_generation=3,
+            first_write_started=False,
+        )
+        self.assertEqual(eligible_prewrite.selected_route, guru_contract.ROUTE_MICRO_TASK)
+        self.assertEqual(eligible_prewrite.selection_generation, 4)
+
+        unchanged = self.select(
+            description="change local button behavior",
+            requirements_clear=False,
+            prior_route="lite_task",
+            prior_selection_generation=3,
+        )
+        self.assertEqual(unchanged.selected_route, guru_contract.ROUTE_LITE_TASK)
+        self.assertEqual(unchanged.selection_generation, 3)
+
+        with self.assertRaisesRegex(policy.DeliveryPolicyError, "RouteDowngradeUnproven"):
+            self.select(
+                description="change local button behavior",
+                requirements_clear=False,
+                preferred_route="micro_task",
+            )
+
+    def test_lite_start_requires_standard_task_and_current_confirmation_without_full_gates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = self.make_lite_task(Path(tmp))
+            self.assertEqual(guru_gate._lite_standard_task_problems(str(task_dir)), [])
+            with (
+                mock.patch.object(guru_gate, "check_requirements", return_value=guru_gate.PASS),
+                mock.patch.object(guru_gate, "check_overview", return_value=guru_gate.BLOCK) as overview,
+                mock.patch.object(guru_gate, "check_detail", return_value=guru_gate.BLOCK) as detail,
+            ):
+                self.assertEqual(guru_gate.cmd_check_start(str(task_dir)), guru_gate.PASS)
+            overview.assert_not_called()
+            detail.assert_not_called()
+
+            (task_dir / "check.jsonl").unlink()
+            self.assertIn("check.jsonl", " ".join(guru_gate._lite_standard_task_problems(str(task_dir))))
+
+    def test_lite_brainstorm_evidence_is_required_only_when_intake_marks_it_necessary(self):
+        prd = """# Requirement
+
+## P0 capabilities
+
+### BHV-001 Update local behavior
+
+Given a valid local state
+When the bounded change is applied
+Then the expected behavior is visible
+
+## Failure path
+
+Invalid input leaves state unchanged.
+
+## Acceptance
+
+The focused deterministic check passes.
+
+## Open questions
+
+None.
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = self.make_lite_task(Path(tmp), brainstorm_required=False)
+            (task_dir / "prd.md").write_text(prd, encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(guru_gate.check_requirements(str(task_dir)), guru_gate.PASS)
+
+            contract = json.loads((task_dir / "gate-contract.json").read_text(encoding="utf-8"))
+            contract["execution_policy"]["brainstorm_required"] = True
+            (task_dir / "gate-contract.json").write_text(json.dumps(contract), encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()) as stderr:
+                self.assertEqual(guru_gate.check_requirements(str(task_dir)), guru_gate.BLOCK)
+            self.assertIn("Brainstorm Evidence missing", stderr.getvalue())
+
+    def test_lite_confirmation_stales_when_prd_route_risk_or_scope_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = self.make_lite_task(Path(tmp))
+            task_data = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
+            original = task_data["guru_gates"]["requirements"]["artifact_digest"]
+            self.assertEqual(original, guru_gate.requirements_confirmation_digest(str(task_dir)))
+
+            contract = json.loads((task_dir / "gate-contract.json").read_text(encoding="utf-8"))
+            contract["execution_policy"]["scope_fingerprint"] = "e" * 64
+            (task_dir / "gate-contract.json").write_text(json.dumps(contract), encoding="utf-8")
+            self.assertNotEqual(original, guru_gate.requirements_confirmation_digest(str(task_dir)))
+
+    def test_in_progress_lite_auto_skips_check_implementation_worker_and_full_packet_preflight(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = self.make_lite_task(Path(tmp), status="in_progress")
+            with (
+                mock.patch.object(guru_gate, "check_requirements", return_value=guru_gate.PASS),
+                mock.patch.object(guru_gate, "cmd_check_implementation") as implementation_check,
+                mock.patch.object(guru_gate, "_implementation_packet_preflight_problem") as packet_preflight,
+            ):
+                self.assertEqual(guru_gate.auto(str(task_dir)), guru_gate.PASS)
+            implementation_check.assert_not_called()
+            packet_preflight.assert_not_called()
+        with self.assertRaisesRegex(policy.DeliveryPolicyError, "RouteDowngradeAfterWrite"):
+            self.select(
+                description="change local button behavior",
+                affected_paths=(PurePosixPath("lib/ui/button.dart"),),
+                requirements_clear=True,
+                coupling="local",
+                reversible=True,
+                verification_scope="focused",
+                prior_route="lite_task",
+                prior_selection_generation=3,
+                first_write_started=True,
+            )
+
+    def test_intake_exposes_recommended_selected_and_user_override_routes(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            rc = guru_gate.cmd_intake(None, {
+                "description": "fix typo in label",
+                "paths": ["lib/ui/title.dart"],
+                "commit_requested": True,
+                "preferred_route": "lite_task",
+            })
+        self.assertEqual(rc, guru_gate.PASS)
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["recommended_route"], guru_contract.ROUTE_SMALL_INLINE)
+        self.assertEqual(payload["selected_route"], guru_contract.ROUTE_LITE_TASK)
+        self.assertEqual(payload["selection_source"], "user_override")
+        self.assertEqual(payload["selection_generation"], 1)
+
+    def test_reintake_loads_existing_route_generation_and_write_boundary(self):
+        options = {
+            "description": "change local button behavior",
+            "paths": ["lib/ui/button.dart"],
+            "requirements_clear": True,
+            "coupling": "local",
+            "reversible": True,
+            "verification_scope": "focused",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = self.make_lite_task(Path(tmp), status="planning")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(guru_gate.cmd_intake(str(task_dir), options), guru_gate.PASS)
+            payload = json.loads(output.getvalue())
+            self.assertEqual(payload["selected_route"], guru_contract.ROUTE_MICRO_TASK)
+            self.assertEqual(payload["selection_generation"], 2)
+
+            task_data = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
+            task_data["status"] = "in_progress"
+            (task_dir / "task.json").write_text(json.dumps(task_data), encoding="utf-8")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(guru_gate.cmd_intake(str(task_dir), options), guru_gate.BLOCK)
+            payload = json.loads(output.getvalue())
+            self.assertIn("RouteDowngradeAfterWrite", " ".join(payload["blocking_reasons"]))
+
+            stale = {**options, "prior_route": "micro_task"}
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(guru_gate.cmd_intake(str(task_dir), stale), guru_gate.BLOCK)
+            self.assertIn("conflicts with existing contract route", output.getvalue())
+
+    def test_direct_small_commit_plan_does_not_upgrade_or_ask_again(self):
+        with (
+            mock.patch.object(guru_gate, "_repo_root", return_value="/repo"),
+            mock.patch.object(
+                guru_gate,
+                "_git_staged_paths",
+                return_value=(["lib/ui/title.dart"], ""),
+            ),
+            mock.patch.object(guru_gate, "resolve_task_dir", return_value=None),
+            mock.patch.object(guru_gate.guru_risk, "has_cross_layer_or_storage", return_value=False),
+        ):
+            plan = guru_gate._commit_plan_payload(None)
+        self.assertEqual(plan["route"], "direct_small_inline")
+        self.assertTrue(plan["can_commit_now"])
+        self.assertEqual(plan["blocking_reasons"], [])
+        self.assertEqual(plan["required_user_confirmations"], [])
+
+    def test_lite_commit_plan_uses_current_confirmation_and_scope_without_full_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = self.make_lite_task(Path(tmp), status="in_progress")
+            with (
+                mock.patch.object(guru_gate, "_repo_root", return_value="/repo"),
+                mock.patch.object(
+                    guru_gate,
+                    "_git_staged_paths",
+                    return_value=(["lib/ui/button.dart"], ""),
+                ),
+                mock.patch.object(guru_gate, "resolve_task_dir", return_value=str(task_dir)),
+                mock.patch.object(guru_gate.guru_risk, "has_cross_layer_or_storage", return_value=False),
+                mock.patch.object(guru_gate, "_captured_gate_problem") as captured_gate,
+                mock.patch.object(guru_gate, "_implementation_review_coverage") as review_coverage,
+            ):
+                plan = guru_gate._commit_plan_payload(str(task_dir))
+            captured_gate.assert_not_called()
+            review_coverage.assert_not_called()
+            self.assertFalse(plan["can_commit_now"])
+            self.assertIn("verification evidence missing", " ".join(plan["blocking_reasons"]))
+            self.assertEqual(plan["required_user_confirmations"], [])
+
+            (task_dir / "verification-evidence.jsonl").write_text(json.dumps({
+                "kind": "deterministic_final",
+                "status": "passed",
+                "selection_generation": 1,
+                "scope_fingerprint": "d" * 64,
+                "target_paths": ["lib/ui/button.dart"],
+                "target_digest": "a" * 64,
+                "docs_code_test_consistency": "passed",
+                "spec_sync": "not_required",
+            }) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(guru_gate, "_repo_root", return_value="/repo"),
+                mock.patch.object(
+                    guru_gate,
+                    "_git_staged_paths",
+                    return_value=(["lib/ui/button.dart"], ""),
+                ),
+                mock.patch.object(guru_gate, "resolve_task_dir", return_value=str(task_dir)),
+                mock.patch.object(guru_gate.guru_risk, "has_cross_layer_or_storage", return_value=False),
+                mock.patch.object(guru_gate, "_captured_gate_problem") as captured_gate,
+                mock.patch.object(guru_gate, "_implementation_review_coverage") as review_coverage,
+                mock.patch.object(
+                    guru_gate.guru_review_record,
+                    "target_snapshot_digest",
+                    return_value="a" * 64,
+                ),
+            ):
+                plan = guru_gate._commit_plan_payload(str(task_dir))
+            captured_gate.assert_not_called()
+            review_coverage.assert_not_called()
+            self.assertTrue(plan["can_commit_now"])
+            self.assertEqual(plan["blocking_reasons"], [])
+            self.assertEqual(plan["required_user_confirmations"], [])
+            self.assertEqual(plan["allowed_stage_paths"], ["lib/ui/button.dart"])
+            self.assertEqual(plan["review_coverage"]["source"], "not-required-for-lite_task")
+            self.assertEqual(plan["review_coverage"]["missing_review_commands"], [])
+
+            with (
+                mock.patch.object(guru_gate, "_repo_root", return_value="/repo"),
+                mock.patch.object(
+                    guru_gate,
+                    "_git_staged_paths",
+                    return_value=(["lib/ui/other.dart"], ""),
+                ),
+                mock.patch.object(guru_gate, "resolve_task_dir", return_value=str(task_dir)),
+                mock.patch.object(guru_gate.guru_risk, "has_cross_layer_or_storage", return_value=False),
+                mock.patch.object(guru_gate, "_captured_gate_problem") as captured_gate,
+                mock.patch.object(guru_gate, "_implementation_review_coverage") as review_coverage,
+            ):
+                blocked = guru_gate._commit_plan_payload(str(task_dir))
+            captured_gate.assert_not_called()
+            review_coverage.assert_not_called()
+            self.assertFalse(blocked["can_commit_now"])
+            self.assertIn("outside gate contract scope", " ".join(blocked["blocking_reasons"]))
+
+    def test_lite_commit_success_records_reusable_exact_evidence_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = self.make_lite_task(Path(tmp), status="in_progress")
+            contract_path = task_dir / "gate-contract.json"
+            contract = json.loads(contract_path.read_text(encoding="utf-8"))
+            contract["execution_policy"].update({
+                "policy_version": self.policy["policy_version"],
+                "intent": "implementation",
+                "route": guru_contract.ROUTE_LITE_TASK,
+            })
+            contract_path.write_text(json.dumps(contract), encoding="utf-8")
+            (task_dir / "verification-evidence.jsonl").write_text(json.dumps({
+                "kind": "deterministic_final",
+                "status": "passed",
+                "selection_generation": 1,
+                "scope_fingerprint": "d" * 64,
+                "target_paths": ["lib/ui/button.dart"],
+                "target_digest": "a" * 64,
+                "docs_code_test_consistency": "passed",
+                "spec_sync": "not_required",
+            }) + "\n", encoding="utf-8")
+            with (
+                mock.patch.object(guru_gate, "resolve_task_dir", return_value=str(task_dir)),
+                mock.patch.object(
+                    guru_gate.guru_delivery_policy,
+                    "project_docs_code_test_digest",
+                    return_value="b" * 64,
+                ),
+            ):
+                cache_key, error = guru_gate._record_lite_delivery_evidence_cache(
+                    str(task_dir),
+                    str(Path(tmp)),
+                )
+            self.assertEqual(error, "")
+            self.assertRegex(cache_key, r"^[0-9a-f]{64}$")
+            rows = [
+                json.loads(line)
+                for line in (task_dir / "verification-evidence.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(rows[-1]["kind"], "delivery_evidence_cache")
+            self.assertEqual(rows[-1]["target_digest"], "a" * 64)
+            self.assertEqual(rows[-1]["docs_code_test_digest"], "b" * 64)
+
+    def test_full_commit_plan_still_requires_implementation_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = self.make_full_task(Path(tmp))
+            task_data = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
+            task_data["status"] = "in_progress"
+            (task_dir / "task.json").write_text(json.dumps(task_data), encoding="utf-8")
+            coverage = guru_gate._empty_review_coverage()
+            with (
+                mock.patch.object(guru_gate, "_repo_root", return_value="/repo"),
+                mock.patch.object(
+                    guru_gate,
+                    "_git_staged_paths",
+                    return_value=(["lib/ui/button.dart"], ""),
+                ),
+                mock.patch.object(guru_gate, "resolve_task_dir", return_value=str(task_dir)),
+                mock.patch.object(guru_gate, "_captured_gate_problem", return_value=""),
+                mock.patch.object(
+                    guru_gate,
+                    "_implementation_review_coverage",
+                    return_value=(coverage, "implementation review record missing", True),
+                ) as review_coverage,
+            ):
+                plan = guru_gate._commit_plan_payload(str(task_dir))
+            review_coverage.assert_called_once()
+            self.assertFalse(plan["can_commit_now"])
+            self.assertIn("implementation review record missing", plan["blocking_reasons"])
+
+    def test_auto_uses_lite_route_instead_of_full_planning_gates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = self.make_lite_task(Path(tmp))
+            with (
+                mock.patch.object(guru_gate, "check_requirements", return_value=guru_gate.PASS),
+                mock.patch.object(guru_gate, "check_overview", return_value=guru_gate.BLOCK) as overview,
+                mock.patch.object(guru_gate, "check_detail", return_value=guru_gate.BLOCK) as detail,
+                mock.patch.object(guru_gate, "check_implement", return_value=guru_gate.BLOCK) as implement,
+            ):
+                self.assertEqual(guru_gate.auto(str(task_dir)), guru_gate.PASS)
+            overview.assert_not_called()
+            detail.assert_not_called()
+            implement.assert_not_called()
+
+    def test_lite_status_reports_one_confirmation_and_no_full_reviews(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = self.make_lite_task(Path(tmp))
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(guru_gate.cmd_status(str(task_dir)), guru_gate.PASS)
+            rendered = output.getvalue()
+            self.assertIn("Brainstorm Evidence — not required", rendered)
+            self.assertIn("Lite requirements confirmation", rendered)
+            self.assertIn("Overview/Detail reviews — not required", rendered)
+            self.assertNotIn("confirm detail", rendered)
+
+    def test_gate_usage_is_route_aware_for_lite_and_full_confirmation_and_review(self):
+        usage = guru_gate.__doc__ or ""
+        self.assertIn("Lite 只确认 requirements 一次", usage)
+        self.assertIn("Full v2 一次批量确认", usage)
+        self.assertIn("Lite 不需要 Worker", usage)
+        self.assertIn("Lite 校验标准任务/当前确认/in_progress/合同 scope", usage)
+        self.assertNotIn("提交前置：check-implementation + staged scope + implementation review clean", usage)
+
+    def test_full_v2_records_one_current_batch_for_requirements_risk_and_design(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = self.make_full_task(Path(tmp))
+            self.assertEqual(
+                guru_gate._record_full_confirmation_batch(
+                    str(task_dir),
+                    "agent",
+                    user_quote="已确认",
+                ),
+                guru_gate.PASS,
+            )
+            task_data = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
+            requirements = task_data["guru_gates"]["requirements"]
+            detail = task_data["guru_gates"]["detail"]
+            self.assertEqual(requirements["confirmation_batch_digest"], detail["confirmation_batch_digest"])
+            self.assertEqual(requirements["confirmation_batch_id"], detail["confirmation_batch_id"])
+            self.assertEqual(guru_gate._full_confirmation_batch_problem(str(task_dir)), "")
+            with (
+                mock.patch.object(guru_gate, "check_requirements", return_value=guru_gate.PASS),
+                mock.patch.object(guru_gate, "check_overview", return_value=guru_gate.PASS),
+                mock.patch.object(guru_gate, "check_detail", return_value=guru_gate.PASS),
+                mock.patch.object(guru_gate, "_block_requirements_review", return_value=guru_gate.PASS),
+                mock.patch.object(guru_gate, "_review_state", return_value={"ready": True}),
+            ):
+                self.assertEqual(guru_gate.cmd_check_start(str(task_dir)), guru_gate.PASS)
+
+            risk_path = task_dir / "risk-packets" / "delivery-control.json"
+            risk_path.write_text(json.dumps({"risk": "high", "decisions": ["D1", "D2"]}), encoding="utf-8")
+            self.assertIn("stale", guru_gate._full_confirmation_batch_problem(str(task_dir)).lower())
+            risk_path.write_text(json.dumps({"risk": "high", "decisions": ["D1"]}), encoding="utf-8")
+            design_path = task_dir / "design.md"
+            design_path.write_text(design_path.read_text(encoding="utf-8") + "\nChanged design.\n", encoding="utf-8")
+            self.assertIn("stale", guru_gate._full_confirmation_batch_problem(str(task_dir)).lower())
+
+    def test_init_contract_persists_lite_selection_runtime_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = Path(tmp) / "07-15-init-lite"
+            task_dir.mkdir()
+            (task_dir / "task.json").write_text(
+                json.dumps({"id": "init-lite", "status": "planning"}),
+                encoding="utf-8",
+            )
+            self.assertEqual(guru_gate.cmd_init_contract(str(task_dir), {
+                "route": "lite_task",
+                "risk": "medium",
+                "allowed_paths": ["lib/ui/button.dart"],
+            }), guru_gate.PASS)
+            contract = json.loads((task_dir / "gate-contract.json").read_text(encoding="utf-8"))
+            execution = contract["execution_policy"]
+            self.assertEqual(execution["recommended_route"], guru_contract.ROUTE_LITE_TASK)
+            self.assertEqual(execution["selected_route"], guru_contract.ROUTE_LITE_TASK)
+            self.assertEqual(execution["selection_generation"], 1)
+            self.assertRegex(execution["scope_fingerprint"], r"^[0-9a-f]{64}$")
+            self.assertFalse(contract["commit_policy"]["require_clean_implementation_review"])
 
     def test_high_risk_preference_cannot_downgrade(self):
         selection = self.select(
@@ -153,8 +802,12 @@ class DeliveryPolicyTests(unittest.TestCase):
 
     def test_lower_route_rejects_full_only_envelope_fields(self):
         selection = self.select(
-            description="fix typo in button label text",
-            affected_paths=(PurePosixPath("lib/ui/title.dart"),),
+            description="change local button behavior",
+            affected_paths=(PurePosixPath("lib/ui/button.dart"),),
+            requirements_clear=True,
+            coupling="local",
+            reversible=True,
+            verification_scope="focused",
             commit_requested=True,
         )
         with self.assertRaisesRegex(policy.DeliveryPolicyError, "micro_task"):
@@ -166,6 +819,28 @@ class DeliveryPolicyTests(unittest.TestCase):
         broken["route_profiles"]["lite_task"] = dict(broken["route_profiles"]["lite_task"])
         del broken["route_profiles"]["lite_task"]["tool_calls"]
         with self.assertRaisesRegex(policy.DeliveryPolicyError, "missing budgets"):
+            policy.validate_policy(broken)
+
+    def test_policy_schema_rejects_worker_topology_for_zero_worker_routes(self):
+        self.assertEqual(self.policy["topology_rules"]["micro_task"], ["host_inline"])
+        self.assertEqual(self.policy["topology_rules"]["lite_task"], ["host_inline"])
+        broken = json.loads(json.dumps(self.policy))
+        broken["topology_rules"]["micro_task"].append("managed_single")
+        with self.assertRaisesRegex(policy.DeliveryPolicyError, "micro_task topology"):
+            policy.validate_policy(broken)
+
+    def test_risk_rules_use_difficulty_evidence_not_commit_intent(self):
+        rules = self.policy["risk_rules"]
+        self.assertNotIn("low_commit_route", rules)
+        self.assertNotIn("low_no_commit_route", rules)
+        self.assertEqual(rules["mechanical_change_route"], guru_contract.ROUTE_SMALL_INLINE)
+        self.assertEqual(rules["bounded_local_change_route"], guru_contract.ROUTE_MICRO_TASK)
+        broken = json.loads(json.dumps(self.policy))
+        broken["risk_rules"] = {
+            "low_commit_route": guru_contract.ROUTE_MICRO_TASK,
+            "low_no_commit_route": guru_contract.ROUTE_SMALL_INLINE,
+        }
+        with self.assertRaisesRegex(policy.DeliveryPolicyError, "commit intent"):
             policy.validate_policy(broken)
 
     def test_capability_never_overclaims_full_without_runner(self):
@@ -205,30 +880,46 @@ class DeliveryPolicyTests(unittest.TestCase):
 
     def test_micro_scope_binds_positive_max_files(self):
         selection = self.select(
-            description="fix typo",
+            description="change local button behavior",
             affected_paths=(PurePosixPath("lib/a.dart"), PurePosixPath("lib/b.dart")),
+            requirements_clear=True,
+            coupling="local",
+            reversible=True,
+            verification_scope="focused",
             commit_requested=True,
             max_files=2,
         )
         self.assertEqual(selection.scope_max_files, 2)
         with self.assertRaisesRegex(policy.DeliveryPolicyError, "max_files"):
             self.select(
-                description="fix typo",
+                description="change local button behavior",
                 affected_paths=(PurePosixPath("lib/a.dart"), PurePosixPath("lib/b.dart")),
+                requirements_clear=True,
+                coupling="local",
+                reversible=True,
+                verification_scope="focused",
                 commit_requested=True,
                 max_files=1,
             )
 
     def test_contract_patch_carries_budget_and_generation_inputs(self):
         selection = self.select(
-            description="fix typo in button label text",
-            affected_paths=(PurePosixPath("lib/ui/title.dart"),),
+            description="change local button behavior",
+            affected_paths=(PurePosixPath("lib/ui/button.dart"),),
+            requirements_clear=True,
+            coupling="local",
+            reversible=True,
+            verification_scope="focused",
             commit_requested=True,
         )
         patch = policy.selection_to_contract_patch(selection)
         self.assertEqual(patch["execution_policy"]["route"], guru_contract.ROUTE_MICRO_TASK)
         self.assertEqual(patch["execution_policy"]["budget"]["tool_calls"], 32)
         self.assertTrue(patch["execution_policy"]["scope_fingerprint"])
+        self.assertEqual(patch["execution_policy"]["recommended_route"], guru_contract.ROUTE_MICRO_TASK)
+        self.assertEqual(patch["execution_policy"]["selected_route"], guru_contract.ROUTE_MICRO_TASK)
+        self.assertEqual(patch["execution_policy"]["selection_source"], "recommended")
+        self.assertEqual(patch["execution_policy"]["selection_generation"], 1)
 
     def test_exact_digest_evidence_reuse_reduces_cost_and_drift_invalidates(self):
         request = policy.IntakeRequest(description="change local button behavior", commit_requested=True)
@@ -357,6 +1048,7 @@ class DeliveryPolicyTests(unittest.TestCase):
             description="change local button behavior",
             intent_hint="implementation",
             affected_paths=(PurePosixPath("lib/ui/button.dart"),),
+            requirements_clear=False,
             commit_requested=True,
         )
         expanded = self.select(
@@ -366,7 +1058,7 @@ class DeliveryPolicyTests(unittest.TestCase):
             commit_requested=True,
         )
         self.assertEqual(lite.execution_route, guru_contract.ROUTE_LITE_TASK)
-        self.assertEqual(lite.resolved_budget["confirmation_batches"], 0)
+        self.assertEqual(lite.resolved_budget["confirmation_batches"], 1)
         self.assertEqual(expanded.execution_route, guru_contract.ROUTE_FULL_CHAIN)
         self.assertEqual(expanded.risk, guru_contract.RISK_HIGH)
         self.assertIn("risk_packet", expanded.required_gate_ids)

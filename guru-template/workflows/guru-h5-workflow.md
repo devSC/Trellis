@@ -10,7 +10,7 @@
 
 ## Core Principles
 
-1. **Plan before code** — Full/high-risk 必须先完成 requirements、overview/detail 与 detail 确认，再通过 `guru_task.py start` 的 digest-bound guarded activation；Lite 保持 host-inline，不继承 Full planning Gate
+1. **Plan before code** — Full/high-risk 必须先完成 current requirements/risk/design evidence 与一次批量确认，再通过 `guru_task.py start` 的 digest-bound guarded activation；Lite 使用官方标准 task、task-local compact `prd.md` 与一次需求确认，不继承 Full 的 Overview/Detail planning Gate
 2. **Specs injected, not remembered** — 规则经 jsonl/hook 注入，不靠记忆
 3. **Persist everything** — 研究、决策、trace 全部落文件
 4. **Gate 不过不进下一阶段** — 缺陷只能回上游阶段修，禁止下游补造
@@ -29,21 +29,26 @@
 - 任何阶段开始前必须通过 `.trellis/spec/conventions/project-conventions.md` 的校验清单 C1~C5（内容源 / 状态管理 / UI 组件库 / 样式方案 / 测试 / lint / 数据库 / 认证 / 图像优化 / 部署 / 路由模式 等槽位，缺失或未填 = 硬前置失败，先补约定）。
 - **H5 三条最高禁令（违反即任务失败）**：① 禁止违反分层依赖律的 import（`data-access`/`domain-type` 不得依赖 `server-component`；`ui-component` 不得反向依赖 `client-component`）② 禁止 `client-component` 直接获取私有数据 / 读取 secret / 直连 DB（私有数据获取只在 `server-component`/`data-access`/`server-action`）③ 禁止全局样式污染（样式一律 CSS Modules / Tailwind 隔离，禁裸全局 CSS 覆盖第三方/跨组件）。
 - **golden-path 锁定硬规则**：TS strict（`tsconfig.json` `"strict": true`，与 blog 示例 `"strict": false` 相反——示例是简化基线，**生产必须开 strict**）；server-first，`'use client'` 最小化（仅需交互处下沉到叶子组件）；私有数据获取/secret 只在 server 侧；route 段约定齐备（`page/layout/loading/error.tsx`）；`metadata`/SEO 标准化（`export const metadata` 或 `generateMetadata`）；样式隔离；错误边界（`error.tsx`）；server→client props 必须可序列化。
-- **Guru Gate 机制**：planning 只保留 `requirements` 与 `detail` 两个人工确认；`overview` / `detail` 的设计 review 证据写入 `task.json.guru_gates.review_runs`，完整模型见 `.trellis/spec/harness/gate/gate-confirmation-model.md`。通道按 config `guru.gate_mode`（**本节是通道唯一主定义**）：
-  - `requirements`：结构 Gate 通过后按 route 选择默认 review。`full_chain` 且 `guru.supervision.adversarial_enabled=true` 时运行 `python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements <task_dir>` 做 opposite-provider 需求 review；`full_chain` 且配置为 false 时不默认 spawn adversarial worker，但仍要求当前 digest clean/current requirements review；`lite_task` 不进入该 Full requirements review/confirm path；`micro_task` / `small_inline` 默认不做 task-local requirements adversarial review（若后续需要 commit，先创建/路由有效 contract）。`route_class=REQ_BLOCKER` 回需求修订并使下游 overview/detail 证据在需求 digest 变化后重跑，`review_result=clean/requirements-ready` 后才停下等待用户运行 `guru_gate.py confirm requirements <task_dir>`。requirements review 不使用 review-evidence Gate、不写 review_runs；`confirm requirements` / `check-start` 必须硬要求当前 digest clean/current requirements review，missing/deferred/blocked/stale 不得人工越过。需求发现阶段内置 Domain Grill，不再要求 post-draft grill Gate。
-  - `overview`：结构 Gate 通过 + 当前 digest 下两个不同 `run_id` 的 clean review（默认至少一条 reviewer 含 `adversarial`；若 `guru.supervision.adversarial_enabled=false`，只要求双 clean）后自动通过；`confirm overview` 必须失败。
-  - `detail`：结构 Gate 通过 + 当前 digest 下两个不同 `run_id` 的 clean review（默认至少一条 reviewer 含 `adversarial`；若 `guru.supervision.adversarial_enabled=false`，只要求双 clean）后，用户运行 `guru_gate.py confirm detail <task_dir>`。
-  - 配置 `guru.supervision.adversarial_enabled: false` 可临时关闭 `--adversarial` 的 opposite-provider worker；gate 会动态读取该配置：requirements 不再强制 opposite-provider adversarial clean，overview/detail 不再要求 adversarial reviewer，但仍要求当前 digest、双 clean review、用户确认以及没有 blocked/medium+ 当前证据。
-  - route-aware policy 必须匹配 delivery policy：`small_inline`/`micro_task` 不继承 Full planning review；`lite_task` 使用 compact intake + host-inline implementation，代码前不运行 requirements/Overview/Detail review Gate，只在代码后运行 `deterministic_final`；`full_chain` / `risk=unknown` / 缺失或非法 contract 才保持 strict planning/review 路径。Lite 若出现 high-risk 或 scope expansion，先重新 intake 并提升为 Full，不得在 Lite 内补跑 Full Gate。
-  - **strict（默认）**：用户本人在交互式终端运行 `python3 .trellis/scripts/guru/guru_gate.py confirm requirements|detail`；agent 经工具运行因无 TTY 被拒。
-  - **soft**：用户在对话中明确确认后，agent 运行 `guru_gate.py confirm requirements|detail --via-agent --user-quote "<用户确认原话>"` 代跑（`--user-quote` 必填，留痕标注 soft/agent + 用户原话）；**未获用户本轮明确确认不得执行**。
+- **Guru Gate 机制**：Small/Micro/Lite/Full 的确认预算固定为 `0/0/1/1 batch`。Lite 的一次确认绑定 task-local `prd.md` digest、route、risk 与 `scope_fingerprint`；Full 在实现 Worker 前把 current requirements、critical/high risk 与关键不可逆设计决定合并为一批确认。`overview` / `detail` review 证据写入 `task.json.guru_gates.review_runs`，完整模型见 `.trellis/spec/harness/gate/gate-confirmation-model.md`。通道按 config `guru.gate_mode`（**本节是通道唯一主定义**）：
+  - `requirements`：Full requirements review 只产出 current `requirements-ready` evidence，不单独请求用户确认；它与 current critical/high risk、关键不可逆设计决定一起进入实现前唯一确认批次。Lite 不进入 Full requirements review，而是对 task-local compact `prd.md` 做一次 digest-bound 确认。missing/deferred/blocked/stale 不得进入确认。
+  - `overview`：结构 Gate 通过 + 当前 digest 下两个不同 `run_id` 的 Codex clean review 后自动通过；不得运行 opposite-provider adversarial worker；`confirm overview` 必须失败。
+  - `detail`：结构 Gate通过 + 当前 digest 下两个不同 `run_id` 的 clean review 后，把 current requirements/risk/design 作为一批请求用户确认；不得先做 requirements confirm 再做 detail confirm。
+  - Custom 默认 `guru.supervision.adversarial_enabled: false`；这只删除 opposite-provider 前置，当前 digest、双 Codex clean、用户确认以及 blocked/medium+ finding 约束全部保留。
+  - route-aware policy 必须匹配 delivery policy：`small_inline`/`micro_task` 不继承 Full planning review；`lite_task` 必须由官方 `task.py create` 创建标准 Trellis task，先查 repo evidence，仅对未解决的产品/范围/失败路径/验收歧义运行 bounded Brainstorm，在 task-local compact `prd.md` 当前 digest 获得一次确认后自动 start、host-inline implementation 与 `deterministic_final`，Worker 0、无 Overview/Detail planning review；`full_chain` / `risk=unknown-high` / 缺失或非法 contract 才保持 strict planning/review 路径。Lite 若出现 high-risk 或 scope expansion，在下一次写入前提升为 Full。
+  - **strict（默认）**：用户本人通过已安装的 route-aware confirmation 入口记录当前 Lite requirements batch 或 Full requirements/risk/design batch；每个 selection generation 最多一批。
+  - **soft**：用户在对话中明确确认后，agent 用 `--via-agent --user-quote "<用户确认原话>"` 记录同一批次；confirmation digest、route、risk、`scope_fingerprint` 必须 current。
   - 进度用 `guru_gate.py status <task_dir>` 查；Full/high-risk 以 `guru_gate.py check-start <task_dir>` 作为 guarded activation 前复查。
   - `check-start` 成功只产生 `START_READY`：Full/high-risk 下一步仅可运行已安装的 `python3 .trellis/scripts/guru/guru_task.py start ...` 并传入当前 gate/slice/risk/envelope/attestation digests；不得把 direct `task.py start` 当作 Full 正常入口。实现/质检 worker 另由 `check-implementation` 要求 `task.json.status == in_progress`，提交另由 `check-commit` 校验 staged scope 与 implementation review。
   - Full 在 detail review/confirm 前必须把按 slice 分组的完整 required critical/high decision universe 写入 `implement.md` 的唯一 `GURU:RISK_DECISION_INVENTORY` JSON fence；精确 schema、resolution evidence 和 Start Guard 重建规则只以 gate SSOT 为准。缺 inventory 或 unresolved 集合非空时不得启动。
 
 ### Planning Artifacts（guru 五阶段语义，双轨制）
 
-**判轨**：task.json `guru_chain`（创建时 after_create 默认 `full`）。**full=完整五阶段链**（核心玩法/付费/广告/存档/权限/数据采集/跨层 feature/新增 route 段）；**light=轻量链**（单层小改且用户同意后显式降级，如仅文案、仅一个 `ui-component`、仅一处 `client-component` 微调）。
+**判轨**：route 难度由需求清晰度、风险、耦合、可逆性与验证成本决定，commit intent 只是交付动作。Agent 自动推荐最低合法 route；更重 override 直接允许，更轻 override 必须满足目标 eligibility；High-risk/unknown-high 不得降级。首次仓库写入前可依据证据降级，首次写入后只允许升级。`gate-contract.json` 记录 selected/recommended route、`selection_source`、单调 `selection_generation` 与 `scope_fingerprint`；`guru_chain` 只保留产物兼容信息。
+
+- `small_inline`：机械、明确、低风险且不改变行为合同；默认无完整 task、确认 0。
+- `micro_task`：明确、低风险、路径有界的局部行为改变；最小 task contract、确认 0、focused check。
+- `lite_task`：官方标准 task、task-local compact `prd.md`、repo evidence first、必要时 bounded Brainstorm、一次 digest-bound 需求确认、Worker 0、无 Overview/Detail planning review。
+- `full_chain`：current requirements/risk/design evidence、一批确认、guarded activation 与 managed implementation。
 
 - `prd.md` — **需求阶段产物**：行为规格（Given/When/Then）、核心能力清单（P0/P1）、失败路径、验收场景、未决问题。不含技术设计。full 链另有**正式需求包**（requirement-writing/review，项目 docs 需求目录），prd.md 为其行为规格抽取层。
 - 设计产物按链型分轨：
@@ -100,16 +105,16 @@ Phase 3: Finish  → 验证（tsc --noEmit / next build / eslint）→ 萃取回
 
 ### Request Triage
 
-- 收到实现类需求时先做可审计分流：不要要求用户自己说 `full/lite/micro`；由 agent 按触达层级、风险与提交需求给出推荐。非高风险可在合法审计下 override，高风险不得降为 lite/micro。
+- 收到实现类需求时先做可审计分流：不要要求用户自己说 `full/lite/micro`；由 Agent 按需求清晰度、风险、耦合、可逆性与验证成本自动推荐最低合法 route。用户可显式选择或切换；更重总是允许，更轻必须满足目标 eligibility，高风险不得降为 Lite/Micro。
 - 若当前已有 active task 但新需求可能完全不同，先确认任务归属或新建任务；需要提交的微小改动在任务确定后用 `guru_gate.py init-contract` 写 `gate-contract.json`，避免污染当前任务。
-- 简单对话/小任务：先问是否需要建 Trellis 任务；用户说不需要则本轮跳过 Trellis。
+- 简单对话/小任务：机械且不改变行为合同走 Small；明确、低风险、路径有界的局部行为改变走 Micro。commit intent 不改变任务难度，只决定是否需要最小提交合同。
 - 进入任务后第一步判定碰哪几层（只文案 → l10n/文案路径；只一个 `ui-component`/`client-component` → 局部链；新增 route 段 / 跨 server-client → 全链）与风险等级。
-- **核心玩法 / 付费 / 广告 / 存档 / 涉权限或数据采集 / 跨 server-client 边界 / 新增 route 段 → 默认推荐完整五阶段（full 链，目录级设计包）**；单层小改可走轻量链（prd 简版 + 所碰 doc_type 的详细合同 + 实现），但每步仍要 Gate。判轨结论落 task.json `guru_chain`（默认 full；降 light 需用户同意）和 `gate-contract.json`；非高风险选择较轻 route 时必须记录 `route_selection` 风险确认审计；高风险请求较轻 route 只能记录偏好，不能绕过 `full_chain`。
-- 风险路由以 `.trellis/scripts/guru/guru_delivery_policy.py` + `.trellis/policy/delivery-policy.json` 为唯一可执行真源：`low/no commit -> small_inline`，`low + commit + explicit path scope -> micro_task`，`medium/unknown -> lite_task`，`high/unknown-high-signal -> full_chain`。Small/Micro/Lite 的目标是快速 first value；Full 的目标是实现前暴露风险。预算耗尽只能 terminal stop 或 re-intake，不能跳过 Gate/review/confirmation。
-- 建任务许可 ≠ 实现许可：Full/high-risk 实现必须等 requirements、overview/detail 与 detail 确认后走 `guru_task.py start` guarded activation；Lite 不走这条 Full 链。
+- **核心玩法 / 付费 / 广告 / 存档 / 权限或数据采集 / 跨 server-client 边界 / 新增 route 段 → `full_chain`**。无 High-risk 的局部行为变更走 Lite：官方创建标准 task，repo evidence 后只对真实歧义运行 bounded Brainstorm，task-local compact `prd.md` 确认一次后自动执行。
+- 风险路由以 `.trellis/scripts/guru/guru_delivery_policy.py` + `.trellis/policy/delivery-policy.json` 为唯一可执行真源；输入是需求清晰度、风险、耦合、可逆性与验证成本，commit intent 不参与难度判定。首次写入前可合法降级，首次写入后只允许升级。预算耗尽只能 terminal stop 或 re-intake。
+- 建任务许可 ≠ 实现许可：Lite 标准 task 必须在 compact requirements 当前 digest 获得一次确认后自动 start；Full/high-risk 必须先暴露 current risk/decision evidence，并在一次批量确认后走 `guru_task.py start` guarded activation。
 
 [workflow-state:no_task]
-无任务：先分类请求并征得建任务同意。单层小改可不建；commit 需有效 contract；高风险、跨 server-client 或新增 route 段默认 full_chain；选择较轻 route 必须记录 route_selection。
+无任务：Agent 自动推荐最低合法 route；用户可显式切换。Small 默认不建完整 task；Micro 用最小 contract；Lite 必须官方创建标准 task；High-risk/unknown-high 必须 Full。commit intent 不决定难度。
 [/workflow-state:no_task]
 
 ### Phase 1: Plan（承载 需求 → 概要 → 详细 三阶段）
@@ -124,19 +129,19 @@ Phase 3: Finish  → 验证（tsc --noEmit / next build / eslint）→ 萃取回
 - 1.7 完成判定
 
 [workflow-state:planning]
-先按 delivery policy route：Lite=compact intake→host-inline 实现→deterministic_final（不进 requirements/Overview/Detail review）；Full=需求确认→Overview/Detail clean→detail confirm→guarded activation；jsonl 齐后 start。
+先按 delivery policy route：Lite=官方标准 task→repo evidence→必要 bounded Brainstorm→task-local compact prd→一次需求确认→自动 start→host-inline→deterministic_final，Worker 0、无 Overview/Detail planning review；Full=current requirements+risk+design→一次批量确认→guarded activation。
 [/workflow-state:planning]
 
 [workflow-state:planning-channel]
-先按 delivery policy route：Lite=compact intake→host-inline 实现→deterministic_final（不进 requirements/Overview/Detail review）；Full=需求确认→Overview/Detail clean→detail confirm→guarded activation；主会话跑 guru_supervise。
+Lite 不进入 channel：官方标准 task→repo evidence→必要 bounded Brainstorm→task-local compact prd→一次需求确认→自动 host-inline；Full=current requirements+risk+design→一次批量确认→主会话 guarded activation。
 [/workflow-state:planning-channel]
 
 [workflow-state:planning-sub-agent]
-先按 delivery policy route：Lite=compact intake→host-inline 实现→deterministic_final（不进 requirements/Overview/Detail review）；Full=需求确认→Overview/Detail clean→detail confirm→guarded activation；legacy sub-agent 用 Active task。
+Lite 不派 Worker：官方标准 task→repo evidence→必要 bounded Brainstorm→task-local compact prd→一次需求确认→自动 host-inline；Full=current requirements+risk+design→一次批量确认→legacy sub-agent 使用 Active task。
 [/workflow-state:planning-sub-agent]
 
 [workflow-state:planning-inline]
-先按 delivery policy route：Lite=compact intake→host-inline 实现→deterministic_final（不进 requirements/Overview/Detail review）；Full=需求确认→Overview/Detail clean→detail confirm→guarded activation；inline 先 trellis-before-dev。
+Lite=官方标准 task→repo evidence→必要 bounded Brainstorm→task-local compact prd→一次需求确认→自动 start→host-inline；Full=current requirements+risk+design→一次批量确认→guarded activation；inline 先 trellis-before-dev。
 [/workflow-state:planning-inline]
 
 ### Phase 2: Execute（实现阶段）
@@ -146,7 +151,7 @@ Phase 3: Finish  → 验证（tsc --noEmit / next build / eslint）→ 萃取回
 - 2.3 回退 `[on demand]`
 
 [workflow-state:in_progress]
-route=`gate-contract.json.route`. lite_task: host-inline -> deterministic_final; no pre-code review/confirm/Worker. full_chain: guru_supervise.py implement-slices <task-dir> --dry-run --backend auto; dispatch only selected_backend.
+route=`gate-contract.json.route`. lite_task: current confirmation digest -> host-inline -> focused check -> mutable evidence -> Spec sync -> reversible commit-ready; Worker 0, no Overview/Detail planning review. full_chain: guru_supervise.py implement-slices <task-dir> --dry-run --backend auto; dispatch only selected_backend.
 [/workflow-state:in_progress]
 
 [workflow-state:in_progress-channel]
@@ -179,7 +184,7 @@ route=`gate-contract.json.route`. Lite: no sub-agent. Full: dispatch trellis-imp
 1. 先定位当前 Phase 与步骤（planning 期按 artifact/章节存在性），从下一步继续。
 2. `[required]` 步骤不可跳过；`[once]` 步骤产物已存在则跳过。
 3. 阶段可回退：下游发现上游缺陷 → 回上游阶段修订产物 → 重入下游。**禁止下游补造**（详细阶段不补归属、实现阶段不改设计语义）。
-4. `guru_chain=light` 只描述精简产物形态；Lite 执行仍是 compact intake→host-inline→deterministic_final，不继承 Full Gate。
+4. `guru_chain=light` 只描述精简产物形态；Lite 执行是标准 task→repo evidence→必要 Brainstorm→compact prd→一次确认→自动 host-inline→deterministic_final，不继承 Full Overview/Detail Gate。
 5. doc_type 全程只用钉死七类（`server-component`/`client-component`/`data-access`/`route`/`ui-component`/`domain-type`/`server-action`）；归属违反分层依赖律 = 直接 fail；`client-component` 直取私有数据/secret = 直接 fail。
 
 ### Active Task Routing
@@ -217,7 +222,7 @@ route=`gate-contract.json.route`. Lite: no sub-agent. Full: dispatch trellis-imp
 ### Guardrails
 
 - 任务创建同意 ≠ 实现同意；Full/high-risk 等确认与 current digests 后必须走 guarded wrapper，direct `task.py start` 不是文档化的 Full 入口。
-- Full 的 planning 阶段跃迁必须经 `guru_gate.py confirm` 人工收口；Lite 不进入该确认路径，scope expansion/high-risk 必须 re-intake 为 Full。
+- Lite 与 Full 各只有一次 route-specific confirmation batch；确认后自动推进，只有 material scope/digest 变化、新 High-risk 或新不可逆决定才重新确认。
 - 合规 STOP：任何可能违反 App Store / Google Play 政策（H5 套壳/WebView 嵌入场景）或美国法规（隐私 / Cookie 同意 / 数据采集）的不确定性 → 立即停止，输出风险点+替代方案+人类确认清单。
 - H5 三条最高禁令（见 Trellis System 节）全程生效；planning 必须落盘到 task artifacts；完成报告前必须有 `tsc --noEmit` + `next build` + `eslint` 验证证据。
 - 产物语言中文优先（英文仅限标识符/命令/路径/协议字段/专有名词/缩写/原文引用）；面向用户的提问与结论一律中文。
@@ -232,19 +237,19 @@ python3 ./.trellis/scripts/get_context.py --mode phase --step <step>
 
 ## Phase 1 步骤细则
 
-**Route applicability**：1.1-1.7 的 PRD、Overview、Detail、confirm 与 activation 仅适用于 `full_chain`。`lite_task` 只做 compact intake，随后直接由主会话 host-inline 实现；不得执行本节来补 planning 产物。
+**Route applicability**：1.1-1.7 的正式需求包、Overview、Detail 与 guarded activation 仅适用于 `full_chain`。`lite_task` 复用 1.0 的官方 `task.py create`，只在任务目录维护 compact `prd.md` 与 Brainstorm evidence，完成一次 digest-bound 需求确认后自动 host-inline；不得为 Lite 补跑 Overview/Detail planning review。
 
 #### 1.0 创建任务 `[required · once]`
 
 与 Trellis 原版一致：`task.py create "<title>" --slug <name>`（仅 create，不 start）。多交付物用 parent/child 树。
-after_create 按 delivery policy 写入 `gate-contract.json.route`，它是执行权威；`guru_chain` 只保留产物兼容信息，禁止用于推导 route。Lite 直接 host-inline，Full 才继续 1.1-1.7。
+after_create 按 delivery policy 写入 `gate-contract.json.route`，它是执行权威；`guru_chain` 只保留产物兼容信息，禁止用于推导 route。Lite 使用官方标准 task + task-local compact `prd.md`；Full 才进入正式设计链。
 
 #### 1.1 需求阶段 `[required · repeatable]`
 
 **full 链**：先加载 `requirement-writing`（guru-ai-guides，硬前置=其标准包 requirement-doc-standard 可读，缺即停）撰写/补齐**正式需求包草稿**（项目 docs 需求目录），全稿后加载 `requirement-review` 做门禁审核；review 通过后把行为规格抽取为任务内 `prd.md`（BHV 编号承接需求包场景）。`trellis-brainstorm` 的 one-question loop 仍是高风险产品/范围/风险确认合同；`requirement-writing` 只能生成 `ai_drafted` / `evidence_ready` / open questions，不得绕过用户逐项确认。
 两轨 `prd.md` 口径一致，**需求五要素**：① 行为规格（Given/When/Then，每条 `BHV-NNN` 标题）② 核心能力清单（P0/P1）③ 失败路径（含 H5 预期分支：取数失败 / 客户端校验失败 / `server-action` 变更失败 / 错误边界 `error.tsx` 触发 / 渲染降级）④ 验收场景（可被 `next build` 通过、`tsc` 零报错、`eslint` 零违规或 RTL/Playwright 断言的可验证信号）⑤ 显式未决问题（默认一次只问用户 1 个最高优先级问题；仅当用户当前消息明确要求“批量确认/一次性确认/这几个都按推荐处理”等覆盖多个 OQ/decision id 时，才可列出 2~4 个并逐项记录确认；模糊“继续/好/按推荐”回退为单个 next_question，其余保持 open）。
 prd 草稿成形后执行 Domain Grill：对照 golden-path/项目约定/既有 BHV 磨术语、压测边界、核对当前代码事实与用户意图，确认的长期术语/边界才回写长期知识，临时需求决策写入 prd。
-**需求 Gate**：五要素缺一 → 留在本步修订。结构过后（`guru_gate.py requirements <task_dir>` 通过），按 route 选择 review 默认：`full_chain + guru.supervision.adversarial_enabled=true` 运行 `python3 .trellis/scripts/guru/guru_supervise.py --adversarial requirements <task_dir>`；`full_chain + adversarial_enabled=false` 不默认 spawn adversarial worker，但其余 strict gate 不降；`lite_task` 不进入该 Full requirements review/confirm path；`micro_task`/`small_inline` 默认无 task-local requirements adversarial review（commit 前必须路由/创建有效 contract）。requirements review 如运行，必须先查 `prd.md`、正式需求包、task context 与 repo evidence；medium+ 需求阻断输出 `route_class=REQ_BLOCKER` 并留在 1.1 修订，需求 digest 变更后下游 overview/detail 证据需重跑；低严重度措辞 nit 不阻断；clean 输出 `review_result=clean/requirements-ready`。requirements review 不使用 review-evidence Gate、不写 review_runs、不代替人工确认；默认只有 clean/current 后才允许 **confirm 人工收口**（通道按 gate_mode，见 Trellis System 节），missing/deferred/blocked/stale 均硬阻断；配置关闭只动态放宽 adversarial review 要求，当前 digest 已有 blocked 或 medium+ 证据仍硬阻断。确认落盘后方可进 1.3。
+**需求 Gate**：五要素缺一 → 留在本步修订。Full requirements review 产出 current `requirements-ready` evidence 并继续设计，不在本步单独询问用户。Lite 不进入该 Full review path；它在 repo evidence 与必要 Brainstorm 后对 task-local compact `prd.md` 请求唯一一次确认。missing/deferred/blocked/stale 均硬阻断。
 
 #### 1.2 研究 `[optional · repeatable]`
 
@@ -259,7 +264,7 @@ prd 草稿成形后执行 Domain Grill：对照 golden-path/项目约定/既有 
 - **三问**：① 改动触达哪几层、是否跨 server-client 边界？② 是否新增/改动 `domain-type` 契约（类型/zod schema）或 `data-access` 取数出口？③ 是否新增 route 段 / `server-action` / 新外部依赖（内容源/CMS/ORM/认证）？
 - **承接索引**：逐文件列出"由哪个 BHV 驱动、对应哪个 doc_type、是 server 还是 client、详细阶段在哪展开"，作为详细阶段 directory_precheck 的输入。
 **full 链**：建立设计包骨架（`README.md` + `design-main.md` + `chapters/`），把包路径写入 task.json `design_package`，产出 `design-main.md` 概要主定义（含架构就绪自检与逐文件承接索引）；任务内 `design.md` 写指针+摘要。
-**概要 Gate**：默认运行 `python3 .trellis/scripts/guru/guru_supervise.py overview <task_dir>`，该 supervisor action 必须在 write/repair 后运行 overview review/fix 并记录当前 digest clean；手动分步时，writing 结束后必须立刻加载 `h5-design-overview-review` 做 clean-context review，并用 `guru_gate.py record-review overview <task_dir> ...` 记录，不能先进入下一阶段。当前 digest 两个不同 `run_id` clean 后自动进入 1.4；默认还要求至少一次 reviewer 含 `adversarial`，缺 adversarial 时运行 `guru_supervise.py --adversarial overview <task_dir>`；若 `guru.supervision.adversarial_enabled=false`，只要求双 clean，不要求 adversarial reviewer。`confirm overview` 禁止。`REQ_BLOCKER` 回 1.1，`OVERVIEW_DEFECT` / `PROCESS_DEFECT` 修复后重审。**归属违反分层依赖律 / client 直取私有数据 = 直接 fail**（不放行、回本步重排归属）。
+**概要 Gate**：默认运行 `python3 .trellis/scripts/guru/guru_supervise.py overview <task_dir>`，该 supervisor action 必须在 write/repair 后运行 overview review/fix 并记录当前 digest clean；手动分步时，writing 结束后必须立刻加载 `h5-design-overview-review` 做 clean-context Codex review，并用 `guru_gate.py record-review overview <task_dir> ...` 记录，不能先进入下一阶段。当前 digest 两个不同 `run_id` 的 Codex clean 后自动进入 1.4；不得运行 `--adversarial` 或启动 opposite-provider worker。`confirm overview` 禁止。`REQ_BLOCKER` 回 1.1，`OVERVIEW_DEFECT` / `PROCESS_DEFECT` 修复后重审。**归属违反分层依赖律 / client 直取私有数据 = 直接 fail**（不放行、回本步重排归属）。
 
 #### 1.4 详细设计 `[required · repeatable]`
 
@@ -274,7 +279,7 @@ prd 草稿成形后执行 Domain Grill：对照 golden-path/项目约定/既有 
 7. 不适用场景 —— 明确本单元**不**承担什么（如 `ui-component` 不做取数/不含业务、`server-component` 不持客户端状态、`domain-type` 无运行时逻辑）；
 8. Gate 判定 —— 本单元过详细 Gate 的判据（合同字段齐全、归属合法、server-client 边界自证、可验证信号可执行）。
 **full 链**：directory_precheck（design-main 承接索引存在且非空，否则回退概要）→ chapter_loop **逐章/小批次**生成 `chapters/<slug>.md`（禁止一次性全量输出）；命中 pending L2 类型（`route` / `ui-component` / `domain-type` / `server-action`）须显式 `L2豁免：<doc_type> 理由：…` 或先补 L2（gate 拦截）。
-**详细 Gate**：默认运行 `python3 .trellis/scripts/guru/guru_supervise.py detail <task_dir>`，该 supervisor action 必须在 write/repair 后运行 detail review/fix 并记录当前 digest clean；手动分步时，writing 结束后必须立刻加载 `h5-design-detail-review` 做 clean-context review，并用 `guru_gate.py record-review detail <task_dir> ...` 记录，不能先请求用户确认。当前 digest 两个不同 `run_id` clean 后停下等待 `guru_gate.py confirm detail <task_dir>`；默认还要求至少一次 reviewer 含 `adversarial`，缺 adversarial 时运行 `guru_supervise.py --adversarial detail <task_dir>`；若 `guru.supervision.adversarial_enabled=false`，只要求双 clean，不要求 adversarial reviewer。`REQ_BLOCKER` 回 1.1，`OVERVIEW_DEFECT` 回 1.3，`DETAIL_DEFECT` / `PROCESS_DEFECT` 修复后重审。
+**详细 Gate**：当前 digest 两个不同 `run_id` clean 后，连同 current requirements、critical/high risk 与关键不可逆设计决定形成 Full 唯一确认批次；确认后不得再以 requirements/detail/commit 拆分询问。`REQ_BLOCKER` 回 1.1，`OVERVIEW_DEFECT` 回 1.3，`DETAIL_DEFECT` / `PROCESS_DEFECT` 修复后重审。
 
 #### 1.5 配置上下文 `[required · once]`
 
@@ -282,15 +287,15 @@ prd 草稿成形后执行 Domain Grill：对照 golden-path/项目约定/既有 
 
 #### 1.6 激活任务 `[required · once]`
 
-Full/high-risk 前置 = requirements 已确认、overview/detail 当前 digest 双 clean、detail 已确认，且 `guru_gate.py check-start <task_dir>` 通过。`START_READY` 后必须运行 `python3 .trellis/scripts/guru/guru_task.py start <task-dir> --slice <id> --gate-digest <sha256> --slice-packet-digest <sha256> --risk-packet-digest <sha256> --envelope-digest <sha256> --attestation-digest <sha256>`；wrapper 会在调用官方 task lifecycle 前校验 current bindings。官方 Core 的 direct `task.py start` 不能替代该 Full 入口。Lite 保持 delivery policy 的 host-inline 路径。
+Full/high-risk 前置 = current requirements/risk/design 批次已确认、overview/detail 当前 digest 双 clean，且 `guru_gate.py check-start <task_dir>` 通过。`START_READY` 后必须运行 `python3 .trellis/scripts/guru/guru_task.py start <task-dir> --slice <id> --gate-digest <sha256> --slice-packet-digest <sha256> --risk-packet-digest <sha256> --envelope-digest <sha256> --attestation-digest <sha256>`。Lite 在 compact requirements 确认 current 后自动 start。
 
 #### 1.7 Full planning 完成判定
 
 | 条件 | 必须 |
 |------|:---:|
-| 需求产物过需求 Gate + route-aware requirements review clean/current（full_chain 且配置开启要求 adversarial clean/requirements-ready；Lite 不适用该 Full Gate）+ 用户 confirm requirements（full 链含正式需求包 review 通过） | ✅ |
+| 需求产物过需求 Gate + route-aware requirements review clean/current（Lite 不适用该 Full Gate） | ✅ |
 | 概要主定义过概要 Gate + 当前 digest 两个不同 run-id clean review；归属表无分层律违规、无 client 直取私有数据 | ✅ |
-| 详细设计过详细 Gate + 当前 digest 两个不同 run-id clean review + 用户 confirm detail；doc_type 限七类 | ✅ |
+| 详细设计过详细 Gate + 当前 digest 两个不同 run-id clean review + current requirements/risk/design 已一批确认 | ✅ |
 | `implement.md`（trace §1）存在 | ✅ |
 | jsonl 含 harness SSOT + golden-path + H5 项目约定条目 | ✅（inline 平台除外） |
 | Full/high-risk 的 `guru_task.py start` guarded activation 已验证；Lite 不适用 | ✅ |
@@ -299,9 +304,9 @@ Full/high-risk 前置 = requirements 已确认、overview/detail 当前 digest �
 
 ## Phase 2 / Phase 3 步骤细则
 
-Lite 直接 host-inline 实现并运行 scoped deterministic_final，确认 0、Worker 0、无 pre-code Gate。以下 2.1/2.2 的 `check-implementation`、dispatcher 和 Worker 协议仅适用于 Full。
+Lite 在一次当前 requirements digest 确认后自动 host-inline 实现并运行 focused check 与 scoped deterministic_final，Worker 0、无 Overview/Detail planning review。随后自动追加 mutable evidence、同步 Spec 并进入可逆 commit-ready。以下 2.1/2.2 的 `check-implementation`、dispatcher 和 Worker 协议仅适用于 Full。
 
-Full 与 Trellis 原版同构（dispatch 协议、commit 批量确认流程、finish-work 收尾不变），仅口径替换为 H5：
+Full 与 Trellis 原版同构（dispatch 协议、guarded commit 与 finish-work 收尾不变），但 unchanged scope 不得再拆分 requirements/detail/commit 用户确认：
 
 #### 2.1 实现 `[required · repeatable]`
 
@@ -336,7 +341,7 @@ dispatch-mode aware：`sub-agent` 模式 dispatch `trellis-check`（prompt 第�
 
 若实现已发生但缺有效合同，且 staged scope 是低风险 scoped implementation diff，commit-plan 必须进入 post-implementation route recovery：阻断 direct commit，只推荐创建/切换 `micro_task` 并运行 `init-contract --route micro_task --risk low`，不得倒逼补 full PRD / overview / detail。
 
-提交前展示 `commit-plan` 摘要、`tsc`/`next build`/`eslint` 验证证据与建议 commit 切分，等待用户确认；不 amend、不 push；只 stage 本任务相关文件，不回滚用户改动。
+提交前展示 `commit-plan` 摘要、`tsc`/`next build`/`eslint` 验证证据与建议 commit 切分。若 commit 已包含在当前 Lite/Full 唯一确认批次或用户初始指令中，则通过 Gate 后自动执行；否则停在可逆 commit-ready，不消耗第二次需求确认。不 amend、不 push；只处理本任务相关文件，不回滚用户改动。
 
 #### 3.5 收尾提醒
 

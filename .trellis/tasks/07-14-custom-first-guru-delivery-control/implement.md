@@ -1,13 +1,17 @@
 # Implementation Plan
 
-## Current Outcome-first Execution Authority (2026-07-15)
+## Current Outcome-first Execution Authority (2026-07-15 M5 amendment)
 
-The requirement package and `prd.md` milestones M0-M4 supersede the six-slice/wave/bootstrap-burn execution sequence below. The remaining work is:
+The requirement package and `prd.md` milestones M0-M6 supersede the six-slice/wave/bootstrap-burn execution sequence below. The remaining work is:
 
 1. M1 operational route proof - candidate complete; evidence in `M1_OPERATIONAL_ROUTE_PROOF.md`.
 2. M2 all-intent compounding and Gate-value proof - candidate complete; evidence in `M2_ALL_INTENT_COMPOUNDING_PROOF.md`.
 3. M3 official Custom/Template cutover readiness using the existing rollback-bundle implementation - candidate complete; evidence in `M3_CUSTOM_TEMPLATE_CUTOVER_PROOF.md`.
-4. M4 final consistency, spec update, final check and commit - current milestone.
+4. M4 final consistency snapshot - historical candidate pass; its Lite zero-confirmation evidence remains historical.
+5. M5 difficulty routing, audited override, standard Lite task, conditional Brainstorm and one-confirmation autonomous closure - current implementation batch.
+6. M6 disposable four-route replay, one full overlay suite, official Custom lifecycle and one Codex check-only final review - pending after M5 focused checks.
+
+M5 implementation order is fixed: update current requirements once, patch policy/runtime in one batch, synchronize all four workflows/skills, run focused regressions and disposable Lite/Full smoke, then run one complete suite. The user confirmed this amendment once on 2026-07-15. No intermediate confirmation or Overview/Detail planning-review cycle is permitted unless a new irreversible decision or expanded critical/high risk appears.
 
 Marketplace catalog, ExtensionManager WAL, trusted reviewer identity, generic replay infrastructure, bootstrap burn/reuse and six independent slice lifecycles are deferred non-requirements. The historical plan below remains read-only rationale and must not be used to block or sequence the current milestones.
 

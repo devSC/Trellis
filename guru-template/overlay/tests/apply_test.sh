@@ -47,6 +47,7 @@ EOF
 T1=$(mk_target generic yes)
 mkdir -p "$T1/.trellis/tasks/old-grill-marker"
 : > "$T1/.trellis/tasks/old-grill-marker/.grilled-prd"
+printf 'guru:\n  supervision:\n    adversarial_enabled: true\n' > "$T1/.trellis/config.yaml"
 out=$(bash "$APPLY" "$T1" 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "场景1 apply 退出码 0" || { bad "场景1 退出码 (rc=$rc)"; echo "$out" | tail -10; }
 
@@ -92,6 +93,10 @@ grep -q "SENTINEL_KEEP_ME" "$T1/.trellis/spec/conventions/project-conventions.md
   && ok "场景1 project-conventions.md 未被覆盖" || bad "场景1 项目约定被覆盖！"
 
 grep -q "before_start" "$T1/.trellis/config.yaml" && ok "场景1 config.yaml before_start 接线" || bad "场景1 config 缺 before_start"
+grep -q '^    adversarial_enabled: false$' "$T1/.trellis/config.yaml" \
+  && ! grep -q 'adversarial_claude_model' "$T1/.trellis/config.yaml" \
+  && ok "场景1 Custom 默认 Codex-only：关闭 opposite-provider 且不注入 Claude model" \
+  || bad "场景1 config 仍可能默认启动非 Codex adversarial review"
 [ -x "$T1/.trellis/scripts/guru/guru_task.py" ] \
   && [ -f "$T1/.trellis/scripts/guru/guru_delivery_policy.py" ] \
   && [ -f "$T1/.trellis/policy/delivery-policy.json" ] \
@@ -367,6 +372,86 @@ PY
 [ "$?" = 0 ] \
   && ok "场景14 high-risk description 生成 honest full_chain/high contract" \
   || bad "场景14 after_create 忽略 high-risk description 或伪造执行能力"
+
+T14_AMBIGUOUS=$(mk_target after-create-ambiguous-description yes)
+mkdir -p "$T14_AMBIGUOUS/.trellis/tasks/t-ambiguous"
+printf '%s\n' '{"id":"t-ambiguous","title":"Fix unclear task","description":"fix unclear behavior"}' > "$T14_AMBIGUOUS/.trellis/tasks/t-ambiguous/task.json"
+TASK_JSON_PATH="$T14_AMBIGUOUS/.trellis/tasks/t-ambiguous/task.json" python3 "$HERE/../hooks/guru_after_create.py" >/dev/null 2>&1
+python3 - "$T14_AMBIGUOUS/.trellis/tasks/t-ambiguous" <<'PY'
+import json
+import os
+import sys
+
+task_dir = sys.argv[1]
+contract = json.load(open(os.path.join(task_dir, "gate-contract.json"), encoding="utf-8"))
+execution = contract["execution_policy"]
+assert contract["route"] == "lite_task"
+assert contract["risk"] == "medium"
+assert execution["brainstorm_required"] is True
+assert execution["budget"]["confirmation_batches"] == 1
+assert execution["budget"]["started_workers"] == 0
+PY
+[ "$?" = 0 ] \
+  && ok "场景14 显式歧义 description 生成 Lite bounded Brainstorm contract" \
+  || bad "场景14 after_create 未把显式歧义绑定到 Lite Brainstorm"
+
+T14_CACHE=$(mk_target after-create-evidence-cache yes)
+bash "$APPLY" "$T14_CACHE" >/dev/null 2>&1
+git -C "$T14_CACHE" init -q
+mkdir -p "$T14_CACHE/lib/ui" "$T14_CACHE/.trellis/tasks/t-cache-prior"
+printf 'v1\n' > "$T14_CACHE/lib/ui/button.dart"
+python3 - "$T14_CACHE" <<'PY'
+import json
+import os
+import sys
+
+root = os.path.abspath(sys.argv[1])
+sys.path.insert(0, os.path.join(root, ".trellis", "scripts", "guru"))
+import guru_delivery_policy as policy
+
+request = policy.IntakeRequest(
+    description="change local button behavior",
+    affected_paths=("lib/ui/button.dart",),
+)
+selection = policy.resolve_project_delivery_selection(request, root, capability_report={})
+assert selection.evidence_reused is False
+record = {
+    "schema_version": 1,
+    "kind": "delivery_evidence_cache",
+    "status": "passed",
+    "outcome": "passed",
+    "evidence_cache_key": selection.evidence_cache_key,
+    "target_digest": policy.guru_review_record.target_snapshot_digest(
+        root, ["lib/ui/button.dart"], "worktree"
+    ),
+    "docs_code_test_digest": policy.project_docs_code_test_digest(root),
+}
+with open(os.path.join(root, ".trellis", "tasks", "t-cache-prior", "verification-evidence.jsonl"), "w", encoding="utf-8") as fh:
+    fh.write(json.dumps(record, sort_keys=True) + "\n")
+PY
+mkdir -p "$T14_CACHE/.trellis/tasks/t-cache-warm"
+printf '%s\n' '{"id":"t-cache-warm","description":"change local button behavior","affected_paths":["lib/ui/button.dart"]}' > "$T14_CACHE/.trellis/tasks/t-cache-warm/task.json"
+TASK_JSON_PATH="$T14_CACHE/.trellis/tasks/t-cache-warm/task.json" python3 "$T14_CACHE/.trellis/scripts/guru/guru_after_create.py" >/dev/null 2>&1
+printf 'v2\n' > "$T14_CACHE/lib/ui/button.dart"
+mkdir -p "$T14_CACHE/.trellis/tasks/t-cache-drift"
+printf '%s\n' '{"id":"t-cache-drift","description":"change local button behavior","affected_paths":["lib/ui/button.dart"]}' > "$T14_CACHE/.trellis/tasks/t-cache-drift/task.json"
+TASK_JSON_PATH="$T14_CACHE/.trellis/tasks/t-cache-drift/task.json" python3 "$T14_CACHE/.trellis/scripts/guru/guru_after_create.py" >/dev/null 2>&1
+python3 - "$T14_CACHE" <<'PY'
+import json
+import os
+import sys
+
+root = sys.argv[1]
+warm = json.load(open(os.path.join(root, ".trellis", "tasks", "t-cache-warm", "gate-contract.json"), encoding="utf-8"))
+drift = json.load(open(os.path.join(root, ".trellis", "tasks", "t-cache-drift", "gate-contract.json"), encoding="utf-8"))
+assert warm["execution_policy"]["evidence_reused"] is True
+assert warm["execution_policy"]["planning_cost_ratio_percent"] == 70
+assert drift["execution_policy"]["evidence_reused"] is False
+assert drift["execution_policy"]["planning_cost_ratio_percent"] == 100
+PY
+[ "$?" = 0 ] \
+  && ok "场景14 official after_create 自动复用 exact evidence，target drift 自动失效" \
+  || bad "场景14 evidence cache 仅停留在库 API 或 drift 未失效"
 
 T14_REJECTED=$(mk_target after-create-rejected-scope yes)
 mkdir -p "$T14_REJECTED/.trellis/tasks/t-rejected"
@@ -1117,6 +1202,20 @@ else
   echo "$verify_out" | tail -5
 fi
 
+T_ROUTE_IOS=$(mk_target route-contract-ios yes)
+out=$(bash "$APPLY" "$T_ROUTE_IOS" ios 2>&1); rc=$?
+if [ "$rc" = 0 ] \
+  && [ -f "$T_ROUTE_IOS/.agents/skills/ios-small-iteration-dev/SKILL.md" ] \
+  && grep -q '0/0/1/1 batch' "$T_ROUTE_IOS/.agents/skills/ios-small-iteration-dev/SKILL.md" \
+  && grep -q '官方标准 task' "$T_ROUTE_IOS/.trellis/workflow.md" \
+  && grep -q 'bounded Brainstorm' "$T_ROUTE_IOS/.trellis/workflow.md"
+then
+  ok "四端路由安装：iOS standard Lite task/one-confirmation contract 可读"
+else
+  bad "四端路由安装：iOS skill/workflow contract 缺失 (rc=$rc)"
+  echo "$out" | tail -8
+fi
+
 v0_consistency_check() { # v0_consistency_check <guru-template-root> [events-jsonl]
   python3 - "$1" "${2:-}" <<'PY'
 import json
@@ -1135,11 +1234,13 @@ matrix = {
         "overlay/agents-skills/client-small-iteration-dev/SKILL.md",
         "overlay/agents-skills/go-small-iteration-dev/SKILL.md",
         "overlay/agents-skills/h5-small-iteration-dev/SKILL.md",
+        "overlay/agents-skills/ios-small-iteration-dev/SKILL.md",
     ],
     "code": [
         "overlay/apply.sh",
         "overlay/policy/delivery-policy.json",
         "overlay/verify/guru_contract.py",
+        "overlay/verify/guru_config_patch.py",
         "overlay/verify/guru_delivery_policy.py",
         "overlay/verify/guru_gate.py",
     ],
@@ -1164,23 +1265,40 @@ for workflow in (
         raise SystemExit(f"docs/code/tests mismatch: {workflow} missing guarded Full entry")
     if "下一步仅可运行 `task.py start`" in content or "然后运行 `task.py start" in content:
         raise SystemExit(f"docs/code/tests mismatch: {workflow} documents direct Full start")
-    if "Lite 保持" not in content or "host-inline" not in content:
-        raise SystemExit(f"docs/code/tests mismatch: {workflow} lost Lite fast path")
+    if "host-inline" not in content or "deterministic_final" not in content:
+        raise SystemExit(f"docs/code/tests mismatch: {workflow} lost Lite execution path")
     if "overview/detail 仍要当前 digest 双 clean" in content:
         raise SystemExit(f"docs/code/tests mismatch: {workflow} restored stale Lite planning review")
     for stale in ("lite 不强制", "lite bounded", "轻量链允许", "Gate 口径不降"):
         if stale in content:
             raise SystemExit(f"docs/code/tests mismatch: {workflow} restored stale Lite Full-Gate phrase {stale}")
-    if "代码前不运行 requirements/Overview/Detail review Gate" not in content:
-        raise SystemExit(f"docs/code/tests mismatch: {workflow} missing Lite no-precode-Gate contract")
     for required in (
-        "以 `gate-contract.json.route` 为准",
-        "1.1-1.7 的 PRD、Overview、Detail、confirm 与 activation 仅适用于 `full_chain`",
-        "Lite 直接 host-inline 实现并运行 scoped deterministic_final",
+        "官方 `task.py create`",
+        "repo evidence",
+        "bounded Brainstorm",
+        "一次需求确认",
+        "Worker 0",
+        "无 Overview/Detail planning review",
+        "0/0/1/1 batch",
+        "commit intent",
+        "selection_generation",
+        "scope_fingerprint",
+        "首次写入后只允许升级",
+        "Full 在实现 Worker 前",
+        "不得再以 requirements/detail/commit",
+        "不得运行 opposite-provider adversarial worker",
         "以下 2.1/2.2 的 `check-implementation`、dispatcher 和 Worker 协议仅适用于 Full",
     ):
         if required not in content:
             raise SystemExit(f"docs/code/tests mismatch: {workflow} missing route boundary: {required}")
+    for stale in (
+        "Lite 直接 host-inline 实现并运行 scoped deterministic_final，确认 0",
+        "no pre-code review/confirm/Worker",
+        "Lite=compact intake",
+        "low + commit -> micro_task",
+    ):
+        if stale in content:
+            raise SystemExit(f"docs/code/tests mismatch: {workflow} retains obsolete route contract: {stale}")
     for stale in ("**light 链**", "light=design.md", "默认写入 `guru_chain: full`"):
         if stale in content:
             raise SystemExit(f"docs/code/tests mismatch: {workflow} retains contradictory Lite planning path: {stale}")
@@ -1189,13 +1307,23 @@ for skill in (
     "overlay/agents-skills/client-small-iteration-dev/SKILL.md",
     "overlay/agents-skills/go-small-iteration-dev/SKILL.md",
     "overlay/agents-skills/h5-small-iteration-dev/SKILL.md",
+    "overlay/agents-skills/ios-small-iteration-dev/SKILL.md",
 ):
     content = open(os.path.join(root, skill), encoding="utf-8").read()
     for required in (
-        "以 `gate-contract.json.route` 为执行权威",
-        "compact intake → host-inline → scoped deterministic_final",
-        "确认 0、Worker 0、无 requirements/Overview/Detail/check-implementation",
-        "只有 Full 才执行需求澄清、Overview、Detail、合同八问及其 review/confirm",
+        "官方 `task.py create`",
+        "repo evidence",
+        "bounded Brainstorm",
+        "task-local `prd.md`",
+        "确认一次",
+        "Worker 0",
+        "无 Overview/Detail planning review",
+        "`selection_generation`",
+        "`scope_fingerprint`",
+        "High-risk/unknown-high",
+        "首次写入后只允许升级",
+        "0/0/1/1 batch",
+        "确认后自动",
     ):
         if required not in content:
             raise SystemExit(f"docs/code/tests mismatch: {skill} missing Lite route contract: {required}")
@@ -1203,6 +1331,7 @@ for skill in (
         "overview/detail 仍需当前 digest 两条 clean",
         "进入轻量链（prd 简版 + 所碰层 design 合同 + 实现/验证）",
         "每步人工 Gate",
+        "Lite 固定为 compact intake",
     ):
         if stale in content:
             raise SystemExit(f"docs/code/tests mismatch: {skill} retains Lite Full-Gate path: {stale}")
@@ -1212,10 +1341,37 @@ if "`gate-contract.json.route` 是执行权威" not in gate_help or "light 仅�
     raise SystemExit("docs/code/tests mismatch: guru_gate usage still derives Lite from guru_chain/light")
 if "after_create 默认 full" in gate_help:
     raise SystemExit("docs/code/tests mismatch: guru_gate usage retains obsolete after_create default")
+for token in (
+    "verification-evidence.jsonl",
+    "deterministic_final",
+    "selection_generation",
+    "scope_fingerprint",
+    "target_digest",
+    "docs_code_test_consistency",
+    "spec_sync",
+):
+    if token not in gate_help:
+        raise SystemExit(f"docs/code/tests mismatch: guru_gate missing Lite exact verification evidence field {token}")
 
 readme = open(os.path.join(root, "overlay/README.md"), encoding="utf-8").read()
 apply_source = open(os.path.join(root, "overlay/apply.sh"), encoding="utf-8").read()
 test_source = open(os.path.join(root, "overlay/tests/apply_test.sh"), encoding="utf-8").read()
+for token in (
+    "commit intent",
+    "selection_generation",
+    "scope_fingerprint",
+    "官方 `task.py create`",
+    "bounded Brainstorm",
+    "0/0/1/1 batch",
+    "verification-evidence.jsonl",
+    "target_digest",
+    "docs_code_test_consistency",
+    "spec_sync",
+    "不得生成 Claude plan/event",
+    "adversarial_enabled: false",
+):
+    if token not in readme:
+        raise SystemExit(f"docs/code/tests mismatch: README missing route contract {token}")
 for token in ("--plan", "--status", "--verify", "--upgrade", "--rollback-bundle", "--unapply", "apply_test.sh"):
     if token not in readme:
         raise SystemExit(f"docs/code/tests mismatch: README missing {token}")
@@ -1243,10 +1399,16 @@ capability = policy.managed_capability_report(parallel=False)
 loaded = policy.load_policy(os.path.join(root, "overlay/policy/delivery-policy.json"))
 requests = {
     "small_inline": policy.IntakeRequest(
-        description="fix typo", affected_paths=(PurePosixPath("lib/ui/label.dart"),)),
-    "micro_task": policy.IntakeRequest(
         description="fix typo", affected_paths=(PurePosixPath("lib/ui/label.dart"),), commit_requested=True),
-    "lite_task": policy.IntakeRequest(description="bounded behavior change", commit_requested=True),
+    "micro_task": policy.IntakeRequest(
+        description="change local validation behavior",
+        affected_paths=(PurePosixPath("lib/validation.dart"),),
+        requirements_clear=True,
+        coupling="local",
+        reversible=True,
+        verification_scope="focused",
+    ),
+    "lite_task": policy.IntakeRequest(description="bounded behavior change"),
     "full_chain": policy.IntakeRequest(
         description="change workflow hook gate runtime",
         affected_paths=(PurePosixPath(".trellis/workflow.md"),), commit_requested=True),
@@ -1287,6 +1449,16 @@ if v0_consistency_check "$V0_STALE" >/dev/null 2>&1; then
   bad "V0 stale Lite Full-Gate contract 未被阻断"
 else
   ok "V0 stale Lite Full-Gate contract fail-closed"
+fi
+
+V0_ZERO_CONFIRM="$TMP/v0-zero-confirm-lite-contract"
+mkdir -p "$V0_ZERO_CONFIRM"
+cp -R "$GURU_TEMPLATE_ROOT/." "$V0_ZERO_CONFIRM/"
+printf '\nLite 直接 host-inline 实现并运行 scoped deterministic_final，确认 0、Worker 0、无 pre-code Gate。\n' >> "$V0_ZERO_CONFIRM/workflows/guru-client-workflow.md"
+if v0_consistency_check "$V0_ZERO_CONFIRM" >/dev/null 2>&1; then
+  bad "V0 Lite zero-confirmation contract 未被阻断"
+else
+  ok "V0 Lite zero-confirmation contract fail-closed"
 fi
 
 V0_FAKE="$TMP/v0-consistency-mismatch"; mkdir -p "$V0_FAKE"
