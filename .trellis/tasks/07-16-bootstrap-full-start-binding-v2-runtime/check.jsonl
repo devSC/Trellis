@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/cli/backend/guru-overlay-gates.md", "reason": "Verify legacy bootstrap isolation plus Full V2 risk, receipt, registry, compatibility and mirror behavior."}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Verify shared validators and providers own cross-script contracts."}
+{"file": ".trellis/spec/cli/backend/error-handling.md", "reason": "Verify failures distinguish stale artifact, receipt, membership, activation provenance and lifecycle CAS."}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "Verify scoped changes, dependency discipline and forbidden patterns."}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Verify historical regression coverage and exact negative assertions."}
+{"file": ".trellis/spec/cli/unit-test/mock-strategies.md", "reason": "Reject mocked confirmation, risk validation, receipt, registry or check-start false greens."}
+{"file": ".trellis/spec/cli/unit-test/integration-patterns.md", "reason": "Verify complete FIX-F1/FIX-F2 lifecycle and compatibility paths."}

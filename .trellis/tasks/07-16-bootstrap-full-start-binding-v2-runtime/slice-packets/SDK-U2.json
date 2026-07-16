@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "slice_id": "SDK-U2",
+  "owner_unit": "UNIT-full-confirmation-authority",
+  "target_kind": "implementation",
+  "target_paths": [
+    "guru-template/overlay/verify/guru_gate.py",
+    "guru-template/overlay/verify/tests/test_delivery_policy.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "full_confirmation_batch",
+    "check_start_freshness"
+  ],
+  "depends_on": [
+    "SDK-U1"
+  ],
+  "deterministic_checks": [
+    "env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_delivery_policy.py' -v",
+    "env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_start_guard.py' -v"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      "guru-template/overlay/hooks/guru_task.py",
+      "guru-template/overlay/verify/tests/test_start_guard.py",
+      ".trellis/tasks/07-16-bootstrap-full-start-binding-v2-runtime/check.jsonl",
+      ".trellis/tasks/07-16-bootstrap-full-start-binding-v2-runtime/implement.jsonl",
+      ".trellis/tasks/07-16-fix-full-start-binding-v2/check.jsonl",
+      ".trellis/tasks/07-16-fix-full-start-binding-v2/implement.jsonl"
+    ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "codex",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-FSB-004",
+      "rule": "Requirements and detail records share one current Full confirmation batch id, batch digest, and canonical projection digest.",
+      "source": "design-package/chapters/full-confirmation-authority.md",
+      "owner": "UNIT-full-confirmation-authority",
+      "positive_case": "The real writer emits one peer batch that the real validator accepts.",
+      "negative_case": "Either record diverges or carries an unknown, missing, or mutated projection field.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "test_delivery_policy.py Full confirmation projection matrix"
+      ]
+    },
+    {
+      "invariant_id": "INV-FSB-005",
+      "rule": "check-start independently recomputes current requirements, detail, complete sorted risk-packet bytes, and the self-verifying confirmation projection.",
+      "source": "design-package/chapters/full-confirmation-authority.md",
+      "owner": "UNIT-full-confirmation-authority",
+      "positive_case": "Current inputs and exact peer records reach START_READY.",
+      "negative_case": "Requirements, detail, risk-set, actor, time, scope, action, prompt, batch, optional metadata, or projection-digest drift reaches start.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "test_delivery_policy.py freshness and mutation negatives"
+      ]
+    }
+  ]
+}

@@ -712,6 +712,38 @@ whose `reviewed_target_digest` matches the staged index digest for that record's
 `target_paths`. It must not authorize multi-slice staged scope from the latest
 JSONL row alone.
 
+### Full v2 Start Guard Stable Binding
+
+For `route=full_chain` with `policy_version=guru-risk-contract-v2`, the Start
+Guard gate digest is a versioned stable planning binding. It binds the schema
+discriminator, `guru_chain`, `require_req_uc`, current review runs, and the
+exact `gate-contract.json` bytes. It must not include the dynamic
+`guru_gates.requirements` or `guru_gates.detail` confirmation records.
+
+This exclusion does not relax `check-start`. The one Full confirmation batch
+must independently bind the current requirements digest, current detail
+digest, and the complete sorted `risk-packets/*.json` byte set. Requirements
+and detail records must be exact canonical peers except for their
+gate-specific `artifact_digest`; both carry the same domain-separated
+`confirmation_projection_digest` over all actor, time, scope, action, prompt,
+batch, current-input, mode, via, turn, and user-quote metadata. Unknown,
+missing, divergent, stale, or invalid optional fields fail closed.
+
+The required chronological regression is:
+
+```text
+compute stable v2 binding
+-> build the real risk packet
+-> write one real Full confirmation batch
+-> run Full freshness validation and check-start
+-> validate the real guarded selected artifact binding
+```
+
+The stable digest must be byte-identical before and after confirmation.
+Selected risk, attestation, envelope, lifecycle CAS, and compensation checks
+remain owned by the existing Start Guard. Contracts other than Full v2 retain
+the legacy digest payload byte-for-byte.
+
 Route awareness is mandatory. `micro_task` and `lite_task` must not inherit
 full-chain slice packet requirements unless their selected contract explicitly
 requires full-chain packet behavior.

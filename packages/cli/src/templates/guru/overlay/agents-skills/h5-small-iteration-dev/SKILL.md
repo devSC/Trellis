@@ -21,22 +21,22 @@ description: H5/Next.js 小需求端到端闭环编排：按入口决策树分�
    - 整段页面或新 route feature → route + server-component/client-component + 所需下层全链。
 
    同时判定风险并按固定表路由：
-   - `low -> small_inline`：局部 UI / 文案 / 注释 / 格式 / 非共享配置等低风险小改，且未命中高风险信号时，默认本轮 inline 处理，不创建完整 Trellis task，不要求 full Guru gate。
-   - `low + commit -> micro_task`：同一低风险小改一旦需要 commit，必须创建或复用最小任务，写入任务目录 `gate-contract.json`，只承载 scoped commit contract，不进入完整规划链。
-   - `medium -> lite_task`：局部业务行为、单层逻辑、小范围多文件或需要可复跑验证的变更，进入轻量链（prd 简版 + 所碰层 design 合同 + 实现/验证），采用 bounded review policy。
+   - `small_inline`：需求完全明确、机械且不改变行为合同的局部 UI / 文案 / 注释 / 格式变更；默认不创建完整 task。commit 是交付动作，初始要求 commit 时只补最小提交合同。
+   - `micro_task`：需求完全明确、低风险、路径有界，但改变一个局部行为合同；创建或复用最小任务和 `gate-contract.json`，不进入完整规划链。
+   - `lite_task`：无 High-risk 的局部业务行为、单层逻辑或小范围多文件变更，但仓库取证后仍可能有产品/范围/验收歧义。必须用官方 `task.py create` 建标准 Trellis task，任务内维护 compact `prd.md`；必要时 bounded Brainstorm，用户确认当前 requirements digest 一次后 host-inline 实现并运行 scoped deterministic_final，Worker 0、无 Overview/Detail planning review。
    - `high -> full_chain`：认证/会话、支付、权限/隐私或数据采集、server-action 写入、DB/schema、内容源迁移、缓存/`revalidate` 语义、跨层协议、workflow/hook/gate/runtime 或发布交付链，默认推荐完整五阶段（full 链，目录级设计包）；即使用户要求 `lite_task` 或 `micro_task`，也必须写入偏好审计并保持 `full_chain`；override 不能授权高风险降级。
 
-   **判轨落盘**：`guru_chain` 仍只表达 `full|light` 的既有 Guru 产物形态；`gate-contract.json.route` 记录实际执行 route（`micro_task|lite_task|full_chain`），`assessment.recommended_route` 记录风险系统推荐，`route_selection` 记录用户选择、推荐值、风险确认与用户原话。`gate-degradations.jsonl` 只能追加真实发生的 gate/tool 失败与补偿检查证据，是事实记录，不是预授权绕行单。非高风险 route 可在合法 user override 审计后选择更轻 route；高风险 override 只记录用户偏好，不能授权 `lite_task` 或 `micro_task`，后续 Gate 必须要求 `full_chain`。
+   **判轨落盘**：`gate-contract.json` 记录 selected/recommended Route、`selection_source`、`selection_generation` 与 `scope_fingerprint`。更重 override 直接允许；更轻 override 必须满足目标 eligibility；High-risk/unknown-high 不能降级。首次写入前可合法降级，首次写入后只允许升级。
 
-   **route review policy**：route 只能放宽 adversarial 证据要求，不能绕过结构 Gate、人工确认、当前 blocked/medium+ 证据、staged scope 或 implementation review digest。`small_inline` / `micro_task` 不要求 requirements adversarial review；`lite_task` 不强制 requirements adversarial review，overview/detail 仍需当前 digest 两条 clean，但不强制 adversarial reviewer；`full_chain`、`risk=unknown`、缺失或非法 contract 保持 strict gate 路径，且只有 `guru.supervision.adversarial_enabled=true` 时才默认要求 requirements adversarial review。高风险推荐 full 且必须执行 full_chain；用户确认选择 lite/micro 时只能形成 route_selection 审计，Gate 仍拒绝非 full_chain 合同。lite 中低严重度文案 nit / P3 follow-up 可作为后续项，不强制刷新 PRD digest 或重跑 requirements review；若 review/supervise 发现范围扩大、验收变化或高风险信号，必须停下请用户确认扩 scope、保持当前 route 或改选 full，不能把 `evidence_ready` 静默改成 `user_confirmed`。
+   **route review policy**：Small/Micro 确认 0；Lite=标准 task→repo evidence→必要 Brainstorm→compact requirements→确认一次→host-inline→scoped deterministic_final，Worker 0、无 Overview/Detail/check-implementation；Full 在实现前完成 current risk/decision evidence 与一批确认。Lite 发现 scope expansion 或 High-risk 时在下一次写入前升级 Full。
 
-2. **需求澄清（简版）**：行为（Given/When/Then）+ 边界（不做什么）+ 验收（怎么算对）三要素；未决问题向用户提问（一次 1~4 个），不私自拍板。
+2. **Lite 执行**：官方创建标准任务，先查 repo evidence；只对真实歧义运行 bounded Brainstorm。compact requirements 与 Brainstorm Evidence 写入 task-local `prd.md`，用户确认当前 digest 后自动 start、host-inline 实现、focused check、mutable evidence、Spec 同步和可逆 commit-ready。
 
-3. **必要的详细设计单元**：对所碰 doc_type 产出合同八问（装载 `.trellis/spec/harness/detail/` 的 L1 + 命中 L2；pending 类型按 L1 八问 + L2 豁免口径）；小改可单文档多章节，但每章独立满足合同。
+3. **Full 需求与设计**：只有 Full 才执行正式需求、Overview、Detail 与风险包；实现前把当前需求、critical/high risk 和关键不可逆设计决定合并为一批用户确认。
 
 4. **实现与验证**：按 `h5-implementation-guru-writing` 执行（含 `implement.md` / implementation-trace、逐片验证、存量违例处置、server/client 边界与 secret 合规）。
 
-5. **每步人工 Gate**：产物给用户过目后再进下一步，不一次推到底。
+5. **人工 Gate**：Small/Micro/Lite/Full=`0/0/1/1 batch`；Lite/Full 确认后自动推进，只有 scope/digest 实质变化、新 High-risk 或新不可逆决定才重新确认。
 
 6. **收口输出**：结论 → 改动 → 验证证据 → 风险 → 下一步。
 

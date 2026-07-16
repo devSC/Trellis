@@ -5,6 +5,54 @@
 > 上游硬输入：详细设计的 `UNIT-<slug>` 单元清单 + 合同八问 + 测试映射；通用约束 `.trellis/spec/guides/golden-path.md`（分层依赖律与禁止清单）+ `.trellis/spec/conventions/project-conventions.md`（槽位选型）。
 > 平台形态：Go monorepo，服务在 `services/<svc>/internal/{app,config,transport,service,repository,domain,auth}`，`cmd/<svc>/main.go` 单一入口；契约在 `packages/contracts/`。
 
+Delivery policy is executable, not prose-only. Implementation trace must quote the selected route from `guru_delivery_policy.py`: Small records first scoped code evidence and stops fast; Micro records explicit allowed paths/max files; Lite records compact task evidence, one confirmation batch maximum, and bounded review; Full records selected slice packet, risk packet, guarded start evidence, deterministic checks and implementation review. Budget expiry never removes required Gate/review/confirmation; it produces a terminal stop or re-intake.
+
+## Full/high 风险决策清单
+
+`guru-risk-contract-v2` 仅在 `full_chain + high|unknown` 时要求以下 block。它必须在 `implement.md` 中恰好出现一次，且 block 内只能有一个 JSON fence；Small/Micro/Lite 和兼容 v1 合同不得被该清单拖慢。
+
+<!-- GURU:RISK_DECISION_INVENTORY:START -->
+```json
+{
+  "schema_version": 1,
+  "task_id": "<task.json.id>",
+  "scope": {
+    "selected_slice_id": "<selected-slice-id>",
+    "official_start_authority": "selected_slice_only",
+    "later_slice_authority": "supervisor_fail_closed"
+  },
+  "slices": {
+    "<selected-slice-id>": [
+      {
+        "decision_id": "DEC-<DOMAIN>-001",
+        "severity": "high",
+        "status": "unresolved",
+        "recommendation": "<recommended choice>",
+        "alternatives": [
+          "<credible alternative>"
+        ],
+        "impact": "<scope, data, compatibility, or rollback impact>",
+        "irreversible": false,
+        "invariant_ids": [
+          "<invariant id from the selected slice packet>"
+        ],
+        "required": true,
+        "source_refs": [
+          {
+            "artifact_key": "design:chapters/<detail-artifact>.md",
+            "anchor": "GURU-DECISION:DEC-<DOMAIN>-001"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+<!-- GURU:RISK_DECISION_INVENTORY:END -->
+
+只允许 `required=true` 的 `critical|high` 决策。`decision_id` 必须跨 slice 唯一，slice 和 `invariant_ids` 必须与 packet 精确匹配；每个 `source_ref` 必须指向 Detail artifact 中恰好出现一次且包含该 decision ID 的 anchor。决策确认后将 `status` 改为 `resolved`，并添加非空 `resolution.choice` 与 `resolution.evidence`；未确认时不得伪造 `resolution`。Detail 结构检查、Detail review/confirm、risk packet 和 guarded start 必须解析同一份清单。
+
+
 ## 0. 装载与硬前置
 
 开工前依次确认，任一失败即终止并输出前置缺口（不得在实现阶段补造上游决策）：

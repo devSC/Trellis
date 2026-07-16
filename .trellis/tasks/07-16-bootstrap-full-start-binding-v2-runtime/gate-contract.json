@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "risk": "high",
+  "route": "full_chain",
+  "assessment": {
+    "confidence": 0.95,
+    "reasons": [
+      "high-risk signal: auth",
+      "high-risk signal: guru_gate.py",
+      "high-risk signal: guru_supervise.py",
+      "high-risk signal: hooks",
+      "high-risk signal: runtime",
+      "high-risk signal: security"
+    ],
+    "risk_flags": [
+      "auth",
+      "guru_gate.py",
+      "guru_supervise.py",
+      "hooks",
+      "runtime",
+      "security"
+    ],
+    "recommended_route": "full_chain"
+  },
+  "route_selection": {
+    "selected_route": "full_chain",
+    "source": "recommended",
+    "recommended_route": "full_chain",
+    "risk_acknowledged": false,
+    "user_quote": "",
+    "selected_by": "system",
+    "selected_at": "2026-07-16T16:57:22+08:00"
+  },
+  "scope": {
+    "allowed_paths": [
+      "guru-template/overlay/hooks/guru_task.py",
+      "guru-template/overlay/verify/guru_gate.py",
+      "guru-template/overlay/verify/guru_delivery_policy.py",
+      "guru-template/overlay/verify/guru_supervise.py",
+      "guru-template/overlay/verify/tests",
+      "guru-template/overlay/tests/apply_test.sh",
+      "packages/cli/src/templates/guru/overlay",
+      ".trellis/spec/cli/backend/guru-overlay-gates.md"
+    ],
+    "forbidden_path_patterns": [],
+    "max_files": null
+  },
+  "required_gates": [],
+  "optional_gates": [],
+  "allowed_degradations": [],
+  "commit_policy": {
+    "require_in_progress": true,
+    "require_clean_implementation_review": true,
+    "allow_task_artifacts_only": false
+  },
+  "bootstrap_boundary": {
+    "parent_task": "07-16-fix-full-start-binding-v2",
+    "activation_contract": "legacy_full_v1_only",
+    "parent_start_forbidden": true,
+    "child_is_only_implementation_ssot": true,
+    "v2_canary_required_after_install": true,
+    "source_implementation_allowed_after_child_start": true,
+    "deferred_threat_model_task_required_before_source_implementation": false,
+    "expected_slice_ids": [
+      "SDK-U1",
+      "SDK-U2",
+      "SDK-U3",
+      "SDK-U4"
+    ],
+    "deferred_topics": [
+      "protected_signer",
+      "root_owned_launch_gate",
+      "external_monotonic_receipts",
+      "malicious_workspace_agent_bypass"
+    ],
+    "user_quote": "立即停止继续扩张当前设计。当前任务只处理 Full/high Start Guard 哈希环修复、保持 Gate 强度，并完成真实生命周期回归；尽快进入 SDK source implementation。",
+    "confirmed_ref": "Codex thread 019f69a6-c923-7792-8607-7863eae0430a"
+  },
+  "mirror_integration": {
+    "baseline_manifest": ".trellis/tasks/07-16-bootstrap-full-start-binding-v2-runtime/verification/mirror-baseline.json",
+    "preexisting_drift_count": 38,
+    "preexisting_drift_owner": ".trellis/tasks/07-14-custom-first-guru-delivery-control",
+    "required_zero_drift_artifact": ".trellis/tasks/07-14-custom-first-guru-delivery-control/verification/guru-mirror-zero-drift-baseline.json",
+    "source_implementation_and_tests_allowed_while_blocked": true,
+    "blocked_operations_while_unresolved": [
+      "package_mirror_sync",
+      "apply_install",
+      "installed_runtime_canary"
+    ],
+    "source_check_commit_blocked_while_unresolved": false
+  },
+  "created_by": "intake",
+  "created_at": "2026-07-16T08:57:22Z",
+  "policy_version": "guru-risk-contract-v1"
+}

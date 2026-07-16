@@ -1,0 +1,35 @@
+{
+  "id": "fix-full-start-binding-v2",
+  "name": "fix-full-start-binding-v2",
+  "title": "Full/high Start Guard Cycle Repair Umbrella",
+  "description": "Umbrella only. The linked child is the sole implementation SSOT; deferred trust hardening is independent and the 38 mirror drifts block release only.",
+  "design_package": ".trellis/tasks/07-16-fix-full-start-binding-v2/design-package",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-07-16",
+  "completedAt": null,
+  "branch": "codex/fix-full-start-binding-v2-20260716",
+  "base_branch": "codex/preserve-guru-target-wip-75887690",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-16-bootstrap-full-start-binding-v2-runtime"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "route": "full_chain",
+    "risk": "high"
+  },
+  "guru_chain": "full",
+  "route": "full_chain",
+  "risk": "high"
+}

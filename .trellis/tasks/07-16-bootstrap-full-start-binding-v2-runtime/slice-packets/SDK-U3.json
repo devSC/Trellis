@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "slice_id": "SDK-U3",
+  "owner_unit": "UNIT-guarded-slice-activation",
+  "target_kind": "implementation",
+  "target_paths": [
+    "guru-template/overlay/verify/tests/test_start_guard.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "selected_artifact_binding",
+    "lifecycle_cas"
+  ],
+  "depends_on": [
+    "SDK-U1",
+    "SDK-U2"
+  ],
+  "deterministic_checks": [
+    "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_start_guard.py' -v"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      "guru-template/overlay/hooks/guru_task.py",
+      "guru-template/overlay/verify/guru_gate.py",
+      "guru-template/overlay/verify/tests/test_delivery_policy.py",
+      ".trellis/tasks/07-16-bootstrap-full-start-binding-v2-runtime/check.jsonl",
+      ".trellis/tasks/07-16-bootstrap-full-start-binding-v2-runtime/implement.jsonl",
+      ".trellis/tasks/07-16-fix-full-start-binding-v2/check.jsonl",
+      ".trellis/tasks/07-16-fix-full-start-binding-v2/implement.jsonl"
+    ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "codex",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-FSB-006",
+      "rule": "Selected slice, risk, detail, decisions, attestation, and envelope bindings remain fail-closed under the stable v2 digest.",
+      "source": "design-package/chapters/guarded-slice-activation.md",
+      "owner": "UNIT-guarded-slice-activation",
+      "positive_case": "Current selected artifacts pass the real artifact binding.",
+      "negative_case": "Selected risk, attestation, or envelope drift reaches the official start side effect.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "test_start_guard.py selected binding negatives"
+      ]
+    },
+    {
+      "invariant_id": "INV-FSB-007",
+      "rule": "Pre-lock, lock-internal, final pre-call, post-return, after-start, and compensation lifecycle checks remain unchanged.",
+      "source": "design-package/chapters/guarded-slice-activation.md",
+      "owner": "UNIT-guarded-slice-activation",
+      "positive_case": "The existing verified guarded lifecycle and compensation suite remains green.",
+      "negative_case": "The hash-cycle repair bypasses or weakens an existing lifecycle CAS boundary.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "test_start_guard.py lifecycle CAS and compensation suite"
+      ]
+    }
+  ]
+}

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -37,6 +38,11 @@ MEDIUM_RISK_TEXT_KEYWORDS = {
 LOW_RISK_TEXT_KEYWORDS = {
     "color", "colour", "copy", "text", "label", "typo", "comment", "format",
     "spacing", "style", "icon", "文案", "颜色", "注释", "格式", "样式",
+}
+AMBIGUOUS_REQUIREMENTS_TEXT_KEYWORDS = {
+    "unclear", "ambiguous", "unspecified", "underspecified", "under-specified",
+    "not clear", "not specified", "不清楚", "不明确", "未明确", "未指定",
+    "有歧义", "需求模糊", "描述模糊", "需求不清", "范围不清",
 }
 
 ROUTE_SMALL_INLINE = "small_inline"
@@ -164,7 +170,24 @@ def full_chain_packet_required(task_dir: str) -> tuple[bool, str]:
 
 def _keyword_flags(text: str, keywords: set) -> list:
     haystack = text.lower()
-    return sorted(k for k in keywords if k.lower() in haystack)
+    flags = []
+    for keyword in keywords:
+        normalized = keyword.lower()
+        if normalized.isascii():
+            matched = re.search(
+                rf"(?<![a-z0-9_]){re.escape(normalized)}(?![a-z0-9_])",
+                haystack,
+            )
+        else:
+            matched = normalized in haystack
+        if matched:
+            flags.append(keyword)
+    return sorted(flags)
+
+
+def _explicit_ambiguity_flags(text: str) -> list:
+    """Return explicit requirement-ambiguity markers without substring traps."""
+    return _keyword_flags(text, AMBIGUOUS_REQUIREMENTS_TEXT_KEYWORDS)
 
 
 def path_high_risk_flags(paths) -> list:
@@ -184,7 +207,16 @@ def path_high_risk_flags(paths) -> list:
     return sorted(set(flags))
 
 
-def assess_intake(description: str = "", paths=None, commit_requested: bool = False) -> dict:
+def assess_intake(
+    description: str = "",
+    paths=None,
+    commit_requested: bool = False,
+    *,
+    requirements_clear: bool | None = None,
+    coupling: str | None = None,
+    reversible: bool | None = None,
+    verification_scope: str | None = None,
+) -> dict:
     """Classify incoming Guru work into risk + route.
 
     This is intentionally conservative: any high-risk signal wins; unknown work
@@ -192,9 +224,13 @@ def assess_intake(description: str = "", paths=None, commit_requested: bool = Fa
     and tests can share the same table.
     """
     paths = list(paths or [])
+    coupling = str(coupling or "unknown").strip().lower().replace("-", "_")
+    verification_scope = str(verification_scope or "unknown").strip().lower().replace("-", "_")
     high_flags = _keyword_flags(description, HIGH_RISK_TEXT_KEYWORDS) + path_high_risk_flags(paths)
     medium_flags = _keyword_flags(description, MEDIUM_RISK_TEXT_KEYWORDS)
     low_flags = _keyword_flags(description, LOW_RISK_TEXT_KEYWORDS)
+    ambiguity_flags = _explicit_ambiguity_flags(description)
+    explicitly_ambiguous = requirements_clear is False or bool(ambiguity_flags)
     reasons = []
     if high_flags:
         return {
@@ -206,26 +242,56 @@ def assess_intake(description: str = "", paths=None, commit_requested: bool = Fa
             "needs_user_choice": False,
             "recommended_contract": ROUTE_FULL_CHAIN,
         }
-    if medium_flags:
+    bounded_behavior = (
+        requirements_clear is True
+        and not explicitly_ambiguous
+        and coupling == "local"
+        and reversible is True
+        and verification_scope == "focused"
+        and 0 < len(paths) <= 3
+    )
+    if low_flags and not medium_flags and not explicitly_ambiguous and 0 < len(paths) <= 3:
+        return {
+            "risk": "low",
+            "route": ROUTE_SMALL_INLINE,
+            "confidence": 0.9,
+            "reasons": [f"mechanical low-risk signal: {flag}" for flag in sorted(set(low_flags))],
+            "risk_flags": sorted(set(low_flags)) + ["mechanical_change"],
+            "needs_user_choice": False,
+            "brainstorm_required": False,
+            "recommended_contract": ROUTE_SMALL_INLINE,
+        }
+    if bounded_behavior:
+        return {
+            "risk": "low",
+            "route": ROUTE_MICRO_TASK,
+            "confidence": 0.9,
+            "reasons": ["requirements clear; local coupling; reversible; focused verification"],
+            "risk_flags": sorted(set(medium_flags)) + ["bounded_local_change"],
+            "needs_user_choice": False,
+            "brainstorm_required": False,
+            "recommended_contract": ROUTE_MICRO_TASK,
+        }
+    if medium_flags or explicitly_ambiguous:
+        ambiguity_reasons = []
+        if explicitly_ambiguous:
+            ambiguity_reasons = (
+                [f"explicit requirements ambiguity: {flag}" for flag in ambiguity_flags]
+                or ["requirements or acceptance criteria are not yet clear"]
+            )
         return {
             "risk": "medium",
             "route": ROUTE_LITE_TASK,
             "confidence": 0.8,
-            "reasons": [f"medium-risk signal: {flag}" for flag in sorted(set(medium_flags))],
-            "risk_flags": sorted(set(medium_flags)),
-            "needs_user_choice": False,
+            "reasons": ambiguity_reasons + [
+                f"medium-risk signal: {flag}" for flag in sorted(set(medium_flags))
+            ],
+            "risk_flags": sorted(set(
+                medium_flags + (["requirements_ambiguous"] if explicitly_ambiguous else [])
+            )),
+            "needs_user_choice": explicitly_ambiguous,
+            "brainstorm_required": explicitly_ambiguous,
             "recommended_contract": ROUTE_LITE_TASK,
-        }
-    if low_flags and 0 < len(paths) <= 3:
-        route = ROUTE_MICRO_TASK if commit_requested else ROUTE_SMALL_INLINE
-        return {
-            "risk": "low",
-            "route": route,
-            "confidence": 0.85,
-            "reasons": [f"low-risk signal: {flag}" for flag in sorted(set(low_flags))],
-            "risk_flags": sorted(set(low_flags)),
-            "needs_user_choice": False,
-            "recommended_contract": route,
         }
     if paths:
         reasons.append("paths present but no low-risk classifier match")
@@ -238,6 +304,7 @@ def assess_intake(description: str = "", paths=None, commit_requested: bool = Fa
         "reasons": reasons,
         "risk_flags": ["unknown_non_low"],
         "needs_user_choice": True,
+        "brainstorm_required": True,
         "recommended_contract": ROUTE_LITE_TASK,
     }
 

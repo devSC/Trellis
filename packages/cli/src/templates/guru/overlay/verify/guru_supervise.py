@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -242,6 +243,7 @@ class ReviewTarget:
     slice_packet_path: Path | None
     digest_source: str
     active_brief: str
+    reviewed_target_digest: str | None = None
 
 
 def _parse_key_line(line: str) -> tuple[int, str, str] | None:
@@ -1183,6 +1185,12 @@ def _skip_adversarial(
 
 
 def _execute_plan(plan: RunPlan, config: SupervisionConfig) -> tuple[int, str | None, str]:
+    if config.provider != "codex" or config.current_provider != "codex":
+        sys.stderr.write(
+            "[guru-supervise] BLOCKED: V0 launch boundary is Codex-only; "
+            f"current={config.current_provider!r} worker={config.provider!r}\n"
+        )
+        return 2, None, ""
     for command in (plan.create_cmd, plan.spawn_cmd):
         try:
             result = _run(command, cwd=config.root)
@@ -1243,6 +1251,10 @@ def _execute_plan(plan: RunPlan, config: SupervisionConfig) -> tuple[int, str | 
                 f"{shlex.join(plan.messages_cmd)} failed: {exc}",
             )
         raise
+    provider_evidence = wait.stdout + "\n" + messages.stdout
+    if re.search(r"\bclaude\b", provider_evidence, re.IGNORECASE):
+        sys.stderr.write("[guru-supervise] BLOCKED: forbidden provider text/event detected\n")
+        return 2, terminal, messages.stdout
     if wait.returncode != 0:
         if config.adversarial:
             return _skip_adversarial(
@@ -1938,14 +1950,21 @@ def _active_review_brief(
     digest_source: str,
     invariants: list | None = None,
     slice_packet_path: Path | None = None,
+    reviewed_target_digest: str | None = None,
 ) -> str:
     packet_line = f"slice_packet={slice_packet_path}\n" if slice_packet_path is not None else ""
+    digest_line = (
+        f"reviewed_target_digest={reviewed_target_digest}\n"
+        if reviewed_target_digest is not None
+        else ""
+    )
     return (
         f"\nactive_review={label}\n"
         f"{packet_line}"
         f"review_target={review_target}\n"
         f"target_paths={target_paths}\n"
         f"target_digest_source={digest_source}\n"
+        f"{digest_line}"
         f"semantic_review_provider={semantic_provider.get('provider')}(required={semantic_provider.get('required')})\n"
         "review_provider 必须写实际 worker provider（codex 或 claude），不要写 opposite/manual/ocr_optional。\n"
         "置顶逐行输出且不得漏写这 7 字段：review_result、route_class、review_target、review_provider、"
@@ -1969,6 +1988,12 @@ def _slice_review_target(task_dir: Path, root: Path, unit_id: str, *, staged: bo
     slice_packet_path = task_dir / "slice-packets" / f"{unit_id}.json"
     semantic_provider = packet.get("semantic_review_provider", {})
     digest_source = "index" if staged else "worktree"
+    try:
+        reviewed_target_digest = guru_review_record.target_snapshot_digest(
+            str(root), packet.get("target_paths", []), digest_source
+        )
+    except guru_review_record.ReviewRecordError as exc:
+        raise GuruSupervisionError(f"SCOPE_INVALID:target snapshot digest failed:{exc}") from exc
     return ReviewTarget(
         unit_id=unit_id,
         review_target=f"slice:{unit_id}",
@@ -1983,7 +2008,9 @@ def _slice_review_target(task_dir: Path, root: Path, unit_id: str, *, staged: bo
             digest_source=digest_source,
             invariants=packet.get("invariants", []),
             slice_packet_path=slice_packet_path,
+            reviewed_target_digest=reviewed_target_digest,
         ),
+        reviewed_target_digest=reviewed_target_digest,
     )
 
 
@@ -2017,6 +2044,12 @@ def _staged_review_target(task_dir: Path, root: Path) -> ReviewTarget:
         ],
         "semantic_review_provider": {"provider": "opposite", "required": True},
     }
+    try:
+        reviewed_target_digest = guru_review_record.target_snapshot_digest(
+            str(root), code_paths, "index"
+        )
+    except guru_review_record.ReviewRecordError as exc:
+        raise GuruSupervisionError(f"SCOPE_INVALID:target snapshot digest failed:{exc}") from exc
     return ReviewTarget(
         unit_id="staged",
         review_target="staged:index",
@@ -2030,7 +2063,9 @@ def _staged_review_target(task_dir: Path, root: Path) -> ReviewTarget:
             semantic_provider=packet["semantic_review_provider"],
             digest_source="index",
             invariants=packet.get("invariants", []),
+            reviewed_target_digest=reviewed_target_digest,
         ),
+        reviewed_target_digest=reviewed_target_digest,
     )
 
 
@@ -2049,13 +2084,20 @@ def _append_supervisor_review_record(
 ) -> tuple[dict, str | None]:
     verdict = guru_review_record.parse_verdict_block(messages)
     try:
-        reviewed_target_digest = guru_review_record.target_snapshot_digest(
+        current_target_digest = guru_review_record.target_snapshot_digest(
             str(root), target.packet.get("target_paths", []), target.digest_source
         )
     except guru_review_record.ReviewRecordError as exc:
         guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
             "SCOPE_INVALID", run_id, unit_id=target.unit_id))
         raise GuruSupervisionError(f"target snapshot digest failed,硬停(SCOPE_INVALID):{exc}") from exc
+    reviewed_target_digest = target.reviewed_target_digest or current_target_digest
+    if current_target_digest != reviewed_target_digest:
+        guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
+            "SCOPE_INVALID", run_id, unit_id=target.unit_id))
+        raise GuruSupervisionError(
+            "target snapshot changed during implementation-review,硬停(SCOPE_INVALID)"
+        )
     record, failure = guru_review_record.normalize_review_record(verdict, {
         "mode": "supervisor", "packet": target.packet, "implement_provider": config.provider,
         "supervisor_deterministic_status": det_status, "deterministic_results": det_results,
@@ -2423,14 +2465,89 @@ def run_implementation_review(args: argparse.Namespace) -> int:
     )
     check_config = resolution.check_config
     _report_review_provider_resolution(config, resolution)
+    review_run_id = f"{base_run_id}-review-1"
+    det_status, det_results = "not_run", []
+    if not args.dry_run:
+        det_status, det_results = guru_review_record.run_deterministic_checks(
+            target.packet.get("deterministic_checks", []), str(root)
+        )
+        try:
+            current_target_digest = guru_review_record.target_snapshot_digest(
+                str(root), target.packet.get("target_paths", []), target.digest_source
+            )
+        except guru_review_record.ReviewRecordError as exc:
+            guru_review_record.append_record(
+                str(task_dir),
+                guru_review_record.preflight_failure_record(
+                    "SCOPE_INVALID", review_run_id, unit_id=target.unit_id
+                ),
+            )
+            sys.stderr.write(
+                f"[guru-supervise] implementation-review target digest failed(SCOPE_INVALID):{exc}\n"
+            )
+            return 2
+        if current_target_digest != target.reviewed_target_digest:
+            guru_review_record.append_record(
+                str(task_dir),
+                guru_review_record.preflight_failure_record(
+                    "SCOPE_INVALID", review_run_id, unit_id=target.unit_id
+                ),
+            )
+            sys.stderr.write(
+                "[guru-supervise] implementation-review target changed during deterministic checks; "
+                "硬停(SCOPE_INVALID)\n"
+            )
+            return 2
 
+    run_slug = _sanitize(review_run_id, limit=40)
+    expected_channel = f"guru-{_sanitize(task_dir.name, limit=70)}-check-{run_slug}"
+    expected_worker = f"check-{_sanitize(check_config.provider, limit=24)}-{run_slug}"
+    supervisor_source = Path(__file__).resolve()
+    try:
+        supervisor_source_ref = supervisor_source.relative_to(root).as_posix()
+    except ValueError:
+        supervisor_source_ref = str(supervisor_source)
+    invocation_contract = {
+        "schema_version": 1,
+        "action": "implementation-review",
+        "review_mode": "check_only",
+        "run_id": review_run_id,
+        "channel": expected_channel,
+        "worker": expected_worker,
+        "supervisor_source": supervisor_source_ref,
+        "supervisor_source_sha256": hashlib.sha256(supervisor_source.read_bytes()).hexdigest(),
+        "slice_id": target.unit_id,
+        "review_target": target.review_target,
+        "digest_source": target.digest_source,
+        "reviewed_target_digest": target.reviewed_target_digest,
+        "target_paths_sha256": hashlib.sha256(json.dumps(
+            target.packet.get("target_paths", []), sort_keys=True,
+            separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest(),
+        "deterministic_status": det_status,
+        "deterministic_results_sha256": hashlib.sha256(json.dumps(
+            det_results, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest(),
+        "implement_provider": config.provider,
+        "review_provider": check_config.provider,
+        "check_provider": check_config.provider,
+        "provider_override_source": resolution.provider_override_source,
+        "same_provider_user_quote": resolution.same_provider_user_quote,
+        "same_provider": resolution.provider_override_source == "cli_same_provider",
+        "staged": target.digest_source == "index",
+    }
+    invocation_line = "review_invocation_contract=" + json.dumps(
+        invocation_contract, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ) + "\n"
     check_plan = build_run_plan(
         "implementation-review",
         task_dir,
         check_config,
-        f"{base_run_id}-review-1",
+        review_run_id,
         "Implementation-review check-only required evidence path. Do not implement or edit files; "
-        "emit exactly one route_class and review_result for required commit evidence." + target.active_brief,
+        "emit exactly one route_class and review_result for required commit evidence.\n"
+        + invocation_line
+        + target.active_brief,
         slice_packet_path=target.slice_packet_path,
     )
 
@@ -2442,9 +2559,6 @@ def run_implementation_review(args: argparse.Namespace) -> int:
         _print_dry_run(check_plan)
         return 0
 
-    det_status, det_results = guru_review_record.run_deterministic_checks(
-        target.packet.get("deterministic_checks", []), str(root)
-    )
     rc, _terminal, messages = _execute_plan(check_plan, check_config)
     if rc != 0:
         return rc
@@ -2453,7 +2567,7 @@ def run_implementation_review(args: argparse.Namespace) -> int:
             task_dir=task_dir,
             root=root,
             target=target,
-            run_id=f"{base_run_id}-review-1",
+            run_id=review_run_id,
             config=config,
             resolution=resolution,
             check_plan=check_plan,
