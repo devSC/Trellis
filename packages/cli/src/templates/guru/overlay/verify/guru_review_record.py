@@ -14,11 +14,13 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import select
 import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 
 SCHEMA_VERSION = 1
 
@@ -193,6 +195,9 @@ _RECORD_FIELDS = (
     "message", "candidates", "supplemental", "required_satisfied", "reviewed_target_digest",
     "provider_override_source", "same_provider_user_quote", "high_risk_review_provider_policy",
     "check_provider", "implement_provider", "review_target_kind",
+    "target_paths_digest", "invariant_set_digest", "requirements_design_digest",
+    "deterministic_commands_digest", "deterministic_results_digest",
+    "review_policy_digest", "supervisor_source_digest", "evidence_key",
 )
 
 
@@ -619,6 +624,483 @@ def target_snapshot_digest(repo_root: str, target_paths: list, source: str = "wo
     raise ReviewRecordError(f"unknown target snapshot source:{source!r}")
 
 
+def canonical_digest(domain: str, value) -> str:
+    """Hash one JSON-compatible contract value with explicit domain separation."""
+    if not isinstance(domain, str) or not domain.strip():
+        raise ReviewRecordError("digest domain 必须是非空字符串")
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ReviewRecordError(f"{domain} 无法 canonical JSON 编码:{exc}") from exc
+    h = hashlib.sha256()
+    _hash_field(h, "DOMAIN", domain)
+    _hash_field(h, "JSON", encoded)
+    return h.hexdigest()
+
+
+def target_paths_digest(target_paths: list) -> str:
+    return canonical_digest("guru-target-paths-v1", _clean_target_paths(target_paths))
+
+
+def invariant_set_digest(invariants) -> str:
+    if not isinstance(invariants, list) or not invariants:
+        raise ReviewRecordError("invariants 必须是非空数组")
+    for idx, invariant in enumerate(invariants):
+        _validate_invariant(invariant, idx)
+    return canonical_digest("guru-invariant-set-v1", invariants)
+
+
+def deterministic_commands_digest(commands) -> str:
+    commands = _require_str_list(commands, "deterministic_checks")
+    return canonical_digest("guru-deterministic-commands-v1", list(dict.fromkeys(commands)))
+
+
+def deterministic_results_digest(results) -> str:
+    if not isinstance(results, list):
+        raise ReviewRecordError("deterministic_results 必须是数组")
+    return canonical_digest("guru-deterministic-results-v1", results)
+
+
+def review_policy_digest(policy) -> str:
+    if not isinstance(policy, dict):
+        raise ReviewRecordError("review policy 必须是对象")
+    return canonical_digest("guru-review-policy-v1", policy)
+
+
+def review_policy_payload(packet: dict, record: dict) -> dict:
+    if not isinstance(packet, dict) or not isinstance(record, dict):
+        raise ReviewRecordError("review policy inputs 必须是对象")
+    configured = record.get("high_risk_review_provider_policy")
+    if not isinstance(configured, str) or not configured.strip():
+        configured = "current"
+    configured = configured.strip().lower()
+    if configured not in HIGH_RISK_REVIEW_PROVIDER_POLICIES:
+        raise ReviewRecordError(
+            f"invalid high-risk review provider policy:{configured!r}"
+        )
+    return {
+        "packet_risk": packet.get("risk"),
+        "packet_risk_reasons": packet.get("risk_reasons"),
+        "packet_semantic_review_provider": packet.get(
+            "semantic_review_provider"
+        ),
+        "configured_high_risk_review_provider_policy": configured,
+        "provider_override_source": record.get("provider_override_source"),
+        "same_provider_user_quote": record.get("same_provider_user_quote"),
+        "review_target_kind": record.get("review_target_kind"),
+        "implement_provider": record.get("implement_provider"),
+        "check_provider": record.get("check_provider"),
+        "review_provider": record.get("review_provider"),
+    }
+
+
+def _supervisor_digest_bytes(source_name: str, data: bytes) -> str:
+    h = hashlib.sha256()
+    _hash_field(h, "DOMAIN", "guru-supervisor-source-v1")
+    _hash_field(h, "PATH", os.path.basename(source_name))
+    _hash_field(h, "CONTENT", data)
+    return h.hexdigest()
+
+
+def supervisor_source_digest(source_path: str) -> str:
+    try:
+        with open(source_path, "rb") as fh:
+            data = fh.read()
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot read supervisor source:{source_path}:{exc}") from exc
+    return _supervisor_digest_bytes(source_path, data)
+
+
+def commit_supervisor_source_digest(
+    repo_root: str,
+    commit_sha: str,
+    source_path: str,
+) -> str:
+    path = _clean_target_paths([source_path])[0]
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{commit_sha}:{path}"],
+            cwd=repo_root,
+            capture_output=True,
+            text=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ReviewRecordError(
+            f"cannot read supervisor source from commit:{commit_sha}:{path}:{exc}"
+        ) from exc
+    if result.returncode != 0:
+        message = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+        raise ReviewRecordError(
+            f"cannot read supervisor source from commit:{commit_sha}:{path}:{message}"
+        )
+    return _supervisor_digest_bytes(path, result.stdout)
+
+
+_MARKDOWN_HEADING_RE = re.compile(rb"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*(?:\r?\n)?$")
+
+
+def _markdown_section_bytes(path: str, heading: str) -> bytes:
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot read requirements/design input:{path}:{exc}") from exc
+    try:
+        wanted = heading.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ReviewRecordError(f"Markdown heading 非 UTF-8:{heading!r}") from exc
+    matches = []
+    offset = 0
+    headings = []
+    for line in data.splitlines(keepends=True):
+        match = _MARKDOWN_HEADING_RE.match(line)
+        if match:
+            title = match.group(2).strip()
+            level = len(match.group(1))
+            headings.append((offset, level, title))
+            if title == wanted:
+                matches.append((offset, level))
+        offset += len(line)
+    if len(matches) != 1:
+        state = "missing" if not matches else "ambiguous"
+        raise ReviewRecordError(f"Markdown heading {state}:{path}:{heading}")
+    start, level = matches[0]
+    end = len(data)
+    for candidate_start, candidate_level, _ in headings:
+        if candidate_start > start and candidate_level <= level:
+            end = candidate_start
+            break
+    return data[start:end]
+
+
+def requirements_design_digest(task_dir: str, manifest) -> str:
+    """Hash exact task-local Markdown sections in declared manifest order."""
+    if not isinstance(manifest, list) or not manifest:
+        raise ReviewRecordError("requirements_design_inputs 必须是非空数组")
+    root = os.path.realpath(task_dir)
+    h = hashlib.sha256()
+    h.update(b"guru-requirements-design-v1\0")
+    for idx, entry in enumerate(manifest):
+        if not isinstance(entry, dict):
+            raise ReviewRecordError(f"requirements_design_inputs[{idx}] 必须是对象")
+        raw_path = entry.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ReviewRecordError(f"requirements_design_inputs[{idx}].path 必须是非空字符串")
+        rel = _clean_target_paths([raw_path])[0]
+        full = os.path.realpath(os.path.join(root, rel))
+        if full != root and not full.startswith(root + os.sep):
+            raise ReviewRecordError(f"requirements/design path escapes task root:{raw_path}")
+        heading = entry.get("heading")
+        whole_file = entry.get("whole_file")
+        if isinstance(heading, str) and heading.strip() and whole_file is not True:
+            selector = f"heading:{heading.strip()}"
+            content = _markdown_section_bytes(full, heading.strip())
+        elif whole_file is True and heading is None:
+            selector = "whole_file"
+            try:
+                with open(full, "rb") as fh:
+                    content = fh.read()
+            except OSError as exc:
+                raise ReviewRecordError(f"cannot read requirements/design input:{full}:{exc}") from exc
+        else:
+            raise ReviewRecordError(
+                f"requirements_design_inputs[{idx}] 必须且只能声明 heading 或 whole_file=true"
+            )
+        _hash_field(h, "PATH", rel)
+        _hash_field(h, "SELECTOR", selector)
+        _hash_field(h, "CONTENT", content)
+    return h.hexdigest()
+
+
+def review_evidence_components(
+    task_dir: str,
+    packet: dict,
+    record: dict,
+    *,
+    supervisor_path: str | None = None,
+) -> dict:
+    if not isinstance(packet, dict) or not isinstance(record, dict):
+        raise ReviewRecordError("review evidence inputs 必须是对象")
+    source_path = supervisor_path or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "guru_supervise.py",
+    )
+    return {
+        "target_paths_digest": target_paths_digest(packet.get("target_paths")),
+        "invariant_set_digest": invariant_set_digest(packet.get("invariants")),
+        "requirements_design_digest": requirements_design_digest(
+            task_dir,
+            packet.get("requirements_design_inputs"),
+        ),
+        "deterministic_commands_digest": deterministic_commands_digest(
+            packet.get("deterministic_checks")
+        ),
+        "deterministic_results_digest": deterministic_results_digest(
+            record.get("deterministic_results")
+        ),
+        "review_policy_digest": review_policy_digest(
+            review_policy_payload(packet, record)
+        ),
+        "supervisor_source_digest": supervisor_source_digest(source_path),
+    }
+
+
+def review_evidence_key(reviewed_target_digest: str, components: dict) -> str:
+    if (
+        not isinstance(reviewed_target_digest, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", reviewed_target_digest)
+    ):
+        raise ReviewRecordError("reviewed_target_digest 必须是 sha256")
+    if not isinstance(components, dict):
+        raise ReviewRecordError("review evidence components 必须是对象")
+    input_fields = (
+        "target_paths_digest",
+        "invariant_set_digest",
+        "requirements_design_digest",
+        "deterministic_commands_digest",
+        "review_policy_digest",
+        "supervisor_source_digest",
+    )
+    inputs = {}
+    for field in input_fields:
+        value = components.get(field)
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ReviewRecordError(f"review evidence component {field} 必须是 sha256")
+        inputs[field] = value
+    return canonical_digest(
+        "guru-implementation-review-evidence-v1",
+        {
+            "reviewed_target_digest": reviewed_target_digest,
+            **inputs,
+        },
+    )
+
+
+def _commit_entries(repo_root: str, targets: list, commit_sha: str) -> list:
+    try:
+        result = subprocess.run(
+            [
+                "git", "--literal-pathspecs", "ls-tree", "-rz", "--full-tree",
+                commit_sha, "--", *targets,
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ReviewRecordError(f"cannot inspect commit tree:{exc}") from exc
+    if result.returncode != 0:
+        message = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+        raise ReviewRecordError(f"git ls-tree failed:{message}")
+    entries = {}
+    for raw in result.stdout.split(b"\0"):
+        if not raw:
+            continue
+        try:
+            meta, path_raw = raw.split(b"\t", 1)
+            mode, kind, oid = meta.split()
+            path = path_raw.decode("utf-8", errors="surrogateescape")
+        except (ValueError, UnicodeError) as exc:
+            raise ReviewRecordError("cannot parse commit tree entry") from exc
+        if _snapshot_path_excluded(path):
+            continue
+        entries[path] = (
+            mode.decode("ascii"),
+            kind.decode("ascii"),
+            oid.decode("ascii"),
+        )
+    indexed = set(entries)
+    for target in targets:
+        if _snapshot_path_excluded(target):
+            continue
+        if target != "." and target not in entries and not any(
+            _target_contains_path(target, path) for path in indexed
+        ):
+            entries[target] = (None, None, None)
+    return [(path, *entries[path]) for path in sorted(entries)]
+
+
+def commit_target_digest(repo_root: str, target_paths: list, commit_sha: str) -> str:
+    """Compute the review target digest from one immutable commit tree."""
+    targets = _clean_target_paths(target_paths)
+    if not targets:
+        raise ReviewRecordError("target_paths 为空，无法计算 commit target digest")
+    if not isinstance(commit_sha, str) or not commit_sha.strip():
+        raise ReviewRecordError("commit_sha 必须是非空字符串")
+    h = hashlib.sha256()
+    h.update(b"guru-target-snapshot-v2\0")
+    for rel, mode, kind, oid in _commit_entries(repo_root, targets, commit_sha):
+        _hash_field(h, "PATH", rel)
+        if not (mode and kind and oid):
+            _hash_field(h, "STATE", "DELETE")
+            continue
+        if mode not in {"100644", "100755", "120000", "160000"}:
+            raise ReviewRecordError(f"unsupported commit mode for {rel}:{mode}")
+        if mode == "160000":
+            if kind != "commit":
+                raise ReviewRecordError(f"invalid gitlink tree entry for {rel}:{kind}")
+            _hash_field(h, "MODE", mode)
+            _hash_field(h, "TYPE", "GITLINK")
+            _hash_field(h, "CONTENT", oid)
+            continue
+        if kind != "blob":
+            raise ReviewRecordError(f"invalid blob tree entry for {rel}:{kind}")
+        _hash_field(h, "MODE", mode)
+        _hash_field(h, "TYPE", "SYMLINK" if mode == "120000" else "FILE")
+        if mode == "120000":
+            try:
+                blob = subprocess.run(
+                    ["git", "cat-file", "-p", oid],
+                    cwd=repo_root,
+                    capture_output=True,
+                    text=False,
+                    timeout=15,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ReviewRecordError(f"cannot read commit blob for {rel}:{exc}") from exc
+            if blob.returncode != 0:
+                message = (blob.stderr or b"").decode("utf-8", errors="replace").strip()
+                raise ReviewRecordError(f"cannot read commit blob for {rel}:{message}")
+            _hash_field(h, "CONTENT", blob.stdout)
+        else:
+            _hash_git_blob_chunks(h, repo_root, rel, oid)
+    return h.hexdigest()
+
+
+RECEIPT_SCHEMA_VERSION = 1
+RECEIPT_REQUIRED_FIELDS = (
+    "schema_version", "slice_id", "commit_sha", "parent_sha", "review_run_id",
+    "reviewed_target_digest", "target_paths_digest", "invariant_set_digest",
+    "requirements_design_digest", "deterministic_commands_digest",
+    "deterministic_results_digest", "review_policy_digest",
+    "supervisor_source_digest", "committed_at",
+)
+_RECEIPT_DIGEST_FIELDS = RECEIPT_REQUIRED_FIELDS[5:13]
+
+
+def receipts_path(task_dir: str) -> str:
+    return os.path.join(task_dir, "review-records", "slice-commit-receipts.jsonl")
+
+
+def validate_receipt(receipt) -> dict:
+    if not isinstance(receipt, dict):
+        raise ReviewRecordError("slice receipt 必须是对象")
+    missing = [field for field in RECEIPT_REQUIRED_FIELDS if field not in receipt]
+    if missing:
+        raise ReviewRecordError("slice receipt 缺字段:" + ",".join(missing))
+    if receipt.get("schema_version") != RECEIPT_SCHEMA_VERSION:
+        raise ReviewRecordError(
+            f"slice receipt schema_version 须为 {RECEIPT_SCHEMA_VERSION}"
+        )
+    for field in ("slice_id", "commit_sha", "parent_sha", "review_run_id", "committed_at"):
+        if not isinstance(receipt.get(field), str) or not receipt[field].strip():
+            raise ReviewRecordError(f"slice receipt {field} 必须是非空字符串")
+    for field in _RECEIPT_DIGEST_FIELDS:
+        value = receipt.get(field)
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ReviewRecordError(f"slice receipt {field} 必须是 sha256")
+    for field in ("commit_sha", "parent_sha"):
+        if not re.fullmatch(r"[0-9a-f]{40,64}", receipt[field]):
+            raise ReviewRecordError(f"slice receipt {field} 必须是完整 Git object id")
+    return dict(receipt)
+
+
+def load_receipt_batches(task_dir: str) -> list:
+    path = receipts_path(task_dir)
+    if not os.path.isfile(path):
+        return []
+    batches = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for lineno, line in enumerate(fh, 1):
+                if not line.strip():
+                    continue
+                try:
+                    batch = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ReviewRecordError(f"slice receipt line {lineno} invalid JSON:{exc}") from exc
+                if (
+                    not isinstance(batch, dict)
+                    or batch.get("schema_version") != RECEIPT_SCHEMA_VERSION
+                    or batch.get("kind") != "slice_commit_receipt_batch"
+                    or not isinstance(batch.get("receipts"), list)
+                    or not batch["receipts"]
+                ):
+                    raise ReviewRecordError(f"slice receipt line {lineno} invalid batch envelope")
+                normalized = dict(batch)
+                normalized["receipts"] = [
+                    validate_receipt(receipt) for receipt in batch["receipts"]
+                ]
+                expected_batch_id = canonical_digest(
+                    "guru-slice-receipt-batch-v1",
+                    [
+                        {
+                            field: receipt[field]
+                            for field in RECEIPT_REQUIRED_FIELDS
+                        }
+                        for receipt in normalized["receipts"]
+                    ],
+                )
+                if batch.get("batch_id") != expected_batch_id:
+                    raise ReviewRecordError(
+                        f"slice receipt line {lineno} batch_id mismatch"
+                    )
+                batches.append(normalized)
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot read slice receipts:{exc}") from exc
+    return batches
+
+
+def receipt_records(task_dir: str) -> list:
+    return [
+        receipt
+        for batch in load_receipt_batches(task_dir)
+        for receipt in batch["receipts"]
+    ]
+
+
+def append_receipt_batch(task_dir: str, receipts: list) -> None:
+    """Append one validated receipt batch with one O_APPEND write."""
+    if not isinstance(receipts, list) or not receipts:
+        raise ReviewRecordError("receipt batch 必须是非空数组")
+    normalized = [validate_receipt(receipt) for receipt in receipts]
+    batch_id = canonical_digest(
+        "guru-slice-receipt-batch-v1",
+        [{field: receipt[field] for field in RECEIPT_REQUIRED_FIELDS} for receipt in normalized],
+    )
+    payload = {
+        "schema_version": RECEIPT_SCHEMA_VERSION,
+        "kind": "slice_commit_receipt_batch",
+        "batch_id": batch_id,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "receipts": normalized,
+    }
+    encoded = (
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    path = receipts_path(task_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
+    fd = os.open(path, flags, 0o600)
+    try:
+        written = os.write(fd, encoded)
+        if written != len(encoded):
+            raise ReviewRecordError("receipt batch append was incomplete")
+        os.fsync(fd)
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot append slice receipt batch:{exc}") from exc
+    finally:
+        os.close(fd)
+
+
 def append_record(task_dir: str, record: dict) -> None:
     """**唯一 writer**:校验 record 关键枚举后追加 review-records/implementation-reviews.jsonl。
     调用方永远经 normalize_review_record / preflight_failure_record → append_record,绝不拒绝后手写
@@ -647,6 +1129,30 @@ def append_record(task_dir: str, record: dict) -> None:
             raise ReviewRecordError(
                 "review record 非规范化(缺完整 verdict 字段或取值不一致);"
                 "须经 normalize_review_record / preflight_failure_record 产出后再 append")
+        slice_id = record.get("slice_id")
+        review_target = record.get("review_target")
+        if (
+            record.get("supplemental") is not True
+            and isinstance(slice_id, str)
+            and slice_id
+            and review_target == f"slice:{slice_id}"
+        ):
+            packet_path = os.path.join(_packets_dir(task_dir), f"{slice_id}.json")
+            if os.path.isfile(packet_path):
+                packet = load_packet(task_dir, slice_id)
+                if packet.get("requirements_design_inputs") is not None:
+                    reviewed_digest = record.get("reviewed_target_digest")
+                    components = review_evidence_components(
+                        task_dir,
+                        packet,
+                        record,
+                    )
+                    record = dict(record)
+                    record.update(components)
+                    record["evidence_key"] = review_evidence_key(
+                        reviewed_digest,
+                        components,
+                    )
     os.makedirs(os.path.dirname(_reviews_path(task_dir)), exist_ok=True)
     line = json.dumps(
         {k: record[k] for k in _RECORD_FIELDS if k in record},

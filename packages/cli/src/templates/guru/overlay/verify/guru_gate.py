@@ -35,6 +35,10 @@ Gate 确认模型 SSOT：.trellis/spec/harness/gate/gate-confirmation-model.md
   python3 guru_gate.py check-implementation [task_dir]
                                                   # Full 实现/检查 Worker 前置；Lite 不需要 Worker（该命令只保留兼容只读校验）
   python3 guru_gate.py check-commit [task_dir]    # route-aware 提交前置：Lite 校验标准任务/当前确认/in_progress/合同 scope；Full 另需 implementation review clean
+                                    [--slice <id>]
+                                                  # --slice: Full/high exact slice staged-byte + dependency-receipt Gate
+  python3 guru_gate.py record-slice-commit <task_dir> --slice <id> --review-run-id <id>
+                                                  # 主会话 work commit 后的官方 append-only receipt producer
   python3 guru_gate.py commit-plan [task_dir] [--write]
                                                   # 输出提交计划 JSON；--write 同步写 task-local commit-plan.json mutable evidence
   python3 guru_gate.py intake [task_dir] --description "<需求>" [--path <path> ...] [--commit-requested] [--write-contract]
@@ -2062,9 +2066,16 @@ def _config_root_for_task(task_dir: str = None) -> str:
 
 
 def _config_value(path: tuple[str, ...], task_dir: str = None) -> str:
+    return _config_value_with_presence(path, task_dir)[1]
+
+
+def _config_value_with_presence(
+    path: tuple[str, ...],
+    task_dir: str = None,
+) -> tuple[bool, str]:
     cfg = read(os.path.join(_config_root_for_task(task_dir), ".trellis", "config.yaml"))
     if not cfg:
-        return ""
+        return False, ""
     stack = []
     for line in cfg.splitlines():
         parsed = _parse_config_key_line(line)
@@ -2075,10 +2086,10 @@ def _config_value(path: tuple[str, ...], task_dir: str = None) -> str:
             stack.pop()
         current_path = tuple(k for _, k in stack) + (key,)
         if current_path == path:
-            return _config_scalar(raw_value)
+            return True, _config_scalar(raw_value)
         if not _config_has_scalar(raw_value):
             stack.append((indent, key))
-    return ""
+    return False, ""
 
 
 def _config_bool(path: tuple[str, ...], default: bool, task_dir: str = None) -> bool:
@@ -5313,6 +5324,752 @@ def _lite_deterministic_evidence_problem(
     return ""
 
 
+def _git_output(root: str, args: list[str], label: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise guru_review_record.ReviewRecordError(f"{label}:{exc}") from exc
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "").strip()
+        raise guru_review_record.ReviewRecordError(f"{label}:{message}")
+    return result.stdout.strip()
+
+
+def _slice_review_policy(task_dir: str, packet: dict, record: dict) -> dict:
+    present, configured = _config_value_with_presence(
+        ("guru", "supervision", "high_risk_review_provider_policy"),
+        task_dir,
+    )
+    configured = configured.strip().lower()
+    if not present:
+        configured = "current"
+    if configured not in guru_review_record.HIGH_RISK_REVIEW_PROVIDER_POLICIES:
+        raise guru_review_record.ReviewRecordError(
+            f"invalid high-risk review provider policy:{configured!r}"
+        )
+    source = record.get("provider_override_source")
+    if packet.get("risk") in {"high", "critical"} and source == "config_policy":
+        if record.get("high_risk_review_provider_policy") != configured:
+            raise guru_review_record.ReviewRecordError(
+                "implementation review provider policy is stale"
+            )
+    return {
+        "packet_risk": packet.get("risk"),
+        "packet_risk_reasons": packet.get("risk_reasons"),
+        "packet_semantic_review_provider": packet.get("semantic_review_provider"),
+        "configured_high_risk_review_provider_policy": configured,
+        "provider_override_source": source,
+        "same_provider_user_quote": record.get("same_provider_user_quote"),
+        "review_target_kind": record.get("review_target_kind"),
+        "implement_provider": record.get("implement_provider"),
+        "check_provider": record.get("check_provider"),
+        "review_provider": record.get("review_provider"),
+    }
+
+
+def _slice_component_digests(
+    task_dir: str,
+    packet: dict,
+    record: dict,
+) -> dict:
+    supervisor_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "guru_supervise.py",
+    )
+    policy = _slice_review_policy(task_dir, packet, record)
+    components = guru_review_record.review_evidence_components(
+        task_dir,
+        packet,
+        record,
+        supervisor_path=supervisor_path,
+    )
+    components["review_policy_digest"] = guru_review_record.review_policy_digest(
+        policy
+    )
+    return components
+
+
+def _slice_contract_problem(
+    task_dir: str,
+    root: str,
+    staged_paths: list[str],
+) -> str:
+    if _task_status(task_dir) != "in_progress":
+        return (
+            "slice commit lifecycle requires task.json.status=in_progress; "
+            f"got {_task_status(task_dir)!r}"
+        )
+    contract, error = guru_contract.load_contract(task_dir)
+    if error or not isinstance(contract, dict):
+        return error or "gate contract missing"
+    problems = guru_contract.validate_commit_contract(
+        contract,
+        staged_paths,
+        task_dir,
+        root,
+    )
+    return "; ".join(problems[:5])
+
+
+def _slice_review_record(
+    task_dir: str,
+    slice_id: str,
+    review_run_id: str | None = None,
+) -> tuple[dict | None, str]:
+    path = os.path.join(task_dir, "review-records", "implementation-reviews.jsonl")
+    records, error = _implementation_review_records(path)
+    if error:
+        return None, error
+    matches = [
+        record
+        for record in records
+        if record.get("slice_id") == slice_id
+        and (review_run_id is None or record.get("run_id") == review_run_id)
+    ]
+    if not matches:
+        suffix = f" run_id={review_run_id}" if review_run_id else ""
+        return None, f"official implementation review missing for slice {slice_id}{suffix}"
+    return matches[-1], ""
+
+
+def _slice_review_problem(
+    task_dir: str,
+    root: str,
+    packet: dict,
+    record: dict,
+) -> str:
+    slice_id = packet["slice_id"]
+    problem = _implementation_review_base_problem(
+        record,
+        f"slice {slice_id} implementation review",
+    )
+    if problem:
+        return problem
+    if record.get("slice_id") != slice_id or record.get("review_target") != f"slice:{slice_id}":
+        return f"implementation review does not bind slice {slice_id}"
+    try:
+        expected_targets = guru_review_record._clean_target_paths(
+            packet.get("target_paths")
+        )
+        reviewed_targets = guru_review_record._clean_target_paths(
+            record.get("target_paths")
+        )
+    except guru_review_record.ReviewRecordError as exc:
+        return str(exc)
+    if reviewed_targets != expected_targets:
+        return f"slice {slice_id} implementation review target_paths differ from packet"
+    try:
+        current_components = _slice_component_digests(
+            task_dir,
+            packet,
+            record,
+        )
+        for field, value in current_components.items():
+            if record.get(field) != value:
+                return (
+                    f"slice {slice_id} review evidence stale: {field}"
+                )
+        current_evidence_key = guru_review_record.review_evidence_key(
+            record.get("reviewed_target_digest"),
+            current_components,
+        )
+        if record.get("evidence_key") != current_evidence_key:
+            return f"slice {slice_id} review evidence_key is stale or missing"
+        current_digest = guru_review_record.target_snapshot_digest(
+            root,
+            expected_targets,
+            "index",
+        )
+    except guru_review_record.ReviewRecordError as exc:
+        return f"cannot validate slice {slice_id} review evidence: {exc}"
+    if current_digest != record.get("reviewed_target_digest"):
+        return f"staged bytes changed after slice {slice_id} implementation review"
+    return ""
+
+
+def _git_is_ancestor(root: str, ancestor: str, descendant: str = "HEAD") -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise guru_review_record.ReviewRecordError(
+            f"cannot verify commit ancestry:{exc}"
+        ) from exc
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise guru_review_record.ReviewRecordError(
+        "cannot verify commit ancestry:" + (result.stderr or result.stdout or "").strip()
+    )
+
+
+def _commit_parent(root: str, commit_sha: str) -> str:
+    line = _git_output(
+        root,
+        ["rev-list", "--parents", "-n", "1", commit_sha],
+        "cannot inspect commit parent",
+    ).split()
+    if len(line) < 2:
+        raise guru_review_record.ReviewRecordError(
+            "slice commit must have a first parent"
+        )
+    return line[1]
+
+
+def _commit_changed_paths(root: str, commit_sha: str, parent_sha: str) -> list[str]:
+    try:
+        result = subprocess.run(
+            [
+                "git", "diff", "--name-only", "--no-renames", "-z",
+                parent_sha, commit_sha,
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise guru_review_record.ReviewRecordError(
+            f"cannot inspect slice commit paths:{exc}"
+        ) from exc
+    if result.returncode != 0:
+        raise guru_review_record.ReviewRecordError(
+            "cannot inspect slice commit paths:"
+            + (result.stderr or result.stdout or "").strip()
+        )
+    return [path for path in result.stdout.split("\0") if path]
+
+
+def _receipt_by_slice(task_dir: str) -> dict[str, dict]:
+    history = _receipt_history_by_slice(task_dir)
+    return {
+        slice_id: receipts[-1]
+        for slice_id, receipts in history.items()
+        if receipts
+    }
+
+
+def _receipt_history_by_slice(task_dir: str) -> dict[str, list[dict]]:
+    by_slice = {}
+    for receipt in guru_review_record.receipt_records(task_dir):
+        by_slice.setdefault(receipt["slice_id"], []).append(receipt)
+    return by_slice
+
+
+def _dependency_receipt_for_commit(
+    root: str,
+    receipt_history: dict[str, list[dict]],
+    dependency: str,
+    dependent_commit: str,
+    *,
+    require_strict_ancestor: bool,
+) -> dict | None:
+    for candidate in reversed(receipt_history.get(dependency, [])):
+        candidate_commit = candidate.get("commit_sha")
+        if not isinstance(candidate_commit, str):
+            continue
+        if require_strict_ancestor and candidate_commit == dependent_commit:
+            continue
+        try:
+            if _git_is_ancestor(root, candidate_commit, dependent_commit):
+                return candidate
+        except guru_review_record.ReviewRecordError:
+            continue
+    return None
+
+
+def _validate_slice_receipt(
+    task_dir: str,
+    root: str,
+    receipt: dict,
+    *,
+    receipt_history: dict[str, list[dict]] | None = None,
+    visiting: set[str] | None = None,
+) -> str:
+    historical_problem = _validate_historical_slice_receipt(
+        task_dir,
+        root,
+        receipt,
+    )
+    if historical_problem:
+        return historical_problem
+    try:
+        receipt = guru_review_record.validate_receipt(receipt)
+        packet = guru_review_record.load_packet(task_dir, receipt["slice_id"])
+        visiting = set() if visiting is None else set(visiting)
+        if receipt["slice_id"] in visiting:
+            return f"slice receipt dependency cycle:{receipt['slice_id']}"
+        visiting.add(receipt["slice_id"])
+        review, _ = _slice_review_record(
+            task_dir, receipt["slice_id"], receipt["review_run_id"]
+        )
+        components = _slice_component_digests(task_dir, packet, review)
+        for field, value in components.items():
+            if field == "supervisor_source_digest":
+                continue
+            if receipt.get(field) != value:
+                return f"slice receipt {receipt['slice_id']} stale {field}"
+        if receipt_history is None:
+            receipt_history = _receipt_history_by_slice(task_dir)
+        for dependency in packet.get("depends_on") or []:
+            dependency_receipt = _dependency_receipt_for_commit(
+                root,
+                receipt_history,
+                dependency,
+                receipt["commit_sha"],
+                require_strict_ancestor=True,
+            )
+            if not isinstance(dependency_receipt, dict):
+                return (
+                    f"slice receipt {receipt['slice_id']} dependency "
+                    f"{dependency} missing from dependent commit ancestry"
+                )
+            dependency_problem = _validate_slice_receipt(
+                task_dir,
+                root,
+                dependency_receipt,
+                receipt_history=receipt_history,
+                visiting=visiting,
+            )
+            if dependency_problem:
+                return (
+                    f"slice receipt {receipt['slice_id']} dependency "
+                    f"{dependency} invalid: {dependency_problem}"
+                )
+    except guru_review_record.ReviewRecordError as exc:
+        return str(exc)
+    return ""
+
+
+def _validate_historical_slice_receipt(
+    task_dir: str,
+    root: str,
+    receipt: dict,
+) -> str:
+    try:
+        receipt = guru_review_record.validate_receipt(receipt)
+        review, review_error = _slice_review_record(
+            task_dir,
+            receipt["slice_id"],
+            receipt["review_run_id"],
+        )
+        if review_error or not isinstance(review, dict):
+            return review_error or "official implementation review missing"
+        problem = _implementation_review_base_problem(
+            review,
+            f"receipt {receipt['slice_id']} implementation review",
+        )
+        if problem:
+            return problem
+        recorded_components = {
+            field: review.get(field)
+            for field in (
+                "target_paths_digest",
+                "invariant_set_digest",
+                "requirements_design_digest",
+                "deterministic_commands_digest",
+                "deterministic_results_digest",
+                "review_policy_digest",
+                "supervisor_source_digest",
+            )
+        }
+        for field, value in recorded_components.items():
+            if not isinstance(value, str) or not re.fullmatch(
+                r"[0-9a-f]{64}", value
+            ):
+                return (
+                    f"receipt {receipt['slice_id']} review lacks "
+                    f"official {field}"
+                )
+            if receipt.get(field) != value:
+                return f"slice receipt {receipt['slice_id']} {field} mismatch"
+        expected_evidence_key = guru_review_record.review_evidence_key(
+            review.get("reviewed_target_digest"),
+            recorded_components,
+        )
+        if review.get("evidence_key") != expected_evidence_key:
+            return f"receipt {receipt['slice_id']} review evidence_key mismatch"
+        if receipt["reviewed_target_digest"] != review.get(
+            "reviewed_target_digest"
+        ):
+            return f"slice receipt {receipt['slice_id']} review digest mismatch"
+        full_commit = _git_output(
+            root,
+            ["rev-parse", "--verify", f"{receipt['commit_sha']}^{{commit}}"],
+            "cannot resolve receipt commit",
+        )
+        if full_commit != receipt["commit_sha"]:
+            return f"slice receipt {receipt['slice_id']} commit_sha is not canonical"
+        if not _git_is_ancestor(root, receipt["commit_sha"]):
+            return (
+                f"slice receipt {receipt['slice_id']} commit is not on "
+                "current HEAD ancestry"
+            )
+        if _commit_parent(root, receipt["commit_sha"]) != receipt["parent_sha"]:
+            return f"slice receipt {receipt['slice_id']} parent_sha mismatch"
+        commit_time = _git_output(
+            root,
+            ["show", "-s", "--format=%cI", receipt["commit_sha"]],
+            "cannot read receipt commit timestamp",
+        )
+        if commit_time != receipt["committed_at"]:
+            return f"slice receipt {receipt['slice_id']} committed_at mismatch"
+        historical_targets = review.get("target_paths")
+        tree_digest = guru_review_record.commit_target_digest(
+            root,
+            historical_targets,
+            receipt["commit_sha"],
+        )
+        if tree_digest != receipt["reviewed_target_digest"]:
+            return (
+                f"slice receipt {receipt['slice_id']} commit bytes differ "
+                "from reviewed digest"
+            )
+        historical_supervisor_digest = (
+            guru_review_record.commit_supervisor_source_digest(
+                root,
+                receipt["commit_sha"],
+                _runtime_repo_relative_path(root, "guru_supervise.py"),
+            )
+        )
+        if historical_supervisor_digest != receipt["supervisor_source_digest"]:
+            return f"slice receipt {receipt['slice_id']} supervisor source mismatch"
+    except guru_review_record.ReviewRecordError as exc:
+        return str(exc)
+    return ""
+
+
+def _slice_dependency_problem(
+    task_dir: str,
+    root: str,
+    packet: dict,
+    *,
+    dependent_commit: str = "HEAD",
+    require_strict_ancestor: bool = False,
+) -> str:
+    depends_on = packet.get("depends_on", [])
+    if depends_on is None:
+        depends_on = []
+    if not isinstance(depends_on, list) or not all(
+        isinstance(dep, str) and dep.strip() for dep in depends_on
+    ):
+        return f"slice {packet['slice_id']} depends_on must be a string array"
+    try:
+        receipt_history = _receipt_history_by_slice(task_dir)
+    except guru_review_record.ReviewRecordError as exc:
+        return str(exc)
+    for dependency in depends_on:
+        receipt = _dependency_receipt_for_commit(
+            root,
+            receipt_history,
+            dependency,
+            dependent_commit,
+            require_strict_ancestor=require_strict_ancestor,
+        )
+        if not isinstance(receipt, dict):
+            return (
+                f"slice {packet['slice_id']} dependency {dependency} "
+                "has no valid commit receipt"
+            )
+        problem = _validate_slice_receipt(
+            task_dir,
+            root,
+            receipt,
+            receipt_history=receipt_history,
+        )
+        if problem:
+            return (
+                f"slice {packet['slice_id']} dependency {dependency} "
+                f"receipt invalid: {problem}"
+            )
+    return ""
+
+
+def _resolve_slice_packet(
+    task_dir_arg,
+    slice_id: str,
+) -> tuple[str | None, dict | None, str]:
+    task_dir = resolve_task_dir(
+        task_dir_arg,
+        allow_unique_planning_fallback=False,
+    )
+    if not task_dir:
+        return None, None, "无法定位任务目录，请显式传 task_dir"
+    contract, error = guru_contract.load_contract(task_dir)
+    if error:
+        return task_dir, None, error
+    if (
+        not isinstance(contract, dict)
+        or guru_contract.contract_route(contract) != guru_contract.ROUTE_FULL_CHAIN
+        or guru_contract.contract_risk(contract) != "high"
+    ):
+        return task_dir, None, "slice commit lifecycle only applies to Full/high tasks"
+    try:
+        packet = guru_review_record.load_packet(task_dir, slice_id)
+    except guru_review_record.ReviewRecordError as exc:
+        return task_dir, None, str(exc)
+    if packet.get("slice_id") != slice_id:
+        return task_dir, None, f"slice packet id mismatch:{packet.get('slice_id')!r}"
+    return task_dir, packet, ""
+
+
+def _runtime_repo_relative_path(root: str, sibling_name: str) -> str:
+    runtime_path = os.path.realpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), sibling_name)
+    )
+    root_real = os.path.realpath(root)
+    if (
+        runtime_path == root_real
+        or not runtime_path.startswith(root_real + os.sep)
+    ):
+        raise guru_review_record.ReviewRecordError(
+            f"runtime source is outside repository:{runtime_path}"
+        )
+    return guru_review_record._clean_target_paths(
+        [os.path.relpath(runtime_path, root_real).replace(os.sep, "/")]
+    )[0]
+
+
+def cmd_check_slice_commit(task_dir_arg, slice_id: str) -> int:
+    task_dir, packet, error = _resolve_slice_packet(task_dir_arg, slice_id)
+    if error or not isinstance(task_dir, str) or not isinstance(packet, dict):
+        sys.stderr.write(f"[guru-gate:check-commit] 拦截：{error}\n")
+        return BLOCK
+    root = _repo_root()
+    staged_paths, staged_error = _git_staged_paths(root)
+    problems = []
+    if staged_error:
+        problems.append(staged_error)
+    if not staged_paths:
+        problems.append("没有 staged changes")
+    contract_problem = _slice_contract_problem(
+        task_dir,
+        root,
+        staged_paths,
+    )
+    if contract_problem:
+        problems.append(contract_problem)
+    artifacts = [
+        path for path in staged_paths
+        if _is_task_artifact_path(path, task_dir, root)
+    ]
+    if artifacts:
+        problems.append(
+            "staged task artifacts/workspace artifacts must not enter slice commit: "
+            + ", ".join(artifacts[:5])
+        )
+    out_of_scope = [
+        path for path in staged_paths
+        if not _path_in_targets(path, packet["target_paths"])
+    ]
+    if out_of_scope:
+        problems.append(
+            f"staged paths outside slice {slice_id} target_paths: "
+            + ", ".join(out_of_scope[:5])
+        )
+    dependency_problem = _slice_dependency_problem(task_dir, root, packet)
+    if dependency_problem:
+        problems.append(dependency_problem)
+    review, review_error = _slice_review_record(task_dir, slice_id)
+    if review_error or not isinstance(review, dict):
+        problems.append(review_error or "official implementation review missing")
+    else:
+        review_problem = _slice_review_problem(
+            task_dir,
+            root,
+            packet,
+            review,
+        )
+        if review_problem:
+            problems.append(review_problem)
+    if problems:
+        sys.stderr.write(
+            "[guru-gate:check-commit] 拦截：" + "; ".join(_dedupe_strings(problems)) + "\n"
+        )
+        return BLOCK
+    print(
+        f"[guru-gate:check-commit] SLICE_COMMIT_READY "
+        f"slice={slice_id} review_run_id={review.get('run_id')}"
+    )
+    return PASS
+
+
+def cmd_record_slice_commit(
+    task_dir_arg,
+    slice_id: str,
+    review_run_id: str,
+) -> int:
+    task_dir, packet, error = _resolve_slice_packet(task_dir_arg, slice_id)
+    if error or not isinstance(task_dir, str) or not isinstance(packet, dict):
+        sys.stderr.write(f"[guru-gate:record-slice-commit] 拦截：{error}\n")
+        return BLOCK
+    root = _repo_root()
+    try:
+        review, review_error = _slice_review_record(
+            task_dir,
+            slice_id,
+            review_run_id,
+        )
+        if review_error or not isinstance(review, dict):
+            raise guru_review_record.ReviewRecordError(
+                review_error or "official implementation review missing"
+            )
+        latest_review, latest_review_error = _slice_review_record(
+            task_dir,
+            slice_id,
+        )
+        if latest_review_error or not isinstance(latest_review, dict):
+            raise guru_review_record.ReviewRecordError(
+                latest_review_error or "latest implementation review missing"
+            )
+        if latest_review.get("run_id") != review_run_id:
+            raise guru_review_record.ReviewRecordError(
+                "record-slice-commit requires the latest slice review run_id"
+            )
+        problem = _slice_review_problem(task_dir, root, packet, review)
+        if problem:
+            raise guru_review_record.ReviewRecordError(problem)
+        commit_sha = _git_output(
+            root,
+            ["rev-parse", "--verify", "HEAD^{commit}"],
+            "cannot resolve HEAD commit",
+        )
+        dependency_problem = _slice_dependency_problem(
+            task_dir,
+            root,
+            packet,
+            dependent_commit=commit_sha,
+            require_strict_ancestor=True,
+        )
+        if dependency_problem:
+            raise guru_review_record.ReviewRecordError(dependency_problem)
+        parent_sha = _commit_parent(root, commit_sha)
+        changed_paths = _commit_changed_paths(root, commit_sha, parent_sha)
+        contract_problem = _slice_contract_problem(
+            task_dir,
+            root,
+            changed_paths,
+        )
+        if contract_problem:
+            raise guru_review_record.ReviewRecordError(contract_problem)
+        if not changed_paths:
+            raise guru_review_record.ReviewRecordError(
+                "HEAD commit has no changed paths"
+            )
+        artifacts = [
+            path for path in changed_paths
+            if _is_task_artifact_path(path, task_dir, root)
+        ]
+        if artifacts:
+            raise guru_review_record.ReviewRecordError(
+                "slice commit contains task/workspace artifacts: "
+                + ", ".join(artifacts[:5])
+            )
+        out_of_scope = [
+            path for path in changed_paths
+            if not _path_in_targets(path, packet["target_paths"])
+        ]
+        if out_of_scope:
+            raise guru_review_record.ReviewRecordError(
+                f"slice commit contains paths outside {slice_id} target_paths: "
+                + ", ".join(out_of_scope[:5])
+            )
+        tree_digest = guru_review_record.commit_target_digest(
+            root,
+            packet["target_paths"],
+            commit_sha,
+        )
+        if tree_digest != review.get("reviewed_target_digest"):
+            raise guru_review_record.ReviewRecordError(
+                "HEAD commit bytes differ from reviewed staged digest"
+            )
+        components = _slice_component_digests(task_dir, packet, review)
+        committed_supervisor_digest = (
+            guru_review_record.commit_supervisor_source_digest(
+                root,
+                commit_sha,
+                _runtime_repo_relative_path(root, "guru_supervise.py"),
+            )
+        )
+        if components["supervisor_source_digest"] != committed_supervisor_digest:
+            raise guru_review_record.ReviewRecordError(
+                "supervisor source differs between reviewed worktree and slice commit"
+            )
+        components["supervisor_source_digest"] = committed_supervisor_digest
+        committed_at = _git_output(
+            root,
+            ["show", "-s", "--format=%cI", commit_sha],
+            "cannot read commit timestamp",
+        )
+        receipt = {
+            "schema_version": guru_review_record.RECEIPT_SCHEMA_VERSION,
+            "slice_id": slice_id,
+            "commit_sha": commit_sha,
+            "parent_sha": parent_sha,
+            "review_run_id": review_run_id,
+            "reviewed_target_digest": tree_digest,
+            **components,
+            "committed_at": committed_at,
+        }
+        receipt["receipt_id"] = guru_review_record.canonical_digest(
+            "guru-slice-commit-receipt-v1",
+            {field: receipt[field] for field in guru_review_record.RECEIPT_REQUIRED_FIELDS},
+        )
+        existing = _receipt_by_slice(task_dir).get(slice_id)
+        if existing is not None:
+            if existing == receipt:
+                print(
+                    f"[guru-gate:record-slice-commit] RECEIPT_EXISTS "
+                    f"slice={slice_id} commit={commit_sha}"
+                )
+                return PASS
+            if existing.get("commit_sha") == commit_sha:
+                raise guru_review_record.ReviewRecordError(
+                    f"conflicting slice receipt already exists for commit:{slice_id}"
+                )
+            existing_problem = _validate_historical_slice_receipt(
+                task_dir,
+                root,
+                existing,
+            )
+            if existing_problem:
+                raise guru_review_record.ReviewRecordError(
+                    f"existing slice receipt invalid:{slice_id}:{existing_problem}"
+                )
+            if not _git_is_ancestor(root, existing["commit_sha"], commit_sha):
+                raise guru_review_record.ReviewRecordError(
+                    f"new slice receipt does not supersede prior ancestor:{slice_id}"
+                )
+        guru_review_record.append_receipt_batch(task_dir, [receipt])
+    except guru_review_record.ReviewRecordError as exc:
+        sys.stderr.write(f"[guru-gate:record-slice-commit] 拦截：{exc}\n")
+        return BLOCK
+    print(
+        f"[guru-gate:record-slice-commit] RECEIPT_RECORDED "
+        f"slice={slice_id} commit={commit_sha} review_run_id={review_run_id} "
+        f"receipt_id={receipt['receipt_id']}"
+    )
+    return PASS
+
+
 def _commit_plan_payload(task_dir_arg) -> dict:
     root = _repo_root()
     staged_paths, staged_error = _git_staged_paths(root)
@@ -5838,6 +6595,8 @@ def main() -> int:
         "created_by": _pop_value_option(argv, "--created-by"),
         "checks": _pop_all_value_options(argv, "--check"),
     }
+    slice_id = _pop_value_option(argv, "--slice")
+    review_run_id = _pop_value_option(argv, "--review-run-id")
     rest = [a for a in argv if not a.startswith("--")]
     flags = {a for a in argv if a.startswith("--")}
     intake_options["commit_requested"] = "--commit-requested" in flags
@@ -5916,7 +6675,24 @@ def main() -> int:
     if cmd == "slice-plan":
         return cmd_slice_plan(arg)
     if cmd == "check-commit":
+        if slice_id is not None:
+            if not slice_id.strip():
+                sys.stderr.write("[guru-gate:check-commit] --slice 需要非空值\n")
+                return BLOCK
+            return cmd_check_slice_commit(arg, slice_id.strip())
         return cmd_check_commit(arg)
+    if cmd == "record-slice-commit":
+        if not slice_id or not slice_id.strip():
+            sys.stderr.write("[guru-gate:record-slice-commit] --slice 是必填项\n")
+            return BLOCK
+        if not review_run_id or not review_run_id.strip():
+            sys.stderr.write("[guru-gate:record-slice-commit] --review-run-id 是必填项\n")
+            return BLOCK
+        return cmd_record_slice_commit(
+            arg,
+            slice_id.strip(),
+            review_run_id.strip(),
+        )
     if cmd == "trace-matrix":
         if not arg or not os.path.isdir(arg):
             sys.stderr.write("[guru-gate:trace-matrix] 需要有效 task_dir 参数\n")
