@@ -12,6 +12,17 @@
 
 实现 Gate、代码质量检查、测试证据和 commit 前审核属于实现/审核阶段，由 implementation trace 合同、平台 golden-path、实现 review skill、`guru_supervise.py implement-check` 与 `trellis-check` 承载。planning Gate 的成功状态只叫 `START_READY`，只能授权下一步运行 `task.py start`。
 
+Universal delivery policy is the entry contract for every task type, not only Lite: `small_inline` targets first scoped code without task ceremony, `micro_task` requires explicit path scope, `lite_task` requires compact task evidence plus at most one confirmation batch, and `full_chain` is mandatory for high or unknown-high-signal work. The executable policy lives in `.trellis/scripts/guru/guru_delivery_policy.py` with `.trellis/policy/delivery-policy.json`; workflows may summarize it, but must not create a second route table. High/full-chain start must use the guarded `guru_task.py start` entry once installed; direct official `task.py start` is only advisory evidence, never proof of hard enforcement.
+
+当前 Custom-only Start Guard 的 capability truth 必须按以下边界解释：
+
+- guarded entry 的 task/slice/risk/envelope digest、session identity、lifecycle CAS、exclusive lock、hook outcome 和 compensation 是结构与生命周期层面的 enforced binding。
+- 平台可信的用户身份来源当前不可用。`task.json`、本地 confirmation record、attestation 或自称 `actor_type=human` 的 JSON 都是 agent-writable，不得作为 trusted confirmation。
+- Full 的 digest-bearing `implement.md` 必须在唯一 `GURU:RISK_DECISION_INVENTORY` JSON fence 中保存按 slice 分组的完整 required critical/high decision universe。每项只能是 `unresolved|resolved`；`resolved` 必须带非空 `resolution.choice/evidence`。这个 inventory 随 detail digest 一起 review/confirm，缺失、重复 marker、重复 decision id、未知状态或未绑定 slice/invariant 一律 fail closed。
+- `RiskDecisionPacketV1` 必须同时绑定当前 `detail_artifact_digest`、完整 `decision_universe_digest`、由 universe 确定性筛出的 unresolved `decision_items`、`decision_set_digest` 与 `confirmation_required`。Start Guard 从已确认 `implement.md` 重建 universe；删除、截断、替换、重排或只重算 packet/envelope/request hash 都不得消除阻塞决策。
+- 集合非空时 Start Guard 必须以 `CapabilityUnavailable` / `ConfirmationMissing` fail closed；本地 attestation 即使与 task record 完全自洽也不能放行。只有当前 detail inventory 显式为空，或其中每个 required critical/high 决策都带 resolution evidence，重新生成的 blocking packet 才能为空；启动仍须通过当前 detail confirmation 与 `guru_gate.py check-start`。
+- execution envelope 的 attestation 字段仅为未来外部 identity verifier 兼容位；当前能力下不得宣称 platform-signed、platform-trusted 或 hard human identity。direct official `task.py start` 仍只产生 advisory evidence。
+
 ## 2. 机制边界
 
 | 机制 | 作用 | 可否替代其他机制 |
@@ -179,7 +190,7 @@ python3 .trellis/scripts/guru/guru_gate.py check-implementation <task_dir>
 python3 .trellis/scripts/guru/guru_supervise.py implement-check <task_dir>
 ```
 
-`guru_supervise.py implement|check|implement-check|implementation-review` 必须在启动 worker 前自动执行 `check-implementation`；若任务仍是 `planning`，fail-closed，不启动 worker。`implement-check` 复用实现 writing skill 与实现 review skill，干净后停在最终验证和 hard-boundary confirmation，不写新的 implementation `guru_gates`。`implementation-review` 是 check-only 结构化记录入口，只跑 deterministic checks + check worker，不启动 implement worker。实现 review record 由 `review-records/implementation-reviews.jsonl` 承载，commit gate 读取最新 clean record。
+`guru_supervise.py implement|check|implement-check|implementation-review` 必须在启动 worker 前自动执行 `check-implementation`；若任务仍是 `planning`，fail-closed，不启动 worker。`implement-check` 复用实现 writing skill 与实现 review skill，干净后停在最终验证和 hard-boundary confirmation，不写新的 implementation `guru_gates`。`implementation-review` 是 check-only 结构化记录入口，只跑 deterministic checks + check worker，不启动 implement worker；它必须在 deterministic checks 前固定目标摘要，在 checks 后确认摘要未变，把 run/target/摘要/target paths/deterministic results/provider 绑定写入 `review_invocation_contract` 后才启动 worker，并在 worker 返回后再次确认摘要未变，最终 record 只能使用该启动前摘要。实现 review record 由 `review-records/implementation-reviews.jsonl` 承载，commit gate 读取最新 clean record。
 
 ## 8. Legacy design-grill 兼容
 

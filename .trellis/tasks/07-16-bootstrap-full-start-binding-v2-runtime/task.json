@@ -1,0 +1,113 @@
+{
+  "id": "bootstrap-full-start-binding-v2-runtime",
+  "name": "bootstrap-full-start-binding-v2-runtime",
+  "title": "Fix Full/high Start Guard Binding Cycle",
+  "description": "As the only implementation SSOT, remove the Full/high Start Guard confirmation hash cycle, preserve existing Gate strength, and add a chronological lifecycle regression. Deferred trust hardening is not a source-implementation prerequisite.",
+  "design_package": ".trellis/tasks/07-16-bootstrap-full-start-binding-v2-runtime/design-package",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-07-16",
+  "completedAt": null,
+  "branch": "codex/fix-full-start-binding-v2-20260716",
+  "base_branch": "codex/fix-full-start-binding-v2-20260716",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "07-16-fix-full-start-binding-v2",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "route": "full_chain",
+    "risk": "high"
+  },
+  "guru_chain": "full",
+  "route": "full_chain",
+  "risk": "high",
+  "guru_gates": {
+    "review_runs": {
+      "overview": [
+        {
+          "run_id": "overview-final-child-20260716T114623Z",
+          "reviewer": "clean-context-codex",
+          "recorded_at": "2026-07-16T19:48:04+08:00",
+          "artifact_digest": "e70cbcbf3022b640db036b4a53ddd93638c8f978fe74356485c183f405e1eb2f",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Read-only live-child review; structural overview PASS; strict trace PASS for BHV-001..004; digest exact; live _gate_digest, cmd_check_start, _full_confirmation_batch_problem, _artifact_binding, and start_with_guard boundaries cross-checked; git diff --check clean."
+        },
+        {
+          "run_id": "overview-final-child-rereview-20260716T115406Z",
+          "reviewer": "clean-context-codex",
+          "recorded_at": "2026-07-16T19:54:56+08:00",
+          "artifact_digest": "cb0be7b8cd39c5efb837fbe695fbbc03406b4cb45b36c181401f39b3d089c033",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Read-only current-digest re-review; structural overview PASS; strict trace PASS for BHV-001..004 with no orphan; FullConfirmationProjectionV2 self-digest, exact peer equality, full metadata validation, and narrowed mirror blockers verified; git diff --check clean."
+        },
+        {
+          "run_id": "overview-final-child-closure-20260716T115737Z",
+          "reviewer": "clean-context-codex",
+          "recorded_at": "2026-07-16T19:58:32+08:00",
+          "artifact_digest": "cb0be7b8cd39c5efb837fbe695fbbc03406b4cb45b36c181401f39b3d089c033",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Read-only cross-file closure review; active gate-contract, referenced mirror-baseline, PRD, Overview, detail chapters, and implement plan inspected; no verifier/proof/check_commit prerequisite remains; only package_mirror_sync/apply_install/installed_runtime_canary blocked; FullConfirmationProjectionV2 closure verified; structural overview and strict trace PASS; diff check clean."
+        },
+        {
+          "run_id": "89FBAC72-D453-4CFB-B95A-135780A331BC",
+          "reviewer": "clean-context-codex",
+          "recorded_at": "2026-07-16T19:59:01+08:00",
+          "artifact_digest": "cb0be7b8cd39c5efb837fbe695fbbc03406b4cb45b36c181401f39b3d089c033",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Read-only final closure review; former confirmation-projection P1 and mirror-contract P2 closed; active contract and referenced mirror baseline agree; structural Overview, strict trace, current digest, staged and unstaged diff checks passed."
+        }
+      ],
+      "detail": [
+        {
+          "run_id": "3aa7874d-b356-4b36-9937-fde9e7145c30",
+          "reviewer": "clean-context-codex",
+          "recorded_at": "2026-07-16T19:59:15+08:00",
+          "artifact_digest": "b6b32d600cfb26f889e1f297f65eb2e67edc01b00b6b661d0ad5d7d7efa7cd8a",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Read-only Detail closure review; mirror-contract P2 closed; FullConfirmationProjectionV2 closed and implementable; Detail, Implement, strict trace, staged and unstaged diff checks pass; digest exact.",
+          "deletion_audit": "clean: rejected protected-signer, root-launcher, external-registry/receipt, malicious-workspace-agent, migration, and expanded lifecycle design is preserved only under research/rejected-threat-model and excluded from canonical Detail authority."
+        },
+        {
+          "run_id": "3D24AAD0-B370-4FB3-A72E-942611318926",
+          "reviewer": "clean-context-codex",
+          "recorded_at": "2026-07-16T20:02:56+08:00",
+          "artifact_digest": "b6b32d600cfb26f889e1f297f65eb2e67edc01b00b6b661d0ad5d7d7efa7cd8a",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Second independent read-only Amazon Bar Raiser Detail closure review; four chapters and implement.md reviewed; Detail, Implement, strict trace, canonical artifact enumeration, current digest, and staged/unstaged diff checks passed; no edits, record-review, or lifecycle action.",
+          "deletion_audit": "rejected expanded threat-model material is preserved only under research/rejected-threat-model as non-normative historical input and is excluded from canonical Detail artifacts, digest inputs, implementation dependencies, and activation prerequisites"
+        }
+      ]
+    },
+    "requirements": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-16T19:58:44+08:00",
+      "confirmation_scope": "requirements_gate_only",
+      "allowed_next_action": "overview_design",
+      "prompt_summary": "Requirements confirmation allows overview/detail planning only",
+      "artifact_digest": "ed0971b0ccc706c6184dea4f551b3204be32afefba03186c421c13b44d735722"
+    },
+    "detail": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-16T20:06:06+08:00",
+      "confirmation_scope": "detail_gate_only",
+      "allowed_next_action": "task_start",
+      "prompt_summary": "Detail confirmation allows task.py start only",
+      "artifact_digest": "b6b32d600cfb26f889e1f297f65eb2e67edc01b00b6b661d0ad5d7d7efa7cd8a"
+    }
+  }
+}

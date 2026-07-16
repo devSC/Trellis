@@ -16,6 +16,19 @@ export PYTHONDONTWRITEBYTECODE=1  # 测试不得在可打包 overlay 中留下 _
 trap 'rm -rf "$TMP"' EXIT
 pass=0; failn=0
 
+run_unittest_file() { # run_unittest_file <pattern>
+  pattern="$1"
+  out=$(PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "$HERE" -p "$pattern" 2>&1); rc=$?
+  if [ "$rc" = 0 ]; then
+    pass=$((pass+1)); echo "PASS  unittest $pattern"
+  else
+    failn=$((failn+1)); echo "FAIL  unittest $pattern (rc=$rc)"; printf '%s\n' "$out" | head -12
+  fi
+}
+
+run_unittest_file 'test_delivery_policy.py'
+run_unittest_file 'test_start_guard.py'
+
 append_detail_chapter() { # append_detail_chapter <file> [unit] [type_heading] [test_hint]
   file="$1"
   unit="${2:-UNIT-order-usecase}"
@@ -316,14 +329,40 @@ write_plain_clean_reviews() { # write_plain_clean_reviews <gate> <task_dir>
   fi
 }
 
-write_route_contract() { # write_route_contract <task_dir> <route> <risk>
-  python3 - "$GATE" "$1" "$2" "$3" <<'PY'
+write_route_contract() { # write_route_contract <task_dir> <route> <risk> [policy_version]
+  if [ "$2" = "lite_task" ] && { [ "$3" = "low" ] || [ "$3" = "medium" ]; } && [ -z "${4:-}" ]; then
+    python3 "$GATE" init-contract "$1" \
+      --route lite_task --risk "$3" \
+      --allowed-path lib --allowed-path test --max-files 8 \
+      --reason "standard Lite fixture" >/dev/null
+    python3 - "$1" <<'PY'
+import json, os, sys
+task_dir = sys.argv[1]
+task_path = os.path.join(task_dir, "task.json")
+try:
+    task = json.load(open(task_path, encoding="utf-8"))
+except Exception:
+    task = {}
+task.setdefault("id", os.path.basename(task_dir))
+with open(task_path, "w", encoding="utf-8") as fh:
+    json.dump(task, fh, ensure_ascii=False, indent=2)
+    fh.write("\n")
+for name in ("implement.jsonl", "check.jsonl"):
+    open(os.path.join(task_dir, name), "a", encoding="utf-8").close()
+PY
+    return
+  fi
+  python3 - "$GATE" "$1" "$2" "$3" "${4:-}" <<'PY'
 import os, sys
-gate, task_dir, route, risk = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+gate, task_dir, route, risk, policy_version = sys.argv[1:6]
 sys.path.insert(0, os.path.dirname(gate))
 import guru_contract
 contract = guru_contract.default_contract(route, risk, created_by="fixture")
 contract["assessment"]["reasons"] = [f"fixture route={route}"]
+if policy_version:
+    contract["policy_version"] = policy_version
+    if policy_version == "guru-risk-contract-v1":
+        contract.pop("risk_decision_inventory", None)
 if route == guru_contract.ROUTE_MICRO_TASK:
     contract["scope"] = {"allowed_paths": ["lib"], "forbidden_path_patterns": [], "max_files": 3}
 elif route == guru_contract.ROUTE_LITE_TASK:
@@ -704,7 +743,7 @@ config = gs.SupervisionConfig(
     root=root,
     platform="flutter",
     current_provider="codex",
-    provider="claude",
+    provider="codex",
     adversarial=True,
     adversarial_enabled=True,
     implement_timeout="45m",
@@ -774,7 +813,7 @@ config = gs.SupervisionConfig(
     root=root,
     platform="flutter",
     current_provider="codex",
-    provider="claude",
+    provider="codex",
     adversarial=True,
     adversarial_enabled=True,
     implement_timeout="45m",
@@ -1285,12 +1324,11 @@ expect_grep "adversarial clean 后 auto 前进到 detail review 缺口" "record-
 
 RV_LITE=$(make_gate_case review-lite-bounded-route)
 write_route_contract "$RV_LITE" lite_task medium
-expect "lite_task route 不强制 requirements adversarial review" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_LITE" --via-agent --user-quote "lite 任务按 bounded review policy 确认需求"
-write_plain_clean_reviews overview "$RV_LITE"
-write_plain_clean_reviews detail "$RV_LITE"
-expect "lite_task route 双普通 clean 可确认 detail" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm detail "$RV_LITE" --via-agent --user-quote "lite 任务双普通 clean 确认详细"
-expect "lite_task route check-start 不要求 adversarial reviewer" 0 python3 "$GATE" check-start "$RV_LITE"
-expect_grep "lite_task status 标注 bounded review policy" "bounded review policy" python3 "$GATE" status "$RV_LITE"
+expect "lite_task route 只确认 requirements 一次" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$RV_LITE" --via-agent --user-quote "确认 Lite PRD、route、risk 与 scope"
+expect_rc_grep "lite_task route 不存在 detail 人工确认" 2 "只有一次 requirements 确认" env GURU_GATE_MODE=soft python3 "$GATE" confirm detail "$RV_LITE" --via-agent --user-quote "不应写入第二次确认"
+expect "lite_task 标准任务确认后直接 START_READY" 0 python3 "$GATE" check-start "$RV_LITE"
+expect_grep "lite_task status 标注一次确认 current" "Lite requirements confirmation — current" python3 "$GATE" status "$RV_LITE"
+expect_grep "lite_task status 明示跳过 Overview/Detail reviews" "Overview/Detail reviews — not required" python3 "$GATE" status "$RV_LITE"
 
 RV_LITE_BLOCK=$(make_gate_case review-lite-bounded-blocked)
 write_route_contract "$RV_LITE_BLOCK" lite_task medium
@@ -1413,6 +1451,7 @@ expect_grep "status 显示确认人" "tester" python3 "$GATE" status "$G"
 
 # 生命周期 Gate 拆分：START_READY 只允许 task.py start；implementation/commit 另有硬闸。
 LC=$(make_gate_case lifecycle-split)
+write_route_contract "$LC" full_chain medium guru-risk-contract-v1
 write_new_gate_ready "$LC"
 expect "check-start planning 任务只达到 START_READY" 0 python3 "$GATE" check-start "$LC"
 expect "check alias 兼容为 check-start" 0 python3 "$GATE" check "$LC"
@@ -1529,6 +1568,7 @@ else failn=$((failn+1)); echo "FAIL  commit-plan stale review/no-contract recove
 
 CG2_PAIR=$(mk_commit_gate_case commit-ready in_progress "lib/x.dart")
 CG2_ROOT="${CG2_PAIR%%|*}"; CG2_TASK="${CG2_PAIR#*|}"
+write_route_contract "$CG2_TASK" full_chain medium guru-risk-contract-v1
 printf 'code\n' > "$CG2_ROOT/lib/x.dart"
 (cd "$CG2_ROOT" && git add lib/x.dart)
 expect "check-commit in_progress + staged target_paths 内实现文件放行" 0 env TASK_JSON_PATH="$CG2_TASK/task.json" bash -c "cd '$CG2_ROOT' && python3 '$GATE' check-commit '$CG2_TASK'"
@@ -1554,6 +1594,7 @@ PY
 expect "check-commit 规范化 ./lib target_paths 并放行" 0 env TASK_JSON_PATH="$CG2C_TASK/task.json" bash -c "cd '$CG2C_ROOT' && python3 '$GATE' check-commit '$CG2C_TASK'"
 CG2ROOT_PAIR=$(mk_commit_gate_case commit-root-target in_progress "lib/x.dart")
 CG2ROOT_ROOT="${CG2ROOT_PAIR%%|*}"; CG2ROOT_TASK="${CG2ROOT_PAIR#*|}"
+write_route_contract "$CG2ROOT_TASK" full_chain medium guru-risk-contract-v1
 python3 - "$CG2ROOT_TASK/review-records/implementation-reviews.jsonl" "$CG2ROOT_ROOT" "$GATE" <<'PY'
 import json, os, sys
 p, root, gate = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -1571,9 +1612,10 @@ if [ "$rc" = 0 ] && assert_commit_plan_json "$out" full_chain implementation && 
 import json, os
 plan = json.loads(os.environ["PLAN"])
 assert plan["can_commit_now"] is True, plan
+assert plan["contract_present"] is True and plan["contract_valid"] is True, plan
 assert plan["allowed_stage_paths"] == ["lib/x.dart"], plan
 assert plan["forbidden_stage_paths"] == [], plan
-assert plan["required_user_confirmations"] == ["confirm_commit"], plan
+assert plan["required_user_confirmations"] == [], plan
 assert plan["suggested_stage_commands"], plan
 joined = "\n".join(plan["suggested_stage_commands"])
 assert "git add -- ." not in joined, plan
@@ -1587,9 +1629,10 @@ if [ "$rc" = 0 ] && assert_commit_plan_json "$out" full_chain implementation && 
 import json, os
 plan = json.loads(os.environ["PLAN"])
 assert plan["can_commit_now"] is True, plan
+assert plan["contract_present"] is True and plan["contract_valid"] is True, plan
 assert plan["allowed_stage_paths"] == ["lib/x.dart"], plan
 assert plan["forbidden_stage_paths"] == [], plan
-assert plan["required_user_confirmations"] == ["confirm_commit"], plan
+assert plan["required_user_confirmations"] == [], plan
 PY
 then pass=$((pass+1)); echo "PASS  commit-plan full_chain 输出 implementation stage plan"
 else failn=$((failn+1)); echo "FAIL  commit-plan full_chain stage plan 错误 (rc=$rc)"; echo "$out" | head -8; fi
@@ -1597,7 +1640,29 @@ else failn=$((failn+1)); echo "FAIL  commit-plan full_chain stage plan 错误 (r
 CG_LITE_PAIR=$(mk_commit_gate_case commit-lite in_progress "lib/x.dart")
 CG_LITE_ROOT="${CG_LITE_PAIR%%|*}"; CG_LITE_TASK="${CG_LITE_PAIR#*|}"
 write_route_contract "$CG_LITE_TASK" lite_task medium
+env GURU_GATE_MODE=soft python3 "$GATE" confirm requirements "$CG_LITE_TASK" \
+  --via-agent --user-quote "确认 Lite commit fixture 当前需求与 scope" >/dev/null
 (cd "$CG_LITE_ROOT" && git add lib/x.dart)
+python3 - "$CG_LITE_TASK" "$CG_LITE_ROOT" "$GATE" "lib/x.dart" <<'PY'
+import json, os, sys
+task, root, gate, target = sys.argv[1:5]
+sys.path.insert(0, os.path.dirname(os.path.abspath(gate)))
+import guru_review_record as R
+contract = json.load(open(os.path.join(task, "gate-contract.json"), encoding="utf-8"))
+execution = contract["execution_policy"]
+row = {
+    "kind": "deterministic_final",
+    "status": "passed",
+    "selection_generation": execution["selection_generation"],
+    "scope_fingerprint": execution["scope_fingerprint"],
+    "target_paths": [target],
+    "target_digest": R.target_snapshot_digest(root, [target], "index"),
+    "docs_code_test_consistency": "passed",
+    "spec_sync": "not_required",
+}
+with open(os.path.join(task, "verification-evidence.jsonl"), "w", encoding="utf-8") as fh:
+    fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+PY
 out=$(env TASK_JSON_PATH="$CG_LITE_TASK/task.json" bash -c "cd '$CG_LITE_ROOT' && python3 '$GATE' commit-plan '$CG_LITE_TASK'" 2>&1); rc=$?
 if [ "$rc" = 0 ] && assert_commit_plan_json "$out" lite_task implementation && PLAN="$out" python3 - <<'PY'
 import json, os
@@ -1613,7 +1678,7 @@ else failn=$((failn+1)); echo "FAIL  commit-plan lite_task stage plan 错误 (rc
 
 CG_MULTI_PAIR=$(mk_commit_gate_case commit-multi-review-set in_progress "lib/a.dart")
 CG_MULTI_ROOT="${CG_MULTI_PAIR%%|*}"; CG_MULTI_TASK="${CG_MULTI_PAIR#*|}"
-write_route_contract "$CG_MULTI_TASK" full_chain high
+write_route_contract "$CG_MULTI_TASK" full_chain high guru-risk-contract-v1
 printf 'code b\n' > "$CG_MULTI_ROOT/lib/b.dart"
 python3 - "$CG_MULTI_TASK" "$CG_MULTI_ROOT" "$GATE" <<'PY'
 import json, os, sys
@@ -1689,7 +1754,7 @@ else failn=$((failn+1)); echo "FAIL  commit-plan 多 slice review-set coverage �
 
 CG_MULTI_MISS_PAIR=$(mk_commit_gate_case commit-multi-missing-review in_progress "lib/a.dart")
 CG_MULTI_MISS_ROOT="${CG_MULTI_MISS_PAIR%%|*}"; CG_MULTI_MISS_TASK="${CG_MULTI_MISS_PAIR#*|}"
-write_route_contract "$CG_MULTI_MISS_TASK" full_chain high
+write_route_contract "$CG_MULTI_MISS_TASK" full_chain high guru-risk-contract-v1
 printf 'code b\n' > "$CG_MULTI_MISS_ROOT/lib/b.dart"
 python3 - "$CG_MULTI_MISS_TASK" "$CG_MULTI_MISS_ROOT" "$GATE" <<'PY'
 import json, os, sys
@@ -2161,8 +2226,8 @@ import guru_risk
 
 low = guru_risk.assess_intake("change unread dot color", ["lib/ui/unread_dot.dart"])
 assert low["risk"] == "low" and low["route"] == "small_inline", low
-micro = guru_risk.assess_intake("change unread dot color", ["lib/ui/unread_dot.dart"], commit_requested=True)
-assert micro["risk"] == "low" and micro["route"] == "micro_task", micro
+commit_intent = guru_risk.assess_intake("change unread dot color", ["lib/ui/unread_dot.dart"], commit_requested=True)
+assert commit_intent["risk"] == "low" and commit_intent["route"] == "small_inline", commit_intent
 no_path = guru_risk.assess_intake("fix typo")
 assert no_path["risk"] == "medium" and no_path["route"] == "lite_task" and no_path["needs_user_choice"], no_path
 medium = guru_risk.assess_intake("fix local behavior bug with test", ["lib/controller/x_controller.dart"])
@@ -2376,7 +2441,7 @@ mk_direct_commit_case() ( # mk_direct_commit_case <name> <paths...>
 )
 
 DC_ROOT=$(mk_direct_commit_case direct-low-risk "lib/ui/character_chat_ai_bubble.dart" "test/ui/character_chat_message_list_test.dart")
-expect_rc_grep "check-commit direct small_inline 无 task + scoped low-risk 要求 micro_task recovery" 2 "post-implementation intake recovery|required|micro_task" bash -c "cd '$DC_ROOT' && python3 '$GATE' check-commit"
+expect "check-commit direct small_inline 无 task + scoped low-risk 直接放行" 0 bash -c "cd '$DC_ROOT' && python3 '$GATE' check-commit"
 
 DCH_ROOT=$(mk_direct_commit_case direct-high-risk ".trellis/config.yaml")
 expect_rc_grep "check-commit direct small_inline 高风险路径被拦" 2 "high-risk signals" bash -c "cd '$DCH_ROOT' && python3 '$GATE' check-commit"
@@ -2389,8 +2454,8 @@ if [ "$rc" = 0 ] && assert_commit_plan_json "$out" direct_small_inline direct &&
 import json, os
 plan = json.loads(os.environ["PLAN"])
 assert plan["route"] == "direct_small_inline", plan
-assert plan["can_commit_now"] is False, plan
-assert any("post-implementation intake recovery" in reason for reason in plan["blocking_reasons"]), plan
+assert plan["can_commit_now"] is True, plan
+assert plan["blocking_reasons"] == [], plan
 assert len(plan["staged_paths"]) == 2, plan
 assert plan["allowed_stage_paths"] == [
     "lib/ui/character_chat_ai_bubble.dart",
@@ -2398,10 +2463,10 @@ assert plan["allowed_stage_paths"] == [
 ], plan
 assert plan["forbidden_stage_paths"] == [], plan
 assert plan["required_user_confirmations"] == [], plan
-assert any("init-contract <new-task-dir> --route micro_task --risk low" in command for command in plan["required_commands"]), plan
+assert plan["required_commands"] == [], plan
 PY
-then pass=$((pass+1)); echo "PASS  commit-plan direct small_inline 输出 micro_task recovery JSON"
-else failn=$((failn+1)); echo "FAIL  commit-plan direct small_inline recovery JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
+then pass=$((pass+1)); echo "PASS  commit-plan direct small_inline 输出直接可提交 JSON"
+else failn=$((failn+1)); echo "FAIL  commit-plan direct small_inline JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
 
 out=$(bash -c "cd '$DCH_ROOT' && python3 '$GATE' commit-plan" 2>&1); rc=$?
 if [ "$rc" = 0 ] && assert_commit_plan_json "$out" direct_small_inline direct && PLAN="$out" python3 - <<'PY'
@@ -2427,7 +2492,7 @@ assert plan["can_commit_now"] is True, plan
 assert plan["blocking_reasons"] == [], plan
 assert plan["allowed_stage_paths"] == ["lib/ui/dot.dart"], plan
 assert plan["forbidden_stage_paths"] == [], plan
-assert plan["required_user_confirmations"] == ["confirm_commit"], plan
+assert plan["required_user_confirmations"] == [], plan
 PY
 then pass=$((pass+1)); echo "PASS  commit-plan micro_task 输出可提交 JSON"
 else failn=$((failn+1)); echo "FAIL  commit-plan micro_task JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
@@ -4129,7 +4194,46 @@ with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
     rc = gs.run_implementation_review(args)
 ok("P1c implementation-review --platform cli 使用 Trellis check skill dry-run",
    rc == 0 and "Guru cli skill(s): trellis-check" in out.getvalue()
-   and "implementation-review" in out.getvalue())
+   and "implementation-review" in out.getvalue()
+   and "review_invocation_contract=" in out.getvalue()
+   and f"reviewed_target_digest={R.target_snapshot_digest(root, ['lib/x.dart'], 'index')}" in out.getvalue())
+
+real_exec, real_det = gs._execute_plan, R.run_deterministic_checks
+try:
+    root, tdir = mkgit("high"); write_packet(tdir, "U", risk="high")
+    os.makedirs(os.path.join(root, "lib"), exist_ok=True)
+    target = os.path.join(root, "lib/x.dart")
+    open(target, "w", encoding="utf-8").write("target")
+    subprocess.run(["git", "-C", root, "add", "lib/x.dart"], check=True)
+    spawned = []
+    def mutate_during_deterministic(_checks, _root):
+        open(target, "w", encoding="utf-8").write("changed during deterministic")
+        subprocess.run(["git", "-C", root, "add", "lib/x.dart"], check=True)
+        return "passed", []
+    R.run_deterministic_checks = mutate_during_deterministic
+    gs._execute_plan = lambda plan, cfg: (spawned.append(plan), (0, "done", current_txt))[1]
+    rc, _o, _e = run_ir(tdir, root, dry_run=False)
+    rec = jsonl_last(tdir)
+    ok("P1c pre-launch digest 在 deterministic 后变化则 worker 前硬停",
+       rc == 2 and not spawned and rec and rec["supervisor_failure"] == "SCOPE_INVALID")
+
+    root, tdir = mkgit("high"); write_packet(tdir, "U", risk="high")
+    os.makedirs(os.path.join(root, "lib"), exist_ok=True)
+    target = os.path.join(root, "lib/x.dart")
+    open(target, "w", encoding="utf-8").write("target")
+    subprocess.run(["git", "-C", root, "add", "lib/x.dart"], check=True)
+    R.run_deterministic_checks = lambda _checks, _root: ("passed", [])
+    def mutate_during_worker(_plan, _cfg):
+        open(target, "w", encoding="utf-8").write("changed during worker")
+        subprocess.run(["git", "-C", root, "add", "lib/x.dart"], check=True)
+        return 0, "done", current_txt
+    gs._execute_plan = mutate_during_worker
+    rc, _o, _e = run_ir(tdir, root, dry_run=False)
+    rec = jsonl_last(tdir)
+    ok("P1c pre-launch digest 在 worker 期间变化则 record 前硬停",
+       rc == 2 and rec and rec["supervisor_failure"] == "SCOPE_INVALID")
+finally:
+    gs._execute_plan, R.run_deterministic_checks = real_exec, real_det
 
 root, tdir = mkgit("high"); write_packet(tdir, "U", risk="high")
 os.makedirs(os.path.join(root, "lib"), exist_ok=True)
@@ -4392,9 +4496,11 @@ os.makedirs(os.path.join(root, "lib"), exist_ok=True)
 open(os.path.join(root, "lib/x.dart"), "w", encoding="utf-8").write("target")
 subprocess.run(["git", "-C", root, "add", "lib/x.dart"], check=True)
 brief = gs._staged_review_target(Path(tdir), Path(root)).active_brief
+brief_digest = R.target_snapshot_digest(root, ["lib/x.dart"], "index")
 ok("P1c staged implementation-review brief 明示 synthetic invariant id",
    "expected_invariants:" in brief and "staged_scope_reviewed" in brief
-   and "不要从其他 slice packet 借 id" in brief)
+   and "不要从其他 slice packet 借 id" in brief
+   and f"reviewed_target_digest={brief_digest}" in brief)
 
 # ============ R1 (codex P1-impl 对抗审查) 修复回归 ============
 def err(fn):  # 捕获 ReviewRecordError → True(packet/append 非法负例)
@@ -4814,6 +4920,94 @@ with open(os.path.join(path, f"{unit}.json"), "w", encoding="utf-8") as fh:
 PY
 }
 
+# V2 Full/high Detail inventory must block every review/start entry before implementation.
+INV_TASK=$(mk_pkg v2-decision-inventory)
+python3 - "$GATE" "$INV_TASK" <<'PY'
+import os, sys
+gate, task = sys.argv[1], sys.argv[2]
+sys.path.insert(0, os.path.dirname(gate))
+import guru_contract
+contract = guru_contract.default_contract("full_chain", "high", created_by="v2-inventory-fixture")
+guru_contract.write_contract(task, contract)
+PY
+write_slice_packet "$INV_TASK" delivery-control "lib/a.dart" high
+mkdir -p "$INV_TASK/risk-packets"
+cp "$INV_TASK/slice-packets/delivery-control.json" "$INV_TASK/risk-packets/delivery-control.json"
+expect_rc_grep "v2 full/high Detail 缺 decision inventory 前置阻断" 2 "RISK_DECISION_INVENTORY" python3 "$GATE" detail "$INV_TASK"
+expect_rc_grep "v2 full/high record-review detail 不得绕过 inventory" 2 "RISK_DECISION_INVENTORY" python3 "$GATE" record-review detail "$INV_TASK" --result findings --max-severity high --reviewer fixture-reviewer --run-id inventory-missing --evidence "inventory missing" --finding-class DETAIL_DEFECT
+expect_rc_grep "v2 full/high 真 check-start 缺 inventory 前置阻断" 2 "RISK_DECISION_INVENTORY" python3 "$GATE" check-start "$INV_TASK"
+
+printf '\nGURU-DECISION:DEC-FIXTURE-001\n' >> "$INV_TASK-docs/chapters/order-usecase.md"
+python3 - "$INV_TASK" <<'PY'
+import json, os, sys
+task = sys.argv[1]
+inventory = {
+    "schema_version": 1,
+    "task_id": os.path.basename(task),
+    "scope": {
+        "selected_slice_id": "delivery-control",
+        "official_start_authority": "selected_slice_only",
+        "later_slice_authority": "supervisor_fail_closed",
+    },
+    "slices": {
+        "delivery-control": [{
+            "decision_id": "DEC-FIXTURE-001",
+            "severity": "high",
+            "status": "resolved",
+            "recommendation": "Keep the Full/high path fail closed before implementation.",
+            "alternatives": ["Allow review/start without the inventory."],
+            "impact": "Proves the selected risk decision is reviewed before code.",
+            "irreversible": False,
+            "invariant_ids": ["INV-delivery-control"],
+            "required": True,
+            "resolution": {
+                "choice": "Require the inventory.",
+                "evidence": "Fixture detail anchor and v2 contract.",
+            },
+            "source_refs": [{
+                "artifact_key": "order-usecase.md",
+                "anchor": "GURU-DECISION:DEC-FIXTURE-001",
+            }],
+        }],
+    },
+}
+path = os.path.join(task, "implement.md")
+with open(path, "a", encoding="utf-8") as fh:
+    fh.write("\n<!-- GURU:RISK_DECISION_INVENTORY:START -->\n```json\n")
+    fh.write(json.dumps(inventory, ensure_ascii=False, indent=2, sort_keys=True))
+    fh.write("\n```\n<!-- GURU:RISK_DECISION_INVENTORY:END -->\n")
+PY
+expect "v2 full/high 合法 decision inventory 通过 Detail 结构 Gate" 0 python3 "$GATE" detail "$INV_TASK"
+write_new_gate_ready "$INV_TASK"
+expect "v2 full/high requirements/risk/design 写入一次批确认" 0 env GURU_GATE_MODE=soft python3 "$GATE" confirm "$INV_TASK" --via-agent --user-quote "确认当前 requirements、risk packet 与不可逆设计"
+expect "v2 full/high 合法 decision inventory 通过真 check-start" 0 python3 "$GATE" check-start "$INV_TASK"
+
+# Namespaced tasks must not use the inventory block in task:implement.md as its own Detail evidence.
+INV_REQ_PKG="$INV_TASK-reqpkg"
+mkdir -p "$INV_REQ_PKG"
+printf '# Requirement package\n' > "$INV_REQ_PKG/README.md"
+python3 - "$INV_TASK" "$INV_REQ_PKG" <<'PY'
+import json, os, sys
+task, req_pkg = sys.argv[1], sys.argv[2]
+task_json = os.path.join(task, "task.json")
+with open(task_json, encoding="utf-8") as fh:
+    task_data = json.load(fh)
+task_data["requirement_package"] = req_pkg
+with open(task_json, "w", encoding="utf-8") as fh:
+    json.dump(task_data, fh)
+    fh.write("\n")
+
+implement_path = os.path.join(task, "implement.md")
+with open(implement_path, encoding="utf-8") as fh:
+    implement = fh.read()
+old = '"artifact_key": "order-usecase.md"'
+assert implement.count(old) == 1, implement
+implement = implement.replace(old, '"artifact_key": "task:implement.md"')
+with open(implement_path, "w", encoding="utf-8") as fh:
+    fh.write(implement)
+PY
+expect_rc_grep "v2 full/high namespaced inventory 不得循环引用 task:implement.md" 2 "source_ref is not detail-bound" python3 "$GATE" detail "$INV_TASK"
+
 IC_TASK="$TMP/init-contract-task"; mkdir -p "$IC_TASK"
 out=$(python3 "$GATE" init-contract "$IC_TASK" --route micro_task --risk low --allowed-path lib/ui/dot.dart --max-files 1 --reason fixture --risk-flag low-risk 2>&1); rc=$?
 if [ "$rc" = 0 ] && SUMMARY="$out" TASK="$IC_TASK" python3 - <<'PY'
@@ -4825,6 +5019,8 @@ assert contract["route"] == "micro_task", contract
 assert contract["risk"] == "low", contract
 assert contract["scope"]["allowed_paths"] == ["lib/ui/dot.dart"], contract
 assert contract["scope"]["max_files"] == 1, contract
+assert contract["policy_version"] == "guru-risk-contract-v2", contract
+assert contract["risk_decision_inventory"]["required"] is False, contract
 PY
 then pass=$((pass+1)); echo "PASS  init-contract 生成 micro_task 合同"
 else failn=$((failn+1)); echo "FAIL  init-contract 生成 micro_task 合同 (rc=$rc)"; echo "$out" | head -8; fi
@@ -4843,22 +5039,27 @@ then pass=$((pass+1)); echo "PASS  intake low/no-commit 输出 small_inline 且�
 else failn=$((failn+1)); echo "FAIL  intake low/no-commit 输出 small_inline (rc=$rc)"; echo "$out" | head -8; fi
 
 IT_MICRO="$TMP/intake-micro-task"; mkdir -p "$IT_MICRO"; printf '{"status":"planning"}\n' > "$IT_MICRO/task.json"
-out=$(python3 "$GATE" intake "$IT_MICRO" --description "change unread dot color" --path lib/ui/unread_dot.dart --commit-requested --write-contract 2>&1); rc=$?
+out=$(python3 "$GATE" intake "$IT_MICRO" --description "change unread dot color" --path lib/ui/unread_dot.dart --commit-requested --preferred-route micro_task --write-contract 2>&1); rc=$?
 if [ "$rc" = 0 ] && SUMMARY="$out" TASK="$IT_MICRO" python3 - <<'PY'
 import json, os
 summary = json.loads(os.environ["SUMMARY"])
 contract = json.load(open(os.path.join(os.environ["TASK"], "gate-contract.json"), encoding="utf-8"))
 task = json.load(open(os.path.join(os.environ["TASK"], "task.json"), encoding="utf-8"))
 assert summary["route"] == "micro_task", summary
+assert summary["recommended_route"] == "small_inline", summary
+assert summary["selection_source"] == "user_override", summary
+assert summary["input"]["commit_requested"] is True, summary
 assert summary["contract_written"] is True, summary
 assert contract["route"] == "micro_task", contract
 assert contract["scope"]["allowed_paths"] == ["lib/ui/unread_dot.dart"], contract
 assert contract["scope"]["max_files"] == 1, contract
 assert {row["gate"] for row in contract["allowed_degradations"]} == {"gitnexus_impact", "gitnexus_detect_changes"}, contract
+assert contract["policy_version"] == "guru-risk-contract-v2", contract
+assert contract["risk_decision_inventory"]["required"] is False, contract
 assert task["guru_chain"] == "light" and task["meta"]["route"] == "micro_task", task
 PY
-then pass=$((pass+1)); echo "PASS  intake low/commit 写入 micro_task 合同和 task metadata"
-else failn=$((failn+1)); echo "FAIL  intake low/commit 写入 micro_task 合同 (rc=$rc)"; echo "$out" | head -8; fi
+then pass=$((pass+1)); echo "PASS  intake commit intent 保持难度推荐，显式 micro override 写入合同"
+else failn=$((failn+1)); echo "FAIL  intake 显式 micro override 写入合同 (rc=$rc)"; echo "$out" | head -8; fi
 
 IT_FULL="$TMP/intake-full-task"; mkdir -p "$IT_FULL"; printf '{"status":"planning"}\n' > "$IT_FULL/task.json"
 out=$(python3 "$GATE" intake "$IT_FULL" --description "change payment workflow gate" --path packages/cli/src/templates/guru/overlay/verify/guru_gate.py --write-contract 2>&1); rc=$?
@@ -4870,6 +5071,8 @@ task = json.load(open(os.path.join(os.environ["TASK"], "task.json"), encoding="u
 assert summary["route"] == "full_chain" and summary["risk"] == "high", summary
 assert contract["route"] == "full_chain" and contract["risk"] == "high", contract
 assert contract["allowed_degradations"] == [], contract
+assert contract["policy_version"] == "guru-risk-contract-v2", contract
+assert contract["risk_decision_inventory"]["required"] is True, contract
 assert task["guru_chain"] == "full" and task["meta"]["route"] == "full_chain", task
 PY
 then pass=$((pass+1)); echo "PASS  intake high 写入 full_chain 合同且不允许降级"
@@ -4932,29 +5135,6 @@ assert "PACKET_REQUIRED_BEFORE_IMPLEMENT" in plan["blocking_reasons"], plan
 PY
 then pass=$((pass+1)); echo "PASS  slice-plan high/full 无 packet 输出阻断 JSON"
 else failn=$((failn+1)); echo "FAIL  slice-plan high/full 无 packet JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
-
-LC_HIGH_LITE=$(make_gate_case accel-high-lite-override)
-write_new_gate_ready "$LC_HIGH_LITE"
-write_user_override_contract "$LC_HIGH_LITE" lite_task high full_chain "用户确认 high 风险仍走 lite"
-python3 - "$LC_HIGH_LITE/task.json" <<'PY'
-import json, sys
-p = sys.argv[1]
-d = json.load(open(p, encoding="utf-8"))
-d["status"] = "in_progress"
-open(p, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
-PY
-expect_rc_grep "check-implementation high/lite override 强制 full_chain packet" 2 "PACKET_REQUIRED_BEFORE_IMPLEMENT" python3 "$GATE" check-implementation "$LC_HIGH_LITE"
-out=$(python3 "$GATE" slice-plan "$LC_HIGH_LITE" 2>&1); rc=$?
-if [ "$rc" = 0 ] && PLAN="$out" python3 - <<'PY'
-import json, os
-plan = json.loads(os.environ["PLAN"])
-assert plan["route"] == "full_chain", plan
-assert plan["risk"] == "high", plan
-assert plan["packet_required"] is True, plan
-assert "PACKET_REQUIRED_BEFORE_IMPLEMENT" in plan["blocking_reasons"], plan
-PY
-then pass=$((pass+1)); echo "PASS  slice-plan high/lite override 强制 full_chain packet"
-else failn=$((failn+1)); echo "FAIL  slice-plan high/lite override JSON 错误 (rc=$rc)"; echo "$out" | head -8; fi
 
 LC_MICRO=$(make_gate_case accel-micro-no-packet)
 write_new_gate_ready "$LC_MICRO"

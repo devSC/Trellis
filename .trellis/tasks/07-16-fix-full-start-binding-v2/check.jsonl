@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/cli/backend/guru-overlay-gates.md", "reason": "Verify Full Binding V2, risk membership, compatibility and mirror behavior against the executable contract."}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Verify one shared validator/builder owns the cross-script JSON contract."}
+{"file": ".trellis/spec/cli/backend/error-handling.md", "reason": "Verify failures remain fail-closed and distinguish stale artifact, authorization, membership and lifecycle errors."}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "Verify scoped changes, dependency discipline and forbidden-pattern compliance."}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Verify meaningful historical regression coverage and exact negative assertions."}
+{"file": ".trellis/spec/cli/unit-test/mock-strategies.md", "reason": "Reject tests that mock confirmation, risk validation or check-start into a false green."}
+{"file": ".trellis/spec/cli/unit-test/integration-patterns.md", "reason": "Verify the complete FIX-F1/FIX-F2 lifecycle state transition and compatibility paths."}

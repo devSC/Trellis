@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "risk": "high",
+  "route": "full_chain",
+  "task_role": "design_parent",
+  "assessment": {
+    "confidence": null,
+    "reasons": [],
+    "risk_flags": [],
+    "recommended_route": "full_chain"
+  },
+  "route_selection": {
+    "selected_route": "full_chain",
+    "source": "recommended",
+    "recommended_route": "full_chain",
+    "risk_acknowledged": false,
+    "user_quote": "",
+    "selected_by": "system",
+    "selected_at": "2026-07-16T15:33:48+08:00"
+  },
+  "scope": {
+    "allowed_paths": [
+      "guru-template/overlay",
+      "packages/cli/src/templates/guru/overlay",
+      ".trellis/spec/cli/backend/guru-overlay-gates.md"
+    ],
+    "forbidden_path_patterns": [],
+    "max_files": null
+  },
+  "required_gates": [],
+  "optional_gates": [],
+  "allowed_degradations": [],
+  "commit_policy": {
+    "require_in_progress": true,
+    "require_clean_implementation_review": true,
+    "allow_task_artifacts_only": false
+  },
+  "start_binding": {
+    "version": 2,
+    "mode": "full_start_binding_v2",
+    "allow_legacy_fallback": false
+  },
+  "authorization_provenance": {
+    "schema_version": 1,
+    "required": true,
+    "accepted_sources": [
+      "signed_interactive_terminal_receipt",
+      "signed_platform_user_turn_receipt",
+      "signed_external_attestation"
+    ],
+    "require_durable_verification": true,
+    "allow_unverified_agent_quote": false
+  },
+  "delivery_bootstrap": {
+    "approval_status": "user_confirmed",
+    "user_quote": "立即停止继续扩张当前设计。当前任务只处理 Full/high Start Guard 哈希环修复、保持 Gate 强度，并完成真实生命周期回归；尽快进入 SDK source implementation。",
+    "confirmed_ref": "Codex thread 019f69a6-c923-7792-8607-7863eae0430a",
+    "start_this_parent_task": false,
+    "parent_role": "umbrella_only",
+    "requires_separately_approved_child": true,
+    "child_is_only_implementation_ssot": true,
+    "child_route": "full_chain",
+    "child_risk": "high",
+    "child_policy_version": "guru-risk-contract-v1",
+    "child_allows_start_binding_v2_marker": false,
+    "child_source_implementation_allowed_after_start": true,
+    "deferred_threat_model_required_before_child_source": false,
+    "deferred_topics": [
+      "protected_signer",
+      "root_owned_launch_gate",
+      "external_monotonic_receipts",
+      "malicious_workspace_agent_bypass"
+    ],
+    "mirror_drift_blocks_source_implementation": false,
+    "mirror_drift_blocks_sync_install_canary": true,
+    "post_install_v2_canary_required": true
+  },
+  "created_by": "init-contract",
+  "created_at": "2026-07-16T07:33:48Z",
+  "policy_version": "guru-risk-contract-v2"
+}

@@ -2577,6 +2577,51 @@ def _full_confirmation_batch_inputs(task_dir: str) -> tuple[dict | None, str]:
     return payload, ""
 
 
+FULL_CONFIRMATION_PROJECTION_SCHEMA_VERSION = 2
+FULL_CONFIRMATION_PROJECTION_DOMAIN = b"guru-full-confirmation-projection-v2\0"
+FULL_CONFIRMATION_SCOPE = "full_requirements_risk_irreversible_design_batch"
+FULL_CONFIRMATION_ALLOWED_ACTION = "task_start_and_autonomous_close"
+FULL_CONFIRMATION_PROMPT = (
+    "One Full confirmation binds requirements, current risk packets and irreversible design"
+)
+FULL_CONFIRMATION_PROJECTION_FIELDS = (
+    "schema_version",
+    "confirmed_by",
+    "confirmed_at",
+    "confirmation_scope",
+    "allowed_next_action",
+    "prompt_summary",
+    "confirmation_batch_id",
+    "confirmation_batch_digest",
+    "requirements_digest",
+    "detail_artifact_digest",
+    "risk_packet_set_digest",
+)
+FULL_CONFIRMATION_OPTIONAL_FIELDS = ("mode", "via", "turn_ref", "user_quote")
+FULL_CONFIRMATION_RECORD_FIELDS = frozenset(
+    (*FULL_CONFIRMATION_PROJECTION_FIELDS, *FULL_CONFIRMATION_OPTIONAL_FIELDS,
+     "artifact_digest", "confirmation_projection_digest")
+)
+
+
+def _full_confirmation_projection(record: dict) -> dict:
+    return {
+        field: record[field]
+        for field in (*FULL_CONFIRMATION_PROJECTION_FIELDS, *FULL_CONFIRMATION_OPTIONAL_FIELDS)
+        if field in record
+    }
+
+
+def _full_confirmation_projection_digest(record: dict) -> str:
+    encoded = json.dumps(
+        _full_confirmation_projection(record),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(FULL_CONFIRMATION_PROJECTION_DOMAIN + encoded).hexdigest()
+
+
 def _record_full_confirmation_batch(task_dir: str, via: str, user_quote=None) -> int:
     inputs, problem = _full_confirmation_batch_inputs(task_dir)
     if problem or not isinstance(inputs, dict):
@@ -2589,11 +2634,12 @@ def _record_full_confirmation_batch(task_dir: str, via: str, user_quote=None) ->
     batch_digest = inputs["confirmation_batch_digest"]
     batch_id = f"confirm-{batch_digest[:16]}"
     base = {
+        "schema_version": FULL_CONFIRMATION_PROJECTION_SCHEMA_VERSION,
         "confirmed_by": _developer_name(),
         "confirmed_at": _now_iso(),
-        "confirmation_scope": "full_requirements_risk_irreversible_design_batch",
-        "allowed_next_action": "task_start_and_autonomous_close",
-        "prompt_summary": "One Full confirmation binds requirements, current risk packets and irreversible design",
+        "confirmation_scope": FULL_CONFIRMATION_SCOPE,
+        "allowed_next_action": FULL_CONFIRMATION_ALLOWED_ACTION,
+        "prompt_summary": FULL_CONFIRMATION_PROMPT,
         "confirmation_batch_id": batch_id,
         "confirmation_batch_digest": batch_digest,
         "requirements_digest": inputs["requirements_digest"],
@@ -2608,6 +2654,7 @@ def _record_full_confirmation_batch(task_dir: str, via: str, user_quote=None) ->
         base["via"] = "agent"
         if user_quote:
             base["user_quote"] = user_quote[:500]
+    base["confirmation_projection_digest"] = _full_confirmation_projection_digest(base)
     gates["requirements"] = {
         **base,
         "artifact_digest": inputs["requirements_digest"],
@@ -2624,6 +2671,71 @@ def _record_full_confirmation_batch(task_dir: str, via: str, user_quote=None) ->
     return PASS
 
 
+def _full_confirmation_record_problem(record: dict, inputs: dict, artifact_digest: str) -> str:
+    fields = set(record)
+    unknown = sorted(fields - FULL_CONFIRMATION_RECORD_FIELDS)
+    if unknown:
+        return f"Full confirmation projection has unknown fields: {', '.join(unknown)}"
+    required = set(FULL_CONFIRMATION_PROJECTION_FIELDS) | {
+        "artifact_digest",
+        "confirmation_projection_digest",
+    }
+    missing = sorted(required - fields)
+    if missing:
+        return f"Full confirmation projection missing fields: {', '.join(missing)}"
+    if record.get("schema_version") != FULL_CONFIRMATION_PROJECTION_SCHEMA_VERSION:
+        return "Full confirmation projection schema_version mismatch"
+    for field in ("confirmed_by", "confirmed_at"):
+        if not isinstance(record.get(field), str) or not record[field].strip():
+            return f"Full confirmation projection {field} must be a non-empty string"
+    expected_constants = {
+        "confirmation_scope": FULL_CONFIRMATION_SCOPE,
+        "allowed_next_action": FULL_CONFIRMATION_ALLOWED_ACTION,
+        "prompt_summary": FULL_CONFIRMATION_PROMPT,
+        "confirmation_batch_id": f"confirm-{inputs['confirmation_batch_digest'][:16]}",
+    }
+    for field, expected in expected_constants.items():
+        if record.get(field) != expected:
+            if field == "confirmation_batch_id":
+                return "Full confirmation batch stale: confirmation_batch_id mismatch"
+            return f"Full confirmation projection {field} mismatch"
+    for field in (
+        "confirmation_batch_digest",
+        "requirements_digest",
+        "detail_artifact_digest",
+        "risk_packet_set_digest",
+    ):
+        if record.get(field) != inputs[field]:
+            return f"Full confirmation batch stale: {field} changed"
+    if record.get("artifact_digest") != artifact_digest:
+        return "Full confirmation batch stale: gate artifact digest changed"
+    has_mode = "mode" in record
+    has_via = "via" in record
+    has_quote = "user_quote" in record
+    if has_mode or has_via:
+        if (
+            record.get("mode") != "soft"
+            or record.get("via") != "agent"
+            or not has_quote
+            or not isinstance(record.get("user_quote"), str)
+            or not record["user_quote"].strip()
+        ):
+            return "Full confirmation projection agent optional fields are invalid"
+    elif has_quote:
+        return "Full confirmation projection TTY record cannot contain user_quote"
+    if "turn_ref" in record and (
+        not isinstance(record.get("turn_ref"), str) or not record["turn_ref"].strip()
+    ):
+        return "Full confirmation projection turn_ref must be a non-empty string"
+    recorded_projection_digest = record.get("confirmation_projection_digest")
+    if (
+        not isinstance(recorded_projection_digest, str)
+        or recorded_projection_digest != _full_confirmation_projection_digest(record)
+    ):
+        return "Full confirmation projection digest mismatch"
+    return ""
+
+
 def _full_confirmation_batch_problem(task_dir: str) -> str:
     inputs, problem = _full_confirmation_batch_inputs(task_dir)
     if problem or not isinstance(inputs, dict):
@@ -2633,19 +2745,28 @@ def _full_confirmation_batch_problem(task_dir: str) -> str:
     detail = states.get("detail")
     if not all(isinstance(record, dict) and record.get("confirmed_by") for record in (requirements, detail)):
         return "Full confirmation batch missing requirements/detail records"
-    expected = inputs["confirmation_batch_digest"]
-    recorded = {
-        requirements.get("confirmation_batch_digest"),
-        detail.get("confirmation_batch_digest"),
+    requirements_peer = {
+        key: value for key, value in requirements.items() if key != "artifact_digest"
     }
-    if recorded != {expected}:
-        return "Full confirmation batch stale: requirements, risk packet, or irreversible design changed"
-    if requirements.get("confirmation_batch_id") != detail.get("confirmation_batch_id"):
-        return "Full confirmation batch records do not share one batch id"
-    if requirements.get("artifact_digest") != inputs["requirements_digest"]:
-        return "Full confirmation batch stale: requirements digest changed"
-    if detail.get("artifact_digest") != inputs["detail_artifact_digest"]:
-        return "Full confirmation batch stale: detail digest changed"
+    detail_peer = {
+        key: value for key, value in detail.items() if key != "artifact_digest"
+    }
+    if requirements_peer != detail_peer:
+        return "Full confirmation batch requirements/detail projections diverge"
+    requirements_problem = _full_confirmation_record_problem(
+        requirements,
+        inputs,
+        inputs["requirements_digest"],
+    )
+    if requirements_problem:
+        return requirements_problem
+    detail_problem = _full_confirmation_record_problem(
+        detail,
+        inputs,
+        inputs["detail_artifact_digest"],
+    )
+    if detail_problem:
+        return detail_problem
     return ""
 
 

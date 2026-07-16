@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-07-16T10:25:33Z",
+  "task_id": "bootstrap-full-start-binding-v2-runtime",
+  "task_ref": "07-16-bootstrap-full-start-binding-v2-runtime",
+  "route": "full_chain",
+  "risk": "high",
+  "policy_version": "guru-risk-contract-v1",
+  "base_commit": "54f3f407d4143577f40f38845ea9f6d55f3253d9",
+  "installed_runtime_root": ".trellis/scripts/guru",
+  "installed_runtime_git_tree": "0d25fca9474b17b0bc1d6db4301f932352cf395a",
+  "tracked_file_count": 7,
+  "capture_worktree_state": "clean_against_base_commit",
+  "anchor": {
+    "contract_field": "bootstrap_boundary.runtime_lock_digest",
+    "requirements_artifact": "prd.md",
+    "requirements_literal": "bootstrap_runtime_lock_sha256",
+    "external_subject_field": "runtime_lock_sha256",
+    "external_registry_class": "root_owned_signed_bootstrap_anchor",
+    "confirmation_gate": "requirements",
+    "status_at_capture": "pending_user_confirmation"
+  }
+}

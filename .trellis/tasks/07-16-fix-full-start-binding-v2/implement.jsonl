@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/cli/backend/index.md", "reason": "Backend guideline index and required pre-development routing for Guru runtime edits."}
+{"file": ".trellis/spec/cli/backend/guru-overlay-gates.md", "reason": "Executable Full route, risk, confirmation, guarded-start, mirror and fail-closed contracts."}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Python runtime script boundaries, shared-helper reuse and template sync conventions."}
+{"file": ".trellis/spec/cli/backend/error-handling.md", "reason": "Fail-closed error taxonomy and actionable CLI failure behavior."}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "Repository quality, dependency and forbidden-pattern constraints."}
+{"file": ".trellis/spec/cli/unit-test/index.md", "reason": "Unit and integration test guideline routing."}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Historical bug regression, exact assertions and test isolation conventions."}
+{"file": ".trellis/spec/cli/unit-test/mock-strategies.md", "reason": "The canonical lifecycle regression must mock only official lifecycle side effects, not the target Gate boundaries."}
+{"file": ".trellis/spec/cli/unit-test/integration-patterns.md", "reason": "Cross-command state transition coverage for confirm, check-start and guarded start."}

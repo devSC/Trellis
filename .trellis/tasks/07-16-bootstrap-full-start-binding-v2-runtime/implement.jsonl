@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/cli/backend/index.md", "reason": "Backend guideline index and pre-development routing for the bootstrap runtime child."}
+{"file": ".trellis/spec/cli/backend/guru-overlay-gates.md", "reason": "Executable legacy bootstrap, Full V2 receipt, activation and fail-closed contracts."}
+{"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Python cross-script ownership, shared-helper reuse and template sync rules."}
+{"file": ".trellis/spec/cli/backend/error-handling.md", "reason": "Fail-closed error taxonomy for risk, receipt, registry and lifecycle failures."}
+{"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "Scope, dependency and forbidden-pattern constraints."}
+{"file": ".trellis/spec/cli/unit-test/index.md", "reason": "Unit and integration test guideline routing."}
+{"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Historical regression and exact assertion requirements."}
+{"file": ".trellis/spec/cli/unit-test/mock-strategies.md", "reason": "Only official lifecycle side effects may be controlled; target boundaries remain real."}
+{"file": ".trellis/spec/cli/unit-test/integration-patterns.md", "reason": "Chronological confirm, guarded-start, registry and later-member coverage."}

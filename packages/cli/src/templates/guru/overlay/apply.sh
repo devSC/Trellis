@@ -2,7 +2,13 @@
 set -euo pipefail
 # guru-template overlay 安装/升级器：装配官方 init -t/--workflow 覆盖不到的部分，
 # 并负责 guru 定制内容（workflow/harness SSOT/skills/hooks/settings 接线）的后续升级刷新。
-# 用法: ./apply.sh <目标项目路径>
+# 用法:
+#   ./apply.sh --plan <目标项目路径> [flutter|go|ios|h5] [--rollback-bundle <外部目录>]
+#   ./apply.sh <目标项目路径> [flutter|go|ios|h5] [--rollback-bundle <外部目录>]
+#   ./apply.sh --upgrade <目标项目路径> [flutter|go|ios|h5] --rollback-bundle <新外部目录>
+#   ./apply.sh --status <目标项目路径> <rollback-bundle>
+#   ./apply.sh --verify <目标项目路径> <rollback-bundle>
+#   ./apply.sh --unapply <目标项目路径> <rollback-bundle>
 # 前提: 目标项目已 trellis init（存在 .trellis/）。幂等：重复执行不产生额外变化。
 #
 # 边界（本脚本不做）：
@@ -12,9 +18,759 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"   # guru-template/
-TARGET="${1:?用法: apply.sh <目标项目路径>}"
+APPLY_RECOVERY_ARMED=0
+APPLY_RECOVERY_EXPECTED_DIGEST=""
+APPLY_RECOVERY_BUNDLE=""
+
+usage() {
+  cat <<'EOF'
+用法:
+  apply.sh --plan <目标项目路径> [flutter|go|ios|h5] [--rollback-bundle <外部目录>]
+  apply.sh <目标项目路径> [flutter|go|ios|h5] [--rollback-bundle <外部目录>]
+  apply.sh --upgrade <目标项目路径> [flutter|go|ios|h5] --rollback-bundle <新外部目录>
+  apply.sh --status <目标项目路径> <rollback-bundle>
+  apply.sh --verify <目标项目路径> <rollback-bundle>
+  apply.sh --unapply <目标项目路径> <rollback-bundle>
+
+plan/status/verify 只读；upgrade 复用 apply，并要求新的外部 rollback bundle。
+EOF
+}
+
+tree_digest() { # tree_digest <target>; excludes Git internals by contract
+  python3 - "$1" <<'PYEOF'
+import hashlib
+import os
+import stat
+import sys
+
+root = os.path.realpath(sys.argv[1])
+digest = hashlib.sha256()
+for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+    dirnames[:] = sorted(name for name in dirnames if not (dirpath == root and name == ".git"))
+    filenames = sorted(name for name in filenames if not (dirpath == root and name == ".git"))
+    for name in [*dirnames, *filenames]:
+        path = os.path.join(dirpath, name)
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        info = os.lstat(path)
+        if stat.S_ISLNK(info.st_mode):
+            kind, payload = "link", os.readlink(path).encode("utf-8", "surrogateescape")
+        elif stat.S_ISDIR(info.st_mode):
+            kind, payload = "dir", b""
+        elif stat.S_ISREG(info.st_mode):
+            kind = "file"
+            with open(path, "rb") as fh:
+                payload = fh.read()
+        else:
+            kind, payload = "other", b""
+        digest.update(f"{rel}\0{kind}\0{stat.S_IMODE(info.st_mode):o}\0".encode())
+        digest.update(payload)
+        digest.update(b"\0")
+print(digest.hexdigest())
+PYEOF
+}
+
+create_rollback_bundle() { # create_rollback_bundle <target> <external-bundle>
+  local digest
+  digest="$(tree_digest "$1")"
+  python3 - "$1" "$2" "$digest" <<'PYEOF'
+import json
+import os
+import shutil
+import sys
+
+target = os.path.realpath(sys.argv[1])
+bundle_arg = os.path.abspath(sys.argv[2])
+if os.path.lexists(bundle_arg) and os.path.islink(bundle_arg):
+    raise SystemExit("ERROR: rollback bundle 路径不得是符号链接")
+bundle = os.path.realpath(bundle_arg)
+digest = sys.argv[3]
+try:
+    inside_target = os.path.commonpath((target, bundle)) == target
+except ValueError:
+    inside_target = False
+if inside_target:
+    raise SystemExit("ERROR: rollback bundle 必须位于目标项目外部")
+if os.path.exists(bundle) and not os.path.isdir(bundle):
+    raise SystemExit(f"ERROR: rollback bundle 必须是目录: {bundle}")
+if os.path.exists(bundle) and os.listdir(bundle):
+    raise SystemExit(f"ERROR: rollback bundle 必须不存在或为空: {bundle}")
+os.makedirs(bundle, exist_ok=True)
+preimage = os.path.join(bundle, "preimage")
+shutil.copytree(
+    target,
+    preimage,
+    symlinks=True,
+    ignore=lambda path, names: [".git"] if os.path.realpath(path) == target and ".git" in names else [],
+)
+manifest = {
+    "schema_version": 2,
+    "state": "prepared",
+    "target": target,
+    "pre_apply_digest": digest,
+    "post_apply_digest": None,
+    "git_internals_owned": False,
+    "recovery": {
+        "status": "armed",
+        "expected_target_digest": digest,
+    },
+}
+with open(os.path.join(bundle, "manifest.json"), "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, ensure_ascii=False, indent=2, sort_keys=True)
+    fh.write("\n")
+PYEOF
+}
+
+checkpoint_rollback_bundle() { # checkpoint_rollback_bundle <target> <bundle>
+  local digest
+  digest="$(tree_digest "$1")"
+  python3 - "$1" "$2" "$digest" <<'PYEOF'
+import json
+import os
+import sys
+
+target, bundle, digest = os.path.realpath(sys.argv[1]), os.path.abspath(sys.argv[2]), sys.argv[3]
+path = os.path.join(bundle, "manifest.json")
+with open(path, encoding="utf-8") as fh:
+    manifest = json.load(fh)
+if manifest.get("schema_version") not in {1, 2} or manifest.get("state") != "prepared":
+    raise SystemExit("ERROR: rollback bundle 未处于 prepared 状态")
+if manifest.get("target") != target:
+    raise SystemExit("ERROR: rollback bundle 不属于该目标项目")
+recovery = manifest.get("recovery")
+if not isinstance(recovery, dict) or recovery.get("status") not in {"armed", "checkpointed"}:
+    raise SystemExit("ERROR: rollback bundle recovery 元数据非法")
+recovery["status"] = "checkpointed"
+recovery["expected_target_digest"] = digest
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, ensure_ascii=False, indent=2, sort_keys=True)
+    fh.write("\n")
+PYEOF
+  APPLY_RECOVERY_EXPECTED_DIGEST="$digest"
+}
+
+finalize_rollback_bundle() { # finalize_rollback_bundle <target> <bundle> [expected-digest]
+  local digest
+  digest="$(tree_digest "$1")"
+  if [ -n "${3:-}" ] && [ "$digest" != "$3" ]; then
+    echo "ERROR: 自检期间目标已偏离 apply checkpoint；拒绝发布 applied 状态" >&2
+    return 1
+  fi
+  python3 - "$1" "$2" "$digest" <<'PYEOF'
+import hashlib
+import json
+import os
+import stat
+import sys
+
+target, bundle, digest = os.path.realpath(sys.argv[1]), os.path.abspath(sys.argv[2]), sys.argv[3]
+path = os.path.join(bundle, "manifest.json")
+with open(path, encoding="utf-8") as fh:
+    manifest = json.load(fh)
+if manifest.get("schema_version") != 2 or manifest.get("state") != "prepared" or manifest.get("target") != target:
+    raise SystemExit("ERROR: rollback bundle 状态或目标不匹配")
+preimage = os.path.join(bundle, "preimage")
+if not os.path.isdir(preimage):
+    raise SystemExit("ERROR: rollback preimage 缺失")
+
+
+def describe(path):
+    if not os.path.lexists(path):
+        return {"type": "missing"}
+    info = os.lstat(path)
+    mode = stat.S_IMODE(info.st_mode)
+    if stat.S_ISREG(info.st_mode):
+        content = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                content.update(chunk)
+        return {"type": "file", "mode": mode, "size": info.st_size, "sha256": content.hexdigest()}
+    if stat.S_ISDIR(info.st_mode):
+        return {"type": "dir", "mode": mode}
+    if stat.S_ISLNK(info.st_mode):
+        return {"type": "link", "mode": mode, "target": os.readlink(path)}
+    return {"type": "other", "mode": mode}
+
+
+def inventory(root):
+    result = {}
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+        if dirpath == root:
+            dirnames[:] = [name for name in dirnames if name != ".git"]
+            filenames = [name for name in filenames if name != ".git"]
+        dirnames.sort()
+        filenames.sort()
+        for name in [*dirnames, *filenames]:
+            asset_path = os.path.join(dirpath, name)
+            rel = os.path.relpath(asset_path, root).replace(os.sep, "/")
+            result[rel] = describe(asset_path)
+    return result
+
+
+def write_atomic(destination, content):
+    temporary = destination + ".tmp"
+    with open(temporary, "wb") as fh:
+        fh.write(content)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(temporary, destination)
+
+
+before = inventory(preimage)
+after = inventory(target)
+assets = []
+for rel in sorted(set(before) | set(after)):
+    pre_state = before.get(rel, {"type": "missing"})
+    post_state = after.get(rel, {"type": "missing"})
+    if pre_state == post_state:
+        continue
+    if "other" in {pre_state.get("type"), post_state.get("type")}:
+        raise SystemExit(f"ERROR: managed asset 类型不支持: {rel}")
+    assets.append({"path": rel, "pre": pre_state, "post": post_state})
+
+managed = {"schema_version": 1, "assets": assets}
+managed_bytes = (json.dumps(managed, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+managed_digest = hashlib.sha256(managed_bytes).hexdigest()
+write_atomic(os.path.join(bundle, "managed-assets.json"), managed_bytes)
+manifest["state"] = "applied"
+manifest["post_apply_digest"] = digest
+manifest["managed_assets"] = {
+    "path": "managed-assets.json",
+    "schema_version": 1,
+    "sha256": managed_digest,
+    "count": len(assets),
+}
+manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+write_atomic(os.path.join(bundle, "manifest.sha256"), (hashlib.sha256(manifest_bytes).hexdigest() + "\n").encode("ascii"))
+write_atomic(path, manifest_bytes)
+PYEOF
+}
+
+restore_rollback_bundle() { # restore_rollback_bundle <target> <bundle> [unapply|recovery] [expected-digest]
+  python3 - "$1" "$2" "${3:-unapply}" "${4:-}" <<'PYEOF'
+import hashlib
+import json
+import os
+from pathlib import PurePosixPath
+import shutil
+import stat
+import sys
+
+target, bundle, mode, expected_digest = (
+    os.path.realpath(sys.argv[1]),
+    os.path.abspath(sys.argv[2]),
+    sys.argv[3],
+    sys.argv[4],
+)
+manifest_path = os.path.join(bundle, "manifest.json")
+preimage = os.path.join(bundle, "preimage")
+
+
+def write_atomic(destination, content):
+    temporary = destination + ".tmp"
+    with open(temporary, "wb") as fh:
+        fh.write(content)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(temporary, destination)
+
+
+def digest_tree(root):
+    digest = hashlib.sha256()
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+        dirnames[:] = sorted(name for name in dirnames if not (dirpath == root and name == ".git"))
+        filenames = sorted(name for name in filenames if not (dirpath == root and name == ".git"))
+        for name in [*dirnames, *filenames]:
+            path = os.path.join(dirpath, name)
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            info = os.lstat(path)
+            if stat.S_ISLNK(info.st_mode):
+                kind, payload = "link", os.readlink(path).encode("utf-8", "surrogateescape")
+            elif stat.S_ISDIR(info.st_mode):
+                kind, payload = "dir", b""
+            elif stat.S_ISREG(info.st_mode):
+                kind = "file"
+                with open(path, "rb") as fh:
+                    payload = fh.read()
+            else:
+                kind, payload = "other", b""
+            digest.update(f"{rel}\0{kind}\0{stat.S_IMODE(info.st_mode):o}\0".encode())
+            digest.update(payload)
+            digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def checked_path(root, rel):
+    pure = PurePosixPath(rel)
+    if not rel or pure.is_absolute() or any(part in {"", ".", ".."} for part in pure.parts):
+        raise SystemExit(f"ERROR: managed asset 路径非法: {rel!r}")
+    if pure.parts[0] == ".git":
+        raise SystemExit("ERROR: managed asset 不得包含 .git")
+    current = root
+    for part in pure.parts[:-1]:
+        current = os.path.join(current, part)
+        if not os.path.lexists(current):
+            break
+        info = os.lstat(current)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise SystemExit(f"ERROR: managed asset 父路径类型漂移: {rel}")
+    return os.path.join(root, *pure.parts)
+
+
+def describe(root, rel):
+    asset_path = checked_path(root, rel)
+    if not os.path.lexists(asset_path):
+        return {"type": "missing"}
+    info = os.lstat(asset_path)
+    mode_bits = stat.S_IMODE(info.st_mode)
+    if stat.S_ISREG(info.st_mode):
+        content = hashlib.sha256()
+        with open(asset_path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                content.update(chunk)
+        return {"type": "file", "mode": mode_bits, "size": info.st_size, "sha256": content.hexdigest()}
+    if stat.S_ISDIR(info.st_mode):
+        return {"type": "dir", "mode": mode_bits}
+    if stat.S_ISLNK(info.st_mode):
+        return {"type": "link", "mode": mode_bits, "target": os.readlink(asset_path)}
+    return {"type": "other", "mode": mode_bits}
+
+
+with open(manifest_path, "rb") as fh:
+    manifest_bytes = fh.read()
+try:
+    manifest = json.loads(manifest_bytes)
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"ERROR: rollback bundle manifest 非法: {exc}") from exc
+schema_version = manifest.get("schema_version")
+if schema_version not in {1, 2}:
+    raise SystemExit("ERROR: rollback bundle schema 非法")
+if manifest.get("target") != target:
+    raise SystemExit("ERROR: rollback bundle 不属于该目标项目")
+if not os.path.isdir(preimage):
+    raise SystemExit("ERROR: rollback preimage 缺失")
+if schema_version == 1 and (
+    "managed_assets" in manifest
+    or os.path.lexists(os.path.join(bundle, "managed-assets.json"))
+    or os.path.lexists(os.path.join(bundle, "manifest.sha256"))
+):
+    raise SystemExit("ERROR: legacy rollback bundle 含不兼容 managed evidence；疑似被篡改")
+if mode in {"unapply", "verify"}:
+    if manifest.get("state") != "applied":
+        raise SystemExit("ERROR: rollback bundle 未处于 applied 状态")
+    if schema_version == 2:
+        integrity_path = os.path.join(bundle, "manifest.sha256")
+        try:
+            with open(integrity_path, encoding="ascii") as fh:
+                recorded_manifest_digest = fh.read().strip()
+        except OSError as exc:
+            raise SystemExit("ERROR: rollback bundle manifest integrity 缺失") from exc
+        if recorded_manifest_digest != hashlib.sha256(manifest_bytes).hexdigest():
+            raise SystemExit("ERROR: rollback bundle manifest integrity 不匹配")
+        managed_ref = manifest.get("managed_assets")
+        if not isinstance(managed_ref, dict) or managed_ref.get("path") != "managed-assets.json":
+            raise SystemExit("ERROR: rollback bundle managed manifest 缺失或非法")
+        managed_path = os.path.join(bundle, "managed-assets.json")
+        try:
+            with open(managed_path, "rb") as fh:
+                managed_bytes = fh.read()
+        except OSError as exc:
+            raise SystemExit("ERROR: rollback bundle managed manifest 缺失") from exc
+        if managed_ref.get("sha256") != hashlib.sha256(managed_bytes).hexdigest():
+            raise SystemExit("ERROR: rollback bundle managed manifest integrity 不匹配")
+        try:
+            managed = json.loads(managed_bytes)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"ERROR: rollback bundle managed manifest 非法: {exc}") from exc
+        assets = managed.get("assets") if isinstance(managed, dict) and managed.get("schema_version") == 1 else None
+        if not isinstance(assets, list) or managed_ref.get("schema_version") != 1:
+            raise SystemExit("ERROR: rollback bundle managed manifest schema 非法")
+        if managed_ref.get("count") != len(assets):
+            raise SystemExit("ERROR: rollback bundle managed manifest count 不匹配")
+        paths = []
+        allowed_types = {"missing", "file", "dir", "link"}
+        for asset in assets:
+            if not isinstance(asset, dict) or set(asset) != {"path", "pre", "post"}:
+                raise SystemExit("ERROR: rollback bundle managed asset 记录非法")
+            rel = asset.get("path")
+            pre_state = asset.get("pre")
+            post_state = asset.get("post")
+            if not isinstance(rel, str) or not isinstance(pre_state, dict) or not isinstance(post_state, dict):
+                raise SystemExit("ERROR: rollback bundle managed asset 字段非法")
+            if pre_state.get("type") not in allowed_types or post_state.get("type") not in allowed_types:
+                raise SystemExit(f"ERROR: rollback bundle managed asset 类型非法: {rel}")
+            checked_path(target, rel)
+            checked_path(preimage, rel)
+            paths.append(rel)
+        if paths != sorted(set(paths)):
+            raise SystemExit("ERROR: rollback bundle managed asset 路径必须唯一且稳定排序")
+        if digest_tree(preimage) != manifest.get("pre_apply_digest"):
+            raise SystemExit("ERROR: rollback bundle preimage 已被篡改")
+
+        conflicts = []
+        for asset in assets:
+            rel = asset["path"]
+            if describe(target, rel) != asset["post"]:
+                conflicts.append(rel)
+            if describe(preimage, rel) != asset["pre"]:
+                raise SystemExit(f"ERROR: rollback bundle managed preimage 证据不匹配: {rel}")
+        if conflicts:
+            raise SystemExit("ERROR: managed asset 已漂移；unapply 前未修改任何目标文件: " + ", ".join(conflicts[:8]))
+
+        managed_paths = set(paths)
+        for asset in assets:
+            if asset["post"]["type"] != "dir" or asset["pre"]["type"] in {"dir", "missing"}:
+                continue
+            directory = checked_path(target, asset["path"])
+            unowned_descendants = []
+            for dirpath, dirnames, filenames in os.walk(directory, topdown=True, followlinks=False):
+                dirnames.sort()
+                filenames.sort()
+                for name in [*dirnames, *filenames]:
+                    child = os.path.join(dirpath, name)
+                    child_rel = os.path.relpath(child, target).replace(os.sep, "/")
+                    if child_rel not in managed_paths:
+                        unowned_descendants.append(child_rel)
+            if unowned_descendants:
+                raise SystemExit(
+                    "ERROR: managed directory 含用户新增内容，无法恢复原非目录类型；unapply 前未修改目标: "
+                    + ", ".join(unowned_descendants[:8])
+                )
+
+        if mode == "verify":
+            print(f"installed-current managed_assets={len(assets)}")
+            raise SystemExit(0)
+
+        retained_directories = []
+        for asset in sorted(assets, key=lambda item: (-item["path"].count("/"), item["path"]), reverse=False):
+            rel, pre_state, post_state = asset["path"], asset["pre"], asset["post"]
+            destination = checked_path(target, rel)
+            post_type = post_state["type"]
+            if post_type in {"file", "link"}:
+                os.unlink(destination)
+            elif post_type == "dir" and pre_state["type"] != "dir":
+                try:
+                    os.rmdir(destination)
+                except OSError:
+                    if pre_state["type"] == "missing":
+                        retained_directories.append(rel)
+                    else:
+                        raise
+
+        for asset in sorted(assets, key=lambda item: (item["path"].count("/"), item["path"])):
+            rel, pre_state = asset["path"], asset["pre"]
+            source = checked_path(preimage, rel)
+            destination = checked_path(target, rel)
+            pre_type = pre_state["type"]
+            if pre_type == "missing":
+                continue
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            if pre_type == "dir":
+                os.makedirs(destination, exist_ok=True)
+                os.chmod(destination, pre_state["mode"])
+            elif pre_type == "file":
+                shutil.copy2(source, destination, follow_symlinks=False)
+            elif pre_type == "link":
+                os.symlink(os.readlink(source), destination)
+
+        retained_set = set(retained_directories)
+        for asset in assets:
+            rel, pre_state, post_state = asset["path"], asset["pre"], asset["post"]
+            current_state = describe(target, rel)
+            if current_state == pre_state:
+                continue
+            if rel in retained_set and pre_state["type"] == "missing" and post_state["type"] == "dir" and current_state["type"] == "dir":
+                continue
+            raise SystemExit(f"ERROR: managed asset 恢复后状态不匹配: {rel}")
+
+        manifest["state"] = "restored"
+        manifest["unapply"] = {
+            "mode": "managed_assets",
+            "retained_user_directories": sorted(retained_set),
+        }
+        restored_manifest_bytes = (
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        write_atomic(
+            os.path.join(bundle, "manifest.sha256"),
+            (hashlib.sha256(restored_manifest_bytes).hexdigest() + "\n").encode("ascii"),
+        )
+        write_atomic(manifest_path, restored_manifest_bytes)
+        raise SystemExit(0)
+
+    current_digest = digest_tree(target)
+    if manifest.get("post_apply_digest") != current_digest:
+        raise SystemExit("ERROR: apply 后目标已有漂移；拒绝覆盖用户新改动")
+    if mode == "verify":
+        print("installed-current managed_assets=legacy-whole-target")
+        raise SystemExit(0)
+    restored_state = "restored"
+elif mode == "recovery":
+    current_digest = digest_tree(target)
+    recovery = manifest.get("recovery")
+    if manifest.get("state") != "prepared" or not isinstance(recovery, dict):
+        raise SystemExit("ERROR: rollback bundle 未处于可自动恢复的 prepared 状态")
+    if recovery.get("status") not in {"armed", "checkpointed"}:
+        raise SystemExit("ERROR: rollback bundle recovery 状态不允许自动恢复")
+    if not expected_digest or recovery.get("expected_target_digest") != expected_digest:
+        raise SystemExit("ERROR: rollback bundle recovery CAS 元数据不匹配")
+    if current_digest != expected_digest:
+        raise SystemExit("ERROR: 当前目标不匹配本次 apply 的最后 CAS；拒绝覆盖非本进程改动")
+    restored_state = "recovered"
+else:
+    raise SystemExit(f"ERROR: 未知 rollback restore mode: {mode}")
+
+# Schema-v1 unapply compatibility and in-process failed-apply recovery retain the
+# original exact whole-target restore. Schema-v2 ordinary unapply exits above.
+for name in os.listdir(target):
+    if name == ".git":
+        continue
+    path = os.path.join(target, name)
+    if os.path.islink(path) or not os.path.isdir(path):
+        os.unlink(path)
+    else:
+        shutil.rmtree(path)
+for name in os.listdir(preimage):
+    source, destination = os.path.join(preimage, name), os.path.join(target, name)
+    if os.path.islink(source):
+        os.symlink(os.readlink(source), destination)
+    elif os.path.isdir(source):
+        shutil.copytree(source, destination, symlinks=True)
+    else:
+        shutil.copy2(source, destination, follow_symlinks=False)
+if digest_tree(target) != manifest.get("pre_apply_digest"):
+    raise SystemExit("ERROR: rollback preimage 恢复后 digest 不匹配；bundle 已保留，必须人工恢复")
+manifest["state"] = restored_state
+manifest["post_apply_digest"] = None if mode == "recovery" else manifest.get("post_apply_digest")
+if mode == "recovery":
+    manifest["recovery"] = {
+        "status": "succeeded",
+        "expected_target_digest": manifest.get("pre_apply_digest"),
+    }
+write_atomic(
+    manifest_path,
+    (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+)
+PYEOF
+}
+
+rollback_bundle_state() { # rollback_bundle_state <target> <bundle>; rc 0=applied, 3=not-applied
+  python3 - "$1" "$2" <<'PYEOF'
+import hashlib
+import json
+import os
+import sys
+
+target, bundle = os.path.realpath(sys.argv[1]), os.path.abspath(sys.argv[2])
+manifest_path = os.path.join(bundle, "manifest.json")
+if not os.path.isfile(manifest_path):
+    print("not-applied")
+    raise SystemExit(3)
+try:
+    with open(manifest_path, "rb") as fh:
+        manifest_bytes = fh.read()
+    manifest = json.loads(manifest_bytes)
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"rollback bundle manifest 非法: {exc}") from exc
+if manifest.get("schema_version") not in {1, 2}:
+    raise SystemExit("rollback bundle schema 非法")
+if manifest.get("target") != target:
+    raise SystemExit("rollback bundle 不属于该目标项目")
+
+state = manifest.get("state")
+managed_evidence = any(
+    os.path.lexists(os.path.join(bundle, name))
+    for name in ("managed-assets.json", "manifest.sha256")
+) or "managed_assets" in manifest
+if manifest.get("schema_version") == 2 and managed_evidence:
+    try:
+        with open(os.path.join(bundle, "manifest.sha256"), encoding="ascii") as fh:
+            expected = fh.read().strip()
+    except OSError as exc:
+        raise SystemExit("rollback bundle manifest integrity 缺失") from exc
+    if expected != hashlib.sha256(manifest_bytes).hexdigest():
+        raise SystemExit("rollback bundle manifest integrity 不匹配")
+if state == "applied":
+    print("applied")
+    raise SystemExit(0)
+if state in {"recovered", "restored"}:
+    print("not-applied")
+    raise SystemExit(3)
+if state == "prepared":
+    raise SystemExit("rollback bundle 仍处于 prepared 状态；apply 未完成或需要人工恢复")
+raise SystemExit("rollback bundle state 非法")
+PYEOF
+}
+
+report_rollback_lifecycle() { # report_rollback_lifecycle <status|verify> <target> <bundle>
+  local operation="$1" target="$2" bundle="$3" state rc=0 detail verify_output
+  state="$(rollback_bundle_state "$target" "$bundle" 2>&1)" || rc=$?
+  if [ "$rc" = 3 ]; then
+    echo "status=not-applied"
+    echo "target=$target"
+    echo "rollback_bundle=$bundle"
+    [ "$operation" = status ] && return 0
+    echo "ERROR: Guru overlay 未处于 applied 状态" >&2
+    return 1
+  fi
+  if [ "$rc" != 0 ]; then
+    detail="${state//$'\n'/; }"
+    echo "status=drifted"
+    echo "target=$target"
+    echo "rollback_bundle=$bundle"
+    echo "detail=$detail"
+    [ "$operation" = status ] && return 0
+    return 1
+  fi
+
+  rc=0
+  verify_output="$(restore_rollback_bundle "$target" "$bundle" verify 2>&1)" || rc=$?
+  if [ "$rc" = 0 ]; then
+    echo "status=installed-current"
+    echo "target=$target"
+    echo "rollback_bundle=$bundle"
+    echo "$verify_output"
+    return 0
+  fi
+  detail="${verify_output//$'\n'/; }"
+  echo "status=drifted"
+  echo "target=$target"
+  echo "rollback_bundle=$bundle"
+  echo "detail=$detail"
+  [ "$operation" = status ] && return 0
+  return 1
+}
+
+validate_planned_rollback_bundle() { # read-only validation for plan
+  python3 - "$1" "$2" <<'PYEOF'
+import os
+import sys
+
+target = os.path.realpath(sys.argv[1])
+bundle_arg = os.path.abspath(sys.argv[2])
+if os.path.lexists(bundle_arg) and os.path.islink(bundle_arg):
+    raise SystemExit("ERROR: rollback bundle 路径不得是符号链接")
+bundle = os.path.realpath(bundle_arg)
+try:
+    inside_target = os.path.commonpath((target, bundle)) == target
+except ValueError:
+    inside_target = False
+if inside_target:
+    raise SystemExit("ERROR: rollback bundle 必须位于目标项目外部")
+if os.path.exists(bundle) and not os.path.isdir(bundle):
+    raise SystemExit(f"ERROR: rollback bundle 必须是目录: {bundle}")
+if os.path.isdir(bundle) and os.listdir(bundle):
+    raise SystemExit(f"ERROR: rollback bundle 必须不存在或为空: {bundle}")
+print(bundle)
+PYEOF
+}
+
+mark_rollback_manual_recovery() { # mark_rollback_manual_recovery <bundle> <reason>
+  python3 - "$1" "$2" <<'PYEOF'
+import json
+import os
+import sys
+
+bundle, reason = os.path.abspath(sys.argv[1]), sys.argv[2]
+path = os.path.join(bundle, "manifest.json")
+try:
+    with open(path, encoding="utf-8") as fh:
+        manifest = json.load(fh)
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+if manifest.get("schema_version") not in {1, 2} or manifest.get("state") != "prepared":
+    raise SystemExit(1)
+recovery = manifest.get("recovery")
+if not isinstance(recovery, dict):
+    recovery = {}
+    manifest["recovery"] = recovery
+recovery["status"] = "manual_required"
+recovery["reason"] = reason
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, ensure_ascii=False, indent=2, sort_keys=True)
+    fh.write("\n")
+PYEOF
+}
+
+handle_failed_apply_exit() {
+  local rc=$?
+  trap - EXIT INT TERM HUP
+  if [ "$rc" = 0 ] || [ "$APPLY_RECOVERY_ARMED" != 1 ]; then
+    return
+  fi
+  set +e
+  echo "ERROR: apply 未完成；正在用 rollback bundle 尝试自动恢复..." >&2
+  if restore_rollback_bundle "$TARGET" "$APPLY_RECOVERY_BUNDLE" recovery "$APPLY_RECOVERY_EXPECTED_DIGEST"; then
+    echo "RECOVERED: 已恢复 apply 前精确 preimage；.git 未读取或修改；bundle 状态为 recovered。" >&2
+  else
+    mark_rollback_manual_recovery "$APPLY_RECOVERY_BUNDLE" "cas_or_restore_failed" >/dev/null 2>&1 || true
+    echo "ERROR: 自动恢复未获精确 CAS 或恢复失败，已拒绝覆盖并保留 rollback bundle。" >&2
+    echo "MANUAL RECOVERY REQUIRED: 检查 $APPLY_RECOVERY_BUNDLE/preimage 与当前目标；该 bundle 不可作为成功 unapply 使用。" >&2
+  fi
+  exit "$rc"
+}
+
+handle_failed_apply_signal() { # handle_failed_apply_signal <exit-code> <signal-name>
+  local rc="$1" signal_name="$2"
+  echo "ERROR: apply 收到 ${signal_name}，将进入 rollback recovery。" >&2
+  exit "$rc"
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  --status|--verify)
+    LIFECYCLE_OPERATION="${1#--}"
+    [ "$#" = 3 ] || { usage >&2; exit 2; }
+    TARGET="$(cd "$2" && pwd)"
+    [ -d "$TARGET/.trellis" ] || { echo "ERROR: $TARGET 不是 Trellis 项目（缺 .trellis/）"; exit 1; }
+    report_rollback_lifecycle "$LIFECYCLE_OPERATION" "$TARGET" "$3"
+    exit $?
+    ;;
+esac
+
+if [ "${1:-}" = "--unapply" ]; then
+  [ "$#" = 3 ] || { echo "用法: apply.sh --unapply <目标项目路径> <rollback-bundle>"; exit 2; }
+  TARGET="$(cd "$2" && pwd)"
+  [ -d "$TARGET/.trellis" ] || { echo "ERROR: $TARGET 不是 Trellis 项目（缺 .trellis/）"; exit 1; }
+  restore_rollback_bundle "$TARGET" "$3" unapply
+  echo "== guru overlay 已从 rollback bundle 恢复；.git 未被读取或修改 =="
+  exit 0
+fi
+
+LIFECYCLE_OPERATION="apply"
+case "${1:-}" in
+  --plan|--upgrade)
+    LIFECYCLE_OPERATION="${1#--}"
+    shift
+    ;;
+esac
+[ "$#" -gt 0 ] || { usage >&2; exit 2; }
+TARGET="$1"
 TARGET="$(cd "$TARGET" && pwd)"
 [ -d "$TARGET/.trellis" ] || { echo "ERROR: $TARGET 不是 Trellis 项目（缺 .trellis/），先 trellis init"; exit 1; }
+shift
+PLATFORM="flutter"
+if [ "$#" -gt 0 ] && [ "${1#--}" = "$1" ]; then
+  PLATFORM="$1"
+  shift
+fi
+ROLLBACK_BUNDLE=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --rollback-bundle)
+      [ "$#" -ge 2 ] || { echo "ERROR: --rollback-bundle 缺目录参数"; exit 2; }
+      ROLLBACK_BUNDLE="$2"
+      shift 2
+      ;;
+    *) echo "ERROR: 未知参数: $1"; exit 2 ;;
+  esac
+done
+if [ "$LIFECYCLE_OPERATION" = upgrade ] && [ -z "$ROLLBACK_BUNDLE" ]; then
+  echo "ERROR: --upgrade 必须指定新的 --rollback-bundle" >&2
+  exit 2
+fi
 GURU_WITH_GITNEXUS="${GURU_WITH_GITNEXUS:-0}"
 GURU_ADVERSARIAL_ENABLED="${GURU_ADVERSARIAL_ENABLED:-}"
 
@@ -56,8 +812,7 @@ for event, entries in hooks.items():
 PYEOF
 fi
 
-# 平台选择（第二位置参数，默认 flutter）：决定 spec 包 / workflow / verify analyze 命令。
-PLATFORM="${2:-flutter}"
+# 平台选择：决定 spec 包 / workflow / verify analyze 命令。
 case "$PLATFORM" in
   flutter) SPEC_NAME="guru-flutter-client"; WF_NAME="guru-client"; ANALYZE_CMD="flutter analyze"; LAYERS="flutter service shared"; SKILL_GLOBS="client-* flutter-implementation-guru-*"; XTRA_HOOKS="block-l10n-sync.sh" ;;
   go)      SPEC_NAME="guru-go-backend";     WF_NAME="guru-go";     ANALYZE_CMD="go build ./... && go vet ./..."; LAYERS="backend shared"; SKILL_GLOBS="go-*"; XTRA_HOOKS="" ;;
@@ -67,6 +822,22 @@ case "$PLATFORM" in
 esac
 [ -d "$ROOT/specs/$SPEC_NAME" ] || { echo "ERROR: spec 包不存在: specs/${SPEC_NAME}（先 pnpm -C packages/cli sync:guru 或确认 guru-template/specs/）"; exit 1; }
 BOOTSTRAP_PRD="$HERE/bootstrap/${PLATFORM}-bootstrap-prd.md"
+
+if [ "$LIFECYCLE_OPERATION" = plan ]; then
+  PLANNED_BUNDLE="none"
+  if [ -n "$ROLLBACK_BUNDLE" ]; then
+    PLANNED_BUNDLE="$(validate_planned_rollback_bundle "$TARGET" "$ROLLBACK_BUNDLE")"
+  fi
+  echo "status=ready"
+  echo "operation=apply"
+  echo "target=$TARGET"
+  echo "platform=$PLATFORM"
+  echo "spec=$SPEC_NAME"
+  echo "workflow=$WF_NAME"
+  echo "rollback_bundle=$PLANNED_BUNDLE"
+  echo "mutation=none"
+  exit 0
+fi
 
 # guru-managed skill 全集（剪枝白名单：只删这些里的"非本平台"项，绝不碰用户自有/官方 trellis-* skill）
 GURU_SKILLS="$(ls -d "$HERE"/agents-skills/*/ 2>/dev/null | xargs -n1 basename || true)"
@@ -239,7 +1010,29 @@ case ",${detect_hint}," in
   *) echo "  ⚠ 平台校验：传入平台 '${PLATFORM}' 与检测到的项目类型（${detect_hint}）不符——确认第二位置参数是否传错（apply.sh <目标> <flutter|go|ios|h5>）" ;;
 esac
 
-echo "== guru overlay 装配 → ${TARGET} （平台: ${PLATFORM} → spec=${SPEC_NAME} workflow=${WF_NAME}）=="
+if [ -n "$ROLLBACK_BUNDLE" ]; then
+  create_rollback_bundle "$TARGET" "$ROLLBACK_BUNDLE"
+  APPLY_RECOVERY_BUNDLE="$(cd "$ROLLBACK_BUNDLE" && pwd)"
+  APPLY_RECOVERY_EXPECTED_DIGEST="$(python3 - "$APPLY_RECOVERY_BUNDLE/manifest.json" <<'PYEOF'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    print(json.load(fh)["pre_apply_digest"])
+PYEOF
+)"
+  APPLY_RECOVERY_ARMED=1
+  trap handle_failed_apply_exit EXIT
+  trap 'handle_failed_apply_signal 130 INT' INT
+  trap 'handle_failed_apply_signal 143 TERM' TERM
+  trap 'handle_failed_apply_signal 129 HUP' HUP
+fi
+
+if [ "$LIFECYCLE_OPERATION" = upgrade ]; then
+  echo "== guru overlay 显式升级 → ${TARGET} （平台: ${PLATFORM} → spec=${SPEC_NAME} workflow=${WF_NAME}）=="
+else
+  echo "== guru overlay 装配 → ${TARGET} （平台: ${PLATFORM} → spec=${SPEC_NAME} workflow=${WF_NAME}）=="
+fi
 ensure_local_runtime_gitignore
 
 # 1) skills → .agents/skills/（装本平台集合 + shared 需求三件套，剪枝他平台 guru skill）
@@ -256,19 +1049,23 @@ for gs in $GURU_SKILLS; do
 done
 echo "  skills ×${agent_skill_n} → .agents/skills/（${PLATFORM} 平台 + shared 需求三件套）"
 
-# 2) gate + after_create + config patcher → .trellis/scripts/guru/
-mkdir -p "$TARGET/.trellis/scripts/guru"
+# 2) delivery policy + guarded lifecycle + gates → project-local Custom runtime
+mkdir -p "$TARGET/.trellis/scripts/guru" "$TARGET/.trellis/policy"
 cp \
   "$HERE/verify/guru_gate.py" \
   "$HERE/verify/guru_risk.py" \
   "$HERE/verify/guru_contract.py" \
+  "$HERE/verify/guru_delivery_policy.py" \
   "$HERE/verify/guru_review_record.py" \
   "$HERE/hooks/guru_after_create.py" \
+  "$HERE/hooks/guru_after_start.py" \
+  "$HERE/hooks/guru_task.py" \
   "$HERE/verify/guru_config_patch.py" \
   "$HERE/verify/guru_supervise.py" \
   "$TARGET/.trellis/scripts/guru/"
+cp "$HERE/policy/delivery-policy.json" "$TARGET/.trellis/policy/delivery-policy.json"
 chmod +x "$TARGET/.trellis/scripts/guru/"*.py
-echo "  scripts: guru_gate.py, guru_risk.py, guru_contract.py, guru_review_record.py, guru_after_create.py, guru_config_patch.py, guru_supervise.py → .trellis/scripts/guru/"
+echo "  runtime: delivery policy + guarded lifecycle + gates → .trellis/scripts/guru/；policy → .trellis/policy/"
 
 # 3) 平台 hooks（Claude）+ trellis-local：只装共享 + 本平台专属 + 平台化 grill-nudge
 mkdir -p "$TARGET/.claude/hooks" "$TARGET/.claude/skills/trellis-local"
@@ -755,14 +1552,29 @@ if os.path.isfile(_cfg_path):
             "(after_create/before_start) 会形成重复顶层键，YAML last-wins 将静默覆盖你的 "
             "after_*/before_* hook。请把你的 hook 手动并入 guru-overlay marker 块内（或确认无冲突）。\n")
 
-merge(os.path.join(t, ".trellis", "config.yaml"),
-"""hooks:
-  after_create:
-    - "python3 .trellis/scripts/guru/guru_after_create.py"
-  # 阻断式：需求确认 + overview/detail 双 clean review + detail 确认缺一，task.py start 直接失败。
-  # check-start 只代表 START_READY，不授权实现 worker 或 git commit；后续由 check-implementation/check-commit 分别把关。
-  before_start:
-    - "python3 .trellis/scripts/guru/guru_gate.py check-start\"""")
+task_utils = os.path.join(t, ".trellis", "scripts", "common", "task_utils.py")
+supports_blocking_start = os.path.isfile(task_utils) and "run_blocking_task_hooks" in open(
+    task_utils, encoding="utf-8"
+).read()
+hook_lines = [
+    "hooks:",
+    "  after_create:",
+    '    - "python3 .trellis/scripts/guru/guru_after_create.py"',
+    "  after_start:",
+    '    - "python3 .trellis/scripts/guru/guru_after_start.py"',
+]
+if supports_blocking_start:
+    hook_lines.extend([
+        "  # Blocking hook supported by this checkout-local Core.",
+        "  before_start:",
+        '    - "python3 .trellis/scripts/guru/guru_gate.py check-start"',
+    ])
+else:
+    hook_lines.extend([
+        "  # Official Core has no blocking before_start hook.",
+        "  # Use guru_task.py start; after_start records direct official bypass as advisory evidence.",
+    ])
+merge(os.path.join(t, ".trellis", "config.yaml"), "\n".join(hook_lines))
 PYEOF
 
 # 7.5) by-layer 项目 spec 骨架 + bootstrap 任务接线
@@ -867,6 +1679,12 @@ if gitnexus_requested; then
   bootstrap_gitnexus
 fi
 
+# All target mutations are complete. This exact digest is the only state an
+# automatic failed-apply recovery may overwrite; later target drift fails closed.
+if [ -n "$ROLLBACK_BUNDLE" ]; then
+  checkpoint_rollback_bundle "$TARGET" "$APPLY_RECOVERY_BUNDLE"
+fi
+
 # 8) 装配自检（失败即非零退出；警告不阻塞）
 echo ""
 echo "== 装配自检 =="
@@ -875,11 +1693,14 @@ FAIL=0
 # 用 ast.parse 做语法检查：py_compile 会写 __pycache__ 副产物，破坏装配幂等性
 if python3 -c "import ast,sys; [ast.parse(open(f,encoding='utf-8').read()) for f in sys.argv[1:]]" \
     "$TARGET/.trellis/scripts/guru/guru_gate.py" \
-    "$TARGET/.trellis/scripts/guru/guru_risk.py" \
-    "$TARGET/.trellis/scripts/guru/guru_contract.py" \
-    "$TARGET/.trellis/scripts/guru/guru_review_record.py" \
-    "$TARGET/.trellis/scripts/guru/guru_after_create.py" \
-    "$TARGET/.trellis/scripts/guru/guru_config_patch.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_risk.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_contract.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_delivery_policy.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_review_record.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_after_create.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_after_start.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_task.py" \
+	    "$TARGET/.trellis/scripts/guru/guru_config_patch.py" \
     "$TARGET/.trellis/scripts/guru/guru_supervise.py" 2>/dev/null; then
   echo "  ✓ guru 脚本语法"
 else
@@ -887,7 +1708,7 @@ else
 fi
 
 # 循环导入冒烟：ast.parse 抓不到 guru_risk↔guru_gate↔guru_supervise 的导入环；-B 不写 __pycache__ 保幂等
-if PYTHONPATH="$TARGET/.trellis/scripts/guru" python3 -B -c "import guru_risk, guru_contract, guru_review_record, guru_gate, guru_supervise" 2>/dev/null; then
+if PYTHONPATH="$TARGET/.trellis/scripts/guru" python3 -B -c "import guru_risk, guru_contract, guru_delivery_policy, guru_review_record, guru_gate, guru_supervise, guru_task" 2>/dev/null; then
   echo "  ✓ guru 脚本可导入（无循环依赖）"
 else
   echo "  ✗ guru 脚本导入失败（循环依赖 / 缺失模块）"; FAIL=1
@@ -908,18 +1729,25 @@ else
 fi
 
 if grep -q "run_blocking_task_hooks" "$TARGET/.trellis/scripts/common/task_utils.py" 2>/dev/null; then
-  echo "  ✓ core 支持 before_start 阻断钩子"
+  if grep -q 'guru_gate.py check-start' "$TARGET/.trellis/config.yaml"; then
+    echo "  ✓ core 支持 before_start 阻断钩子"
+  else
+    echo "  ✗ core 支持 before_start，但 Guru marker 未接线"; FAIL=1
+  fi
 else
-  # §7 刚把 before_start→guru_gate.py 写进 config.yaml。若 core 不支持阻断钩子，该 Gate 被静默忽略
-  # → 用户以为有硬 Gate、实则 task.py start 拦不住（最危险的失败：假安全）。故硬失败，不软警告。
-  # 根因不在本 overlay：core 脚本归 trellis update 的哈希三方合并管理（见脚本头部边界），本 overlay
-  # 按设计不碰 core。此缺口=项目用「上游」CLI init/update（.trellis/.version 不带 -guru），其 core 无此能力。
-  ver="$(cat "$TARGET/.trellis/.version" 2>/dev/null || echo '未知')"
-  printf '  \033[31m✗ core 缺 before_start 阻断支持：guru 硬 Gate 已接线但不会生效（task.py start 拦不住）！\033[0m\n'
-  echo "    根因：本项目用上游 CLI 装的（.trellis/.version=${ver}，非 -guru）。修复=用 guru CLI 重新基线 core（可复现、哈希追踪）："
-  echo "      npm i -g @devsc/trellis@guru   # 或用 fork 本地 bin：node <fork>/packages/cli/bin/trellis.js"
-  echo "      cd $TARGET && trellis update    # 交互式：对 task.py / common/task_utils.py 选「取模板版」"
-  FAIL=1
+  # Official Trellis exposes non-blocking after_* hooks. Do not install a
+  # before_start key that Core would silently ignore; the guarded wrapper is
+  # the writable high-risk entry, after_start records bypass truthfully, and
+  # the Codex commit guard retains the irreversible boundary.
+  if grep -q 'guru_gate.py check-start' "$TARGET/.trellis/config.yaml"; then
+    echo "  ✗ official Core 不支持 before_start，但 config 仍宣称硬 Gate"; FAIL=1
+  elif [ -x "$TARGET/.trellis/scripts/guru/guru_task.py" ] \
+      && grep -q 'guru_after_start.py' "$TARGET/.trellis/config.yaml" \
+      && [ -x "$TARGET/.codex/hooks/block-unstarted-commit.sh" ]; then
+    echo "  ✓ official Core compensated：guarded wrapper + after_start evidence + Codex commit guard"
+  else
+    echo "  ✗ official Core compensated lifecycle 接线不完整"; FAIL=1
+  fi
 fi
 
 if [ -f "$TARGET/scripts/check_workflow_compliance.py" ]; then
@@ -969,3 +1797,13 @@ echo ""
 echo "维护规约：每次 trellis update / 平台 reconfigure 后补跑一次本脚本。"
 echo "  原因：平台 configurator 会向单面写 skill（如 Codex 的 trellis-start 只进 .agents/skills），"
 echo "  使 .agents/skills 与 .claude/skills 漂移；重跑 apply.sh 的 §4.5 双面对齐即拉平（幂等）。"
+if [ -n "$ROLLBACK_BUNDLE" ]; then
+  # Publish `applied` only after every other fallible apply step/output. Ignore
+  # signals during the tiny publish/disarm window; finalize errors still reach
+  # the EXIT recovery trap while the bundle remains prepared.
+  trap '' INT TERM HUP
+  finalize_rollback_bundle "$TARGET" "$APPLY_RECOVERY_BUNDLE" "$APPLY_RECOVERY_EXPECTED_DIGEST"
+  APPLY_RECOVERY_ARMED=0
+  trap - EXIT INT TERM HUP
+  echo "  rollback: 已生成外部 preimage + post-apply CAS bundle（不包含 .git）" || true
+fi

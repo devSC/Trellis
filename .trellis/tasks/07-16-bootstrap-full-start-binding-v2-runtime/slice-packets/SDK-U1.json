@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "slice_id": "SDK-U1",
+  "owner_unit": "UNIT-stable-planning-binding",
+  "target_kind": "implementation",
+  "target_paths": [
+    "guru-template/overlay/hooks/guru_task.py",
+    "guru-template/overlay/verify/tests/test_start_guard.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "start_guard_digest",
+    "v1_v2_compatibility"
+  ],
+  "depends_on": [],
+  "deterministic_checks": [
+    "env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_start_guard.py' -v",
+    "env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s guru-template/overlay/verify/tests -p 'test_delivery_policy.py' -v"
+  ],
+  "dirty_state": {
+    "unrelated": [
+      ".trellis/tasks/07-16-bootstrap-full-start-binding-v2-runtime/check.jsonl",
+      ".trellis/tasks/07-16-bootstrap-full-start-binding-v2-runtime/implement.jsonl",
+      ".trellis/tasks/07-16-fix-full-start-binding-v2/check.jsonl",
+      ".trellis/tasks/07-16-fix-full-start-binding-v2/implement.jsonl"
+    ]
+  },
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "codex",
+    "ocr": "disabled"
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-FSB-001",
+      "rule": "The guru-risk-contract-v2 Full Start Guard digest is byte-identical before and after requirements/detail confirmation records are written.",
+      "source": "design-package/chapters/stable-planning-binding.md",
+      "owner": "UNIT-stable-planning-binding",
+      "positive_case": "A v2 Full fixture writes confirmation records and retains the original stable digest.",
+      "negative_case": "The v2 digest changes solely because confirmation records were added or mutated.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "test_start_guard.py v2 stable digest regression"
+      ]
+    },
+    {
+      "invariant_id": "INV-FSB-002",
+      "rule": "The v2 stable digest continues to bind schema, chain flags, review runs, and the exact gate-contract bytes.",
+      "source": "design-package/chapters/stable-planning-binding.md",
+      "owner": "UNIT-stable-planning-binding",
+      "positive_case": "Review-run or gate-contract drift changes the v2 digest.",
+      "negative_case": "Stable planning evidence changes without invalidating the v2 digest.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "test_start_guard.py stable planning mutation matrix"
+      ]
+    },
+    {
+      "invariant_id": "INV-FSB-003",
+      "rule": "Every non-v2 policy executes the legacy Start Guard digest payload byte-for-byte.",
+      "source": "design-package/chapters/stable-planning-binding.md",
+      "owner": "UNIT-stable-planning-binding",
+      "positive_case": "A v1 confirmation mutation changes the digest exactly as before.",
+      "negative_case": "A non-v2 contract silently selects the new stable payload.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "test_start_guard.py legacy digest compatibility"
+      ]
+    }
+  ]
+}
