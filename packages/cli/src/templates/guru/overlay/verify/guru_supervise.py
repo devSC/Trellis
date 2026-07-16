@@ -69,6 +69,7 @@ DEFAULT_ADVERSARIAL_CODEX_MODEL = "gpt-5.4"
 DEFAULT_ADVERSARIAL_CODEX_REASONING_EFFORT = "high"
 HIGH_RISK_REVIEW_PROVIDER_POLICIES = {"current", "opposite", "codex", "claude"}
 DEFAULT_HIGH_RISK_REVIEW_PROVIDER_POLICY = "current"
+DETERMINISTIC_REVIEW_BRIEF_MAX_CHARS = 16000
 ADVERSARIAL_MODEL_ACTIONS = {"requirements", "overview", "detail"}
 GATES_KEY = "guru_gates"
 ADVERSARIAL_SKIPS_KEY = "adversarial_skips"
@@ -946,6 +947,8 @@ def build_run_plan(
     elif action == "implementation-review":
         responsibility = (
             "Review the exact implementation target under Guru quality rules without implementing or editing files. "
+            "Remain read-only: do not modify source, tests, review records, Gate code, the index, task artifacts, "
+            "or Git history. "
             "Emit a complete required implementation review verdict for commit evidence and stop after one review pass."
         )
     else:
@@ -2081,6 +2084,12 @@ def _append_supervisor_review_record(
     messages: str,
     det_status: str,
     det_results: list,
+    deterministic_evidence_key: str = "",
+    expected_evidence_components: dict | None = None,
+    platform: str | None = None,
+    provider: str | None = None,
+    trellis_bin: str | None = None,
+    same_provider_user_quote: str | None = None,
 ) -> tuple[dict, str | None]:
     verdict = guru_review_record.parse_verdict_block(messages)
     try:
@@ -2110,14 +2119,781 @@ def _append_supervisor_review_record(
         "high_risk_review_provider_policy": config.high_risk_review_provider_policy,
         "review_target_kind": resolution.review_target_kind,
         "reviewed_target_digest": reviewed_target_digest,
+        "evidence_key": deterministic_evidence_key,
+        "deterministic_evidence_key": deterministic_evidence_key,
+        guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD: (
+            guru_review_record.REVIEW_EVIDENCE_SCHEMA_VERSION
+            if deterministic_evidence_key
+            else None
+        ),
+        "supervisor_successful_commands": [
+            result["command"]
+            for result in det_results
+            if result.get("exit_code") == 0
+            and result.get("timed_out") is False
+        ],
     })
     if resolution.same_provider_user_quote and failure is None:
         record["message"] = (
             "same-provider implementation-review authorized by user quote: "
             + resolution.same_provider_user_quote
         )
-    guru_review_record.append_record(str(task_dir), record)
+    if deterministic_evidence_key:
+        if not isinstance(expected_evidence_components, dict):
+            raise GuruSupervisionError(
+                "v2 implementation review requires expected evidence "
+                "components before append"
+            )
+        _require_current_slice_evidence(
+            task_dir=task_dir,
+            root=root,
+            target=target,
+            evidence_key=deterministic_evidence_key,
+            evidence_components=expected_evidence_components,
+            deterministic_results=det_results,
+            platform=platform,
+            provider=provider,
+            trellis_bin=trellis_bin,
+            same_provider_user_quote=same_provider_user_quote,
+        )
+    try:
+        guru_review_record.append_record(str(task_dir), record)
+    except guru_review_record.ReviewRecordError as exc:
+        raise GuruSupervisionError(
+            f"cannot append current implementation review evidence:{exc}"
+        ) from exc
     return record, failure
+
+
+def _implementation_review_policy_record(
+    config: SupervisionConfig,
+    resolution: ReviewProviderResolution,
+) -> dict:
+    return {
+        "deterministic_results": [],
+        "provider_override_source": resolution.provider_override_source,
+        "same_provider_user_quote": resolution.same_provider_user_quote,
+        "high_risk_review_provider_policy": (
+            config.high_risk_review_provider_policy
+        ),
+        "review_target_kind": resolution.review_target_kind,
+        "implement_provider": config.provider,
+        "check_provider": resolution.check_config.provider,
+        "review_provider": resolution.check_config.provider,
+    }
+
+
+def _implementation_review_evidence_key(
+    task_dir: Path,
+    target: ReviewTarget,
+    config: SupervisionConfig,
+    resolution: ReviewProviderResolution,
+) -> tuple[str, dict]:
+    components = guru_review_record.review_evidence_components(
+        str(task_dir),
+        target.packet,
+        _implementation_review_policy_record(config, resolution),
+        supervisor_path=str(Path(__file__).resolve()),
+    )
+    return (
+        guru_review_record.review_evidence_key(
+            target.reviewed_target_digest,
+            components,
+        ),
+        components,
+    )
+
+
+def _require_current_slice_evidence(
+    *,
+    task_dir: Path,
+    root: Path,
+    target: ReviewTarget,
+    evidence_key: str,
+    evidence_components: dict,
+    deterministic_results: list,
+    platform: str | None,
+    provider: str | None,
+    trellis_bin: str | None,
+    same_provider_user_quote: str | None,
+) -> None:
+    """Fail when any semantic input changed after the initial evidence key."""
+    if target.unit_id is None:
+        raise GuruSupervisionError(
+            "implementation review evidence lifecycle requires a slice id"
+        )
+    current_target = _slice_review_target(
+        task_dir,
+        root,
+        target.unit_id,
+        staged=target.digest_source == "index",
+    )
+    current_config = _load_config(
+        root,
+        platform=platform,
+        provider=provider,
+        adversarial=False,
+        trellis_bin=trellis_bin,
+    )
+    try:
+        independent_required, independent_reason = (
+            guru_risk.implement_check_independent_required(
+                str(task_dir),
+                current_config.platform,
+                str(root),
+                unit_id=current_target.unit_id,
+            )
+        )
+    except guru_review_record.ReviewRecordError as exc:
+        raise GuruSupervisionError(
+            f"implementation review evidence is no longer current:{exc}"
+        ) from exc
+    current_resolution = _implementation_review_check_config(
+        current_config,
+        packet=current_target.packet,
+        independent_required=independent_required,
+        independent_reason=independent_reason,
+        high_risk_policy_applies=_slice_uses_high_risk_review_policy(
+            current_target.packet,
+            task_dir,
+        ),
+        review_target_kind="slice",
+        same_provider_user_quote=same_provider_user_quote,
+    )
+    policy_record = _implementation_review_policy_record(
+        current_config,
+        current_resolution,
+    )
+    policy_record["deterministic_results"] = deterministic_results
+    try:
+        current_components = guru_review_record.review_evidence_components(
+            str(task_dir),
+            current_target.packet,
+            policy_record,
+            supervisor_path=str(Path(__file__).resolve()),
+        )
+        current_key = guru_review_record.review_evidence_key(
+            current_target.reviewed_target_digest,
+            current_components,
+        )
+    except guru_review_record.ReviewRecordError as exc:
+        raise GuruSupervisionError(
+            f"implementation review evidence is no longer current:{exc}"
+        ) from exc
+    if (
+        current_key != evidence_key
+        or current_components != evidence_components
+    ):
+        raise GuruSupervisionError(
+            "implementation review semantic inputs changed after initial "
+            "evidence key; rerun the slice review"
+        )
+
+
+def _slice_evidence_lifecycle_enabled(target: ReviewTarget) -> bool:
+    return (
+        target.review_target.startswith("slice:")
+        and target.slice_packet_path is not None
+        and target.packet.get(
+            guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD,
+            1,
+        )
+        == guru_review_record.REVIEW_EVIDENCE_SCHEMA_VERSION
+    )
+
+
+def _reusable_clean_review(
+    task_dir: Path,
+    target: ReviewTarget,
+    evidence_key: str,
+) -> dict | None:
+    path = task_dir / "review-records" / "implementation-reviews.jsonl"
+    if not path.is_file():
+        return None
+    latest_attempt = None
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise GuruSupervisionError(
+            f"cannot read implementation review evidence:{exc}"
+        ) from exc
+    for lineno, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise GuruSupervisionError(
+                f"implementation review evidence line {lineno} invalid JSON:{exc}"
+            ) from exc
+        if not isinstance(record, dict):
+            raise GuruSupervisionError(
+                f"implementation review evidence line {lineno} must be object"
+            )
+        if (
+            record.get("evidence_key") == evidence_key
+            and record.get("supplemental") is not True
+        ):
+            latest_attempt = record
+    if latest_attempt is None:
+        return None
+    record = latest_attempt
+    if (
+        record.get("slice_id") != target.unit_id
+        or record.get("review_target") != target.review_target
+        or record.get("review_result") != "clean"
+        or record.get("required_satisfied") is not True
+        or record.get("supervisor_failure", "none") != "none"
+        or guru_review_record.validate_verdict_values(record) is not None
+        or record.get("deterministic_evidence_key") != evidence_key
+    ):
+        return None
+    try:
+        invariant_verdicts = (
+            guru_review_record.validate_persisted_invariant_verdicts(
+                target.packet.get("invariants"),
+                record.get("invariant_verdicts"),
+                require_all_pass=True,
+            )
+        )
+        if (
+            guru_review_record.aggregate_invariant_coverage(
+                target.packet.get("invariants"),
+                invariant_verdicts,
+            )
+            != record.get("invariant_coverage")
+        ):
+            return None
+        if (
+            record.get("invariant_verdicts_digest")
+            != guru_review_record.invariant_verdicts_digest(
+                invariant_verdicts
+            )
+        ):
+            return None
+        components = guru_review_record.review_evidence_components(
+            str(task_dir),
+            target.packet,
+            record,
+            supervisor_path=str(Path(__file__).resolve()),
+        )
+        current_key = guru_review_record.review_evidence_key(
+            target.reviewed_target_digest,
+            components,
+        )
+    except guru_review_record.ReviewRecordError:
+        return None
+    persisted_fields = (
+        "target_paths_digest",
+        "invariant_set_digest",
+        "requirements_design_digest",
+        "deterministic_commands_digest",
+        "deterministic_results_digest",
+        "review_policy_digest",
+        "supervisor_source_digest",
+    )
+    if current_key != evidence_key or not all(
+        record.get(field) == components[field]
+        for field in persisted_fields
+    ):
+        return None
+    try:
+        deterministic = guru_review_record.load_deterministic_evidence(
+            str(task_dir),
+            evidence_key,
+        )
+    except guru_review_record.ReviewRecordError as exc:
+        raise GuruSupervisionError(
+            f"deterministic evidence referenced by clean review is invalid:{exc}"
+        ) from exc
+    if deterministic is None:
+        return None
+    if deterministic["status"] != "passed":
+        raise GuruSupervisionError(
+            "clean implementation review references failed deterministic evidence"
+        )
+    if (
+        deterministic["deterministic_commands_digest"]
+        != components["deterministic_commands_digest"]
+        or deterministic["deterministic_results_digest"]
+        != components["deterministic_results_digest"]
+        or deterministic["results"] != record.get("deterministic_results")
+    ):
+        raise GuruSupervisionError(
+            "clean implementation review deterministic cache binding mismatch"
+        )
+    return record
+
+
+def _append_reused_clean_review(
+    task_dir: Path,
+    target: ReviewTarget,
+    source_record: dict,
+    review_run_id: str,
+    evidence_key: str,
+) -> dict:
+    try:
+        deterministic = guru_review_record.load_deterministic_evidence(
+            str(task_dir),
+            evidence_key,
+        )
+    except guru_review_record.ReviewRecordError as exc:
+        raise GuruSupervisionError(
+            f"cannot append clean reuse row from invalid deterministic evidence:{exc}"
+        ) from exc
+    if deterministic is None or deterministic.get("status") != "passed":
+        raise GuruSupervisionError(
+            "cannot append clean reuse row without current passed deterministic evidence"
+        )
+    reused = dict(source_record)
+    reused.update(
+        {
+            "run_id": review_run_id,
+            "slice_id": target.unit_id,
+            "review_target": target.review_target,
+            "target_paths": target.packet.get("target_paths", []),
+            "reviewed_target_digest": target.reviewed_target_digest,
+            "deterministic_results": deterministic["results"],
+            "deterministic_evidence_key": evidence_key,
+            "channel": "evidence-cache",
+            "worker": "semantic-review-reuse",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "message": (
+                "validated clean semantic evidence reused; "
+                f"reused_from_run_id={source_record.get('run_id')}; "
+                f"deterministic_evidence_key={evidence_key}; "
+                "deterministic_runs=0; reviewers_spawned=0"
+            ),
+        }
+    )
+    try:
+        guru_review_record.append_record(
+            str(task_dir),
+            guru_review_record._normalized_reuse_record(reused),
+        )
+    except guru_review_record.ReviewRecordError as exc:
+        raise GuruSupervisionError(
+            f"cannot append official clean reuse review row:{exc}"
+        ) from exc
+    return reused
+
+
+def _resolve_slice_deterministic_evidence(
+    task_dir: Path,
+    root: Path,
+    target: ReviewTarget,
+    review_run_id: str,
+    evidence_key: str,
+    evidence_components: dict,
+) -> tuple[dict | None, str, list, bool, dict]:
+    def current_target_digest() -> str:
+        try:
+            return guru_review_record.target_snapshot_digest(
+                str(root),
+                target.packet.get("target_paths", []),
+                target.digest_source,
+            )
+        except guru_review_record.ReviewRecordError as exc:
+            raise GuruSupervisionError(
+                f"SCOPE_INVALID:target snapshot digest failed:{exc}"
+            ) from exc
+
+    try:
+        lock = guru_review_record.DeterministicEvidenceLock(
+            str(task_dir),
+            evidence_key,
+        )
+        with lock:
+            if current_target_digest() != target.reviewed_target_digest:
+                raise GuruSupervisionError(
+                    "SCOPE_INVALID:implementation-review target changed "
+                    "before deterministic evidence lookup"
+                )
+            clean_record = _reusable_clean_review(
+                task_dir,
+                target,
+                evidence_key,
+            )
+            if clean_record is not None:
+                deterministic = guru_review_record.load_deterministic_evidence(
+                    str(task_dir),
+                    evidence_key,
+                )
+                if deterministic is None:
+                    raise GuruSupervisionError(
+                        "clean review deterministic evidence disappeared"
+                    )
+                return (
+                    clean_record,
+                    "passed",
+                    deterministic["results"],
+                    True,
+                    {
+                        **evidence_components,
+                        "deterministic_results_digest": deterministic[
+                            "deterministic_results_digest"
+                        ],
+                    },
+                )
+            cached = guru_review_record.load_deterministic_evidence(
+                str(task_dir),
+                evidence_key,
+            )
+            deterministic_reused = cached is not None
+            if cached is not None:
+                if (
+                    cached["deterministic_commands_digest"]
+                    != evidence_components["deterministic_commands_digest"]
+                ):
+                    raise GuruSupervisionError(
+                        "deterministic evidence command binding does not "
+                        "match current evidence key"
+                    )
+                det_status = cached["status"]
+                det_results = cached["results"]
+            else:
+                commands = guru_review_record.stable_unique_commands(
+                    target.packet.get("deterministic_checks", [])
+                )
+                det_status, det_results = (
+                    guru_review_record.run_deterministic_checks(
+                        commands,
+                        str(root),
+                    )
+                )
+                if current_target_digest() != target.reviewed_target_digest:
+                    raise GuruSupervisionError(
+                        "SCOPE_INVALID:implementation-review target changed "
+                        "during deterministic checks"
+                    )
+                deterministic_record = (
+                    guru_review_record.deterministic_evidence_record(
+                        evidence_key,
+                        commands,
+                        det_status,
+                        det_results,
+                    )
+                )
+                guru_review_record.append_deterministic_evidence(
+                    str(task_dir),
+                    deterministic_record,
+                )
+            if det_status == "passed":
+                if current_target_digest() != target.reviewed_target_digest:
+                    raise GuruSupervisionError(
+                        "SCOPE_INVALID:implementation-review target changed "
+                        "during deterministic checks"
+                    )
+            current_components = dict(evidence_components)
+            current_components["deterministic_results_digest"] = (
+                guru_review_record.deterministic_results_digest(det_results)
+            )
+            return (
+                None,
+                det_status,
+                det_results,
+                deterministic_reused,
+                current_components,
+            )
+    except guru_review_record.ReviewRecordError as exc:
+        raise GuruSupervisionError(
+            f"deterministic evidence lifecycle invalid:{exc}"
+        ) from exc
+
+
+def _deterministic_reviewer_brief(
+    evidence_key: str,
+    results: list,
+    *,
+    reused: bool,
+) -> str:
+    successful_commands = [
+        result["command"]
+        for result in results
+        if result.get("exit_code") == 0
+        and result.get("timed_out") is False
+    ]
+    max_payload_chars = 10000
+    bounded_results = []
+    truncated = False
+    for result in results:
+        candidate = [*bounded_results, result]
+        encoded = json.dumps(
+            candidate,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if len(encoded) > max_payload_chars:
+            truncated = True
+            break
+        bounded_results = candidate
+    payload = {
+        "evidence_key": evidence_key,
+        "reused": reused,
+        "results": bounded_results,
+        "results_digest": guru_review_record.deterministic_results_digest(
+            results
+        ),
+        "result_count": len(results),
+        "included_result_count": len(bounded_results),
+        "truncated": truncated,
+    }
+    included_commands = successful_commands[:len(bounded_results)]
+    brief = (
+        "Supervisor deterministic evidence follows. Treat these results as "
+        "authoritative for this exact evidence key. Do not rerun any exact "
+        "command from the packet deterministic_checks: semantic review starts "
+        "only after all of them passed. You may run a distinct read-only "
+        "adversarial probe; report each one as "
+        "reviewer_probe_command.N=<exact command>. Any repeated successful "
+        "command invalidates a clean verdict.\n"
+        f"supervisor_successful_commands={json.dumps(included_commands, ensure_ascii=False)}\n"
+        f"supervisor_deterministic_evidence_truncated={str(truncated).lower()}\n"
+        "supervisor_deterministic_evidence="
+        + json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    if len(brief) <= DETERMINISTIC_REVIEW_BRIEF_MAX_CHARS:
+        return brief
+    payload["results"] = []
+    payload["included_result_count"] = 0
+    payload["truncated"] = True
+    return (
+        "Supervisor deterministic evidence follows. All packet deterministic "
+        "commands passed; do not rerun them. Distinct read-only probes are "
+        "allowed and must be reported as reviewer_probe_command.N=<exact "
+        "command>.\n"
+        "supervisor_successful_commands=[]\n"
+        "supervisor_deterministic_evidence_truncated=true\n"
+        "supervisor_deterministic_evidence="
+        + json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+
+
+def _review_read_only_snapshot(root: Path) -> str:
+    """Bind HEAD, index, tracked edits, and untracked bytes around the reviewer."""
+    h = hashlib.sha256()
+    h.update(b"guru-review-read-only-snapshot-v1\0")
+    commands = (
+        ["rev-parse", "--verify", "HEAD^{commit}"],
+        ["ls-files", "--stage", "-z"],
+        ["diff", "--binary", "--no-ext-diff"],
+        [
+            "for-each-ref",
+            "--sort=refname",
+            "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(symref)",
+        ],
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+    )
+    outputs = []
+    for args in commands:
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=root,
+                capture_output=True,
+                text=False,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise GuruSupervisionError(
+                f"cannot snapshot reviewer read-only boundary:{exc}"
+            ) from exc
+        if args[0] == "for-each-ref" and (
+            result.returncode != 0 or result.stderr
+        ):
+            message = (result.stderr or result.stdout or b"").decode(
+                "utf-8",
+                errors="replace",
+            ).strip()
+            raise GuruSupervisionError(
+                f"cannot snapshot reviewer read-only boundary:{message}"
+            )
+        output = result.stdout
+        if result.returncode != 0 and args == [
+            "rev-parse",
+            "--verify",
+            "HEAD^{commit}",
+        ]:
+            try:
+                symbolic_head = subprocess.run(
+                    ["git", "symbolic-ref", "-q", "HEAD"],
+                    cwd=root,
+                    capture_output=True,
+                    text=False,
+                    timeout=30,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise GuruSupervisionError(
+                    f"cannot snapshot reviewer read-only boundary:{exc}"
+                ) from exc
+            if symbolic_head.returncode != 0:
+                message = (result.stderr or result.stdout or b"").decode(
+                    "utf-8",
+                    errors="replace",
+                ).strip()
+                raise GuruSupervisionError(
+                    f"cannot snapshot reviewer read-only boundary:{message}"
+                )
+            head_ref = symbolic_head.stdout.strip()
+            if not head_ref:
+                raise GuruSupervisionError(
+                    "cannot snapshot reviewer read-only boundary:empty HEAD ref"
+                )
+            try:
+                ref_state = subprocess.run(
+                    [
+                        "git",
+                        "show-ref",
+                        "--verify",
+                        "--quiet",
+                        head_ref.decode("utf-8", errors="surrogateescape"),
+                    ],
+                    cwd=root,
+                    capture_output=True,
+                    text=False,
+                    timeout=30,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise GuruSupervisionError(
+                    f"cannot snapshot reviewer read-only boundary:{exc}"
+                ) from exc
+            if ref_state.returncode == 1:
+                try:
+                    git_path = subprocess.run(
+                        [
+                            "git",
+                            "rev-parse",
+                            "--git-path",
+                            head_ref.decode("utf-8", errors="surrogateescape"),
+                        ],
+                        cwd=root,
+                        capture_output=True,
+                        text=False,
+                        timeout=30,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    raise GuruSupervisionError(
+                        f"cannot snapshot reviewer read-only boundary:{exc}"
+                    ) from exc
+                path_lines = git_path.stdout.splitlines()
+                if (
+                    git_path.returncode != 0
+                    or len(path_lines) != 1
+                    or not path_lines[0]
+                ):
+                    message = (
+                        git_path.stderr
+                        or git_path.stdout
+                        or b"cannot resolve exact HEAD ref path"
+                    ).decode("utf-8", errors="replace").strip()
+                    raise GuruSupervisionError(
+                        f"cannot snapshot reviewer read-only boundary:{message}"
+                    )
+                loose_ref_path = Path(
+                    path_lines[0].decode("utf-8", errors="surrogateescape")
+                )
+                if not loose_ref_path.is_absolute():
+                    loose_ref_path = root / loose_ref_path
+                if os.path.lexists(loose_ref_path):
+                    raise GuruSupervisionError(
+                        "cannot snapshot reviewer read-only boundary:"
+                        "unresolved HEAD loose ref exists"
+                    )
+                output = b"unborn\0" + symbolic_head.stdout
+            else:
+                message = (
+                    ref_state.stderr
+                    or ref_state.stdout
+                    or b"HEAD ref exists but does not resolve to a commit"
+                ).decode("utf-8", errors="replace").strip()
+                raise GuruSupervisionError(
+                    f"cannot snapshot reviewer read-only boundary:{message}"
+                )
+        elif result.returncode == 0 and args == [
+            "rev-parse",
+            "--verify",
+            "HEAD^{commit}",
+        ]:
+            try:
+                symbolic_head = subprocess.run(
+                    ["git", "symbolic-ref", "-q", "HEAD"],
+                    cwd=root,
+                    capture_output=True,
+                    text=False,
+                    timeout=30,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise GuruSupervisionError(
+                    f"cannot snapshot reviewer read-only boundary:{exc}"
+                ) from exc
+            symbolic_lines = symbolic_head.stdout.splitlines()
+            if (
+                symbolic_head.returncode == 0
+                and len(symbolic_lines) == 1
+                and symbolic_lines[0]
+            ):
+                output = b"symbolic\0" + symbolic_lines[0] + b"\0" + result.stdout
+            elif (
+                symbolic_head.returncode == 1
+                and not symbolic_head.stdout
+                and not symbolic_head.stderr
+            ):
+                output = b"detached\0" + result.stdout
+            else:
+                message = (
+                    symbolic_head.stderr
+                    or symbolic_head.stdout
+                    or b"cannot classify canonical HEAD identity"
+                ).decode("utf-8", errors="replace").strip()
+                raise GuruSupervisionError(
+                    f"cannot snapshot reviewer read-only boundary:{message}"
+                )
+        elif result.returncode != 0:
+            message = (result.stderr or result.stdout or b"").decode(
+                "utf-8",
+                errors="replace",
+            ).strip()
+            raise GuruSupervisionError(
+                f"cannot snapshot reviewer read-only boundary:{message}"
+            )
+        outputs.append(output)
+        h.update(len(output).to_bytes(8, "big"))
+        h.update(output)
+    for raw_path in outputs[-1].split(b"\0"):
+        if not raw_path:
+            continue
+        rel = raw_path.decode("utf-8", errors="surrogateescape")
+        path = root / rel
+        h.update(len(raw_path).to_bytes(8, "big"))
+        h.update(raw_path)
+        try:
+            if path.is_symlink():
+                data = os.readlink(path).encode(
+                    "utf-8",
+                    errors="surrogateescape",
+                )
+            else:
+                data = path.read_bytes()
+        except OSError as exc:
+            raise GuruSupervisionError(
+                f"cannot snapshot untracked reviewer path {rel}:{exc}"
+            ) from exc
+        h.update(len(data).to_bytes(8, "big"))
+        h.update(data)
+    return h.hexdigest()
 
 
 def _task_status(task_dir: Path) -> str:
@@ -2426,6 +3202,14 @@ def run_implementation_review(args: argparse.Namespace) -> int:
                 return 2
             target = _slice_review_target(task_dir, root, resolved_unit, staged=False)
         record_unit_id = target.unit_id
+        if (
+            _slice_evidence_lifecycle_enabled(target)
+            and target.digest_source != "index"
+        ):
+            raise GuruSupervisionError(
+                "SCOPE_INVALID:schema-v2 slice implementation-review "
+                "requires --staged"
+            )
         if target.digest_source == "index":
             drift_failure = _staged_target_drift(str(root), target.packet.get("target_paths", []))
             if drift_failure:
@@ -2467,37 +3251,134 @@ def run_implementation_review(args: argparse.Namespace) -> int:
     _report_review_provider_resolution(config, resolution)
     review_run_id = f"{base_run_id}-review-1"
     det_status, det_results = "not_run", []
-    if not args.dry_run:
+    deterministic_reused = False
+    lifecycle_enabled = _slice_evidence_lifecycle_enabled(target)
+    evidence_key = ""
+    evidence_components = {}
+    if lifecycle_enabled:
+        try:
+            evidence_key, evidence_components = (
+                _implementation_review_evidence_key(
+                    task_dir,
+                    target,
+                    config,
+                    resolution,
+                )
+            )
+        except guru_review_record.ReviewRecordError as exc:
+            sys.stderr.write(
+                f"[guru-supervise] implementation-review evidence key invalid:{exc}\n"
+            )
+            return 2
+    elif not args.dry_run:
         det_status, det_results = guru_review_record.run_deterministic_checks(
-            target.packet.get("deterministic_checks", []), str(root)
+            target.packet.get("deterministic_checks", []),
+            str(root),
         )
         try:
             current_target_digest = guru_review_record.target_snapshot_digest(
-                str(root), target.packet.get("target_paths", []), target.digest_source
+                str(root),
+                target.packet.get("target_paths", []),
+                target.digest_source,
             )
         except guru_review_record.ReviewRecordError as exc:
             guru_review_record.append_record(
                 str(task_dir),
                 guru_review_record.preflight_failure_record(
-                    "SCOPE_INVALID", review_run_id, unit_id=target.unit_id
+                    "SCOPE_INVALID",
+                    review_run_id,
+                    unit_id=target.unit_id,
                 ),
             )
             sys.stderr.write(
-                f"[guru-supervise] implementation-review target digest failed(SCOPE_INVALID):{exc}\n"
+                "[guru-supervise] implementation-review target digest "
+                f"failed(SCOPE_INVALID):{exc}\n"
             )
             return 2
         if current_target_digest != target.reviewed_target_digest:
             guru_review_record.append_record(
                 str(task_dir),
                 guru_review_record.preflight_failure_record(
-                    "SCOPE_INVALID", review_run_id, unit_id=target.unit_id
+                    "SCOPE_INVALID",
+                    review_run_id,
+                    unit_id=target.unit_id,
                 ),
             )
             sys.stderr.write(
-                "[guru-supervise] implementation-review target changed during deterministic checks; "
-                "硬停(SCOPE_INVALID)\n"
+                "[guru-supervise] implementation-review target changed during "
+                "deterministic checks; 硬停(SCOPE_INVALID)\n"
             )
             return 2
+    if not args.dry_run and lifecycle_enabled:
+        try:
+            (
+                reusable_clean_record,
+                det_status,
+                det_results,
+                deterministic_reused,
+                evidence_components,
+            ) = _resolve_slice_deterministic_evidence(
+                task_dir,
+                root,
+                target,
+                review_run_id,
+                evidence_key,
+                evidence_components,
+            )
+        except GuruSupervisionError as exc:
+            if str(exc).startswith("SCOPE_INVALID:"):
+                guru_review_record.append_record(
+                    str(task_dir),
+                    guru_review_record.preflight_failure_record(
+                        "SCOPE_INVALID",
+                        review_run_id,
+                        unit_id=target.unit_id,
+                    ),
+                )
+            sys.stderr.write(f"[guru-supervise] {exc}\n")
+            return 2
+        if det_status != "passed":
+            sys.stderr.write(
+                "[guru-supervise] deterministic checks failed; semantic "
+                f"reviewer not started (evidence_key={evidence_key}, "
+                f"cached={str(deterministic_reused).lower()})\n"
+            )
+            return 2
+        try:
+            _require_current_slice_evidence(
+                task_dir=task_dir,
+                root=root,
+                target=target,
+                evidence_key=evidence_key,
+                evidence_components=evidence_components,
+                deterministic_results=det_results,
+                platform=args.platform,
+                provider=args.provider,
+                trellis_bin=args.trellis_bin,
+                same_provider_user_quote=same_provider_quote or None,
+            )
+        except GuruSupervisionError as exc:
+            sys.stderr.write(f"[guru-supervise] {exc}\n")
+            return 2
+        if reusable_clean_record is not None:
+            try:
+                reused_record = _append_reused_clean_review(
+                    task_dir,
+                    target,
+                    reusable_clean_record,
+                    review_run_id,
+                    evidence_key,
+                )
+            except GuruSupervisionError as exc:
+                sys.stderr.write(f"[guru-supervise] {exc}\n")
+                return 2
+            print(
+                "[guru-supervise] implementation-review clean evidence reused "
+                f"(evidence_key={evidence_key}, "
+                f"run_id={reused_record.get('run_id')}); "
+                "deterministic_runs=0 reviewers_spawned=0"
+            )
+            return 0
 
     run_slug = _sanitize(review_run_id, limit=40)
     expected_channel = f"guru-{_sanitize(task_dir.name, limit=70)}-check-{run_slug}"
@@ -2525,9 +3406,16 @@ def run_implementation_review(args: argparse.Namespace) -> int:
             separators=(",", ":"), ensure_ascii=False,
         ).encode("utf-8")).hexdigest(),
         "deterministic_status": det_status,
-        "deterministic_results_sha256": hashlib.sha256(json.dumps(
-            det_results, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-        ).encode("utf-8")).hexdigest(),
+        "deterministic_results_sha256": (
+            guru_review_record.deterministic_results_digest(det_results)
+        ),
+        "deterministic_evidence_key": evidence_key or None,
+        "deterministic_evidence_reused": (
+            deterministic_reused if lifecycle_enabled else None
+        ),
+        "evidence_components": (
+            evidence_components if lifecycle_enabled else None
+        ),
         "implement_provider": config.provider,
         "review_provider": check_config.provider,
         "check_provider": check_config.provider,
@@ -2539,6 +3427,15 @@ def run_implementation_review(args: argparse.Namespace) -> int:
     invocation_line = "review_invocation_contract=" + json.dumps(
         invocation_contract, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ) + "\n"
+    deterministic_brief = (
+        _deterministic_reviewer_brief(
+            evidence_key,
+            det_results,
+            reused=deterministic_reused,
+        )
+        if lifecycle_enabled
+        else ""
+    )
     check_plan = build_run_plan(
         "implementation-review",
         task_dir,
@@ -2547,6 +3444,7 @@ def run_implementation_review(args: argparse.Namespace) -> int:
         "Implementation-review check-only required evidence path. Do not implement or edit files; "
         "emit exactly one route_class and review_result for required commit evidence.\n"
         + invocation_line
+        + deterministic_brief
         + target.active_brief,
         slice_packet_path=target.slice_packet_path,
     )
@@ -2559,8 +3457,74 @@ def run_implementation_review(args: argparse.Namespace) -> int:
         _print_dry_run(check_plan)
         return 0
 
+    try:
+        read_only_before = _review_read_only_snapshot(root)
+    except GuruSupervisionError as exc:
+        guru_review_record.append_record(
+            str(task_dir),
+            guru_review_record.preflight_failure_record(
+                "SCOPE_INVALID",
+                review_run_id,
+                unit_id=target.unit_id,
+            ),
+        )
+        sys.stderr.write(f"[guru-supervise] {exc}\n")
+        return 2
     rc, _terminal, messages = _execute_plan(check_plan, check_config)
+    try:
+        read_only_after = _review_read_only_snapshot(root)
+    except GuruSupervisionError as exc:
+        guru_review_record.append_record(
+            str(task_dir),
+            guru_review_record.preflight_failure_record(
+                "SCOPE_INVALID",
+                review_run_id,
+                unit_id=target.unit_id,
+            ),
+        )
+        sys.stderr.write(f"[guru-supervise] {exc}\n")
+        return 2
+    if read_only_after != read_only_before:
+        guru_review_record.append_record(
+            str(task_dir),
+            guru_review_record.preflight_failure_record(
+                "SCOPE_INVALID",
+                review_run_id,
+                unit_id=target.unit_id,
+            ),
+        )
+        sys.stderr.write(
+            "[guru-supervise] implementation reviewer changed repository, "
+            "index, task artifact, or Git HEAD; 硬停(SCOPE_INVALID)\n"
+        )
+        return 2
     if rc != 0:
+        if lifecycle_enabled:
+            try:
+                _append_supervisor_review_record(
+                    task_dir=task_dir,
+                    root=root,
+                    target=target,
+                    run_id=review_run_id,
+                    config=config,
+                    resolution=resolution,
+                    check_plan=check_plan,
+                    messages="",
+                    det_status=det_status,
+                    det_results=det_results,
+                    deterministic_evidence_key=evidence_key,
+                    expected_evidence_components=evidence_components,
+                    platform=args.platform,
+                    provider=args.provider,
+                    trellis_bin=args.trellis_bin,
+                    same_provider_user_quote=same_provider_quote or None,
+                )
+            except GuruSupervisionError as exc:
+                sys.stderr.write(
+                    "[guru-supervise] cannot record interrupted semantic "
+                    f"attempt:{exc}\n"
+                )
+                return 2
         return rc
     try:
         record, failure = _append_supervisor_review_record(
@@ -2574,6 +3538,12 @@ def run_implementation_review(args: argparse.Namespace) -> int:
             messages=messages,
             det_status=det_status,
             det_results=det_results,
+            deterministic_evidence_key=evidence_key,
+            expected_evidence_components=evidence_components,
+            platform=args.platform,
+            provider=args.provider,
+            trellis_bin=args.trellis_bin,
+            same_provider_user_quote=same_provider_quote or None,
         )
     except GuruSupervisionError as exc:
         sys.stderr.write(f"[guru-supervise] {exc}\n")

@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from datetime import datetime, timezone
 
 SCHEMA_VERSION = 1
@@ -168,6 +169,14 @@ def load_packet(task_dir: str, unit_id: str) -> dict:
     for i, inv in enumerate(invs):
         _validate_invariant(inv, i)
     pkt = dict(pkt)
+    review_evidence_schema = pkt.get(
+        "review_evidence_schema_version",
+        1,
+    )
+    if review_evidence_schema not in (1, 2):
+        raise ReviewRecordError(
+            "slice packet review_evidence_schema_version 必须是 1|2"
+        )
     pkt["risk"] = _normalize_packet_risk(pkt.get("risk"))  # 非法枚举在此 raise
     pkt["semantic_review_provider"] = _validate_semantic_review_provider(pkt.get("semantic_review_provider"))
     _require_str_list(pkt.get("risk_reasons"), "risk_reasons")  # R1-F6:非字符串数组 → PACKET_INVALID
@@ -188,16 +197,26 @@ def _reviews_path(task_dir: str) -> str:
 
 # review record jsonl 字段全集(append_record 写;R3-F2 review_target / R5-F2 deterministic_results /
 # R5-F3 message+candidates / R7-F2 supplemental+required_satisfied 均在内)。
+REVIEW_EVIDENCE_SCHEMA_VERSION = 2
+REVIEW_EVIDENCE_SCHEMA_FIELD = "review_evidence_schema_version"
+
+
+class _NormalizedReviewRecord(dict):
+    """In-process capability emitted only by official v2 record producers."""
+
+
 _RECORD_FIELDS = (
     "run_id", "slice_id", "review_target", "target_paths", "review_provider",
     "route_class", "review_result", "deterministic_checks", "dirty_scope", "invariant_coverage",
     "deterministic_results", "channel", "worker", "timestamp", "supervisor_failure", "repairable",
     "message", "candidates", "supplemental", "required_satisfied", "reviewed_target_digest",
+    "invariant_verdicts", "invariant_verdicts_digest",
     "provider_override_source", "same_provider_user_quote", "high_risk_review_provider_policy",
     "check_provider", "implement_provider", "review_target_kind",
     "target_paths_digest", "invariant_set_digest", "requirements_design_digest",
     "deterministic_commands_digest", "deterministic_results_digest",
     "review_policy_digest", "supervisor_source_digest", "evidence_key",
+    "deterministic_evidence_key", REVIEW_EVIDENCE_SCHEMA_FIELD,
 )
 
 
@@ -657,7 +676,16 @@ def invariant_set_digest(invariants) -> str:
 
 def deterministic_commands_digest(commands) -> str:
     commands = _require_str_list(commands, "deterministic_checks")
-    return canonical_digest("guru-deterministic-commands-v1", list(dict.fromkeys(commands)))
+    return canonical_digest(
+        "guru-deterministic-commands-v1",
+        stable_unique_commands(commands),
+    )
+
+
+def stable_unique_commands(commands) -> list:
+    """Deduplicate commands by exact string while preserving first-seen order."""
+    commands = _require_str_list(commands, "deterministic_checks")
+    return list(dict.fromkeys(commands))
 
 
 def deterministic_results_digest(results) -> str:
@@ -975,6 +1003,9 @@ def commit_target_digest(repo_root: str, target_paths: list, commit_sha: str) ->
 
 
 RECEIPT_SCHEMA_VERSION = 1
+RECEIPT_REVIEW_EVIDENCE_SCHEMA_FIELD = REVIEW_EVIDENCE_SCHEMA_FIELD
+RECEIPT_DETERMINISTIC_EVIDENCE_KEY_FIELD = "deterministic_evidence_key"
+RECEIPT_INVARIANT_VERDICTS_DIGEST_FIELD = "invariant_verdicts_digest"
 RECEIPT_REQUIRED_FIELDS = (
     "schema_version", "slice_id", "commit_sha", "parent_sha", "review_run_id",
     "reviewed_target_digest", "target_paths_digest", "invariant_set_digest",
@@ -983,6 +1014,26 @@ RECEIPT_REQUIRED_FIELDS = (
     "supervisor_source_digest", "committed_at",
 )
 _RECEIPT_DIGEST_FIELDS = RECEIPT_REQUIRED_FIELDS[5:13]
+
+
+def receipt_digest_payload(receipt: dict) -> dict:
+    payload = {
+        field: receipt[field]
+        for field in RECEIPT_REQUIRED_FIELDS
+    }
+    if RECEIPT_REVIEW_EVIDENCE_SCHEMA_FIELD in receipt:
+        payload[RECEIPT_REVIEW_EVIDENCE_SCHEMA_FIELD] = receipt[
+            RECEIPT_REVIEW_EVIDENCE_SCHEMA_FIELD
+        ]
+    if RECEIPT_DETERMINISTIC_EVIDENCE_KEY_FIELD in receipt:
+        payload[RECEIPT_DETERMINISTIC_EVIDENCE_KEY_FIELD] = receipt[
+            RECEIPT_DETERMINISTIC_EVIDENCE_KEY_FIELD
+        ]
+    if RECEIPT_INVARIANT_VERDICTS_DIGEST_FIELD in receipt:
+        payload[RECEIPT_INVARIANT_VERDICTS_DIGEST_FIELD] = receipt[
+            RECEIPT_INVARIANT_VERDICTS_DIGEST_FIELD
+        ]
+    return payload
 
 
 def receipts_path(task_dir: str) -> str:
@@ -999,6 +1050,49 @@ def validate_receipt(receipt) -> dict:
         raise ReviewRecordError(
             f"slice receipt schema_version 须为 {RECEIPT_SCHEMA_VERSION}"
         )
+    if (
+        RECEIPT_REVIEW_EVIDENCE_SCHEMA_FIELD in receipt
+        and receipt[RECEIPT_REVIEW_EVIDENCE_SCHEMA_FIELD]
+        != REVIEW_EVIDENCE_SCHEMA_VERSION
+    ):
+        raise ReviewRecordError(
+            "slice receipt review_evidence_schema_version 非法"
+        )
+    review_evidence_schema = receipt.get(
+        RECEIPT_REVIEW_EVIDENCE_SCHEMA_FIELD,
+        1,
+    )
+    deterministic_evidence_key = receipt.get(
+        RECEIPT_DETERMINISTIC_EVIDENCE_KEY_FIELD
+    )
+    invariant_verdicts_digest_value = receipt.get(
+        RECEIPT_INVARIANT_VERDICTS_DIGEST_FIELD
+    )
+    if review_evidence_schema == REVIEW_EVIDENCE_SCHEMA_VERSION:
+        if (
+            not isinstance(deterministic_evidence_key, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", deterministic_evidence_key)
+        ):
+            raise ReviewRecordError(
+                "slice receipt deterministic_evidence_key 必须是 sha256"
+            )
+        if (
+            not isinstance(invariant_verdicts_digest_value, str)
+            or not re.fullmatch(
+                r"[0-9a-f]{64}",
+                invariant_verdicts_digest_value,
+            )
+        ):
+            raise ReviewRecordError(
+                "slice receipt invariant_verdicts_digest 必须是 sha256"
+            )
+    elif (
+        deterministic_evidence_key is not None
+        or invariant_verdicts_digest_value is not None
+    ):
+        raise ReviewRecordError(
+            "v1 slice receipt 不得声明 v2 review evidence fields"
+        )
     for field in ("slice_id", "commit_sha", "parent_sha", "review_run_id", "committed_at"):
         if not isinstance(receipt.get(field), str) or not receipt[field].strip():
             raise ReviewRecordError(f"slice receipt {field} 必须是非空字符串")
@@ -1009,6 +1103,13 @@ def validate_receipt(receipt) -> dict:
     for field in ("commit_sha", "parent_sha"):
         if not re.fullmatch(r"[0-9a-f]{40,64}", receipt[field]):
             raise ReviewRecordError(f"slice receipt {field} 必须是完整 Git object id")
+    if "receipt_id" in receipt:
+        expected_receipt_id = canonical_digest(
+            "guru-slice-commit-receipt-v1",
+            receipt_digest_payload(receipt),
+        )
+        if receipt.get("receipt_id") != expected_receipt_id:
+            raise ReviewRecordError("slice receipt receipt_id mismatch")
     return dict(receipt)
 
 
@@ -1041,10 +1142,7 @@ def load_receipt_batches(task_dir: str) -> list:
                 expected_batch_id = canonical_digest(
                     "guru-slice-receipt-batch-v1",
                     [
-                        {
-                            field: receipt[field]
-                            for field in RECEIPT_REQUIRED_FIELDS
-                        }
+                        receipt_digest_payload(receipt)
                         for receipt in normalized["receipts"]
                     ],
                 )
@@ -1073,7 +1171,7 @@ def append_receipt_batch(task_dir: str, receipts: list) -> None:
     normalized = [validate_receipt(receipt) for receipt in receipts]
     batch_id = canonical_digest(
         "guru-slice-receipt-batch-v1",
-        [{field: receipt[field] for field in RECEIPT_REQUIRED_FIELDS} for receipt in normalized],
+        [receipt_digest_payload(receipt) for receipt in normalized],
     )
     payload = {
         "schema_version": RECEIPT_SCHEMA_VERSION,
@@ -1107,6 +1205,10 @@ def append_record(task_dir: str, record: dict) -> None:
     (BHV-005;malformed/scope/packet failure 都经此入 jsonl)。"""
     if not isinstance(record, dict):
         raise ReviewRecordError("review record 必须是 dict")
+    normalized_by_official_producer = isinstance(
+        record,
+        _NormalizedReviewRecord,
+    )
     # R3-SF1:枚举字段先做字符串类型守卫(单一 writer/校验入口须对非法 record fail-closed,而非 traceback);
     # 防 unhashable(list/dict)在下面 set membership 抛 TypeError 逃逸 ReviewRecordError。缺失字段保留默认逻辑。
     for _k in ("review_result", "route_class", "supervisor_failure"):
@@ -1140,19 +1242,97 @@ def append_record(task_dir: str, record: dict) -> None:
             packet_path = os.path.join(_packets_dir(task_dir), f"{slice_id}.json")
             if os.path.isfile(packet_path):
                 packet = load_packet(task_dir, slice_id)
-                if packet.get("requirements_design_inputs") is not None:
+                review_evidence_schema = packet.get(
+                    REVIEW_EVIDENCE_SCHEMA_FIELD,
+                    1,
+                )
+                if (
+                    review_evidence_schema == REVIEW_EVIDENCE_SCHEMA_VERSION
+                    or packet.get("requirements_design_inputs") is not None
+                ):
                     reviewed_digest = record.get("reviewed_target_digest")
                     components = review_evidence_components(
                         task_dir,
                         packet,
                         record,
                     )
-                    record = dict(record)
-                    record.update(components)
-                    record["evidence_key"] = review_evidence_key(
+                    expected_key = review_evidence_key(
                         reviewed_digest,
                         components,
                     )
+                    record = dict(record)
+                    if (
+                        review_evidence_schema
+                        == REVIEW_EVIDENCE_SCHEMA_VERSION
+                    ):
+                        if (
+                            record.get("review_result") == "clean"
+                            and not normalized_by_official_producer
+                        ):
+                            raise ReviewRecordError(
+                                "v2 clean implementation review must come "
+                                "from the official normalized producer"
+                            )
+                        if (
+                            record.get(REVIEW_EVIDENCE_SCHEMA_FIELD)
+                            != REVIEW_EVIDENCE_SCHEMA_VERSION
+                        ):
+                            raise ReviewRecordError(
+                                "implementation review "
+                                "review_evidence_schema_version missing or "
+                                "invalid"
+                            )
+                        invariant_verdicts = (
+                            validate_persisted_invariant_verdicts(
+                                packet.get("invariants"),
+                                record.get("invariant_verdicts"),
+                                require_all_pass=(
+                                    record.get("review_result") == "clean"
+                                ),
+                            )
+                        )
+                        expected_verdicts_digest = (
+                            invariant_verdicts_digest(
+                                invariant_verdicts
+                            )
+                        )
+                        if (
+                            record.get("invariant_verdicts_digest")
+                            != expected_verdicts_digest
+                        ):
+                            raise ReviewRecordError(
+                                "implementation review "
+                                "invariant_verdicts_digest mismatch"
+                            )
+                        if (
+                            aggregate_invariant_coverage(
+                                packet.get("invariants"),
+                                invariant_verdicts,
+                            )
+                            != record.get("invariant_coverage")
+                        ):
+                            raise ReviewRecordError(
+                                "implementation review invariant_coverage "
+                                "does not match invariant_verdicts"
+                            )
+                        if (
+                            record.get("evidence_key") != expected_key
+                            or record.get("deterministic_evidence_key")
+                            != expected_key
+                        ):
+                            raise ReviewRecordError(
+                                "implementation review evidence_key and "
+                                "deterministic_evidence_key must match "
+                                "current evidence before append"
+                            )
+                        validate_review_deterministic_evidence(
+                            task_dir,
+                            record,
+                            components,
+                        )
+                    else:
+                        record["evidence_key"] = expected_key
+                    record.update(components)
     os.makedirs(os.path.dirname(_reviews_path(task_dir)), exist_ok=True)
     line = json.dumps(
         {k: record[k] for k in _RECORD_FIELDS if k in record},
@@ -1274,6 +1454,118 @@ def aggregate_invariant_coverage(packet_invariants, reviewer_statuses) -> str:
     return "all_passed"
 
 
+def canonical_invariant_verdicts(
+    packet_invariants,
+    reviewer_statuses,
+    *,
+    require_all_pass: bool,
+) -> dict:
+    """Return the stable v2 per-invariant verdict map or fail closed."""
+    if not isinstance(packet_invariants, list) or not packet_invariants:
+        raise ReviewRecordError("packet invariants 必须是非空数组")
+    if not isinstance(reviewer_statuses, dict):
+        raise ReviewRecordError("invariant_verdicts 必须是对象")
+    invariant_ids = []
+    for idx, invariant in enumerate(packet_invariants):
+        if not isinstance(invariant, dict):
+            raise ReviewRecordError(f"invariants[{idx}] 必须是对象")
+        invariant_id = invariant.get("invariant_id")
+        if not isinstance(invariant_id, str) or not invariant_id.strip():
+            raise ReviewRecordError(
+                f"invariants[{idx}].invariant_id 必须是非空字符串"
+            )
+        invariant_ids.append(invariant_id.strip())
+    if len(set(invariant_ids)) != len(invariant_ids):
+        raise ReviewRecordError("packet invariant ids 必须唯一")
+    if set(reviewer_statuses) != set(invariant_ids):
+        raise ReviewRecordError(
+            "invariant_verdicts 必须完整且仅覆盖 packet invariant ids"
+        )
+    canonical = {}
+    for invariant_id in invariant_ids:
+        verdict = reviewer_statuses.get(invariant_id)
+        if (
+            not isinstance(verdict, dict)
+            or set(verdict) - {"status", "evidence", "reason"}
+        ):
+            raise ReviewRecordError(
+                f"invariant_verdicts.{invariant_id} schema 非法"
+            )
+        status = verdict.get("status")
+        evidence = verdict.get("evidence", "")
+        reason = verdict.get("reason", "")
+        if not isinstance(status, str):
+            raise ReviewRecordError(
+                f"invariant_verdicts.{invariant_id}.status 非法"
+            )
+        if not isinstance(evidence, str) or not isinstance(reason, str):
+            raise ReviewRecordError(
+                f"invariant_verdicts.{invariant_id} evidence/reason 非法"
+            )
+        status = status.strip()
+        evidence = evidence.strip()
+        reason = reason.strip()
+        if status == "pass":
+            if not evidence or reason:
+                raise ReviewRecordError(
+                    f"invariant_verdicts.{invariant_id} pass 必须仅含 evidence"
+                )
+        elif status == "fail":
+            if not evidence and not reason:
+                raise ReviewRecordError(
+                    f"invariant_verdicts.{invariant_id} fail 必须含 evidence 或 reason"
+                )
+        elif status == "not_applicable":
+            if not reason or evidence:
+                raise ReviewRecordError(
+                    f"invariant_verdicts.{invariant_id} not_applicable "
+                    "必须仅含 reason"
+                )
+        else:
+            raise ReviewRecordError(
+                f"invariant_verdicts.{invariant_id}.status 非法"
+            )
+        if require_all_pass and status != "pass":
+            raise ReviewRecordError(
+                "clean implementation review invariant_verdicts 必须全部 pass"
+            )
+        canonical[invariant_id] = {
+            "status": status,
+            "evidence": evidence,
+            "reason": reason,
+        }
+    return canonical
+
+
+def invariant_verdicts_digest(invariant_verdicts) -> str:
+    if not isinstance(invariant_verdicts, dict) or not invariant_verdicts:
+        raise ReviewRecordError(
+            "invariant_verdicts digest input 必须是非空对象"
+        )
+    return canonical_digest(
+        "guru-invariant-verdicts-v2",
+        invariant_verdicts,
+    )
+
+
+def validate_persisted_invariant_verdicts(
+    packet_invariants,
+    invariant_verdicts,
+    *,
+    require_all_pass: bool,
+) -> dict:
+    canonical = canonical_invariant_verdicts(
+        packet_invariants,
+        invariant_verdicts,
+        require_all_pass=require_all_pass,
+    )
+    if invariant_verdicts != canonical:
+        raise ReviewRecordError(
+            "invariant_verdicts 必须使用 canonical stable structure"
+        )
+    return canonical
+
+
 def run_deterministic_checks(commands, repo_root):
     """supervisor-side 执行 packet deterministic_checks[]（R3-F1/R5-F2,BHV-008）。
     返回 (status, results)：空/缺→("missing",[])；全 exit0→"passed"；任一失败/timeout/非法命令→"failed"。
@@ -1287,6 +1579,29 @@ def run_deterministic_checks(commands, repo_root):
         return ("missing", [])
     if not isinstance(commands, list):  # R5-SF2:顶层非 list(非预期)→ failed,不迭代任意 iterable(如 dict key)
         return ("failed", [])
+    try:
+        commands = stable_unique_commands(commands)
+    except ReviewRecordError:
+        raw_command = (
+            repr(commands[0])
+            if isinstance(commands, list) and commands
+            else "<invalid>"
+        )
+        return (
+            "failed",
+            [
+                {
+                    "command": raw_command,
+                    "cwd": repo_root,
+                    "exit_code": None,
+                    "timed_out": False,
+                    "stdout_summary": "",
+                    "stderr_summary": "invalid deterministic command",
+                    "duration_ms": 0,
+                    "run_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ],
+        )
     results = []
     status = "passed"
     for cmd in commands:
@@ -1325,12 +1640,484 @@ def run_deterministic_checks(commands, repo_root):
     return (status, results)
 
 
+DETERMINISTIC_EVIDENCE_SCHEMA_VERSION = 1
+
+
+def deterministic_evidence_path(task_dir: str) -> str:
+    return os.path.join(
+        task_dir,
+        "review-records",
+        "deterministic-evidence.jsonl",
+    )
+
+
+def _timezone_aware_timestamp(value, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ReviewRecordError(f"{field} 必须是非空 timezone-aware timestamp")
+    normalized = value.strip()
+    try:
+        parsed = datetime.fromisoformat(
+            normalized[:-1] + "+00:00"
+            if normalized.endswith("Z")
+            else normalized
+        )
+    except ValueError as exc:
+        raise ReviewRecordError(
+            f"{field} 必须是可解析 timezone-aware timestamp"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ReviewRecordError(f"{field} 必须包含 timezone offset")
+    return normalized
+
+
+def deterministic_evidence_record(
+    evidence_key: str,
+    commands: list,
+    status: str,
+    results: list,
+) -> dict:
+    commands = stable_unique_commands(commands)
+    record = {
+        "schema_version": DETERMINISTIC_EVIDENCE_SCHEMA_VERSION,
+        "kind": "deterministic_evidence",
+        "evidence_key": evidence_key,
+        "status": status,
+        "deterministic_commands_digest": deterministic_commands_digest(
+            commands
+        ),
+        "deterministic_results_digest": deterministic_results_digest(results),
+        "results": results,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return validate_deterministic_evidence(record)
+
+
+def validate_deterministic_evidence(record) -> dict:
+    if not isinstance(record, dict):
+        raise ReviewRecordError("deterministic evidence 必须是对象")
+    if (
+        record.get("schema_version")
+        != DETERMINISTIC_EVIDENCE_SCHEMA_VERSION
+        or record.get("kind") != "deterministic_evidence"
+    ):
+        raise ReviewRecordError("deterministic evidence schema/kind 非法")
+    for field in (
+        "evidence_key",
+        "deterministic_commands_digest",
+        "deterministic_results_digest",
+    ):
+        value = record.get(field)
+        if not isinstance(value, str) or not re.fullmatch(
+            r"[0-9a-f]{64}",
+            value,
+        ):
+            raise ReviewRecordError(
+                f"deterministic evidence {field} 必须是 sha256"
+            )
+    status = record.get("status")
+    if status not in {"passed", "failed"}:
+        raise ReviewRecordError(
+            "deterministic evidence status 必须是 passed|failed"
+        )
+    results = record.get("results")
+    if not isinstance(results, list) or not results:
+        raise ReviewRecordError(
+            "deterministic evidence results 必须是非空数组"
+        )
+    commands = []
+    any_failed = False
+    for idx, result in enumerate(results):
+        if not isinstance(result, dict):
+            raise ReviewRecordError(
+                f"deterministic evidence results[{idx}] 必须是对象"
+            )
+        command = result.get("command")
+        if not isinstance(command, str) or not command.strip():
+            raise ReviewRecordError(
+                f"deterministic evidence results[{idx}].command 非法"
+            )
+        commands.append(command)
+        cwd = result.get("cwd")
+        if not isinstance(cwd, str) or not cwd.strip():
+            raise ReviewRecordError(
+                f"deterministic evidence results[{idx}].cwd 必须是非空字符串"
+            )
+        if "duration_ms" not in result:
+            raise ReviewRecordError(
+                f"deterministic evidence results[{idx}].duration_ms 缺失"
+            )
+        duration_ms = result["duration_ms"]
+        if (
+            not isinstance(duration_ms, int)
+            or isinstance(duration_ms, bool)
+            or duration_ms < 0
+        ):
+            raise ReviewRecordError(
+                f"deterministic evidence results[{idx}].duration_ms "
+                "必须是非负整数"
+            )
+        _timezone_aware_timestamp(
+            result.get("run_at"),
+            f"deterministic evidence results[{idx}].run_at",
+        )
+        if "timed_out" not in result:
+            raise ReviewRecordError(
+                f"deterministic evidence results[{idx}].timed_out 缺失"
+            )
+        timed_out = result["timed_out"]
+        if not isinstance(timed_out, bool):
+            raise ReviewRecordError(
+                f"deterministic evidence results[{idx}].timed_out 非法"
+            )
+        if "exit_code" not in result:
+            raise ReviewRecordError(
+                f"deterministic evidence results[{idx}].exit_code 缺失"
+            )
+        exit_code = result["exit_code"]
+        if (
+            exit_code is not None
+            and (
+                not isinstance(exit_code, int)
+                or isinstance(exit_code, bool)
+            )
+        ):
+            raise ReviewRecordError(
+                f"deterministic evidence results[{idx}].exit_code 非法"
+            )
+        if timed_out and exit_code is not None:
+            raise ReviewRecordError(
+                f"deterministic evidence results[{idx}] timeout 必须使用 exit_code=null"
+            )
+        if exit_code != 0 or timed_out:
+            any_failed = True
+        for summary_field in ("stdout_summary", "stderr_summary"):
+            if summary_field not in result:
+                raise ReviewRecordError(
+                    f"deterministic evidence results[{idx}].{summary_field} 缺失"
+                )
+            summary = result[summary_field]
+            if not isinstance(summary, str) or len(summary) > 500:
+                raise ReviewRecordError(
+                    f"deterministic evidence results[{idx}].{summary_field} "
+                    "必须是至多 500 字符字符串"
+                )
+        if (
+            exit_code is None
+            and not timed_out
+            and not result["stderr_summary"].strip()
+        ):
+            raise ReviewRecordError(
+                f"deterministic evidence results[{idx}] exit_code=null "
+                "必须由 timeout 或非空 stderr 解释"
+            )
+    if commands != stable_unique_commands(commands):
+        raise ReviewRecordError(
+            "deterministic evidence commands 必须按 exact-string 稳定去重"
+        )
+    if (
+        record["deterministic_commands_digest"]
+        != deterministic_commands_digest(commands)
+    ):
+        raise ReviewRecordError(
+            "deterministic evidence command digest mismatch"
+        )
+    if (
+        record["deterministic_results_digest"]
+        != deterministic_results_digest(results)
+    ):
+        raise ReviewRecordError(
+            "deterministic evidence results digest mismatch"
+        )
+    expected_status = "failed" if any_failed else "passed"
+    if status != expected_status:
+        raise ReviewRecordError(
+            "deterministic evidence status/results mismatch"
+        )
+    _timezone_aware_timestamp(
+        record.get("recorded_at"),
+        "deterministic evidence recorded_at",
+    )
+    return dict(record)
+
+
+class DeterministicEvidenceLock:
+    """Task-local evidence-key lock released by the OS when its owner exits."""
+
+    def __init__(
+        self,
+        task_dir: str,
+        evidence_key: str,
+        timeout_seconds: float = 3600.0,
+        poll_seconds: float = 0.05,
+    ) -> None:
+        if not isinstance(evidence_key, str) or not re.fullmatch(
+            r"[0-9a-f]{64}",
+            evidence_key,
+        ):
+            raise ReviewRecordError(
+                "deterministic evidence lock key 必须是 sha256"
+            )
+        self.path = os.path.join(
+            task_dir,
+            "review-records",
+            "deterministic-locks",
+            f"{evidence_key}.lock",
+        )
+        self.timeout_seconds = max(0.0, float(timeout_seconds))
+        self.poll_seconds = max(0.01, float(poll_seconds))
+        self._fd = None
+        self.owner_bytes = (
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "evidence_key": evidence_key,
+                    "pid": os.getpid(),
+                    "owner_identity": (
+                        f"pid:{os.getpid()}:token:{self.token}"
+                    ),
+                    "token": self.token,
+                    "acquired_at": datetime.now(timezone.utc).isoformat(),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+        # Kept as a compatibility attribute for callers that inspect old state.
+        # Advisory locking needs no secondary recovery claim.
+        self.reclaim_path = self.path + ".reclaim"
+
+    @property
+    def token(self) -> str:
+        if not hasattr(self, "_token"):
+            self._token = uuid.uuid4().hex
+        return self._token
+
+    @staticmethod
+    def _try_lock_file(fd: int) -> bool:
+        if os.name == "nt":
+            try:
+                import msvcrt
+
+                if os.fstat(fd).st_size == 0:
+                    os.write(fd, b"\0")
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                return True
+            except OSError as exc:
+                if exc.errno in {13, 33, 36}:
+                    return False
+                raise
+        import fcntl
+
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False
+        except OSError as exc:
+            if exc.errno in {11, 13}:
+                return False
+            raise
+
+    @staticmethod
+    def _unlock_file(fd: int) -> None:
+        if os.name == "nt":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            return
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+    def __enter__(self) -> "DeterministicEvidenceLock":
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        try:
+            fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        except OSError as exc:
+            raise ReviewRecordError(
+                f"cannot open deterministic evidence lock:{exc}"
+            ) from exc
+        deadline = time.monotonic() + self.timeout_seconds
+        while True:
+            try:
+                acquired = self._try_lock_file(fd)
+            except OSError as exc:
+                os.close(fd)
+                raise ReviewRecordError(
+                    f"cannot acquire deterministic evidence lock:{exc}"
+                ) from exc
+            if acquired:
+                break
+            if time.monotonic() >= deadline:
+                os.close(fd)
+                raise ReviewRecordError(
+                    "deterministic evidence lock wait timed out"
+                )
+            time.sleep(self.poll_seconds)
+        try:
+            os.ftruncate(fd, 0)
+            os.lseek(fd, 0, os.SEEK_SET)
+            written = os.write(fd, self.owner_bytes)
+            if written != len(self.owner_bytes):
+                raise ReviewRecordError(
+                    "deterministic evidence lock write was incomplete"
+                )
+            os.fsync(fd)
+        except Exception:
+            try:
+                self._unlock_file(fd)
+            finally:
+                os.close(fd)
+            raise
+        self._fd = fd
+        return self
+
+    def __exit__(self, _type, _value, _traceback) -> None:
+        fd = self._fd
+        if fd is None:
+            raise ReviewRecordError(
+                "deterministic evidence lock is not acquired"
+            )
+        release_error = None
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            current = os.read(fd, len(self.owner_bytes) + 1)
+            if current != self.owner_bytes:
+                release_error = ReviewRecordError(
+                    "deterministic evidence lock ownership changed before release"
+                )
+        except OSError as exc:
+            release_error = ReviewRecordError(
+                f"cannot verify deterministic evidence lock ownership:{exc}"
+            )
+        try:
+            self._unlock_file(fd)
+        except OSError as exc:
+            release_error = ReviewRecordError(
+                f"cannot release deterministic evidence lock:{exc}"
+            )
+        finally:
+            os.close(fd)
+            self._fd = None
+        if release_error is not None:
+            raise release_error
+
+
+def append_deterministic_evidence(task_dir: str, record: dict) -> None:
+    normalized = validate_deterministic_evidence(record)
+    path = deterministic_evidence_path(task_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    encoded = (
+        json.dumps(
+            normalized,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+    fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        written = os.write(fd, encoded)
+        if written != len(encoded):
+            raise ReviewRecordError(
+                "deterministic evidence append was incomplete"
+            )
+        os.fsync(fd)
+    except OSError as exc:
+        raise ReviewRecordError(
+            f"cannot append deterministic evidence:{exc}"
+        ) from exc
+    finally:
+        os.close(fd)
+
+
+def load_deterministic_evidence(
+    task_dir: str,
+    evidence_key: str,
+) -> dict | None:
+    if not isinstance(evidence_key, str) or not re.fullmatch(
+        r"[0-9a-f]{64}",
+        evidence_key,
+    ):
+        raise ReviewRecordError(
+            "deterministic evidence lookup key 必须是 sha256"
+        )
+    path = deterministic_evidence_path(task_dir)
+    if not os.path.isfile(path):
+        return None
+    latest = None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for lineno, line in enumerate(fh, 1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ReviewRecordError(
+                        f"deterministic evidence line {lineno} invalid JSON:{exc}"
+                    ) from exc
+                normalized = validate_deterministic_evidence(record)
+                if normalized["evidence_key"] == evidence_key:
+                    latest = normalized
+    except OSError as exc:
+        raise ReviewRecordError(
+            f"cannot read deterministic evidence:{exc}"
+        ) from exc
+    return latest
+
+
+def validate_review_deterministic_evidence(
+    task_dir: str,
+    record: dict,
+    components: dict,
+) -> dict:
+    """Validate one semantic record against its exact passed check evidence."""
+    if not isinstance(record, dict) or not isinstance(components, dict):
+        raise ReviewRecordError(
+            "implementation review deterministic binding inputs 必须是对象"
+        )
+    expected_key = review_evidence_key(
+        record.get("reviewed_target_digest"),
+        components,
+    )
+    if record.get("deterministic_evidence_key") != expected_key:
+        raise ReviewRecordError(
+            "implementation review deterministic_evidence_key mismatch"
+        )
+    deterministic = load_deterministic_evidence(task_dir, expected_key)
+    if deterministic is None:
+        raise ReviewRecordError(
+            "implementation review deterministic evidence missing"
+        )
+    if deterministic["status"] != "passed":
+        raise ReviewRecordError(
+            "implementation review deterministic evidence is not passed"
+        )
+    if (
+        deterministic["deterministic_commands_digest"]
+        != components.get("deterministic_commands_digest")
+        or deterministic["deterministic_results_digest"]
+        != components.get("deterministic_results_digest")
+        or deterministic["results"] != record.get("deterministic_results")
+    ):
+        raise ReviewRecordError(
+            "implementation review deterministic evidence binding mismatch"
+        )
+    return deterministic
+
+
 def parse_verdict_block(text: str) -> dict:
     """从 worker 输出解析行级 key=value：7 字段 + per-invariant
     invariant_status.<id> / invariant_evidence.<id> / invariant_reason.<id>。
     返回 fields，per-invariant 收进 fields["_invariants"] = {id: {status,evidence,reason}}。"""
     fields = {}
     invariants = {}
+    reviewer_probe_commands = []
     if not isinstance(text, str):  # R4-SF(穷尽):非 str 输入返回空 fields,交 validate_verdict_values 判 MALFORMED
         return fields
     lines = []
@@ -1360,9 +2147,16 @@ def parse_verdict_block(text: str) -> dict:
                 invariants.setdefault(key[len(prefix):], {})[slot] = val
                 matched = True
                 break
+        if (
+            not matched
+            and key.startswith("reviewer_probe_command.")
+        ):
+            reviewer_probe_commands.append(val)
+            matched = True
         if not matched and key in _VERDICT_FIELDS:
             fields[key] = val
     fields["_invariants"] = invariants
+    fields["_reviewer_probe_commands"] = reviewer_probe_commands
     return fields
 
 
@@ -1378,6 +2172,7 @@ def normalize_review_record(fields, context):
     mode = context.get("mode", "supervisor")
     f = dict(fields)
     statuses = f.pop("_invariants", {})
+    reviewer_probe_commands = f.pop("_reviewer_probe_commands", [])
     f["review_result"] = _norm_result(f.get("review_result"))
     base = {
         "run_id": context.get("run_id"), "slice_id": context.get("slice_id"),
@@ -1393,6 +2188,16 @@ def normalize_review_record(fields, context):
         "implement_provider": context.get("implement_provider"),
         "review_target_kind": context.get("review_target_kind"),
     }
+    if context.get("deterministic_evidence_key"):
+        base["deterministic_evidence_key"] = context[
+            "deterministic_evidence_key"
+        ]
+    if context.get("evidence_key"):
+        base["evidence_key"] = context["evidence_key"]
+    if context.get(REVIEW_EVIDENCE_SCHEMA_FIELD) is not None:
+        base[REVIEW_EVIDENCE_SCHEMA_FIELD] = context[
+            REVIEW_EVIDENCE_SCHEMA_FIELD
+        ]
     if context.get("reviewed_target_digest"):
         base["reviewed_target_digest"] = context.get("reviewed_target_digest")
 
@@ -1486,6 +2291,29 @@ def normalize_review_record(fields, context):
         if check_provider != expected_provider:
             return blocked("MALFORMED_REVIEW_OUTPUT")
 
+    canonical_verdicts = None
+    if (
+        isinstance(pkt, dict)
+        and pkt.get(REVIEW_EVIDENCE_SCHEMA_FIELD, 1)
+        == REVIEW_EVIDENCE_SCHEMA_VERSION
+    ):
+        try:
+            canonical_verdicts = canonical_invariant_verdicts(
+                pkt.get("invariants"),
+                statuses,
+                require_all_pass=f["review_result"] == "clean",
+            )
+        except ReviewRecordError:
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        if (
+            aggregate_invariant_coverage(
+                pkt.get("invariants"),
+                canonical_verdicts,
+            )
+            != f["invariant_coverage"]
+        ):
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+
     # 层②(supervisor 消费 channel check 作 required clean)：provider gating + deterministic 双过 + 聚合重算
     if f["review_result"] == "clean":
         # R6-F1:supervisor clean 必须有有效 packet(dict + 非空 invariants list)。packet 缺失 / 非 dict /
@@ -1501,6 +2329,21 @@ def normalize_review_record(fields, context):
         agg = aggregate_invariant_coverage(invs, statuses)
         if agg != "all_passed":
             return blocked("MALFORMED_REVIEW_OUTPUT")
+        successful_commands = context.get(
+            "supervisor_successful_commands",
+            [],
+        )
+        if (
+            not isinstance(reviewer_probe_commands, list)
+            or not all(
+                isinstance(command, str) and command.strip()
+                for command in reviewer_probe_commands
+            )
+            or not isinstance(successful_commands, list)
+        ):
+            return blocked("MALFORMED_REVIEW_OUTPUT")
+        if set(reviewer_probe_commands).intersection(successful_commands):
+            return blocked("MALFORMED_REVIEW_OUTPUT")
 
     rec = dict(base)
     rec.update({"review_result": f["review_result"], "route_class": f["route_class"],
@@ -1508,7 +2351,28 @@ def normalize_review_record(fields, context):
                 "invariant_coverage": f["invariant_coverage"], "supervisor_failure": "none",
                 "repairable": f["review_result"] == "findings" and f["route_class"] in _REPAIRABLE_ROUTES,
                 "required_satisfied": f["review_result"] == "clean"})
+    if canonical_verdicts is not None:
+        rec["invariant_verdicts"] = canonical_verdicts
+        rec["invariant_verdicts_digest"] = invariant_verdicts_digest(
+            canonical_verdicts
+        )
+        rec = _NormalizedReviewRecord(rec)
     return (rec, None)
+
+
+def _normalized_reuse_record(record: dict) -> dict:
+    if (
+        not isinstance(record, dict)
+        or record.get("review_result") != "clean"
+        or record.get("channel") != "evidence-cache"
+        or record.get("worker") != "semantic-review-reuse"
+        or record.get(REVIEW_EVIDENCE_SCHEMA_FIELD)
+        != REVIEW_EVIDENCE_SCHEMA_VERSION
+    ):
+        raise ReviewRecordError(
+            "semantic review reuse record is not an official v2 clean row"
+        )
+    return _NormalizedReviewRecord(record)
 
 
 # ============================================================================

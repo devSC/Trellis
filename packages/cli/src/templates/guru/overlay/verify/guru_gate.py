@@ -5481,8 +5481,63 @@ def _slice_review_problem(
             record.get("reviewed_target_digest"),
             current_components,
         )
+        packet_schema = packet.get(
+            guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD,
+            1,
+        )
+        record_schema = record.get(
+            guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD,
+            1,
+        )
+        if record_schema != packet_schema:
+            return (
+                f"slice {slice_id} review evidence schema is "
+                "stale or missing"
+            )
         if record.get("evidence_key") != current_evidence_key:
             return f"slice {slice_id} review evidence_key is stale or missing"
+        if (
+            packet_schema
+            == guru_review_record.REVIEW_EVIDENCE_SCHEMA_VERSION
+        ):
+            invariant_verdicts = (
+                guru_review_record.validate_persisted_invariant_verdicts(
+                    packet.get("invariants"),
+                    record.get("invariant_verdicts"),
+                    require_all_pass=True,
+                )
+            )
+            if (
+                guru_review_record.aggregate_invariant_coverage(
+                    packet.get("invariants"),
+                    invariant_verdicts,
+                )
+                != record.get("invariant_coverage")
+            ):
+                return (
+                    f"slice {slice_id} invariant_coverage does not match "
+                    "persisted invariant_verdicts"
+                )
+            if (
+                record.get("invariant_verdicts_digest")
+                != guru_review_record.invariant_verdicts_digest(
+                    invariant_verdicts
+                )
+            ):
+                return (
+                    f"slice {slice_id} invariant_verdicts_digest "
+                    "is stale or missing"
+                )
+            if record.get("deterministic_evidence_key") != current_evidence_key:
+                return (
+                    f"slice {slice_id} deterministic_evidence_key is stale "
+                    "or missing"
+                )
+            guru_review_record.validate_review_deterministic_evidence(
+                task_dir,
+                record,
+                current_components,
+            )
         current_digest = guru_review_record.target_snapshot_digest(
             root,
             expected_targets,
@@ -5707,6 +5762,82 @@ def _validate_historical_slice_receipt(
         )
         if review.get("evidence_key") != expected_evidence_key:
             return f"receipt {receipt['slice_id']} review evidence_key mismatch"
+        review_schema = review.get(
+            guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD,
+            1,
+        )
+        receipt_schema = receipt.get(
+            guru_review_record.RECEIPT_REVIEW_EVIDENCE_SCHEMA_FIELD,
+            1,
+        )
+        if review_schema not in (
+            1,
+            guru_review_record.REVIEW_EVIDENCE_SCHEMA_VERSION,
+        ):
+            return (
+                f"receipt {receipt['slice_id']} review "
+                "review_evidence_schema_version invalid"
+            )
+        if receipt_schema != review_schema:
+            return (
+                f"receipt {receipt['slice_id']} review evidence schema "
+                "mismatch"
+            )
+        if review_schema == guru_review_record.REVIEW_EVIDENCE_SCHEMA_VERSION:
+            historical_verdicts = review.get("invariant_verdicts")
+            if not isinstance(historical_verdicts, dict):
+                return (
+                    f"receipt {receipt['slice_id']} review lacks "
+                    "invariant_verdicts"
+                )
+            historical_invariants = [
+                {"invariant_id": invariant_id}
+                for invariant_id in historical_verdicts
+            ]
+            guru_review_record.validate_persisted_invariant_verdicts(
+                historical_invariants,
+                historical_verdicts,
+                require_all_pass=True,
+            )
+            historical_verdicts_digest = (
+                guru_review_record.invariant_verdicts_digest(
+                    historical_verdicts
+                )
+            )
+            if (
+                review.get("invariant_verdicts_digest")
+                != historical_verdicts_digest
+            ):
+                return (
+                    f"receipt {receipt['slice_id']} review "
+                    "invariant_verdicts_digest mismatch"
+                )
+            if receipt.get(
+                guru_review_record.RECEIPT_INVARIANT_VERDICTS_DIGEST_FIELD
+            ) != historical_verdicts_digest:
+                return (
+                    f"receipt {receipt['slice_id']} "
+                    "invariant_verdicts_digest mismatch"
+                )
+            if receipt.get(
+                guru_review_record.RECEIPT_DETERMINISTIC_EVIDENCE_KEY_FIELD
+            ) != expected_evidence_key:
+                return (
+                    f"receipt {receipt['slice_id']} "
+                    "deterministic_evidence_key mismatch"
+                )
+            if review.get(
+                "deterministic_evidence_key"
+            ) != expected_evidence_key:
+                return (
+                    f"receipt {receipt['slice_id']} review "
+                    "deterministic_evidence_key mismatch"
+                )
+            guru_review_record.validate_review_deterministic_evidence(
+                task_dir,
+                review,
+                recorded_components,
+            )
         if receipt["reviewed_target_digest"] != review.get(
             "reviewed_target_digest"
         ):
@@ -6029,9 +6160,22 @@ def cmd_record_slice_commit(
             **components,
             "committed_at": committed_at,
         }
+        if (
+            review.get(guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD)
+            == guru_review_record.REVIEW_EVIDENCE_SCHEMA_VERSION
+        ):
+            receipt[
+                guru_review_record.RECEIPT_REVIEW_EVIDENCE_SCHEMA_FIELD
+            ] = guru_review_record.REVIEW_EVIDENCE_SCHEMA_VERSION
+            receipt[
+                guru_review_record.RECEIPT_DETERMINISTIC_EVIDENCE_KEY_FIELD
+            ] = review["deterministic_evidence_key"]
+            receipt[
+                guru_review_record.RECEIPT_INVARIANT_VERDICTS_DIGEST_FIELD
+            ] = review["invariant_verdicts_digest"]
         receipt["receipt_id"] = guru_review_record.canonical_digest(
             "guru-slice-commit-receipt-v1",
-            {field: receipt[field] for field in guru_review_record.RECEIPT_REQUIRED_FIELDS},
+            guru_review_record.receipt_digest_payload(receipt),
         )
         existing = _receipt_by_slice(task_dir).get(slice_id)
         if existing is not None:
