@@ -73,6 +73,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 # 共享风险 helper（单一来源，防两份风险逻辑漂移）：guru_gate 作脚本运行时其目录已在 sys.path[0]，
 # 被 guru_supervise import 时其目录也已加入——此处显式补一遍兜底奇怪调用形态。guru_risk **不 import
@@ -7294,7 +7295,272 @@ def _record_lite_delivery_evidence_cache(task_dir_arg, root: str) -> tuple[str, 
     return cache_key, ""
 
 
+def _final_lifecycle_context(
+    task_dir_arg,
+) -> tuple[str | None, list[dict] | None, str]:
+    task_dir = resolve_task_dir(
+        task_dir_arg,
+        allow_unique_planning_fallback=False,
+    )
+    if not task_dir:
+        return None, None, ""
+    contract, contract_error = guru_contract.load_contract(task_dir)
+    if contract_error:
+        return task_dir, None, contract_error
+    if (
+        not isinstance(contract, dict)
+        or guru_contract.contract_route(contract) != guru_contract.ROUTE_FULL_CHAIN
+        or guru_contract.contract_risk(contract)
+        not in {guru_contract.RISK_HIGH, guru_contract.RISK_UNKNOWN}
+    ):
+        return task_dir, None, ""
+    try:
+        packets = [
+            guru_review_record.load_packet(task_dir, slice_id)
+            for slice_id in guru_review_record.list_packets(task_dir)
+        ]
+    except guru_review_record.ReviewRecordError as exc:
+        return task_dir, None, str(exc)
+    if not any(
+        packet.get(guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD) == 2
+        for packet in packets
+    ):
+        return task_dir, None, ""
+    integration_values = [
+        packet.get("integration_slice", False)
+        for packet in packets
+    ]
+    if any(not isinstance(value, bool) for value in integration_values):
+        return task_dir, [], "integration_slice must be boolean"
+    return task_dir, packets, ""
+
+
+def _final_topological_packets(packets: list[dict]) -> list[dict]:
+    packet_by_id = {}
+    for packet in packets:
+        slice_id = packet.get("slice_id")
+        if not isinstance(slice_id, str) or not slice_id.strip():
+            raise guru_review_record.ReviewRecordError(
+                "final lifecycle packet slice_id missing"
+            )
+        if slice_id in packet_by_id:
+            raise guru_review_record.ReviewRecordError(
+                f"final lifecycle duplicate slice_id:{slice_id}"
+            )
+        packet_by_id[slice_id] = packet
+    for slice_id, packet in packet_by_id.items():
+        dependencies = packet.get("depends_on") or []
+        if not isinstance(dependencies, list) or not all(
+            isinstance(dependency, str) and dependency.strip()
+            for dependency in dependencies
+        ):
+            raise guru_review_record.ReviewRecordError(
+                f"{slice_id}.depends_on must be a string array"
+            )
+        missing = [
+            dependency
+            for dependency in dependencies
+            if dependency not in packet_by_id
+        ]
+        if missing:
+            raise guru_review_record.ReviewRecordError(
+                f"final lifecycle slice {slice_id} dependency missing:{missing}"
+            )
+    ordered = []
+    remaining = list(packet_by_id)
+    resolved = set()
+    while remaining:
+        ready = [
+            slice_id
+            for slice_id in remaining
+            if all(
+                dependency in resolved
+                for dependency in (packet_by_id[slice_id].get("depends_on") or [])
+            )
+        ]
+        if not ready:
+            raise guru_review_record.ReviewRecordError(
+                "final lifecycle dependency graph contains a cycle"
+            )
+        for slice_id in ready:
+            ordered.append(packet_by_id[slice_id])
+            resolved.add(slice_id)
+            remaining.remove(slice_id)
+    return ordered
+
+
+def cmd_check_final_receipts(task_dir: str, packets: list[dict]) -> int:
+    started = time.monotonic()
+    root = _repo_root()
+    recovery_slice = ""
+    try:
+        ordered_packets = _final_topological_packets(packets)
+        integration_packets = [
+            packet
+            for packet in ordered_packets
+            if packet.get("integration_slice") is True
+        ]
+        if len(integration_packets) != 1:
+            raise guru_review_record.ReviewRecordError(
+                "final lifecycle requires exactly one integration slice"
+            )
+        integration_packet = integration_packets[0]
+        integration_targets = guru_review_record._clean_target_paths(
+            integration_packet["target_paths"]
+        )
+        required_targets = guru_review_record._clean_target_paths(
+            [
+                target
+                for packet in ordered_packets
+                for target in packet["target_paths"]
+            ]
+        )
+        uncovered = [
+            target
+            for target in required_targets
+            if not any(
+                guru_review_record._target_contains_path(
+                    integration_target,
+                    target,
+                )
+                for integration_target in integration_targets
+            )
+        ]
+        if uncovered:
+            raise guru_review_record.ReviewRecordError(
+                "integration slice does not cover required targets: "
+                + ", ".join(uncovered[:5])
+            )
+        receipt_history = _receipt_history_by_slice(task_dir)
+        current_receipts = {}
+        for packet in ordered_packets:
+            slice_id = packet["slice_id"]
+            recovery_slice = slice_id
+            receipt = _dependency_receipt_for_commit(
+                root,
+                receipt_history,
+                slice_id,
+                "HEAD",
+                require_strict_ancestor=False,
+            )
+            if not isinstance(receipt, dict):
+                raise guru_review_record.ReviewRecordError(
+                    f"required slice receipt missing from HEAD ancestry:{slice_id}"
+                )
+            problem = _validate_slice_receipt(
+                task_dir,
+                root,
+                receipt,
+                receipt_history=receipt_history,
+            )
+            if problem:
+                raise guru_review_record.ReviewRecordError(problem)
+            current_receipts[slice_id] = receipt
+        integration_id = integration_packet["slice_id"]
+        recovery_slice = integration_id
+        integration_receipt = current_receipts[integration_id]
+        integration_commit = integration_receipt["commit_sha"]
+        for slice_id, receipt in current_receipts.items():
+            if slice_id == integration_id:
+                continue
+            if receipt["commit_sha"] == integration_commit:
+                integration_memberships = receipt_history.batch_memberships.get(
+                    integration_receipt.get("receipt_id"), []
+                )
+                receipt_memberships = receipt_history.batch_memberships.get(
+                    receipt.get("receipt_id"), []
+                )
+                if (
+                    len(integration_memberships) != 1
+                    or len(receipt_memberships) != 1
+                    or integration_memberships[0] != receipt_memberships[0]
+                ):
+                    raise guru_review_record.ReviewRecordError(
+                        "integration receipt shares a commit outside one "
+                        f"validated aggregate batch:{slice_id}"
+                    )
+            elif not _git_is_ancestor(
+                    root,
+                    receipt["commit_sha"],
+                    integration_commit,
+                ):
+                raise guru_review_record.ReviewRecordError(
+                    f"integration receipt is not newer than current slice receipt:{slice_id}"
+                )
+        recovery_slice = integration_id
+        expected_digest = integration_receipt["reviewed_target_digest"]
+        final_digests = {
+            "HEAD": guru_review_record.commit_target_digest(
+                root,
+                integration_targets,
+                "HEAD",
+            ),
+            "index": guru_review_record.target_snapshot_digest(
+                root,
+                integration_targets,
+                source="index",
+            ),
+            "worktree": guru_review_record.target_snapshot_digest(
+                root,
+                integration_targets,
+                source="worktree",
+            ),
+        }
+        for source, digest in final_digests.items():
+            if digest != expected_digest:
+                raise guru_review_record.ReviewRecordError(
+                    f"integration receipt is stale against final {source} bytes"
+                )
+    except guru_review_record.ReviewRecordError as exc:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        recovery = ""
+        if recovery_slice:
+            display_task = _display_task_dir(task_dir, root)
+            recovery = (
+                "; recovery_command=python3 .trellis/scripts/guru/"
+                "guru_supervise.py implementation-review "
+                f"{shlex.quote(display_task)} --slice "
+                f"{shlex.quote(recovery_slice)} --staged && python3 "
+                ".trellis/scripts/guru/guru_gate.py check-commit "
+                f"{shlex.quote(display_task)} --slice "
+                f"{shlex.quote(recovery_slice)}"
+            )
+        sys.stderr.write(
+            f"[guru-gate:check-commit] 拦截：{exc}; "
+            f"reviewers_spawned=0 elapsed_ms={elapsed_ms}{recovery}\n"
+        )
+        return BLOCK
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    receipt_ids = ",".join(
+        current_receipts[packet["slice_id"]]["receipt_id"]
+        for packet in ordered_packets
+    )
+    commit_shas = ",".join(
+        f"{packet['slice_id']}:{current_receipts[packet['slice_id']]['commit_sha']}"
+        for packet in ordered_packets
+    )
+    print(
+        "[guru-gate:check-commit] FINAL_COMMIT_READY "
+        f"required_slices={','.join(packet['slice_id'] for packet in ordered_packets)} "
+        f"integration_slice={integration_id} "
+        f"integration_receipt_id={integration_receipt['receipt_id']} "
+        f"receipt_ids={receipt_ids} commit_shas={commit_shas} "
+        f"reviewers_spawned=0 elapsed_ms={elapsed_ms}"
+    )
+    return PASS
+
+
 def cmd_check_commit(task_dir_arg) -> int:
+    task_dir, lifecycle_packets, lifecycle_error = _final_lifecycle_context(
+        task_dir_arg
+    )
+    if lifecycle_error:
+        sys.stderr.write(
+            f"[guru-gate:check-commit] 拦截：{lifecycle_error}; reviewers_spawned=0\n"
+        )
+        return BLOCK
+    if isinstance(task_dir, str) and isinstance(lifecycle_packets, list):
+        return cmd_check_final_receipts(task_dir, lifecycle_packets)
     plan = _commit_plan_payload(task_dir_arg)
     if not plan.get("can_commit_now"):
         reasons = plan.get("blocking_reasons") or ["commit-plan blocked"]

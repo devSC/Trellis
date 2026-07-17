@@ -48,6 +48,37 @@ hook 也直接命中。任一 target 或 Custom consistency digest 变化都会�
 scope/digest 变化、新 High-risk 或新不可逆决定才允许重新确认。全程默认 provider 为 Codex，
 当前 delivery policy 不得生成 Claude plan/event。
 
+## Full/high Slice Review And Receipt Lifecycle
+
+Schema-v2 Full/high-like tasks close each implementation slice before the next
+slice mutates shared files:
+
+```bash
+python3 .trellis/scripts/guru/guru_supervise.py implementation-review TASK \
+  --slice SDK-U1 --staged --run-id sdk-u1-r1
+python3 .trellis/scripts/guru/guru_gate.py check-commit TASK --slice SDK-U1
+git commit -m "work commit"
+python3 .trellis/scripts/guru/guru_gate.py record-slice-commit TASK \
+  --slice SDK-U1 --review-run-id sdk-u1-r1-review-1
+```
+
+The official task-local receipt binds the immutable commit, reviewed bytes,
+invariants, selected requirements/design inputs, deterministic evidence,
+provider policy, and supervisor source. Changing any reviewed staged byte
+invalidates `SLICE_COMMIT_READY`. Dependencies require valid ancestor receipts;
+task/workspace artifacts never belong in a slice work commit.
+
+When implementation was completed before any receipt existed, explicit
+`implementation-review --aggregate --slice ...` runs one reviewer over the exact
+covering slice union and `record-slice-commit --aggregate` writes one atomic
+topological receipt batch. After the current integration slice is committed and
+receipted, `check-commit TASK` validates the packet DAG, all current receipts,
+ancestry, commit bytes, and final HEAD/index/worktree bytes locally. A successful
+final Gate reports `reviewers_spawned=0`; it does not rerun deterministic checks
+or review earlier immutable slices. The integration receipt must be newer than
+ordinary slice receipts; same-commit constituents are accepted only when all
+belong to the same validated atomic aggregate batch.
+
 ## 安装/升级边界（apply.sh）
 
 apply.sh 负责 guru 定制内容的完整安装与升级刷新：skills（.agents + 平台镜像）、gate/hook 脚本、

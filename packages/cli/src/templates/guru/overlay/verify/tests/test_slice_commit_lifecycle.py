@@ -315,6 +315,8 @@ class SliceCommitLifecycleTests(unittest.TestCase):
                     guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD
                 ] = (
                     guru_review_record.REVIEW_EVIDENCE_SCHEMA_VERSION
+                    if lifecycle_v2
+                    else 1
                 )
                 guru_review_record.append_deterministic_evidence(
                     str(self.task),
@@ -2788,6 +2790,318 @@ class SliceCommitLifecycleTests(unittest.TestCase):
                 u2_receipt,
             )
         self.assertIn("missing from dependent commit ancestry", problem)
+
+    def test_final_gate_uses_current_integration_receipt_without_reviewer(
+        self,
+    ) -> None:
+        self._update_packet(
+            "U1",
+            lambda packet: packet.update(
+                {
+                    "integration_slice": False,
+                    guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD: 1,
+                }
+            ),
+        )
+        self._write("lib/a.txt", b"final-u1\n")
+        self._git("add", "--", "lib/a.txt")
+        u1_review = self._append_review(
+            "U1",
+            ["lib/a.txt"],
+            run_id="final-U1-review-1",
+        )
+        self._git("commit", "-m", "final U1")
+        rc, output = self._record_slice("U1", u1_review["run_id"])
+        self.assertEqual(0, rc, output)
+
+        self._write_packet(
+            "U2",
+            ["."],
+            depends_on=["U1"],
+        )
+        self._update_packet(
+            "U2",
+            lambda packet: packet.__setitem__("integration_slice", True),
+        )
+        missing_output = io.StringIO()
+        with (
+            self._gate_root(),
+            contextlib.redirect_stderr(missing_output),
+            mock.patch.object(
+                guru_gate,
+                "_commit_plan_payload",
+                side_effect=AssertionError("final Gate spawned generic review path"),
+            ),
+        ):
+            self.assertEqual(
+                2,
+                guru_gate.cmd_check_commit(str(self.task)),
+            )
+        self.assertIn("required slice receipt missing", missing_output.getvalue())
+        self.assertIn("reviewers_spawned=0", missing_output.getvalue())
+
+        self._write("lib/a.txt", b"final-combined-a\n")
+        self._write("lib/b.txt", b"final-combined-b\n")
+        contract_path = self.task / "gate-contract.json"
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        contract["scope"]["allowed_paths"].append(
+            "packages/cli/src/templates/guru/overlay/verify/guru_review_record.py"
+        )
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        self._write(
+            "packages/cli/src/templates/guru/overlay/verify/guru_review_record.py",
+            b"# review record\n",
+        )
+        self._git(
+            "add",
+            "--",
+            "lib/a.txt",
+            "lib/b.txt",
+            "packages/cli/src/templates/guru/overlay/verify/guru_review_record.py",
+        )
+        integration_review = self._append_review(
+            "U2",
+            ["."],
+            run_id="final-U2-review-1",
+        )
+        self._git("commit", "-m", "final integration")
+        rc, output = self._record_slice("U2", integration_review["run_id"])
+        self.assertEqual(0, rc, output)
+        final_output = io.StringIO()
+        with (
+            self._gate_root(),
+            contextlib.redirect_stdout(final_output),
+            mock.patch.object(
+                guru_gate,
+                "_commit_plan_payload",
+                side_effect=AssertionError("final Gate spawned generic review path"),
+            ),
+        ):
+            started = time.monotonic()
+            self.assertEqual(
+                0,
+                guru_gate.cmd_check_commit(str(self.task)),
+            )
+            self.assertLess(time.monotonic() - started, 10)
+        self.assertIn("FINAL_COMMIT_READY", final_output.getvalue())
+        self.assertIn("reviewers_spawned=0", final_output.getvalue())
+        self.assertIn("commit_shas=U1:", final_output.getvalue())
+
+        self._write("lib/a.txt", b"drift after integration\n")
+        drift_output = io.StringIO()
+        with self._gate_root(), contextlib.redirect_stderr(drift_output):
+            self.assertEqual(
+                2,
+                guru_gate.cmd_check_commit(str(self.task)),
+            )
+        self.assertIn("final worktree bytes", drift_output.getvalue())
+        self.assertIn("recovery_command=", drift_output.getvalue())
+
+    def test_final_gate_recovery_targets_stale_integration_slice(self) -> None:
+        packets = [
+            {
+                "slice_id": "U1",
+                "target_paths": ["lib/a.txt"],
+                "depends_on": [],
+                "integration_slice": False,
+            },
+            {
+                "slice_id": "U4",
+                "target_paths": ["lib/a.txt"],
+                "depends_on": ["U1"],
+                "integration_slice": True,
+            },
+        ]
+        cases = [
+            ("newer", "older", "not newer than current slice receipt"),
+            ("shared", "shared", "shares a commit outside one validated aggregate batch"),
+        ]
+        for ordinary_commit, integration_commit, expected_error in cases:
+            with self.subTest(expected_error=expected_error):
+                receipts = {
+                    "U1": {
+                        "slice_id": "U1",
+                        "receipt_id": "r1",
+                        "commit_sha": ordinary_commit,
+                    },
+                    "U4": {
+                        "slice_id": "U4",
+                        "receipt_id": "r4",
+                        "commit_sha": integration_commit,
+                        "reviewed_target_digest": "digest",
+                    },
+                }
+                output = io.StringIO()
+                with (
+                    mock.patch.object(guru_gate, "_repo_root", return_value="/repo"),
+                    mock.patch.object(
+                        guru_gate,
+                        "_receipt_history_by_slice",
+                        return_value=guru_gate._ReceiptHistory(),
+                    ),
+                    mock.patch.object(
+                        guru_gate,
+                        "_dependency_receipt_for_commit",
+                        side_effect=lambda _root, _history, slice_id, _head,
+                        require_strict_ancestor: receipts[slice_id],
+                    ),
+                    mock.patch.object(
+                        guru_gate,
+                        "_validate_slice_receipt",
+                        return_value="",
+                    ),
+                    mock.patch.object(
+                        guru_gate,
+                        "_git_is_ancestor",
+                        return_value=False,
+                    ),
+                    mock.patch.object(
+                        guru_gate,
+                        "_display_task_dir",
+                        return_value="TASK",
+                    ),
+                    contextlib.redirect_stderr(output),
+                ):
+                    self.assertEqual(
+                        2,
+                        guru_gate.cmd_check_final_receipts("TASK", packets),
+                    )
+                message = output.getvalue()
+                self.assertIn(expected_error, message)
+                self.assertIn("--slice U4 --staged", message)
+                self.assertIn("check-commit TASK --slice U4", message)
+                self.assertNotIn("--slice U1 --staged", message)
+
+    def test_final_gate_accepts_one_atomic_aggregate_integration_batch(
+        self,
+    ) -> None:
+        self._write_packet(
+            "U2",
+            ["lib/a.txt", "lib/b.txt"],
+            depends_on=["U1"],
+        )
+        self._update_packet(
+            "U2",
+            lambda packet: packet.__setitem__("integration_slice", True),
+        )
+        self._write("lib/a.txt", b"aggregate-final-a\n")
+        self._write("lib/b.txt", b"aggregate-final-b\n")
+        self._git("add", "--", "lib/a.txt", "lib/b.txt")
+        with (
+            self._aggregate_runtime(),
+            mock.patch.object(
+                guru_supervise,
+                "_guru_gate_check_implementation",
+                return_value=0,
+            ),
+            mock.patch.object(
+                guru_supervise,
+                "_load_config",
+                return_value=self._supervision_config(),
+            ),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                return_value=(0, "done", self._aggregate_worker_verdict()),
+            ),
+        ):
+            self.assertEqual(
+                0,
+                guru_supervise.run_implementation_review(
+                    self._aggregate_args("aggregate-final")
+                ),
+            )
+        self._git("commit", "-m", "aggregate final")
+        with self._gate_root():
+            self.assertEqual(
+                0,
+                guru_gate.cmd_record_aggregate_slice_commit(
+                    str(self.task),
+                    ["U1", "U2"],
+                    "aggregate-final-review-1",
+                ),
+            )
+        output = io.StringIO()
+        with (
+            self._gate_root(),
+            contextlib.redirect_stdout(output),
+            mock.patch.object(
+                guru_gate,
+                "_commit_plan_payload",
+                side_effect=AssertionError("final Gate spawned generic review path"),
+            ),
+        ):
+            self.assertEqual(
+                0,
+                guru_gate.cmd_check_commit(str(self.task)),
+            )
+        self.assertIn("FINAL_COMMIT_READY", output.getvalue())
+        self.assertIn("commit_shas=U1:", output.getvalue())
+        self.assertIn(",U2:", output.getvalue())
+
+    def test_final_lifecycle_activation_is_fail_closed_and_route_compatible(
+        self,
+    ) -> None:
+        missing_output = io.StringIO()
+        with self._gate_root(), contextlib.redirect_stderr(missing_output):
+            self.assertEqual(
+                2,
+                guru_gate.cmd_check_commit(str(self.task)),
+            )
+        self.assertIn("exactly one integration slice", missing_output.getvalue())
+
+        self._update_packet(
+            "U1",
+            lambda packet: packet.__setitem__("integration_slice", "true"),
+        )
+        _, malformed_packets, malformed_error = (
+            guru_gate._final_lifecycle_context(str(self.task))
+        )
+        self.assertEqual([], malformed_packets)
+        self.assertIn("must be boolean", malformed_error)
+        self._update_packet(
+            "U1",
+            lambda packet: packet.__setitem__("integration_slice", 1),
+        )
+        _, malformed_packets, malformed_error = (
+            guru_gate._final_lifecycle_context(str(self.task))
+        )
+        self.assertEqual([], malformed_packets)
+        self.assertIn("must be boolean", malformed_error)
+
+        self._update_packet(
+            "U1",
+            lambda packet: packet.__setitem__("integration_slice", True),
+        )
+        self._write_packet("U2", ["lib/b.txt"])
+        self._update_packet(
+            "U2",
+            lambda packet: packet.__setitem__("integration_slice", True),
+        )
+        duplicate_output = io.StringIO()
+        with self._gate_root(), contextlib.redirect_stderr(duplicate_output):
+            self.assertEqual(
+                2,
+                guru_gate.cmd_check_commit(str(self.task)),
+            )
+        self.assertIn("exactly one integration slice", duplicate_output.getvalue())
+
+        lite_contract = guru_contract.default_contract(
+            guru_contract.ROUTE_LITE_TASK,
+            guru_contract.RISK_LOW,
+            created_by="test",
+        )
+        lite_contract["scope"]["allowed_paths"] = ["lib/a.txt", "lib/b.txt"]
+        lite_contract["scope"]["max_files"] = None
+        (self.task / "gate-contract.json").write_text(
+            json.dumps(lite_contract),
+            encoding="utf-8",
+        )
+        _, lifecycle_packets, lifecycle_error = guru_gate._final_lifecycle_context(
+            str(self.task)
+        )
+        self.assertIsNone(lifecycle_packets)
+        self.assertEqual("", lifecycle_error)
 
     def test_committed_at_mutation_invalidates_receipt(self) -> None:
         self._write("lib/a.txt", b"reviewed\n")
