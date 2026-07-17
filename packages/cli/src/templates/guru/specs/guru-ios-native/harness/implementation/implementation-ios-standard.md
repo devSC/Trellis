@@ -28,7 +28,14 @@
 - 本标准包**不执行**代码修改，也**不输出**审核 Findings。它定义"代码编写"与"实现审核"共同遵守的合同与判定口径。
 - golden-path 的硬规则（FactoryKit DI、DDD 分层依赖律、Repository 模式、`enum Error` 分层、WCDBSwift 持久化、`ObservableObject + @Published` ViewModel、`private extension`、Coordinator 导航）在本文件中是**锁定前提（不可豁免）**；project-conventions 的槽位（UI 框架收敛 / 网络层 / 日志 / JSON 修复 / 测试框架 / i18n / 主题 / mock 生成 / 构建自动化）是**可按项目调整的取值**，实现时读 `project-conventions.md` 当前值，不在本文件硬编码。
 
-### 0.1 iOS 详细设计 doc_type 权威七类（全程唯一，禁止改名 / 增减 / 换数）
+### 0.1 Active packet 与验证路由
+
+- Full/high active worker 必须消费 current packet 与 `implement.md` 已确认的 minimum commit-stable planning audit；它们是不可变 dispatch input。
+- Full/high ordinary 只写 packet `target_paths`，只运行 packet `deterministic_checks` 与 planning audit focused checks；不得按 UNIT、layer、`doc_type`、ViewModel、UseCase、View、component、symbol 或 hunk 重新切片或转移 ownership。
+- Workspace-wide `xcodebuild` / SwiftLint / full regression 只由唯一 Integration 执行；Integration 实际写范围限 exact `integration_owned_paths`。
+- Small、Micro、Lite、non-Full 与 v1 保留本标准原有验证合同。下文的 workspace 命令均按此路由解释，不得覆盖 Full/high ordinary 的 packet 边界。
+
+### 0.2 iOS 详细设计 doc_type 权威七类（全程唯一，禁止改名 / 增减 / 换数）
 
 | doc_type | 含义 | owner 层 | 落地锚点（story-verse-mac 实测路径） |
 |----------|------|----------|-------------------------------------|
@@ -283,18 +290,19 @@ Phase 6  验证与符合性审查：xcodebuild build/test + SwiftLint + 证据�
 
 ## 5. 实现 Gate（xcodebuild build/test + SwiftLint + 证据）
 
-实现 Gate 是"证据感，不是做完感"。每次实现闭环至少运行下列命令，并把命令与结果（命令 + 测试名级别，非"全部通过"）追加到 `verification-evidence.jsonl`；implementation review verdict 进入 `review-records/implementation-reviews.jsonl`。
+实现 Gate 是"证据感，不是做完感"。Full/high ordinary 运行 packet-declared deterministic/focused checks；Integration 运行一次下表 workspace 命令。Small、Micro、Lite、non-Full 与 v1 继续按下表既有命令。命令与结果追加到 `verification-evidence.jsonl`；implementation review verdict 进入 `review-records/implementation-reviews.jsonl`。
 
-### 5.1 必跑验证命令（既有命令优先）
+### 5.1 路由解析后的必跑验证命令
 
 | 类型 | 命令（story-verse-mac 用 `.xcworkspace`；纯 SPM 模块用 `swift`） | 通过判据 |
 |------|------------------------------------------------------------------|---------|
-| 编译 | `xcodebuild build -workspace StoryVerse.xcworkspace -scheme StoryVerse -destination 'platform=macOS'`（或 SPM 包 `swift build`） | 退出码 0，无编译错误 |
-| 测试 | `xcodebuild test -workspace StoryVerse.xcworkspace -scheme StoryVerse -destination 'platform=macOS'`（或 `swift test`；框架取值见 `project-conventions.md`：XCTest，可调 Quick/Nimble） | 退出码 0；记录受影响 target 的测试名 |
-| lint | `swiftlint`（配置取值见 `project-conventions.md`；建成后接 `guru_lints`） | 退出码 0，无新增告警 |
-| 静态/告警 | 构建告警清零（`-quiet` 下无 warning 残留）；并发安全（`@MainActor` / `await MainActor.run` 路径正确） | 无新增 warning |
-| 启动/冒烟 | 最小真实启动 / 关键 feature 冒烟（如 Home 加载故事列表）或真机 / 模拟器手测 | 行为符合预期 |
-| Secret 残留 | 检查代码 / `Info.plist` / `xcconfig` / fixture / `implement.md` / mutable evidence 无明文 secret（注意 `DatabaseManager` 的加密 key 走配置而非硬编码） | 仅出现引用 / env 名，无真实 key/token/password |
+| Full/high ordinary | packet `deterministic_checks` + planning audit focused checks | 全部通过；不得扩成 workspace-wide 命令 |
+| Integration / non-Full / v1 编译 | `xcodebuild build -workspace StoryVerse.xcworkspace -scheme StoryVerse -destination 'platform=macOS'`（或 `swift build`） | 退出码 0，无编译错误 |
+| Integration / non-Full / v1 测试 | `xcodebuild test -workspace StoryVerse.xcworkspace -scheme StoryVerse -destination 'platform=macOS'`（或 `swift test`） | 退出码 0；记录受影响 target 的测试名 |
+| Integration / non-Full / v1 lint | `swiftlint` | 退出码 0，无新增告警 |
+| Integration / non-Full / v1 静态/告警 | 构建告警清零（`-quiet` 下无 warning 残留）；并发安全（`@MainActor` / `await MainActor.run` 路径正确） | 无新增 warning |
+| Integration / non-Full / v1 启动/冒烟 | 最小真实启动 / 关键 feature 冒烟（如 Home 加载故事列表）或真机 / 模拟器手测 | 行为符合预期 |
+| Integration / non-Full / v1 Secret 残留 | 检查代码 / `Info.plist` / `xcconfig` / fixture / `implement.md` / mutable evidence 无明文 secret（注意 `DatabaseManager` 的加密 key 走配置而非硬编码） | 仅出现引用 / env 名，无真实 key/token/password |
 
 `verification-evidence.jsonl` 要求：
 - 每个切片对应"命令 + 结果"；测试写到测试名级别（如 `StoryRepositoryTests.testSaveAndFetch` 通过 / `ManageAIModelsUseCaseTests.*`）。
@@ -316,7 +324,7 @@ Phase 6  验证与符合性审查：xcodebuild build/test + SwiftLint + 证据�
 
 `pass` / `fail` / `blocked` 三态，语义判定由实现审核（人工 Gate）逐条核：
 
-- `pass`：所有承接单元切片为 `verified` 或明确 `skipped_with_reason`；无悬空 `in_progress`；无被当成完成交付的未验证 `implemented`；LOCK-1~7 全部满足；§5.1 必跑命令全部执行成功并有证据；合同八项无偏离；Secret 残留检查通过。
+- `pass`：先按当前 route 解析验证闭合条件，再检查共同条件。Full/high ordinary 只要求 singular current packet 为 `verified`，且 current packet/audit 选中的 focused checks 成功，不等待或检查 sibling packets；Integration 要求完整依赖 packet set 均有 current receipt，并完成 Integration-selected checks；non-Full/v1 保留原合同，所有计划设计单元 slices 为 `verified` 或明确 `skipped_with_reason`、无悬空 `in_progress`、无被当成完成交付的未验证 `implemented`，且 legacy checks 通过。三路都必须满足 LOCK-1~7、合同八项无偏离，并在当前 route 要求时通过 Secret 检查。
 - `fail`：存在合同未实现 / 实现偏离；无 plan 先行证据却已写生产代码；计划已 `blocked` 但代码绕过继续；`implemented` 未验证却交付为完成；触碰任一 LOCK 锁定项；明文 secret 写入配置/代码/fixture；fake / 占位 / `InMemory*` store 作生产路径；新增测试超出 §6 allowlist；测试补写业务语义；自创非七类 doc_type。
 - `blocked`：详细设计缺失 / 冲突 / 需确认（含 pending 四类 full 链无 L2 豁免）且已按 §7 记录并回退，未写临时代码绕过；或环境 / 凭据 / 真机 / 模型缺失导致验证无法继续，保留恢复条件。
 
@@ -381,8 +389,8 @@ Phase 6  验证与符合性审查：xcodebuild build/test + SwiftLint + 证据�
 
 | 字段 | 要求 |
 |------|------|
-| 切片 | 每片承接的设计单元编号（`UNIT-<slug>`，幽灵引用被 Gate 拦截）+ doc_type（七类之一）/ 文件范围 / 完成信号 / 验证方式；每片小到可独立 review |
-| 执行顺序 | 按依赖排序（§3 自底向上：domain-model → repository → usecase → viewmodel → view+coordinator），从最小切片开始 |
+| 切片 | Full/high 读取已确认 planning audit 的真实 `owner_unit`、`covered_units`、文件级 `owned_paths`、完成信号与 focused checks；active worker 不按 UNIT / `doc_type` / ViewModel / UseCase / View 重切。non-Full/v1 保留原有计划合同 |
+| 执行顺序 | Full/high 按 audit 的真实 `depends_on` 与 `parallel_wave`；iOS 自底向上顺序只约束代码依赖，不机械生成 slices |
 | 风险点 | 预判高风险改动（WCDB schema 变更、跨 feature 共享 use case、`@MainActor` 并发、导航目的地新增、RxSwift→SwiftUI 收敛），逐条写验证手段 |
 
 #### 2. 执行（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
@@ -396,11 +404,9 @@ Phase 6  验证与符合性审查：xcodebuild build/test + SwiftLint + 证据�
 
 | 类型 | 要求 |
 |------|------|
-| 编译 | `xcodebuild build ...` / `swift build` 结果（通过 / 失败 + 处理） |
-| lint | `swiftlint` 结果 |
-| 测试 | 每个切片对应 `xcodebuild test` / `swift test` 命令 + 结果（测试名级别，非"通过"）；新增测试清单（限 §6 allowlist） |
-| 启动/冒烟 | 最小启动 / 关键 feature 冒烟结果（如 Home 列表加载） |
-| Secret | Secret 残留检查结果 |
+| Full/high ordinary evidence | 只记录 current packet `deterministic_checks` 与 planning audit focused checks；test / startup / Secret 仅在 packet/audit 明确声明时记录，不自行扩展命令 |
+| Integration evidence | 记录完整 workspace build / lint / test / startup / Secret / full regression；测试结果到测试名级别，新增测试清单限 §6 allowlist |
+| non-Full/v1 evidence | 保留 legacy evidence 合同：编译、lint、测试名级别结果、关键 feature 启动冒烟与 Secret 残留检查 |
 | 未验证项 | 无法本地验证的（真机、外部 SDK、模型下载）→ 显式列出 + 留给哪个环节 |
 
 #### 4. 阻塞与偏差（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
@@ -412,7 +418,7 @@ Phase 6  验证与符合性审查：xcodebuild build/test + SwiftLint + 证据�
 ### 8.2 切片状态机
 
 - 固定枚举：`pending` / `in_progress` / `implemented` / `verified` / `blocked` / `skipped_with_reason`。
-- 同一时间最多一个切片 `in_progress`；detail 确认后该状态写入 `implementation-evidence.jsonl`。
+- 一个 active worker 只推进分配给它的 current packet，不创建或转换 sibling slices；并行宽度由已确认 planning audit 的 `parallel_wave` 决定。
 - `implemented` 只表示代码落地；未通过 `checkpoint` 与 `validation_commands` 的切片不得 `verified`。
 - `blocked` 必须写明恢复条件与回指（详细设计回修 / L2 豁免 / 凭据 / 真机 / 模型）。
 - `skipped_with_reason` 必须说明设计范围 / 用户范围为何不需要；不得用来隐藏未实现的 required 切片。

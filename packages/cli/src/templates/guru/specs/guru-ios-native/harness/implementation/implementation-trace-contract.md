@@ -53,6 +53,15 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 
 只允许 `required=true` 的 `critical|high` 决策。`decision_id` 必须跨 slice 唯一，slice 和 `invariant_ids` 必须与 packet 精确匹配；每个 `source_ref` 必须指向 Detail artifact 中恰好出现一次且包含该 decision ID 的 anchor。决策确认后将 `status` 改为 `resolved`，并添加非空 `resolution.choice` 与 `resolution.evidence`；未确认时不得伪造 `resolution`。Detail 结构检查、Detail review/confirm、risk packet 和 guarded start 必须解析同一份清单。
 
+## Full/high slice planning audit
+
+Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少的 commit-stable slices 和最大的安全并发宽度**，不是按 UNIT、`doc_type`、ViewModel、UseCase、View 或章节机械拆分。每个普通 slice 登记 `slice_id`、真实标量 `owner_unit`、`covered_units`、文件级 `owned_paths`、`read_paths`、`depends_on`、`parallel_wave`、`independent_commit_value`、`rollback_contract`、`resource_locks` / 隔离方式、focused checks 和 reviewer context inputs/bytes。`covered_units` 是包含 `owner_unit` 在内的完整 Design UNIT 集合，只属于 planning audit；不得新增或重定义 packet / evidence schema 字段。
+
+- 一个普通 mutable path 在同一 implementation wave 只有一个 owner；symbol、函数或 diff hunk 不能绕过文件级 ownership。共享测试文件也必须唯一归属、分波次或合并。
+- 多个 Design UNIT 和多个合法 iOS `doc_type` 可以合并为一个 implementation slice，只要每个文件仍遵守 iOS owner 层与依赖方向、合同已冻结且该 slice 有独立提交与回滚价值。`depends_on` 默认空；UNIT 编号或 domain-model → repository → usecase → viewmodel → view 写作顺序本身不是实现依赖。无法冻结且没有独立提交价值的候选 slices 必须合并。
+- Full/high 恰好一个 Integration Slice。其 packet `target_paths` 是最终 union snapshot 的 review coverage；planning audit 的 `integration_owned_paths` 才是实际可写范围。普通 slices 只跑 focused checks，full regression 只出现在 Integration deterministic checks。
+- 最终语义/静态证据必须检查 workflow 实际派发的 Implementation writer Skill 及其引用的 implementation standards；仅 Planner、Detail 或 reviewer parity 一致不足以满足 Integration。若任一 active Full/high ordinary consumer 仍要求 project/global build、analyze、lint 或 full regression command，或仍按 UNIT、layer、`doc_type`、ViewModel、UseCase 或 component 机械重切片，按 `IMPLEMENT_DEFECT` 阻断。
+- 每个 v2 packet 保留并填实 `review_evidence_schema_version=2`、`requirements_design_inputs`、`target_paths`、`deterministic_checks`、`semantic_review_provider`、`invariants` 与 `integration_slice`。禁止为结构整齐默认生成一 UNIT 一 slice、单 ViewModel 一 slice、单 UseCase 一 slice 或单 View 一 slice。
 
 ---
 
@@ -74,19 +83,16 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 
 | 字段 | 要求 |
 |------|------|
-| 任务切片 | 每片登记：① 承接的设计单元编号（`UNIT-<slug>`，幽灵引用被 gate 拦截）；② `doc_type`（iOS 七类之一）；③ 文件范围（相对路径，落在该 doc_type 的 owner 层内）；④ 完成信号（可验证、非「做完感」）；⑤ 验证方式（编译 / 测试 / lint 命令，见第 3 节）。**每片小到可独立 review**——单 ViewModel、单 UseCase、单 Repository 接口+实现对、单 SwiftUI View 为一片的典型粒度。 |
-| 执行顺序 | 按分层依赖**自底向上**排序：`domain-model → repository（接口+实现） → usecase → viewmodel → view + coordinator/external 横切`。这是 golden-path 锁定的写作顺序；横切（`coordinator` 的 DI 装配 / `external` 集成）在被依赖方稳定后接入。人工选择从最小切片开始。 |
+| 任务切片 | 每片登记：① 真实标量 `owner_unit` 与 planning audit 中的 `covered_units`；② 涉及的 iOS 权威 `doc_type`；③ 文件范围（相对路径，每个文件落在对应 doc_type 的 owner 层内）；④ 完成信号；⑤ 验证方式。多个 ViewModel / UseCase / View 或跨多个合法 doc_type 可以合并，边界由文件级 ownership、冻结合同、独立 commit/rollback 价值与资源隔离决定。 |
+| 执行顺序 | 按 audit 中真实 `depends_on` 与 `parallel_wave` 排序。`domain-model → repository → usecase → viewmodel → view + coordinator/external` 继续约束代码依赖方向，但不自动制造 slice 依赖；横切 DI 装配仍必须随其唯一 mutable owner 收口。 |
 | 风险点 | 逐条预判高风险改动并写**验证手段**：① WCDBSwift 表结构/迁移（`ColumnCodable` 变更、`Table` 字段增删）；② FactoryKit DI 装配改动（`Container+*.swift` 改 graph 影响全局单例生命周期）；③ SwiftUI ↔ RxSwift 遗留桥接（`@Published` 与 `Observable` 共存的内存/线程风险）；④ AppCoordinator 导航枚举扩展（`NavigationDestination` 新增 case 的全量 switch 覆盖）；⑤ async/await 与 `MainActor` 线程归属。 |
 
 **计划切片登记示例（表格形态）：**
 
 | 切片 | 承接 UNIT | doc_type | 文件范围 | 完成信号 | 验证方式 |
 |------|-----------|----------|---------|---------|---------|
-| S1 | `UNIT-story-entity` | `domain-model` | `Domain/Entities/Story.swift`、`Domain/Errors/StoryError.swift` | 实体+不变量+`enum StoryError` 编译通过，零 import（仅 `Foundation`） | `xcodebuild build` + SwiftLint |
-| S2 | `UNIT-story-repository` | `repository` | `Domain/Repositories/IStoryRepository.swift`、`Infrastructure/Persistence/Repositories/StoryRepository.swift`、`Infrastructure/Persistence/Models/StoryObject.swift` | 接口在 Domain、实现在 Infrastructure，mapper 独立，错误映射表逐条落地 | `xcodebuild test`（`StoryRepositoryTests`） |
-| S3 | `UNIT-story-management-usecase` | `usecase` | `App/UseCases/StoryManagement/IStoryManagementUseCase.swift`、`StoryManagementUseCase.swift`、`StoryManagementError.swift` | 公开方法签名级齐全，只注入 repository 接口，业务错误枚举落地 | `xcodebuild test`（`StoryManagementUseCaseTests`） |
-| S4 | `UNIT-home-viewmodel` | `viewmodel` | `UI/Features/Home/ViewModels/HomeViewModel.swift` | `ObservableObject`+`@Published` 三态字段齐全，`@Injected` 注入 usecase 接口 | `xcodebuild test`（`HomeViewModelTests`） |
-| S5 | `UNIT-home-view` + `UNIT-app-coordinator` | `view` / `coordinator` | `UI/Features/Home/Views/HomeView.swift`、`App/Coordinators/AppCoordinator.swift`、`App/DependencyInjection/Container+ViewModels.swift` | View 只展示+输入（无业务），导航走 coordinator，DI 装配补齐 | `xcodebuild build` + SwiftLint |
+| S1 | owner `UNIT-story-repository`; covered `UNIT-story-repository`, `UNIT-story-entity`, `UNIT-story-management-usecase` | `domain-model` / `repository` / `usecase` | `Domain/Entities/Story.swift`、`Domain/Errors/StoryError.swift`、`Domain/Repositories/IStoryRepository.swift`、`Infrastructure/Persistence/Repositories/StoryRepository.swift`、`App/UseCases/StoryManagement/*` | 冻结的领域/持久化/业务合同作为一个独立提交闭合，每个文件保持合法 owner 与单向依赖 | focused `xcodebuild test`（Story domain/repository/usecase tests）+ SwiftLint |
+| S2 | owner `UNIT-home-viewmodel`; covered `UNIT-home-viewmodel`, `UNIT-home-view`, `UNIT-app-coordinator` | `viewmodel` / `view` / `coordinator` | `UI/Features/Home/**`、`App/Coordinators/AppCoordinator.swift`、`App/DependencyInjection/Container+ViewModels.swift` | 页面状态、展示、导航与 DI 在唯一 mutable owner 下闭合，不重写 S1 核心字节 | focused `xcodebuild test`（HomeViewModel/Coordinator）+ build + SwiftLint |
 
 > 横切说明：`coordinator` 切片同时覆盖 FactoryKit DI 装配（`Container+ViewModels.swift` / `Container+UseCases.swift` / `Container+Coordinators.swift`）——新增单元必须有对应 `Factory<I...>` 注册，否则 `@Injected` 运行期解析失败（属可验证完成信号之一）。
 
@@ -108,13 +114,13 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 
 ### 3. 证据（字段合同，post-detail 记录进 `verification-evidence.jsonl`）
 
-> `verification-evidence.jsonl` 只写「全部通过」= 反模式。每条必须带**命令 + 结果（测试名级别）**。
+> `verification-evidence.jsonl` 只写「全部通过」= 反模式。每条必须带**命令 + 结果**；当前 route/packet 声明测试时，结果还必须到测试名级别。
 > 构建系统基准：本平台为 CocoaPods 工作区（`Podfile` 依赖 SwiftLint 0.31.0 / RxSwift / Moya / SwiftyBeaver 等），主用 `xcodebuild`；纯 SPM 包（Domain 抽离为独立 package 时）可用 `swift build` / `swift test`。两套命令按目标仓库实际构建形态二选一，trace 记录实际所用那套。
 
 | 类型 | 要求 | iOS 命令基线（按实际仓库填实参） |
 |------|------|------|
-| 编译 / 静态检查 | 切片编译通过；SwiftLint 零新增违例（存量违例按第 4 节记债）。记录命令 + 通过/失败 + 失败处理。 | SPM 包：`swift build`；工作区：`xcodebuild build -workspace StoryVerse.xcworkspace -scheme StoryVerse -destination 'platform=macOS'`；lint：`Pods/SwiftLint/swiftlint lint --strict --reporter emoji`（CocoaPods 集成的 SwiftLint，Debug 配置） |
-| 测试 | 每个切片对应测试命令 + 结果**到测试名级别**（不只写「通过」）；新增测试清单逐条列出（`XCTestCase` 子类名 + `test*` 方法名）。 | SPM 包：`swift test --filter <ClassName>`；工作区：`xcodebuild test -workspace StoryVerse.xcworkspace -scheme StoryVerse -destination 'platform=macOS' -only-testing:StoryVerseTests/<ClassName>/<testMethod>` |
+| 编译 / 静态检查 | Full/high ordinary slice 只运行 packet 声明的 focused build/test/lint；全 workspace build 与全项目 SwiftLint 只由 Integration 运行。非 Full/high 任务继续按原 route 合同。记录命令 + 通过/失败 + 失败处理。 | ordinary：affected-file SwiftLint 与 packet exact focused command；Integration：SPM `swift build` 或 workspace `xcodebuild build ...` + full SwiftLint |
+| 测试 | Full/high ordinary 仅当 current packet 或 planning audit focused checks 明确声明测试时，才记录测试命令、测试名级别结果、成功/失败路径与新增测试映射；不得为满足通用 trace Gate 自行运行 undeclared tests。Integration 或 non-Full/v1 保留每个切片的完整测试合同。 | 声明测试时使用 packet/audit exact bounded command；Integration 或 non-Full/v1 按实际仓库使用 `swift test` 或 workspace `xcodebuild test`。 |
 | 未验证项 | 无法本地验证的（真机 / 设备能力 / 大模型推理 / TTS 真实音频 / GPU 图像生成 / WhisperKit 设备端表现）→ **显式列出** + 留给哪个环节（Manual QA / 真机池 / 性能基准跑）。 | — |
 
 **测试分层与 doc_type 映射（取证口径，与详细设计「测试映射」八问之七对齐）：**
@@ -135,8 +141,7 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 
 ```
 切片 S3 / UNIT-story-management-usecase / doc_type=usecase
-- 编译：xcodebuild build -workspace StoryVerse.xcworkspace -scheme StoryVerse -destination 'platform=macOS' → BUILD SUCCEEDED
-- 静态检查：Pods/SwiftLint/swiftlint lint --strict → 0 violations（新增文件 3 个）
+- focused 静态检查：Pods/SwiftLint/swiftlint lint <affected-files> --strict → 0 violations
 - 测试：xcodebuild test ... -only-testing:StoryVerseTests/StoryManagementUseCaseTests → 全部 PASS
   · test_createStory_成功_返回持久化Story
   · test_createStory_校验失败_抛StoryManagementError.validationFailed
@@ -171,8 +176,8 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 实现切片可进入 commit，当且仅当：
 
 - **GI-1** `implement.md` 计划合同与 mutable evidence 齐全（计划 / 执行 / 证据 / 阻塞偏差），无空记录、无 TODO 占位。
-- **GI-2** 每个切片承接的 `UNIT-<slug>` 均存在于详细设计（无幽灵引用）；`doc_type` 为 iOS 七类之一且文件范围落在该 doc_type owner 层内。
-- **GI-3** `verification-evidence.jsonl`：每切片有编译命令结果 + 测试命令结果（**测试名级别**）+ SwiftLint 结果；无「全部通过」式无命令证据。
+- **GI-2** 每个切片的真实 `owner_unit` 与 planning audit `covered_units` 均存在于详细设计（无幽灵引用）；涉及的每个 `doc_type` 均为 iOS 七类之一，且每个文件落在对应 doc_type owner 层内。
+- **GI-3** `verification-evidence.jsonl`：Full/high ordinary slice 有 packet focused commands 的结果，且仅在 packet/audit 明确声明测试时提供测试名级别结果；不得自行运行 undeclared tests。Integration 有 full build/regression/SwiftLint 与完整测试结果；非 Full/high 任务按原 route 合同。无「全部通过」式无命令证据。
 - **GI-4** golden-path 锁定项逐项落地（FactoryKit `@Injected` 无手动初始化 / Repository 模式 / `enum Error` 分层 / WCDBSwift 无 CoreData·SwiftData / ViewModel=`ObservableObject`+`@Published` / `private` 在 `private extension`）。
 - **GI-5** 分层依赖律零违反（Domain 零依赖；Domain→App→Infrastructure→UI 单向；View 不直连持久化、不互相导航）。
 - **GI-6** 偏差与存量违例均有记录与处置；未决决策已升级（无私自拍板）。
@@ -185,7 +190,7 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 ## 反模式
 
 - ❌ trace 在 PR 前一次性补写（失去过程证据意义）。
-- ❌ mutable evidence 只写「全部通过」/「编译 OK」（无命令、无测试名、无 SwiftLint 结果）。
+- ❌ mutable evidence 只写「全部通过」/「编译 OK」（无命令、无 SwiftLint 结果；当前 route/packet 声明测试时还缺测试名）。
 - ❌ 偏差不记录，PR diff 与计划对不上靠 reviewer 自己发现。
 - ❌ doc_type 自创（写成 `service` / `controller` / `data-source` / `transport-handler`——必须用 iOS 权威七类）。
 - ❌ 切片不承接 UNIT 或承接不存在的 UNIT（幽灵引用）。

@@ -120,6 +120,52 @@ light 链执行 WX-3/WX-4/WX-5/WX-6 的等价检查（索引在 `design.md` §1�
 - **测试**：Vitest+RTL / Playwright。
 - **混用即缺陷**：把 `getStaticProps`/`getStaticPaths` 当 RSC 写、在 `server-component` 内调 `useState`、写全局 CSS / `strict: false` ——均按 P1 处理。
 
+## Full/high 实现切片计划（与章节批次解耦）
+
+full/high 全目录完成时，写作者必须在 `implement.md` 建立切片 planning
+audit；章节写作批次不是实现切片边界。H5 七类 doc_type、App Router
+server-first 边界和 domain→data→change→render→interactive→ui→route
+归属/依赖律继续生效，但不得机械要求每个 `UNIT`、`doc_type` 或层各占一个
+切片。
+
+1. 每个普通切片记录 `owner_unit`、`covered_units`、`read_paths`、
+   `owned_paths`、`focused_checks`、`parallel_wave`、`resource_locks`、
+   `resource_isolation`、`check_wave`、`independent_commit_value`、
+   `rollback_contract`、`review_context_inputs`、`review_context_bytes` 和
+   `rejected_merge_candidates`。packet 的 `owner_unit` 保持一个真实标量；
+   `covered_units` 可包含多个 Design UNIT。
+2. `owned_paths` 按文件级声明，同一 `parallel_wave` 的一个 mutable path
+   只能有一个 ordinary slice **mutable owner**；不得以 symbol、函数、类或
+   diff hunk 绕过。重叠路径须重新分配唯一 owner 或合并切片。
+3. 普通切片默认 `depends_on=[]`。先在已确认 Detail 中冻结跨切片接口、
+   schema、digest、错误语义和共享数据结构；只有必须读取另一切片实际输出
+   bytes 时才允许非空依赖。UNIT、章节、doc_type、层级或 review 顺序都不是
+   实现依赖。
+4. 每个被修改的测试文件只能有一个 owner。普通切片只跑 focused checks；
+   相同工具状态须以独立 worktree/cache/output 隔离，或记录同一
+   `resource_locks` 并分配串行 `check_wave`；不能隔离时合并。full regression
+   只交给 Integration。
+5. 普通切片默认最多四个。每片必须有可独立提交的用户/合同价值和可独立执行
+   的 rollback；缺任一项就拒绝该切片候选并合并。对考虑过但决定不合并的
+   组合，在 `rejected_merge_candidates` 逐项写切片集合与保持分离的理由；
+   超过四片时还须逐片说明独立价值和 rollback 例外理由。
+6. `review_context_inputs` 必须列出 reviewer 实际选中的精确、有序 inventory
+   （packet、planning audit、target diff/owned paths、相关 frozen contracts
+   与 focused evidence），每项写选择范围和该 snapshot 的 UTF-8 bytes。
+   `review_context_bytes` 是各项的精确整数和，必须 `<= 262144`；禁止 wildcard、
+   “相关文件”或只写未实测不等式。超限先缩减到上述最小输入，再阻断确认。
+7. 普通分组稳定后创建恰好一个 Integration Slice：它依赖全部普通切片，
+   packet coverage 覆盖普通 target union；`integration_owned_paths` 单独限定
+   实际可写路径。Integration 只补集成字节、跨切片 invariant、full regression
+   和最终 spec/sync 检查，不重写普通 owner 的核心字节。
+8. Full/high planning 时，从当前 route/platform contract 解析适用的
+   `h5-implementation-guru-writing` 与 implementation standard，并将其作为
+   只读 guidance 校验：其声明契约须消费已确认的 packet/planning audit，且
+   ordinary checks 须保持 packet-focused。不得把这些 framework 文件分配给
+   application slice，不得依赖固定 `slice_id`、新增 planning-audit 字段或修改
+   已确认的 `implement.md`；实际 framework 维护归属与 receipt bookkeeping 由
+   相应 framework maintenance task、Integration validation 或 coordinator 处理。
+
 ## 输出要求（writing 专属）
 
 每批输出（对齐 backend/flutter 同名 skill 的输出结构）：
@@ -136,7 +182,7 @@ light 链执行 WX-3/WX-4/WX-5/WX-6 的等价检查（索引在 `design.md` §1�
 - `未决问题与升级项`（如有，按强制约束 17 四类分类）
 - `下一目标推荐`：下一批建议与剩余目标清单
 
-全目录完成时追加：`完成判定`（L1 §5.5 / §8 G1~G8）+ `实现 trace 计划合同与 mutable evidence`指引（L1 §7：承接 trace / 依赖 trace / 边界 trace / 测试 trace）+ 送审与人工确认指引（强制约束 18）。
+全目录完成时追加：`完成判定`（L1 §5.5 / §8 G1~G8）+ `实现 trace 计划合同与 mutable evidence`指引（L1 §7：承接 trace / 依赖 trace / 边界 trace / 测试 trace）+ 上述切片 planning audit + 送审与人工确认指引（强制约束 18）。
 
 前置失败输出：`writing_stage=draft_requires_overview_fix` + `draft_blockers`（缺口清单）+ `recommended_next_step`（概要修订动作），**不产出正文**。
 

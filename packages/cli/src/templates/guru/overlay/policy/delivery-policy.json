@@ -152,6 +152,15 @@
       "full_chain": 1
     }
   },
+  "slice_planning": {
+    "full_high_default_strategy": "minimum_commit_stable_parallel_first",
+    "max_ordinary_slices": 4,
+    "mutable_path_overlap": 0,
+    "review_context_target_bytes": 262144,
+    "ordinary_depends_on_default": [],
+    "single_integration_slice": true,
+    "formal_evidence_control_worktree": "serial"
+  },
   "evidence_reuse": {
     "max_planning_cost_ratio_percent": 70,
     "required_outcome": "passed",

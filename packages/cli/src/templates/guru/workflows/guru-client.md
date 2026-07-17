@@ -2,7 +2,7 @@
 
 > 基于 Trellis native workflow 定制（官方定制契约见原版 "Customizing Trellis (for forks)" 节）。
 > 五阶段 = 需求 → 概要设计 → 详细设计 → 实现 → 审核，映射进 Trellis 的 planning/in_progress 状态机：
-> **Phase 1 Plan 承载需求确认、概要/详细 review Gate 与详细确认，Phase 2/3 承载实现与审核（verify 强制）。**
+> **Phase 1 Plan 承载需求确认、概要/详细 review Gate 与详细确认，Phase 2/3 承载实现与审核；verify 按 route 和 slice role 执行：Full/high ordinary 只运行 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 Integration 才运行 project-wide build/analyze/lint/full regression，其他 route 保持既有验证合同。**
 > 规则唯一真源：`.trellis/spec/`（guru-flutter-client spec 库）；本文件只做流程路由，不复写规则正文。
 
 ---
@@ -127,11 +127,11 @@ Lite 不进入 channel/Worker 路径；以下 channel 行为仅适用于 Full。
 
 [workflow-state:in_progress-sub-agent]
 Lite 不派 sub-agent；以下 sub-agent 行为仅适用于 Full。
-实现→质检→spec回写→commit→finish。legacy sub-agent：dispatch trellis-implement/check，prompt 以 Active task: <path> 开头；trace 记执行/证据/偏差；质检按 guru 口径，无 analyze/test 证据不 commit；设计缺陷回 Phase1。
+实现→质检→spec回写→commit→finish。legacy sub-agent：dispatch trellis-implement/check，prompt 以 Active task: <path> 开头；trace 记执行/证据/偏差；Full/high ordinary 只要求 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 Integration 才要求 project-wide build/analyze/lint/full-regression evidence；设计缺陷回 Phase1。
 [/workflow-state:in_progress-sub-agent]
 
 [workflow-state:in_progress-inline]
-实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 spec，编辑后 trellis-check（guru 口径）；验证证据记 `verification-evidence.jsonl` 等 task-local mutable evidence，无证据不 commit；设计缺陷回 Phase1。
+实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 spec，编辑后 trellis-check（guru 口径）；Full/high ordinary 只记录 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 Integration 记录 project-wide build/analyze/lint/full-regression evidence，Small/Micro/Lite/non-Full/v1 仍按原 route 记录验证；缺少当前角色必需证据不得 commit，设计缺陷回 Phase1。
 [/workflow-state:in_progress-inline]
 
 ### Phase 3: Finish（审核与收尾）
@@ -262,15 +262,22 @@ Lite 在一次当前 requirements digest 确认后自动 host-inline 实现并�
 
 Full 与 Trellis 原版同构（dispatch 协议、guarded commit 与 finish-work 收尾不变），但 unchanged scope 不得再拆分 requirements/detail/commit 用户确认：
 
+**Full/high minimum-stable slice lifecycle（Agent planning SSOT）**：
+
+- `Design UNIT` 只负责需求、行为和 invariant 追溯；`Implementation Slice` 才是独占修改、focused validation、review、commit 与 rollback 单元。多个 Design UNIT 可合并进一个 Implementation Slice，但 packet 继续只保留一个真实 `owner_unit`，其余写入 `implement.md.covered_units`；禁止按 UNIT、设计章节、doc_type 或技术层机械生成 slice。
+- 所有四端都遵循 delivery policy 的同一组 Agent-only 默认值：`full_high_default_strategy=minimum_commit_stable_parallel_first`、`max_ordinary_slices=4`、`mutable_path_overlap=0`、`review_context_target_bytes=262144`、`ordinary_depends_on_default=[]`、`single_integration_slice=true`、`formal_evidence_control_worktree=serial`。Detail 应先冻结接口、schema、digest、错误语义和共享数据结构；共享 mutable path 必须重新分配唯一 owner 或合并，资源锁与 focused test 修改范围必须隔离、分波次或触发合并。
+- `guru_supervise.py implement-slices ... --dry-run` 只输出 dispatch plan/brief，不启动 sub-agent，也不是实际 spawn 或 writer-parallel 的证明。完整 packet 集可能因 Integration coverage overlap 被当前 `slice-plan` 保守标为 serial；coordinator 必须回读 Detail planning audit，只派发 ownership 不重叠、`depends_on=[]` 且工具资源可隔离的 ordinary Implementation Slices。
+- ordinary implementation 可以并发，但同一 snapshot 只启动一个 semantic reviewer；Full/high ordinary 只运行 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 `Integration Slice` 才运行 project-wide build/analyze/lint/full regression；Small、Micro、Lite、non-Full 和 v1 保留原 route verification。正式 staged review、commit 与 receipt 只在唯一 control worktree 串行收口；Integration 最后执行跨 slice invariants 和最终组合验证，其普通 target union 只是 review coverage，不授予重写 ordinary owner 核心字节的权限。
+
 #### 2.1 实现 `[required · repeatable]`
 
 进入本节的最低硬条件是 `python3 .trellis/scripts/guru/guru_gate.py check-implementation <task-dir>` 通过；`guru_supervise.py implement|check|implement-check` 会在启动 worker 前自动执行该 gate，`planning` 状态一律 fail-closed。
 
-dispatch-mode aware：主会话先运行 `python3 .trellis/scripts/guru/guru_supervise.py implement-slices <task-dir> --dry-run --backend auto` 读取 `codex.dispatch_mode` 与 slice-plan；`sub-agent` 模式按返回的 `trellis-implement` brief 派发平台 sub-agent（prompt 第一行必须是 `Active task: <path>`，且不得再嵌套 spawn implement/check）；`channel` 模式才使用官方 channel worker/`guru_supervise.py implement-check` 命令；`inline` 模式串行手工执行。必要时可拆分 `implement` 与 `check`。worker 注入存在的 jsonl、任务产物和平台 implementation writing/review skill，等待后端的 done/error/killed 或平台 final status。**P1 high-risk full_chain slice（packet 机制）**：仅当 selected route 为 `full_chain` 且 risk 为 high 时要求 `--slice <unit_id>`（多 packet 必填，单 packet 自动选）；supervisor 进修复循环前做 packet preflight + scope preflight（packet 缺失/非法/多义 → `PACKET_*`、dirty 越界 packet `target_paths`/`dirty_state.unrelated` → `SCOPE_INVALID`，均硬停 exit2、不启 worker、不进 repairable loop）；每轮 implement 成功后 supervisor 独立执行 packet `deterministic_checks`（绑定本轮 diff，hard Gate）。编码按平台 Guru implementation writing/review 口径：组合需求真正触达的迷你路径，逐片实现；执行/验证证据写入 task-local mutable evidence，不把 `implement.md` 当作 detail 确认后的可变证据文件。发现 `DETAIL_DEFECT` / `OVERVIEW_DEFECT` / `REQ_BLOCKER` 按 Phase 1 回退。
+dispatch-mode aware：主会话先运行 `python3 .trellis/scripts/guru/guru_supervise.py implement-slices <task-dir> --dry-run --backend auto` 读取 `codex.dispatch_mode` 与 slice-plan；该命令只产生 dispatch plan/brief，实际 spawn 必须由 coordinator 另行执行并留存 dispatch 记录。`sub-agent` 模式按返回的 `trellis-implement` brief 派发平台 sub-agent（prompt 第一行必须是 `Active task: <path>`，且不得再嵌套 spawn implement/check）；`channel` 模式才使用官方 channel worker/`guru_supervise.py implement-check` 命令；`inline` 模式串行手工执行。必要时可拆分 `implement` 与 `check`。worker 注入存在的 jsonl、任务产物和平台 implementation writing/review skill，等待后端的 done/error/killed 或平台 final status。**P1 high-risk full_chain slice（packet 机制）**：仅当 selected route 为 `full_chain` 且 risk 为 high 时要求 `--slice <unit_id>`（多 packet 必填，单 packet 自动选）；supervisor 进修复循环前做 packet preflight + scope preflight（packet 缺失/非法/多义 → `PACKET_*`、dirty 越界 packet `target_paths`/`dirty_state.unrelated` → `SCOPE_INVALID`，均硬停 exit2、不启 worker、不进 repairable loop）；每轮 implement 成功后 supervisor 独立执行 packet `deterministic_checks`（绑定本轮 diff，hard Gate）。编码按平台 Guru implementation writing/review 口径，实现 Detail-approved Implementation Slice 覆盖的最小完整行为，而不是把 UNIT/doc_type/技术层机械转换为 slices；执行/验证证据写入 task-local mutable evidence，不把 `implement.md` 当作 detail 确认后的可变证据文件。发现 `DETAIL_DEFECT` / `OVERVIEW_DEFECT` / `REQ_BLOCKER` 按 Phase 1 回退。
 
 #### 2.2 质检 `[required · repeatable]`
 
-check 可作为 `implement-check` 的拆分子命令运行：`python3 .trellis/scripts/guru/guru_supervise.py check <task-dir>`。审核按平台 Guru review 口径覆盖需求/设计/实现合同一致性、分层依赖律、合规红线与验证证据；无 analyze/test/lints/compliance 证据不得进入 commit。需要只补 commit gate 所需结构化 review record 时，使用 `python3 .trellis/scripts/guru/guru_supervise.py implementation-review <task-dir> --staged`（或 `--slice <unit_id> --staged`），该入口只跑 deterministic checks + check worker，不启动 implement worker，不修改 confirmed detail artifacts。**P1 完成条件（有 packet）**：check worker 置顶输出 7 字段 verdict + 逐条 `invariant_status.*`；clean 须同时满足 **deterministic passed（supervisor 执行 + worker 自报双过）+ invariant_coverage all_passed（supervisor 从 packet invariants 聚合重算）+ dirty_scope clean/isolated + review_provider 满足 packet `semantic_review_provider` + 无 blocker/should-fix**；缺字段或取非通过值却声明 clean → `MALFORMED_REVIEW_OUTPUT` 硬停。**OCR 仅 optional bounded provider**（用户显式触发/高风险抽检），不作默认完成条件；`No comments generated` 不作退出目标。每轮 review 记录由单一 writer 追加 `review-records/implementation-reviews.jsonl`（可审计回放）。
+check 可作为 `implement-check` 的拆分子命令运行：`python3 .trellis/scripts/guru/guru_supervise.py check <task-dir>`。审核按平台 Guru review 口径覆盖需求/设计/实现合同一致性、分层依赖律、合规红线与 route/slice-role 验证证据：Full/high ordinary 只核对 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 Integration 才核对 project-wide build/analyze/lint/full regression，Small/Micro/Lite/non-Full/v1 沿用原验证合同；缺少当前角色要求的 evidence/compliance 证据不得进入 commit。需要只补 commit gate 所需结构化 review record 时，使用 `python3 .trellis/scripts/guru/guru_supervise.py implementation-review <task-dir> --staged`（或 `--slice <unit_id> --staged`），该入口只跑 deterministic checks + check worker，不启动 implement worker，不修改 confirmed detail artifacts。**P1 完成条件（有 packet）**：check worker 置顶输出 7 字段 verdict + 逐条 `invariant_status.*`；clean 须同时满足 **deterministic passed（supervisor 执行 + worker 自报双过）+ invariant_coverage all_passed（supervisor 从 packet invariants 聚合重算）+ dirty_scope clean/isolated + review_provider 满足 packet `semantic_review_provider` + 无 blocker/should-fix**；缺字段或取非通过值却声明 clean → `MALFORMED_REVIEW_OUTPUT` 硬停。**OCR 仅 optional bounded provider**（用户显式触发/高风险抽检），不作默认完成条件；`No comments generated` 不作退出目标。每轮 review 记录由单一 writer 追加 `review-records/implementation-reviews.jsonl`（可审计回放）。
 
 #### 2.3 回退 `[on demand]`
 
@@ -278,7 +285,7 @@ check 可作为 `implement-check` 的拆分子命令运行：`python3 .trellis/s
 
 #### 3.1 质量验证 `[required · repeatable]`
 
-复跑与变更范围匹配的验证命令，确认 `verification-evidence.jsonl`（或等价 task-local mutable evidence）已记录命令、结果与说明。若必须修改 `implement.md`，视为主动返回 detail Gate。验证失败回 2.1/2.2；验证缺失不得进入 3.3。
+按 route/slice role 复跑验证：Full/high ordinary 只运行 packet 声明的 `deterministic_checks` 与 focused evidence；唯一 Integration 运行 project-wide build/analyze/lint/full regression；Small/Micro/Lite/non-Full/v1 运行各自原 route 的验证。确认 `verification-evidence.jsonl`（或等价 task-local mutable evidence）已记录命令、结果与说明。若必须修改 `implement.md`，视为主动返回 detail Gate。当前角色验证失败回 2.1/2.2；必需证据缺失不得进入 3.3。
 
 #### 3.2 Debug 复盘 `[on demand]`
 
@@ -292,7 +299,7 @@ check 可作为 `implement-check` 的拆分子命令运行：`python3 .trellis/s
 
 提交前先运行 `python3 .trellis/scripts/guru/guru_gate.py commit-plan [task-dir]` 获取机器可读 JSON，按其中 `route`、`commit_mode`、`allowed_stage_paths`、`forbidden_stage_paths`、`can_commit_now`、`split_required`、`blocking_reasons`、`review_coverage` 汇报 staged scope 和建议切分；计划可提交时仍必须通过 `python3 .trellis/scripts/guru/guru_gate.py check-commit <task-dir>` 或等价 PreToolUse hook。full/lite 的既有 Guru gate 语义不降：full 链要求任务已 `in_progress`，且 staged implementation paths 被当前 clean implementation review set 覆盖（切片 review 集或完整 `--staged` review），不得只信最新一条 review row；lite route 仍需 scoped 验证和 review 证据（产物形态兼容 `guru_chain=light`）。若 commit gate 只缺 required implementation review record，恢复命令是 `guru_supervise.py implementation-review <task-dir> --staged`，能映射 slice 时优先用 `--slice <unit_id> --staged`，不是 `implement-check`。`small_inline` 不能直接 commit；低风险一旦需要 commit 必须走 `micro_task` 并由任务目录 `gate-contract.json` 约束 staged scope。若实现已发生但缺有效合同，且 staged scope 是低风险 scoped implementation diff，commit-plan 必须进入 post-implementation route recovery：阻断 direct commit，只推荐创建/切换 `micro_task` 并运行 `init-contract --route micro_task --risk low`，不得倒逼补 full PRD / overview / detail。`gate-degradations.jsonl` 只可作为真实失败与补偿检查证据，不能预授权跳过 gate；high/full_chain 是推荐与 selected route 组合，用户选择较轻 route 时必须由 `route_selection` 审计承接。
 
-提交前展示 `commit-plan` 摘要、验证证据与建议 commit 切分。若 commit 已包含在当前 Lite/Full 唯一确认批次或用户初始指令中，则通过 Gate 后自动执行；否则停在可逆 commit-ready，不消耗第二次需求确认。不 amend、不 push；只处理本任务相关文件，不回滚用户改动。
+提交前展示 `commit-plan` 摘要、当前 route/slice role 的验证证据与建议 commit 切分：Full/high ordinary 只展示 packet 声明的 `deterministic_checks` 与 focused evidence，Integration 展示 project-wide build/analyze/lint/full regression，Small/Micro/Lite/non-Full/v1 展示原 route evidence。若 commit 已包含在当前 Lite/Full 唯一确认批次或用户初始指令中，则通过 Gate 后自动执行；否则停在可逆 commit-ready，不消耗第二次需求确认。不 amend、不 push；只处理本任务相关文件，不回滚用户改动。
 
 #### 3.5 收尾提醒
 

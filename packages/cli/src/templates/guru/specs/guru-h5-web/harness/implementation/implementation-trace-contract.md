@@ -52,6 +52,15 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 
 只允许 `required=true` 的 `critical|high` 决策。`decision_id` 必须跨 slice 唯一，slice 和 `invariant_ids` 必须与 packet 精确匹配；每个 `source_ref` 必须指向 Detail artifact 中恰好出现一次且包含该 decision ID 的 anchor。决策确认后将 `status` 改为 `resolved`，并添加非空 `resolution.choice` 与 `resolution.evidence`；未确认时不得伪造 `resolution`。Detail 结构检查、Detail review/confirm、risk packet 和 guarded start 必须解析同一份清单。
 
+## Full/high slice planning audit
+
+Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少的 commit-stable slices 和最大的安全并发宽度**，不是按 UNIT、`doc_type` 或章节机械拆分。每个普通 slice 登记 `slice_id`、真实标量 `owner_unit`、`covered_units`、文件级 `owned_paths`、`read_paths`、`depends_on`、`parallel_wave`、`independent_commit_value`、`rollback_contract`、`resource_locks` / 隔离方式、focused checks 和 reviewer context inputs/bytes。`covered_units` 是包含 `owner_unit` 在内的完整 Design UNIT 集合，只属于 planning audit；不得新增或重定义 packet / evidence schema 字段。
+
+- 一个普通 mutable path 在同一 implementation wave 只有一个 owner；symbol、函数或 diff hunk 不能绕过文件级 ownership。共享测试文件也必须唯一归属、分波次或合并。
+- 多个 Design UNIT 和多个合法 `doc_type` 可以合并为一个 implementation slice，只要每个文件仍遵守 H5 owner 与 server/client 分层、合同已冻结且该 slice 有独立提交与回滚价值。`depends_on` 默认空；UNIT 编号或 domain-type → data-access → render/interaction 写作顺序本身不是实现依赖。无法冻结且没有独立提交价值的候选 slices 必须合并。
+- Full/high 恰好一个 Integration Slice。其 packet `target_paths` 是最终 union snapshot 的 review coverage；planning audit 的 `integration_owned_paths` 才是实际可写范围。普通 slices 只跑 focused checks，full regression 只出现在 Integration deterministic checks。
+- 最终语义/静态证据必须检查 workflow 实际派发的 Implementation writer Skill 及其引用的 implementation standards；仅 Planner、Detail 或 reviewer parity 一致不足以满足 Integration。若任一 active Full/high ordinary consumer 仍要求 project/global build、analyze、lint 或 full regression command，或仍按 UNIT、layer、`doc_type`、ViewModel、UseCase 或 component 机械重切片，按 `IMPLEMENT_DEFECT` 阻断。
+- 每个 v2 packet 保留并填实 `review_evidence_schema_version=2`、`requirements_design_inputs`、`target_paths`、`deterministic_checks`、`semantic_review_provider`、`invariants` 与 `integration_slice`。禁止为结构整齐默认生成一 UNIT 一 slice 或一 `doc_type` 一 slice。
 
 ## 0. 装载与硬前置
 
@@ -78,54 +87,52 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 
 v1 的 L2（render/interactive/data 三元组，对应 flutter 的 controller/usecase/repository-datasource）：`detail-type-server-component.md` / `detail-type-client-component.md` / `detail-type-data-access.md`；其余四类（`route` / `ui-component` / `domain-type` / `server-action`）为 pending（按 L1 合同八问展开，full 链须显式 `L2豁免` 或先补 L2）。trace 不替这些类型补造 L2 决策——触碰 pending 类型且上游缺 L2 时按 §4 阻塞回退。
 
-**分层依赖律（归属硬基准，trace 中改动跨层即 fail）**：
+**分层依赖律（归属硬基准；文件越出对应 owner 或依赖反向即 fail，同一 slice 覆盖多个合法 owner 本身不 fail）**：
 - 服务端链：`route → server-component → data-access → domain-type`。
 - 交互链：`client-component → ui-component`。
 - 变更链：`server-action → data-access`。
 - 私有数据获取 / secret 只能出现在 `server-component` / `data-access` / `server-action`；`client-component` 直取私有数据或 secret → fail。
 
-**写作/实现顺序（自底向上，与详细设计同序）**：`domain-type → data-access → server-action → server-component → client-component → ui-component → route`。trace 的执行顺序应与之一致——下层单元未落地且未验证前，不开工依赖它的上层切片。
+**写作/实现顺序（自底向上，与详细设计同序）**：`domain-type → data-access → server-action → server-component → client-component → ui-component → route`。该顺序约束代码依赖方向；若接口与语义已在 Detail 冻结，不自动转化为 implementation slice 的 `depends_on`。
 
 ---
 
 ## 1. 计划（开工前写）
 
-开工前把任务拆成切片并登记，**每片小到可独立 review**。切片落表，post-detail mutable evidence 回填时逐片对应。
+开工前按 slice planning audit 登记最少的 commit-stable slices。切片落表，post-detail mutable evidence 回填时逐片对应。
 
 | 字段 | 要求 |
 |------|------|
-| 任务切片 | 每片挂**承接的设计单元编号 `UNIT-<slug>`**（裸 token，幽灵引用被 trace-matrix 拦截）+ 该单元的 doc_type（七类之一）+ 文件范围（相对路径）+ 完成信号 + 验证方式。切片不得跨多个 doc_type 合并；一个 `UNIT` 若需多片实现，各片仍各自挂同一 UNIT 并写明子范围。 |
-| 执行顺序 | 按分层依赖律自底向上排：`domain-type → data-access → server-action → server-component → client-component → ui-component → route`。人工从最小、最底层切片开始；上层切片的前置是其依赖的下层切片"完成信号 + 证据"齐备。 |
+| 任务切片 | 每片挂真实标量 `owner_unit`、planning audit 中的 `covered_units`、涉及的 H5 权威 `doc_type`、文件范围、完成信号与验证方式。多个 `doc_type` 可在 ownership、冻结合同与独立交付价值要求同时满足时合并；逐文件 owner 与 server/client 边界仍是硬约束。 |
+| 执行顺序 | 按 audit 中真实 `depends_on` 与 `parallel_wave` 排序。`domain-type → data-access → server-action → server-component → client-component → ui-component → route` 继续约束依赖方向，不以层级或 doc_type 自动串行 slices。 |
 | 风险点 | 逐条预判高风险改动并写验证手段。H5 高风险面（必查）：① server/client 边界误判（把私有数据获取或 secret 漏进 `'use client'` → 私密泄露 / 打包进客户端 bundle）；② `'use client'` 边界过大（交互最小化原则被破坏，水合体积膨胀）；③ Server/Client Component 序列化边界（向 Client Component 传不可序列化 props，如函数、Date 在 RSC payload 中的处理）；④ metadata/SEO 标准化（route 段缺 `generateMetadata` 或静态 `metadata`）；⑤ 错误边界（route 段缺 `error.tsx` / `not-found.tsx`）；⑥ 样式隔离（全局 CSS 污染、Tailwind 与 CSS Modules 混用规则）；⑦ 缓存/重新验证语义（`fetch` cache、`revalidatePath`/`revalidateTag`、`dynamic`/`revalidate` 段配置）；⑧ App Router vs Pages Router 形态混淆（参考示例为 Pages Router，生产为 App Router）。 |
 
 ### 1.1 切片计划表（模板）
 
-每个切片写一行 `### UNIT-<slug>`，正文用下表。完成信号必须是**可机器验证的信号**，不得写"功能正常"这类主观词。
+每个切片写一行 `### <slice_id>`，正文用下表。完成信号必须是**可机器验证的信号**，不得写"功能正常"这类主观词。
 
 | 项 | 内容 |
 |----|------|
-| 承接单元 | `UNIT-<slug>`（裸 token；必须存在于详细设计） |
+| 承接单元 | 真实 `owner_unit` + `covered_units`（裸 `UNIT-<slug>` token；必须存在于详细设计） |
 | 承接行为 | `BHV-NNN`、`BHV-MMM`（逐条；必须存在于 prd） |
-| doc_type | 七类之一（例：`server-component`） |
+| doc_type | 涉及的权威七类之一或多类（例：`domain-type` + `data-access`）；逐文件归属必须合法 |
 | 文件范围 | 相对路径清单（例：`app/posts/[slug]/page.tsx`、`lib/posts.ts`） |
-| 完成信号 | 例："`tsc --noEmit` 0 error；该 route 在 `next build` 标记为 `●  (SSG)` / `ƒ  (Dynamic)` 符合设计；新增 vitest 用例 `posts.parse > 解析 frontmatter` 通过" |
-| 验证方式 | 引用 §3 证据命令（`tsc --noEmit` / `next build` / `eslint` / `vitest`），逐项写预期结果 |
+| 完成信号 | Full/high ordinary 例："受影响文件 `eslint` 0 error；新增 vitest 用例 `posts.parse > 解析 frontmatter` 通过"；Integration 再记录全项目 `tsc --noEmit` 与 `next build` route 形态。 |
+| 验证方式 | Full/high ordinary 引用 packet 的 exact focused commands；Integration 引用 §3 的全项目类型、build、lint、test commands。非 Full/high 任务继续按原 route 合同。 |
 
 > 示例（基于 blog 示例的内容模型基线，落地为 App Router 生产形态）：
 >
 > ```
-> ### UNIT-post-frontmatter-schema   (doc_type: domain-type)
-> 承接行为：BHV-012（文章元数据必须含 title/date/description）
-> 文件范围：lib/schema/post.ts（zod schema + 推导出的 TS 类型）
-> 完成信号：tsc --noEmit 0 error；vitest 用例 "post schema > 缺 title 时校验失败" 通过
-> 验证方式：tsc --noEmit；pnpm vitest run lib/schema/post.test.ts
->
-> ### UNIT-posts-data-access         (doc_type: data-access)
-> 承接行为：BHV-013（按 slug 读取单篇文章）
-> 文件范围：lib/posts.ts（读 MDX 文件 + gray-matter 解析 + 用 UNIT-post-frontmatter-schema 校验）
-> 依赖：UNIT-post-frontmatter-schema（domain-type，须先完成）
-> 完成信号：vitest 用例 "getPostBySlug > 命中 / 未命中返回 null" 通过；eslint 0 error
-> 验证方式：pnpm vitest run lib/posts.test.ts；pnpm eslint lib/posts.ts
+> ### SL-post-content
+> owner_unit：UNIT-posts-data-access
+> covered_units：UNIT-post-frontmatter-schema、UNIT-posts-data-access
+> doc_type：domain-type、data-access
+> 承接行为：BHV-012（frontmatter schema）、BHV-013（按 slug 读取文章）
+> 文件范围：lib/schema/post.ts、lib/posts.ts 及其唯一归属测试
+> depends_on：[]（schema 与读取合同已在 Detail 冻结）
+> 完成信号：schema 拒绝非法 frontmatter；data-access 用该 schema 解析并正确处理命中/未命中；
+>           逐文件 owner 与 data-access → domain-type 方向合法
+> 验证方式：pnpm vitest run lib/schema/post.test.ts lib/posts.test.ts；pnpm eslint lib/schema/post.ts lib/posts.ts
 > ```
 >
 > **示例实证 vs 生产级补充**：blog 示例用 `gray-matter` 在 `gen-rss.js`（Node 脚本，构建期）解析 frontmatter，且 `tsconfig.json` 中 `strict: false`。生产级补充：data-access 的 frontmatter 解析必须经 `domain-type` 的 zod schema 校验后再消费（示例未做校验），且 `tsconfig` 必须 `strict: true`——这两点在切片计划中作为"生产级补充"显式标注，不能以"示例没做"为由省略。
@@ -150,14 +157,14 @@ v1 的 L2（render/interactive/data 三元组，对应 flutter 的 controller/us
 
 ## 3. 证据（字段合同，post-detail 记录进 `verification-evidence.jsonl`）
 
-`verification-evidence.jsonl` 是 Gate 取证的核心。**只写"全部通过"无效**——必须给命令、给关键输出、给测试名。所有切片的完成信号都要在此回填为可复现命令。
+`verification-evidence.jsonl` 是 Gate 取证的核心。**只写"全部通过"无效**——必须给命令和关键输出；当前 route/packet 声明测试时还必须给测试名。所有切片的完成信号都要在此回填为可复现命令。Full/high ordinary slice 只运行 packet 声明的 focused checks；全项目 typecheck、build、lint 与 full regression 只由 Integration 运行。非 Full/high 任务继续按原 route 合同。
 
 | 类型 | 命令（统一口径） | 要求 |
 |------|------|------|
-| 类型检查 | `pnpm exec tsc --noEmit`（或 `npx tsc --noEmit`） | 在 `strict: true` 下 **0 error**；贴出 error 数量与（若有）处理记录。strict 是 golden-path 锁定项，不得临时关 strict 或加 `// @ts-ignore` 绕过——确需抑制须在偏差节写明并升级。 |
-| 构建 | `pnpm next build`（或 `npx next build`） | 构建成功；贴出受影响 route 的形态行（`○ Static` / `● SSG` / `ƒ Dynamic` / ISR `revalidate`），与设计预期逐条对照；确认无 "Error: ... can not be used in Client Component" 类 server/client 边界报错；确认 First Load JS 无异常膨胀（`'use client'` 最小化的体现）。 |
-| Lint | `pnpm eslint .`（或针对改动文件 `pnpm eslint <paths>`） | **0 error**（warning 逐条说明保留/修复）；必须启用并通过 `eslint-plugin-react-hooks` 与 Next.js 官方规则集（`next/core-web-vitals`），后者会拦截 server/client 误用与 `next/image`/`next/link` 误用。 |
-| 单元测试 | `pnpm vitest run <path>`（CI 用 `vitest run` 非 watch） | 每个切片对应测试命令 + 结果，**精确到测试名**（不只写"通过"）；新增测试逐个列清单。覆盖：成功路径 + 全部失败路径（data-access 的 fetch 失败/解析失败/未命中；server-action 的校验失败/写入失败；domain-type 的 schema 拒绝非法输入）。 |
+| 类型检查 | Integration：`pnpm exec tsc --noEmit`（或 `npx tsc --noEmit`）；ordinary：仅 packet 声明的 focused type command | 在 `strict: true` 下 **0 error**；贴出 error 数量与（若有）处理记录。strict 是 golden-path 锁定项，不得临时关 strict 或加 `// @ts-ignore` 绕过。 |
+| 构建 | Integration：`pnpm next build`（或 `npx next build`）；ordinary：不运行全局 build，除非 packet 明确声明 bounded build | Integration 构建成功并贴出受影响 route 的形态行，与设计预期逐条对照；确认无 server/client 边界报错与异常 bundle 膨胀。 |
+| Lint | ordinary：`pnpm eslint <paths>`；Integration：`pnpm eslint .` | **0 error**（warning 逐条说明保留/修复）；启用 React Hooks 与 Next.js 官方规则集，拦截 server/client、image/link 误用。 |
+| 单元测试 | Full/high ordinary 仅在 current packet 或 planning audit focused checks 明确声明测试时运行 bounded `pnpm vitest run <path>`；不得为满足通用 trace Gate 自行运行 undeclared tests。Integration 或 non-Full/v1 使用 route 合同指定命令。 | 声明测试时记录精确测试名、新增测试清单和成功/失败路径；Integration 或 non-Full/v1 保留每个切片的完整测试合同。 |
 
 ### 3.1 切片粒度的测试挂载（UNIT → 测试）
 
@@ -173,11 +180,10 @@ v1 的 L2（render/interactive/data 三元组，对应 flutter 的 controller/us
 | `ui-component` | 纯展示快照/可访问性（RTL） | UNIT |
 | `route` | 段约定与 metadata（`generateMetadata` 返回、错误边界存在性）；端到端归 Playwright | UNIT（段单元）/ E2E（标注留给 Playwright 环节） |
 
-`verification-evidence.jsonl` 模板（逐切片）：
+`verification-evidence.jsonl` 模板（Full/high ordinary focused evidence）：
 
 ```
 [UNIT-posts-data-access] data-access
-- tsc --noEmit: 0 error
 - eslint lib/posts.ts: 0 error
 - vitest run lib/posts.test.ts:
     ✓ getPostBySlug > 命中已知 slug 返回解析后的 Post
@@ -185,6 +191,8 @@ v1 的 L2（render/interactive/data 三元组，对应 flutter 的 controller/us
     ✓ getPostBySlug > frontmatter 缺 title 时抛 SchemaError（经 UNIT-post-frontmatter-schema 校验）
   3 passed
 ```
+
+Integration 再追加全项目 `tsc --noEmit`、`next build`、全量 lint 与 full regression 证据；ordinary slice 不得用这些全局命令替代 packet 声明的 focused checks。
 
 ### 3.2 未验证项（显式列出 + 留给哪个环节）
 
@@ -249,16 +257,16 @@ trace 的命令与判定依赖项目约定的实际取值。开工前在 `.trell
 实现 Gate 通过的充要条件，任一不满足即"不进 commit"：
 
 1. **计划合同与 mutable evidence 齐全**：`implement.md` §1 计划、`implementation-evidence.jsonl` 执行/阻塞偏差、`verification-evidence.jsonl` 证据均非空且实质（无 TODO/占位/空记录）。
-2. **证据可复现**：`tsc --noEmit`（strict，0 error）、`next build`（成功 + route 形态对照）、`eslint`（0 error）、`vitest run`（测试名级别，成功 + 全部失败路径）四类证据齐备且有命令与输出；只写"通过"判 fail。
-3. **切片挂 UNIT 闭合**：每个切片挂裸 `UNIT-<slug>` 且 trace-matrix 无断链；幽灵引用 / 无承接行为 fail。
+2. **证据可复现**：Full/high ordinary 的 packet focused checks 齐备且有命令与输出；Integration 的 `tsc --noEmit`（strict，0 error）、`next build`（成功 + route 形态对照）、全项目 `eslint` 与 full test regression 齐备。非 Full/high 任务按原 route 合同。只写"通过"判 fail。
+3. **切片挂 UNIT 闭合**：每个切片的真实 `owner_unit` 与 planning audit `covered_units` 均使用裸 `UNIT-<slug>` 且 trace-matrix 无断链；幽灵引用 / 无承接行为 fail。
 4. **分层依赖律未违反**：server/client 边界正确（私有数据/secret 不入 `client-component`）、`'use client'` 最小化、`route → server-component → data-access → domain-type` 与交互链/变更链无反向。
-5. **doc_type 合规**：切片所标 doc_type 严格属权威七类，无改名/增减；触碰 pending 类型且无 `L2豁免`/L2 → 阻塞。
+5. **doc_type 合规**：切片涉及的每个 doc_type 均严格属权威七类，无改名/增减；逐文件归属合法；触碰 pending 类型且无 `L2豁免`/L2 → 阻塞。
 6. **偏差与未验证项闭合**：计划外/未做项有原因，未验证项有明确后续环节归属，上游缺陷已回退修订并留记录。
 
 ### 反模式（命中即 fail）
 
 - ❌ trace 在 PR 前一次性补写（失去过程证据意义）。
-- ❌ mutable evidence 只写"全部通过"（无命令、无测试名、无 route 形态对照）。
+- ❌ mutable evidence 只写"全部通过"（无命令、无 route 形态对照；当前 route/packet 声明测试时还缺测试名）。
 - ❌ 偏差不记录，PR diff 与计划对不上靠 reviewer 自己发现。
 - ❌ 为过 `tsc` 临时关 `strict` 或撒 `// @ts-ignore`、`any` 绕过类型（不记入偏差）。
 - ❌ 把私有数据获取 / secret 写进 `'use client'` 组件（边界泄露）。

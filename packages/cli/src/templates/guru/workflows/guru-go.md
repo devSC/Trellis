@@ -2,7 +2,7 @@
 
 > 基于 Trellis native workflow 定制（官方定制契约见原版 "Customizing Trellis (for forks)" 节）。
 > 五阶段 = 需求 → 概要设计 → 详细设计 → 实现 → 审核，映射进 Trellis 的 planning/in_progress 状态机：
-> **Phase 1 Plan 承载需求确认、概要/详细 review Gate 与详细确认，Phase 2/3 承载实现与审核（verify 强制）。**
+> **Phase 1 Plan 承载需求确认、概要/详细 review Gate 与详细确认，Phase 2/3 承载实现与审核；verify 按 route 和 slice role 执行：Full/high ordinary 只运行 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 Integration 才运行 project-wide build/vet/lint/full regression，其他 route 保持既有验证合同。**
 > 平台形态：Go monorepo（safa-land 形态），服务在 `services/<svc>/internal/{app,config,transport,service,repository,domain,auth}`，`cmd/<svc>/main.go` 单一入口，跨服务契约在 `packages/contracts/`。
 > 规则唯一真源：`.trellis/spec/`（guru-go-backend spec 库）；本文件只做流程路由，不复写规则正文。
 
@@ -64,7 +64,7 @@
 ```
 Phase 1: Plan    → 需求 Gate → 概要 Gate → 详细 Gate → 激活任务
 Phase 2: Execute → 实现（golden-path 迷你路径 + trace）→ 质检（guru 审核口径）
-Phase 3: Finish  → 验证（go build/vet/test + golangci-lint）→ 萃取回写 spec → commit → 收尾
+Phase 3: Finish  → route/slice-role 验证 → 萃取回写 spec → commit → 收尾
 ```
 
 ### Request Triage
@@ -124,11 +124,11 @@ Lite 不进入 channel/Worker 路径；以下 channel 行为仅适用于 Full。
 
 [workflow-state:in_progress-sub-agent]
 Lite 不派 sub-agent；以下 sub-agent 行为仅适用于 Full。
-实现→质检→spec回写→commit→finish。legacy sub-agent：dispatch trellis-implement/check，prompt 以 Active task: <path> 开头；trace 记执行/证据/偏差；质检按 guru 口径，无 go build/vet/test 证据不 commit；设计缺陷回 Phase1。
+实现→质检→spec回写→commit→finish。legacy sub-agent：dispatch trellis-implement/check，prompt 以 Active task: <path> 开头；trace 记执行/证据/偏差；Full/high ordinary 只要求 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 Integration 才要求 project-wide go build/vet/lint/full-regression evidence；设计缺陷回 Phase1。
 [/workflow-state:in_progress-sub-agent]
 
 [workflow-state:in_progress-inline]
-实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 golden-path/约定/harness，编辑后 trellis-check（guru 口径）；go build/vet/test 证据记 `verification-evidence.jsonl` 等 task-local mutable evidence，无证据不 commit；设计缺陷回 Phase1。
+实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 golden-path/约定/harness，编辑后 trellis-check（guru 口径）；Full/high ordinary 只记录 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 Integration 记录 project-wide go build/vet/lint/full-regression evidence，Small/Micro/Lite/non-Full/v1 仍按原 route 记录验证；缺少当前角色必需证据不得 commit，设计缺陷回 Phase1。
 [/workflow-state:in_progress-inline]
 
 ### Phase 3: Finish（审核与收尾）
@@ -140,7 +140,7 @@ Lite 不派 sub-agent；以下 sub-agent 行为仅适用于 Full。
 - 3.5 收尾提醒
 
 [workflow-state:completed]
-代码已提交。运行 /trellis:finish-work；工作区不净先回 3.4。go build/vet/test 与 golangci-lint 证据须已落 `verification-evidence.jsonl` 或等价 task-local mutable evidence。
+代码已提交。运行 /trellis:finish-work；工作区不净先回 3.4。`verification-evidence.jsonl` 或等价 task-local mutable evidence 必须包含当前 route/slice role 要求的证据：Full/high ordinary 为 packet 声明的 `deterministic_checks` 与 focused evidence，Integration 为 project-wide go build/vet/lint/full regression，其他 route 保持既有验证。
 [/workflow-state:completed]
 
 ### Rules
@@ -189,7 +189,7 @@ Lite 不派 sub-agent；以下 sub-agent 行为仅适用于 Full。
 - 任务创建同意 ≠ 实现同意；Full/high-risk 等确认与 current digests 后必须走 guarded wrapper，direct `task.py start` 不是文档化的 Full 入口。
 - Lite 与 Full 各只有一次 route-specific confirmation batch；确认后自动推进，只有 material scope/digest 变化、新 High-risk 或新不可逆决定才重新确认。
 - 合规 STOP：触及鉴权/会话/密钥/用户数据采集或任何法规/政策不确定性 → 立即停止，输出风险点 + 替代方案 + 人类确认清单；密钥一律走环境变量名引用，不落字面量。
-- 三条最高禁令（见 Trellis System 节）全程生效；planning 必须落盘到 task artifacts；完成报告前必须有 `go build`/`go vet`/`go test`/`golangci-lint` 验证证据。
+- 三条最高禁令（见 Trellis System 节）全程生效；planning 必须落盘到 task artifacts；完成报告前必须有当前 route/slice role 的验证证据：Full/high ordinary 只需 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 Integration 才需 project-wide go build/vet/lint/full regression，其他 route 保持既有验证。
 - 产物语言中文优先（英文仅限标识符/命令/路径/协议字段/库名/缩写/原文引用）；面向用户的提问与结论一律中文。
 
 ### Loading Step Detail
@@ -262,15 +262,22 @@ Lite 在一次当前 requirements digest 确认后自动 host-inline 实现并�
 
 Full 与 Trellis 原版同构（dispatch 协议、guarded commit 与 finish-work 收尾不变），但 unchanged scope 不得再拆分 requirements/detail/commit 用户确认：
 
+**Full/high minimum-stable slice lifecycle（Agent planning SSOT）**：
+
+- `Design UNIT` 只负责需求、行为和 invariant 追溯；`Implementation Slice` 才是独占修改、focused validation、review、commit 与 rollback 单元。多个 Design UNIT 可合并进一个 Implementation Slice，但 packet 继续只保留一个真实 `owner_unit`，其余写入 `implement.md.covered_units`；禁止按 UNIT、设计章节、doc_type 或技术层机械生成 slice。
+- 所有四端都遵循 delivery policy 的同一组 Agent-only 默认值：`full_high_default_strategy=minimum_commit_stable_parallel_first`、`max_ordinary_slices=4`、`mutable_path_overlap=0`、`review_context_target_bytes=262144`、`ordinary_depends_on_default=[]`、`single_integration_slice=true`、`formal_evidence_control_worktree=serial`。Detail 应先冻结接口、schema、digest、错误语义和共享数据结构；共享 mutable path 必须重新分配唯一 owner 或合并，资源锁与 focused test 修改范围必须隔离、分波次或触发合并。
+- `guru_supervise.py implement-slices ... --dry-run` 只输出 dispatch plan/brief，不启动 sub-agent，也不是实际 spawn 或 writer-parallel 的证明。完整 packet 集可能因 Integration coverage overlap 被当前 `slice-plan` 保守标为 serial；coordinator 必须回读 Detail planning audit，只派发 ownership 不重叠、`depends_on=[]` 且工具资源可隔离的 ordinary Implementation Slices。
+- ordinary implementation 可以并发，但同一 snapshot 只启动一个 semantic reviewer；Full/high ordinary 只运行 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 `Integration Slice` 才运行 project-wide go build/vet/lint/full regression；Small、Micro、Lite、non-Full 和 v1 保留原 route verification。正式 staged review、commit 与 receipt 只在唯一 control worktree 串行收口；Integration 最后执行跨 slice invariants 和最终组合验证，其普通 target union 只是 review coverage，不授予重写 ordinary owner 核心字节的权限。
+
 #### 2.1 实现 `[required · repeatable]`
 
 进入本节的最低硬条件是 `python3 .trellis/scripts/guru/guru_gate.py check-implementation <task-dir>` 通过；`guru_supervise.py implement|check|implement-check` 会在启动 worker 前自动执行该 gate，`planning` 状态一律 fail-closed。
 
-dispatch-mode aware：主会话先运行 `python3 .trellis/scripts/guru/guru_supervise.py implement-slices <task-dir> --dry-run --backend auto` 读取 `codex.dispatch_mode` 与 slice-plan；执行必须按 dry-run report 的 `selected_backend`、`decision`、`dispatch_items`、`dispatch_now`、`deferred_slices`、`downgrade_reasons` 字段行动，`decision=serial|blocked` 不得被强行并行。`sub-agent` 模式按返回的 `trellis-implement` brief 派发平台 sub-agent（brief/prompt 第一行必须是 `Active task: <path>`，worker 已经是被调度的 `trellis-implement`，不得再嵌套 spawn implement/check）；`channel` 模式才使用官方 channel worker / `guru_supervise.py implement-check` 命令；`inline` 模式串行手工执行 report 推荐命令，并先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT。helper 只注入存在的 `implement.jsonl`、任务产物和 `go-implementation-guru-writing` skill，等待后端的 done/error/killed 或平台 final status。编码按 `go-implementation-guru-writing` 口径：组合需求真正触达的迷你路径，按执行顺序自下而上（`domain → repository → service → transport → app/config/main`）逐切片实现，每片挂 `UNIT-<slug>` 编号 + 所属 `services/<svc>/internal/<layer>` + 完成信号 + 验证方式（一片不跨两个 internal 层）；执行/验证证据写入 task-local mutable evidence，不把 `implement.md` 当作 detail 确认后的可变证据文件。守住硬规则：`net/http ServeMux`（禁 gin/echo）、分层单向无环、sentinel + `%w` + `errors.Is`、`app.New/Run/Shutdown` 生命周期、`config.Load()` 集中配置、secret 只引用 env 名。发现设计缺口停下回 Phase 1 修订（不在代码里补造 owner/合同）。
+dispatch-mode aware：主会话先运行 `python3 .trellis/scripts/guru/guru_supervise.py implement-slices <task-dir> --dry-run --backend auto` 读取 `codex.dispatch_mode` 与 slice-plan；该命令只产生 dispatch plan/brief，实际 spawn 必须由 coordinator 另行执行并留存 dispatch 记录。执行必须按 dry-run report 的 `selected_backend`、`decision`、`dispatch_items`、`dispatch_now`、`deferred_slices`、`downgrade_reasons` 字段行动，`decision=serial|blocked` 不得被强行并行。`sub-agent` 模式按返回的 `trellis-implement` brief 派发平台 sub-agent（brief/prompt 第一行必须是 `Active task: <path>`，worker 已经是被调度的 `trellis-implement`，不得再嵌套 spawn implement/check）；`channel` 模式才使用官方 channel worker / `guru_supervise.py implement-check` 命令；`inline` 模式串行手工执行 report 推荐命令，并先加载 `trellis-before-dev` 读当前任务产物、`conventions/project-conventions.md`、`guides/golden-path.md` 与相关 harness SSOT。helper 只注入存在的 `implement.jsonl`、任务产物和 `go-implementation-guru-writing` skill，等待后端的 done/error/killed 或平台 final status。编码按 `go-implementation-guru-writing` 口径，实现 Detail-approved Implementation Slice 覆盖的最小完整行为；`domain → repository → service → transport → app/config/main` 只是合同与实现顺序，不得按 `UNIT-<slug>` 或 `internal/<layer>` 机械拆片，也不要求一个 slice 只能跨一个 internal 层。执行/验证证据写入 task-local mutable evidence，不把 `implement.md` 当作 detail 确认后的可变证据文件。守住硬规则：`net/http ServeMux`（禁 gin/echo）、分层单向无环、sentinel + `%w` + `errors.Is`、`app.New/Run/Shutdown` 生命周期、`config.Load()` 集中配置、secret 只引用 env 名。发现设计缺口停下回 Phase 1 修订（不在代码里补造 owner/合同）。
 
 #### 2.2 质检 `[required · repeatable]`
 
-dispatch-mode aware：`sub-agent` 模式 dispatch `trellis-check`（prompt 第一行必须是 `Active task: <path>`，且不得再嵌套 spawn check/implement）；`channel` 模式才运行 `python3 .trellis/scripts/guru/guru_supervise.py check <task-dir>` 并可读 `trellis channel messages --raw`；`inline` 模式加载 `trellis-check`。helper 只注入存在的 `check.jsonl`、任务产物和 `go-implementation-guru-review` skill，等待后端结果。按 `go-implementation-guru-review` 口径审核：需求/设计/实现合同一致性、分层依赖律（无反向/横向 `internal` 包导入）、框架锁定（无 gin/echo 新增依赖）、错误三件套（sentinel + `%w` + `errors.Is`，无字符串比对错误）、启动序列与 `context` 超时传递、项目槽位取值（SLOT-01~SLOT-13）、`SLOT-15` 存量豁免判定、合规红线（无 secret 字面量）与验证证据。无 `go build`/`go vet`/`go test`/`golangci-lint`/合规证据不得进入 commit。
+dispatch-mode aware：`sub-agent` 模式 dispatch `trellis-check`（prompt 第一行必须是 `Active task: <path>`，且不得再嵌套 spawn check/implement）；`channel` 模式才运行 `python3 .trellis/scripts/guru/guru_supervise.py check <task-dir>` 并可读 `trellis channel messages --raw`；`inline` 模式加载 `trellis-check`。helper 只注入存在的 `check.jsonl`、任务产物和 `go-implementation-guru-review` skill，等待后端结果。按 `go-implementation-guru-review` 口径审核：需求/设计/实现合同一致性、分层依赖律（无反向/横向 `internal` 包导入）、框架锁定（无 gin/echo 新增依赖）、错误三件套（sentinel + `%w` + `errors.Is`，无字符串比对错误）、启动序列与 `context` 超时传递、项目槽位取值（SLOT-01~SLOT-13）、`SLOT-15` 存量豁免判定、合规红线（无 secret 字面量）与 route/slice-role 验证证据。Full/high ordinary 只核对 packet 声明的 `deterministic_checks` 与 focused evidence；唯一 Integration 才核对 project-wide go build/vet/lint/full regression；Small/Micro/Lite/non-Full/v1 沿用原验证合同。缺少当前角色要求的 evidence/compliance 证据不得进入 commit。
 
 #### 2.3 回退 `[on demand]`
 
@@ -278,7 +285,7 @@ dispatch-mode aware：`sub-agent` 模式 dispatch `trellis-check`（prompt 第�
 
 #### 3.1 质量验证 `[required · repeatable]`
 
-复跑与变更范围匹配的验证命令（`go build ./...` 或 `go build ./services/<svc>/...` + `go vet ./...` + `golangci-lint run ./...` + `go test ./services/<svc>/internal/<pkg>/ -run <Test> -v`，竞态切片附 `-race`），确认 `verification-evidence.jsonl`（或等价 task-local mutable evidence）已记录命令、退出态、测试名级结果与未验证项（真实 PostgreSQL 集成、生产负载下 `context` 超时/连接池、跨服务契约运行时兼容、信号驱动优雅关闭）。若必须修改 `implement.md`，视为主动返回 detail Gate。验证失败回 2.1/2.2；验证缺失不得进入 3.3。
+按 route/slice role 复跑验证：Full/high ordinary 只运行 packet 声明的 `deterministic_checks` 与 focused evidence（可包含 packet 指定的 package/service 定向 `go test`）；唯一 Integration 才运行 project-wide `go build ./...`、`go vet ./...`、`golangci-lint run ./...` 与 full regression；Small/Micro/Lite/non-Full/v1 运行各自原 route 的 Go 验证。确认 `verification-evidence.jsonl`（或等价 task-local mutable evidence）已记录命令、退出态、测试名级结果与未验证项（真实 PostgreSQL 集成、生产负载下 `context` 超时/连接池、跨服务契约运行时兼容、信号驱动优雅关闭）。若必须修改 `implement.md`，视为主动返回 detail Gate。当前角色验证失败回 2.1/2.2；必需证据缺失不得进入 3.3。
 
 #### 3.2 Debug 复盘 `[on demand]`
 
@@ -294,7 +301,7 @@ dispatch-mode aware：`sub-agent` 模式 dispatch `trellis-check`（prompt 第�
 
 若实现已发生但缺有效合同，且 staged scope 是低风险 scoped implementation diff，commit-plan 必须进入 post-implementation route recovery：阻断 direct commit，只推荐创建/切换 `micro_task` 并运行 `init-contract --route micro_task --risk low`，不得倒逼补 full PRD / overview / detail。
 
-提交前展示 `commit-plan` 摘要、验证证据（`go build`/`go vet`/`go test`/`golangci-lint` 结果）与建议 commit 切分。若 commit 已包含在当前 Lite/Full 唯一确认批次或用户初始指令中，则通过 Gate 后自动执行；否则停在可逆 commit-ready，不消耗第二次需求确认。不 amend、不 push；只处理本任务相关文件，不回滚用户改动。涉及 `go.mod`/`go.sum` 变更须确认已跑 `go mod tidy` 且新增依赖在已批准槽位内。
+提交前展示 `commit-plan` 摘要、当前 route/slice role 的验证证据与建议 commit 切分：Full/high ordinary 只展示 packet 声明的 `deterministic_checks` 与 focused evidence，Integration 展示 project-wide go build/vet/lint/full regression，Small/Micro/Lite/non-Full/v1 展示原 route evidence。若 commit 已包含在当前 Lite/Full 唯一确认批次或用户初始指令中，则通过 Gate 后自动执行；否则停在可逆 commit-ready，不消耗第二次需求确认。不 amend、不 push；只处理本任务相关文件，不回滚用户改动。涉及 `go.mod`/`go.sum` 变更须按当前 route/slice role 的合同确认是否需要 `go mod tidy`，且新增依赖必须位于已批准槽位。
 
 #### 3.5 收尾提醒
 

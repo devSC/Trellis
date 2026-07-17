@@ -11,6 +11,14 @@ description: 按详细设计合同执行 Flutter 编码与自测。编码规则�
 2. 读取同级标准包 `.trellis/spec/harness/implementation/implementation-trace-contract.md`（过程合同）与标准包 SKILL.md 的实现 Gate 定义。
 3. 读取**`.trellis/spec/conventions/project-conventions.md`**（校验 C1~C5；重点消费 SLOT-01/02/03/05/08/11/12/15，并确认项目 logger / logging helper / 日志门面）。
 4. 定位已通过 Gate 的详细设计文档；缺失 → 终止并提示回退设计阶段（探索性 spike 除外，须显式声明并隔离）。
+5. Full/high 必须读取当前 packet 与 `implement.md` 中已确认的 minimum commit-stable planning audit；packet 缺失、audit 不匹配或未确认即停止，不在 active worker 内补造。
+
+## Active packet 消费边界
+
+- Full/high ordinary worker 把 current packet 和 planning audit 当作不可变 dispatch input，只修改 packet `target_paths`，只运行 packet `deterministic_checks` 与 audit 显式声明的 focused checks。
+- 不得按 UNIT、层、`doc_type`、ViewModel、UseCase、View、component、symbol 或 hunk 重新切片、转移 mutable ownership、改变 `depends_on` / `parallel_wave`，也不得修改 `implement.md` 来迁就实现。
+- Full/high ordinary 不运行 project-wide `flutter analyze` 或 full regression；这些只由唯一 `integration_slice=true` 的 Integration 执行。Integration 的实际写范围仍限 planning audit 的 exact `integration_owned_paths`。
+- Small、Micro、Lite、non-Full 与兼容 v1 保留既有验证行为；本节只收窄 Full/high ordinary，不削弱其它路由。
 
 ## 边界约束
 
@@ -24,10 +32,10 @@ description: 按详细设计合同执行 Flutter 编码与自测。编码规则�
 
 ## 执行流程
 
-1. **WX-1 计划**：按 trace 合同 §1 产出任务切片（每片：**`UNIT-<slug>` / `target_paths` 文件范围摘要** / 完成信号 / 验证方式），人工确认从最小切片开始。**P1 high-risk slice（仅校验,不创建）**：校验 `<task_dir>/slice-packets/<unit_id>.json` **已由 planning / 主会话在 implement-check 前创建存在**，在 mutable evidence 摘要 `slice_packet` 路径 / `invariant_ids` / `negative_case`；**packet 缺失即停回 planning 补 packet，绝不在实现 worker 内创建/补造 packet 或按实现倒推 invariant**。packet 存在时以其 `target_paths`/`invariants[]` 为机器 SSOT；实现后只向 mutable evidence 补 deterministic check evidence / 测试名 / 证据文件，不改 `implement.md` 或 invariant 语义字段。
+1. **WX-1 消费已确认计划**：Full/high 只校验 current packet 与 `implement.md` planning audit 的 `owner_unit` / `covered_units` / `owned_paths` / `depends_on` / `parallel_wave` / focused checks 一致；ordinary worker 不创建、拆分或重排 slices。packet 缺失即停回 planning。Small、Micro、Lite、non-Full 与 v1 继续按既有 trace 计划行为执行。
 2. **WX-2 逐片实现**：按入口决策树组合迷你路径（golden-path §1，§3~§7）；每片完成即追加 `implementation-evidence.jsonl` 执行记录。
 3. **WX-3 代码生成**：按 `[SLOT-08]` 顺序执行（仅在触发条件满足时）；记录于 `implementation-evidence.jsonl`。
-4. **WX-4 逐片验证**：`flutter analyze` + 本片相关测试 + `guru_lints`（建成后）；结果追加到 `verification-evidence.jsonl`，失败先修复再进下一片。
+4. **WX-4 当前 packet 验证**：Full/high ordinary 只运行 packet `deterministic_checks` 与 planning audit focused checks，不运行 project-wide `flutter analyze` 或 full regression；Integration 运行 project-wide analyze/lint/full regression。Small、Micro、Lite、non-Full 与 v1 保留 `flutter analyze` + 相关测试 + `guru_lints`（建成后）的既有行为。结果追加到 `verification-evidence.jsonl`，失败即阻塞当前 packet。
 5. **WX-5 注释/日志/文档追溯**：逐片完成前补齐维护性证据：
    - 新增核心类、public API、Controller/UseCase/Repository/DataSource、跨层 DTO/状态定义：优先用 Dart doc comment 写明职责、承接的 `UNIT-<slug>` / `BHV-NNN`，必要时附设计文档相对路径（如 `docs/design/.../chapters/<slug>.md` 或任务内 `design.md` 锚点）。
    - 复杂私有 helper、状态机分支、错误转换、缓存/恢复/降级、异步竞态、生命周期处置：用局部注释解释"为什么这样做"和对应设计约束。

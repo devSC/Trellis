@@ -14,7 +14,14 @@ description: 按已过 Gate 的 Go 后端详细设计执行编码与自测的执
 2. 读 `.trellis/spec/harness/implementation/implementation-trace-contract.md`（过程合同 §0~§7）与 `.trellis/spec/harness/index.md` 的实现 Gate（Gate 4）定义、doc_type 七类、编号纪律（BHV/UNIT）。
 3. 读 `.trellis/spec/conventions/project-conventions.md` 并校验 C1~C5：DI（当前无→可 wire）、ORM（原生 SQL + `lib/pq` + PostgreSQL→可 ent/sqlc）、日志（标准 `log`→可 slog/zap）、测试框架（`testing`→可 testify/ginkgo）、API 风格（REST JSON→可 gRPC）、DB 驱动、lint（`golangci-lint`）、文档生成（Swagger/OpenAPI 当前无）、会话鉴权（HMAC-SHA256 签名 cookie + bcrypt，当前自实现）等槽位均已选定且未留空；同时确认项目 logger / logging helper / 日志门面和字段约定；任一未填 → 停止先定槽位，不在实现里私自拍板。
 4. 定位本任务承接的、已过详细 Gate 且人工确认已落盘的详细设计单元（full=`design_package/chapters/*.md`；light=`design.md` §详细），建立 `UNIT-<slug>` 单元清单 + 合同八问 + 测试映射；缺失或单元为幽灵引用 → 终止并提示回退设计阶段（探索性 spike 除外，须显式声明、隔离、不并入交付）。
-5. 建立编译基线：`go.mod` 可读，记录改动前 `go build ./...` 的基线状态（用于区分"我引入的失败"与"既有失败"）；不可建立基线 → 记录环境阻塞，不得把未验证当通过。
+5. 判定验证路由：Full/high 读取 current packet 与 `implement.md` 已确认的 minimum commit-stable planning audit；ordinary 只建立 packet focused checks 所需的 scoped 基线，Integration 才建立 `go build ./...` / workspace lint 全局基线。Small、Micro、Lite、non-Full 与 v1 保留既有 `go build ./...` 基线行为。
+
+## Active packet 消费边界
+
+- Full/high ordinary worker 把 current packet 和 planning audit 当作不可变 dispatch input，只修改 packet `target_paths`，只运行 packet `deterministic_checks` 与 audit 显式声明的 focused checks。
+- 不得按 UNIT、internal layer、`doc_type`、component、symbol 或 hunk 重新切片、转移 mutable ownership、改变 `depends_on` / `parallel_wave`；Go 分层顺序继续约束代码依赖，但不生成第二份 slice plan。
+- Full/high ordinary 不运行 workspace-wide build/vet/lint 或 full regression；这些只由唯一 `integration_slice=true` 的 Integration 执行。Integration 实际写范围仍限 planning audit 的 exact `integration_owned_paths`。
+- Small、Micro、Lite、non-Full 与兼容 v1 保留既有验证行为。
 
 ## 边界约束
 
@@ -30,11 +37,11 @@ description: 按已过 Gate 的 Go 后端详细设计执行编码与自测的执
 
 ## 执行流程（WX 步骤）
 
-1. **WX-0 判定实现模式与编译基线**：判定空服务初始化 / 已有服务增量 / 重构校准；确定本任务落在哪个 `services/<svc>/`，复用还是新建 `internal/{app,config,transport,service,repository,domain,auth}` 包，跨服务数据结构是否需进 `packages/contracts/`；记录改动前 `go build ./...` 基线。
-2. **WX-1 计划（开工前写）**：按 trace 合同 §1 在目标仓库 `implement.md`（建议 `docs/design/<feature>/implementation-trace.md`）产出任务切片；若 detail 已确认则只读取该计划，不在实现阶段补写。每片含：承接的 `UNIT-<slug>`（幽灵引用被 Gate 拦截）+ 所属服务/层（`services/<svc>/internal/<layer>`）+ 文件范围 + 完成信号 + 验证方式。执行顺序**自下而上**：`domain`（实体/sentinel errors）→ `repository`（SQL/迁移）→ `service`（编排 + `%w` 包装）→ `transport`（ServeMux 路由 + handler）→ `app`/`config`/`main`（装配与启动）；`packages/contracts/` 契约变更排在所有消费方之前。逐条预判高风险点（DB 迁移兼容/回滚、`app.App` 装配生命周期、契约变更消费方编译面、env 前缀冲突、`context` 超时传递、sentinel 重命名导致的 `errors.Is` 断裂）。人工确认从最小可独立编译的切片开始。**P1 high-risk slice（仅校验，不创建）**：校验 `<task_dir>/slice-packets/<unit_id>.json` 已由 planning / 主会话在 implement-check 前创建存在，在 `implementation-evidence.jsonl` 摘要 `slice_packet` 路径 / `invariant_ids` / `negative_case`；packet 缺失即停回 planning 补 packet，绝不在实现 worker 内创建/补造 packet 或按实现倒推 invariant。packet 存在时以其 `target_paths` / `invariants[]` 为机器 SSOT；实现后只向 mutable evidence 补 deterministic check evidence / 测试名 / 证据文件，不改 `implement.md` 或 invariant 语义字段。
+1. **WX-0 判定实现模式与验证基线**：判定空服务初始化 / 已有服务增量 / 重构校准并核对 packet scope。Full/high ordinary 只记录 packet focused baseline；Integration 或 non-Full/v1 才按既有合同记录 workspace `go build ./...` 基线。
+2. **WX-1 消费已确认计划**：Full/high 只校验 current packet 与 `implement.md` planning audit 的 `owner_unit` / `covered_units` / `owned_paths` / `depends_on` / `parallel_wave` / focused checks 一致；不按 UNIT 或 internal layer 创建、拆分、转移或重排 slices。代码仍遵守 `domain → repository → service → transport → app` 单向依赖。packet 缺失即停回 planning。Small、Micro、Lite、non-Full 与 v1 继续按既有 trace 计划行为执行。
 3. **WX-2 逐片实现（随做随记）**：每片对照承接 `UNIT-<slug>` 的合同八问落地——②输入/输出/错误（函数签名、`domain` 结构体、错误枚举与 sentinel 表，对齐如 `service.ErrValidation`、`repository.ErrNotFound`）；④调用关系单向（service 调 repository 不反向，handler 走 service 不直连 DB）；⑤失败收口（`%w` 包装 + `errors.Is` 检查 + HTTP 状态码映射，逐条失败路径）；⑥后置副作用（如 config 同步触发 `configSync.TouchNodesForUser`）。每片完成**立即**追加 `implementation-evidence.jsonl`（实际改动文件清单标层、与计划偏差及原因、触碰 `app.New/Run/Shutdown`/`config.Load()`/`cmd/<svc>/main.go` 的共享面单独标注），不积压到批末。
 4. **WX-3 代码生成（仅触发条件满足时）**：按 project-conventions 代码生成相关槽位选型执行并追加 `implementation-evidence.jsonl`——选 wire（`[SLOT-01]` DI）→ `go run github.com/google/wire/cmd/wire ./services/<svc>/internal/app/`（记 `wire_gen.go` 是否变更）；选 sqlc（`[SLOT-02]` ORM）→ `sqlc generate`（记生成 `db/*.sql.go` 清单）；选 ent（`[SLOT-02]` ORM）→ `go generate ./services/<svc>/internal/ent`；选 swag（`[SLOT-09]` 文档）/ stringer / mock / protoc 同理逐条记命令与产物。**当前 golden-path 默认无代码生成槽位（原生 SQL + 标准库）→ 本项写「N/A：无代码生成槽位启用」，不留空、不私自引入生成器。**
-5. **WX-4 逐片验证（验证后记）**：按 trace 合同 §3 的字段要求追加 `verification-evidence.jsonl`——编译 `go build ./...` 或 `go build ./services/<svc>/...`（贴命令 + 退出态，失败写错误摘要 + 处置）；静态检查 `go vet ./...` + `golangci-lint run ./...`（逐条通过/失败，nolint 豁免写理由并指向 `[SLOT-17]`）；测试到**测试名级别**（如 `go test ./services/<svc>/internal/service/ -run TestUserService_Create -v` 给出子测试名），竞态敏感切片附 `-race`，新增测试逐条列文件 + 测试函数名 + 承接 `BHV-NNN`/`UNIT-<slug>`；依赖变更跑 `go mod tidy` 记 diff（新增库须落在已批准槽位内，禁被锁框架）。失败先修复再进下一片；未验证项显式列出并指明留给哪个环节（真实 PostgreSQL 集成 → CI 集成测试/容器化 DB；生产负载下连接池与 `context` 超时 → 压测/灰度；跨服务契约运行时兼容 → 集成环境；信号驱动优雅关闭 → Manual QA/staging）。
+5. **WX-4 当前 packet 验证（验证后记）**：Full/high ordinary 只运行 packet `deterministic_checks` 与 audit focused checks（例如 scoped `go build` / `go vet` / `golangci-lint` / `go test`），不得升级为 `./...` workspace checks 或 full regression；Integration 运行 workspace-wide build/vet/lint/full regression。Small、Micro、Lite、non-Full 与 v1 保留原有全局或服务级验证。测试证据仍到测试名级别，失败即阻塞当前 packet；未验证项显式移交。
 6. **WX-5 注释/日志/文档追溯**：逐片完成前补齐维护性证据：
    - 新增核心类型、导出函数/方法、transport handler、service、repository、domain model、config/app 生命周期入口、`packages/contracts/` 契约结构：优先用 Go doc comment（导出符号按 Go 约定以符号名开头）说明职责、承接的 `UNIT-<slug>` / `BHV-NNN`，必要时附设计文档相对路径（如 `docs/design/.../chapters/<slug>.md` 或任务内 `design.md` 锚点）。
    - 复杂私有 helper、事务/迁移、错误包装与 sentinel 映射、`context` timeout/cancel、并发同步、降级/重试、优雅关闭：用局部注释解释"为什么这样做"和对应设计约束。
@@ -56,25 +63,26 @@ description: 按已过 Gate 的 Go 后端详细设计执行编码与自测的执
 切片可进入 commit/PR，当且仅当：
 
 - **G1 trace 合同与 mutable evidence 齐全**：`implement.md` 必须存在且计划有 `UNIT-<slug>` 承接与完成信号；执行/偏差/验证证据在 `implementation-evidence.jsonl` 与 `verification-evidence.jsonl` 中可按切片恢复，阻塞如无则显式记录「无」；trace 不存在直接 fail。
-- **G2 编译证据**：`go build ./...` 全绿（贴命令 + 退出 0）；本任务引入的失败已全部收口（编译不过的切片不存在"完成"）。
-- **G3 静态检查证据**：`go vet ./...` + `golangci-lint run ./...` 通过，或豁免有理由且记债（`[SLOT-17]`）。
-- **G4 测试证据**：每个切片有测试名级别结果，覆盖承接 `UNIT-<slug>`/`BHV-NNN` 的成功路径 + 全部失败路径；新增测试清单可追溯到 UNIT；未执行的验证不得写成通过。
+- **G2 编译证据**：Full/high ordinary 的 packet scoped build checks 全绿；Integration 或 non-Full/v1 按既有合同要求 `go build ./...`。本任务引入的失败必须全部收口。
+- **G3 静态检查证据**：Full/high ordinary 的 packet scoped vet/lint checks 通过；Integration 或 non-Full/v1 执行既有 workspace `go vet ./...` + `golangci-lint run ./...`，豁免须有理由并记债（`[SLOT-17]`）。
+- **G4 测试证据**：Full/high ordinary 仅当 current packet 或 planning audit focused checks 声明测试时，才要求测试名级别结果、成功/失败路径证据与新增测试映射；不得为满足通用 G4 自行运行 undeclared tests。Integration 或 non-Full/v1 保留原合同：测试名级别结果覆盖承接 `UNIT-<slug>`/`BHV-NNN` 的成功路径 + 全部失败路径，新增测试清单可追溯到 UNIT；未执行的验证不得写成通过。
 - **G5 分层与错误契约**：无跨层反向/越层导入（除 `domain` 外不跨 `internal` 包）；服务级错误经 sentinel + `%w` 包装、`errors.Is` 可判定；轻框架未被破坏（无新引入被锁框架）；secret 只写环境变量名引用，无字面量密钥。
 - **G6 偏差闭合 + 编号闭合**：PR diff 与计划逐项可对，计划外改动均有原因记录；切片均挂真实 `UNIT-<slug>`（幽灵单元被拦截）；上游结构性缺陷（归属错、合同越界、单元跟随名词而非行为）已回退拥有该决策的阶段修订，禁止在实现阶段补造。
 
-任一未满足 → 不进 commit。`go build ./...` / `go vet ./...` / `golangci-lint run` / `go test ./...`（测试名级别）由 worktree.yaml verify 条目执行，与本自检同口径。
+任一未满足 → 不进 commit。Full/high ordinary 以 packet focused checks 为准；workspace `go build ./...` / `go vet ./...` / `golangci-lint run ./...` / `go test ./...` 只在 Integration 执行。Small、Micro、Lite、non-Full 与 v1 保留既有 worktree.yaml verify 行为。
 
 ## 好例 / 坏例
 
-✅ **合格切片登记与证据**（粒度可独立 review、命令级证据、可追溯）：
+✅ **Full/high ordinary 合格切片登记与证据**（命令均来自 current packet 或 planning audit focused checks）：
 
 ```
 切片 S2 | 承接 UNIT-user-repository | services/<svc>/internal/repository/user_repository.go + db/migrations/0011_users_xxx.up.sql
   范围：UserRepository 原生 SQL（lib/pq），sql.ErrNoRows → domain/repository.ErrNotFound 转换
-  完成信号：go build ./services/<svc>/... 退出 0；迁移可 up/down；无跨层导入
+  完成信号：packet scoped build/test/lint 全绿；迁移可 up/down；无跨层导入
   证据：
     - go build ./services/<svc>/... → 退出 0
-    - go vet ./services/<svc>/... → 退出 0；golangci-lint run → 0 issues
+    - go vet ./services/<svc>/... → 退出 0
+    - golangci-lint run ./services/<svc>/internal/repository/... → 0 issues
     - go test ./services/<svc>/internal/repository/ -run TestUserRepository -v
         --- PASS: TestUserRepository_GetByID/found (0.01s)
         --- PASS: TestUserRepository_GetByID/not_found_maps_ErrNotFound (0.01s)
@@ -82,7 +90,7 @@ description: 按已过 Gate 的 Go 后端详细设计执行编码与自测的执
     - 未验证：真实 PG 唯一约束触发 → 留给 CI 集成测试
 ```
 
-❌ **不合格**：「实现用户模块，改 service 和 repository，写完跑测试」——无 `UNIT` 编号、无文件范围、无完成信号、跨多层无法独立 review；证据「全部编译通过，测试通过，vet 无问题」——无命令、无退出态、无测试名、无新增测试映射、未声明未验证项。
+❌ **不合格**：「实现用户模块，改 service 和 repository，写完跑测试」——无 current packet、无 planning audit ownership、无文件范围或完成信号；问题不是跨层本身，而是 active worker 擅自重新划 scope 且证据不可审计。
 
 ❌ **红线违例**：为图省事在 handler/transport 层直接写 SQL 或调 repository 跳过 service 层（违反单向依赖律）；用 `fmt.Errorf("create user: " + err.Error())` 拼接丢 `%w`（破坏 `errors.Is` 链）；实现里擅自引入 `wire`/`sqlc`/`gin` 未升级 project-conventions；trace 在 PR 前一次性补写（失去过程证据）。
 

@@ -27,6 +27,13 @@
 - 本标准包**不执行**代码修改，也**不输出**审核 Findings。它定义"代码编写"与"实现审核"共同遵守的合同与判定口径。
 - golden-path 的硬规则（`net/http`、分层依赖律、错误处理范式、启动 / 关闭契约）在本文件中是**锁定前提（不可豁免）**；project-conventions 的槽位（DI / ORM / 日志 / 测试 / API 风格等）是**可按服务调整的取值**，实现时读 `project-conventions.md` 当前值，不在本文件硬编码。
 
+### 0.1 Active packet 与验证路由
+
+- Full/high active worker 必须消费 current packet 与 `implement.md` 已确认的 minimum commit-stable planning audit；它们是不可变 dispatch input。
+- Full/high ordinary 只写 packet `target_paths`，只运行 packet `deterministic_checks` 与 planning audit focused checks；不得按 UNIT、layer、`doc_type`、component、symbol 或 hunk 重新切片或转移 ownership。
+- Workspace-wide Go build/vet/lint/full regression 只由唯一 Integration 执行；Integration 实际写范围限 exact `integration_owned_paths`。
+- Small、Micro、Lite、non-Full 与 v1 保留本标准原有验证合同。下文的 workspace 命令均按此路由解释，不得覆盖 Full/high ordinary 的 packet 边界。
+
 ---
 
 ## 1. golden-path 锁定前提（不可豁免）
@@ -263,7 +270,7 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 - 好例子（safa-land `app/app.go`）：`app.New` 内逐个 `repository.NewXRepository(db)` → `service.NewXService(...)` → `httptransport.NewHandler(...)` → `&http.Server{...}`。
 - 坏例子：`main.go` 手工 `new` 全部业务对象、跳过 `app.New` 装配层——破坏单一装配入口。
 
-出口条件：最小启动验证通过（或因凭据/基础设施缺失明确 `blocked`）；无手工散落装配；`go build ./...` 通过。
+出口条件：最小启动验证通过（或因凭据/基础设施缺失明确 `blocked`）；无手工散落装配；Full/high ordinary 的 packet focused build 通过，Integration 或 non-Full/v1 的 `go build ./...` 通过。
 
 失败判定：业务对象在 `main.go` 散装；启动无信号 / 无优雅关闭；config 被业务层绕过。
 
@@ -275,18 +282,19 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 
 ## 5. 实现 Gate（go build / vet / test + lint + 证据）
 
-实现 Gate 是"证据感，不是做完感"。每次实现闭环至少运行下列命令，并把命令与结果（命令 + 测试名级别，非"全部通过"）追加到 `verification-evidence.jsonl`；implementation review verdict 进入 `review-records/implementation-reviews.jsonl`。
+实现 Gate 是"证据感，不是做完感"。Full/high ordinary 运行 packet-declared deterministic/focused checks；Integration 运行一次下表 workspace 命令。Small、Micro、Lite、non-Full 与 v1 继续按下表既有命令。命令与结果追加到 `verification-evidence.jsonl`；implementation review verdict 进入 `review-records/implementation-reviews.jsonl`。
 
-### 5.1 必跑验证命令（既有命令优先）
+### 5.1 路由解析后的必跑验证命令
 
 | 类型 | 命令 | 通过判据 |
 |------|------|---------|
-| 编译 | `go build ./...` | 退出码 0，无编译错误 |
-| 静态检查 | `go vet ./...` | 退出码 0，无可疑构造告警 |
-| 测试 | `go test ./...`（或 `project-conventions.md` 指定的等价命令） | 退出码 0；记录受影响包的测试名 |
-| lint | `golangci-lint run`（lint 取值见 `project-conventions.md`） | 退出码 0，无新增告警 |
-| 启动验证 | 最小真实启动 / 调用（`/healthz` 探活、关键 endpoint 冒烟） | 返回预期状态码与响应结构 |
-| Secret 残留 | 检查 `config.go` / yaml / fixture / 代码 / `implement.md` / mutable evidence 无明文 secret | 仅出现 env var name / 引用，无真实 key/AK/SK/token |
+| Full/high ordinary | packet `deterministic_checks` + planning audit focused checks | 全部通过；不得扩成 workspace-wide 命令 |
+| Integration / non-Full / v1 编译 | `go build ./...` | 退出码 0，无编译错误 |
+| Integration / non-Full / v1 静态检查 | `go vet ./...` | 退出码 0，无可疑构造告警 |
+| Integration / non-Full / v1 测试 | `go test ./...`（或 `project-conventions.md` 指定的等价命令） | 退出码 0；记录受影响包的测试名 |
+| Integration / non-Full / v1 lint | `golangci-lint run`（lint 取值见 `project-conventions.md`） | 退出码 0，无新增告警 |
+| Integration / non-Full / v1 启动验证 | 最小真实启动 / 调用（`/healthz` 探活、关键 endpoint 冒烟） | 返回预期状态码与响应结构 |
+| Integration / non-Full / v1 Secret 残留 | 检查 `config.go` / yaml / fixture / 代码 / `implement.md` / mutable evidence 无明文 secret | 仅出现 env var name / 引用，无真实 key/AK/SK/token |
 
 `verification-evidence.jsonl` 要求：
 - 每个切片对应"命令 + 结果"；测试写到测试名级别（如 `ok internal/service 0.3s` + 具体 `Test_UserService_Create_...`）。
@@ -308,7 +316,7 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 
 `pass` / `fail` / `blocked` 三态，语义判定由实现审核（人工 Gate）逐条核：
 
-- `pass`：所有承接单元切片为 `verified` 或明确 `skipped_with_reason`；无悬空 `in_progress`；无被当成完成交付的未验证 `implemented`；LOCK-1~6 全部满足；§5.1 必跑命令全部执行成功并有证据；合同八项无偏离；Secret 残留检查通过。
+- `pass`：先按当前 route 解析验证闭合条件，再检查共同条件。Full/high ordinary 只要求 singular current packet 为 `verified`，且 current packet/audit 选中的 focused checks 成功，不等待或检查 sibling packets；Integration 要求完整依赖 packet set 均有 current receipt，并完成 Integration-selected checks；non-Full/v1 保留原合同，所有计划设计单元 slices 为 `verified` 或明确 `skipped_with_reason`、无悬空 `in_progress`、无被当成完成交付的未验证 `implemented`，且 legacy checks 通过。三路都必须满足 LOCK-1~6、合同八项无偏离，并在当前 route 要求时通过 Secret 检查。
 - `fail`：存在合同未实现 / 实现偏离；无 plan 先行证据却已写生产代码；计划已 `blocked` 但代码绕过继续；`implemented` 未验证却交付为完成；触碰任一 LOCK 锁定项；明文 secret 写入配置/代码/fixture；fake / 占位 / 内存 store 生产路径；新增测试超出 §6 allowlist；测试补写业务语义。
 - `blocked`：详细设计缺失 / 冲突 / 需确认且已按 §7 记录并回退，未写临时代码绕过；或环境 / 凭据 / 基础设施缺失导致验证无法继续，保留恢复条件。
 
@@ -373,8 +381,8 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 
 | 字段 | 要求 |
 |------|------|
-| 切片 | 每片承接的设计单元编号（`UNIT-<slug>`，幽灵引用被 Gate 拦截）+ doc_type / 文件范围 / 完成信号 / 验证方式；每片小到可独立 review |
-| 执行顺序 | 按依赖排序（§3 自下而上：domain → repository → service → transport → app），从最小切片开始 |
+| 切片 | Full/high 读取已确认 planning audit 的真实 `owner_unit`、`covered_units`、文件级 `owned_paths`、完成信号与 focused checks；active worker 不重切。non-Full/v1 保留原有 UNIT / 文件范围 / 完成信号 / 验证方式合同 |
+| 执行顺序 | Full/high 按 audit 的真实 `depends_on` 与 `parallel_wave`；domain → repository → service → transport → app 只约束代码依赖，不按 layer 机械生成 slices |
 | 风险点 | 预判高风险改动（migration、跨服务契约、共享状态），逐条写验证手段 |
 
 #### 2. 执行（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
@@ -388,11 +396,9 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 
 | 类型 | 要求 |
 |------|------|
-| 编译 / 静态 | `go build ./...` / `go vet ./...` 结果（通过 / 失败 + 处理） |
-| lint | `golangci-lint run` 结果 |
-| 测试 | 每个切片对应 `go test` 命令 + 结果（测试名级别，非"通过"）；新增测试清单（限 §6 allowlist） |
-| 启动 | 最小启动 / `/healthz` 冒烟结果 |
-| Secret | Secret 残留检查结果 |
+| Full/high ordinary evidence | 只记录 current packet `deterministic_checks` 与 planning audit focused checks；test / startup / Secret 仅在 packet/audit 明确声明时记录，不自行扩展命令 |
+| Integration evidence | 记录完整 workspace build / vet / lint / test / startup / Secret / full regression；测试结果到测试名级别，新增测试清单限 §6 allowlist |
+| non-Full/v1 evidence | 保留 legacy evidence 合同：编译、静态、lint、测试名级别结果、最小启动或 `/healthz` 冒烟、Secret 残留检查 |
 | 未验证项 | 无法本地验证的（真机、外部联调）→ 显式列出 + 留给哪个环节 |
 
 #### 4. 阻塞与偏差（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
@@ -404,7 +410,7 @@ Phase 6  验证与符合性审查：go build / go vet / go test + lint + 证据�
 ### 8.2 切片状态机
 
 - 固定枚举：`pending` / `in_progress` / `implemented` / `verified` / `blocked` / `skipped_with_reason`。
-- 同一时间最多一个切片 `in_progress`；detail 确认后该状态写入 `implementation-evidence.jsonl`。
+- 一个 active worker 只推进分配给它的 current packet，不创建或转换 sibling slices；并行宽度由已确认 planning audit 的 `parallel_wave` 决定。
 - `implemented` 只表示代码落地；未通过 `checkpoint` 与 `validation_commands` 的切片不得 `verified`。
 - `blocked` 必须写明恢复条件与回指（详细设计回修 / 凭据 / 基础设施）。
 - `skipped_with_reason` 必须说明设计范围 / 用户范围为何不需要；不得用来隐藏未实现的 required 切片。

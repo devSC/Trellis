@@ -49,6 +49,52 @@ description: 用于审核 Flutter 客户端详细设计文档，判定能否进�
 13. 薄文档判定：≥2 章骨架雷同且无单元级实质内容 → 结论直接「不可进入」+ 文档级重构建议（L1 §9），不逐条列局部 finding。
 14. 详细设计文档无存量豁免；修订形态建议只引用 L1 §9。
 
+## Full/high 实现切片 planning audit 复算
+
+`directory_final` 对 `implement.md` 的 planning audit 独立复算，不能采信 writer
+自报结论。章节批次不是实现切片边界；Flutter
+domain→data→presentation→横切归属和依赖律仍须满足，但按一个 `UNIT`、
+`doc_type`、层、ViewModel、UseCase 或 View 机械拆片属于 `DETAIL_DEFECT`。
+
+1. 逐普通切片核对 `owner_unit`、`covered_units`、`read_paths`、
+   `owned_paths`、`focused_checks`、`parallel_wave`、`resource_locks`、
+   `resource_isolation`、`check_wave`、`independent_commit_value`、
+   `rollback_contract`、`review_context_inputs`、`review_context_bytes` 和
+   `rejected_merge_candidates`。`owner_unit` 必须是一个真实标量，
+   `covered_units` 可含多个 Design UNIT。
+2. 从实际路径集合计算同 wave 的两两 `owned_paths` 交集，必须为空；每个
+   mutable path 只有一个 ordinary slice **mutable owner**，不得按 symbol、
+   函数、类或 hunk 分摊。每个被修改的测试文件也只能有一个 owner。
+3. 普通切片默认 `depends_on=[]`。非空项须指向被消费的真实输出 bytes；
+   接口、schema、digest、错误语义和共享结构应在确认后的 Detail 先冻结。
+   UNIT、章节、doc_type、层级或 review 顺序推导的依赖一律判缺陷。
+4. 对冲突的 `resource_locks`，确认独立 worktree/cache/output 隔离，或确认
+   checks 已分配串行 `check_wave`；两者都没有则必须合并切片。普通切片只能有
+   focused checks，full regression 只能出现于 Integration。
+5. 普通切片默认最多四个；例外须逐片证明独立 commit 价值与独立 rollback
+   价值。缺任一价值的候选必须合并；`rejected_merge_candidates` 必须列出每个
+   已考虑但拒绝的合并集合及保持分离理由。
+6. 按 `review_context_inputs` 的精确、有序 inventory 重新读取同一 snapshot：
+   只选 packet、planning audit、target diff/owned paths、相关 frozen contracts
+   和 focused evidence，逐项复算选择范围的 UTF-8 bytes，再求精确整数总和。
+   总和必须等于 `review_context_bytes` 且 `<= 262144`；wildcard、“相关文件”、
+   估算值或只写不等式均不合格。
+7. 确认恰好一个 Integration Slice，依赖全部普通切片，packet coverage 覆盖
+   普通 target union，且实际写范围仅为 `integration_owned_paths`。它只能补
+   集成字节、跨切片 invariant、full regression 与最终 spec/sync 检查，不得
+   重写普通 owner 核心字节。
+8. Full/high planning 时，从当前 route/platform contract 解析适用的
+   `flutter-implementation-guru-writing` 及其实际引用的 contracts（Flutter
+   没有独立 implementation standard），并将其作为只读 guidance 校验：其声明契约
+   须消费已确认的 packet/planning audit，
+   且 ordinary checks 须保持 packet-focused。不得把这些 framework 文件分配
+   给 application slice，不得依赖固定 `slice_id`、新增 planning-audit 字段或
+   修改已确认的 `implement.md`；实际 framework 维护归属与 receipt bookkeeping
+   由相应 framework maintenance task、Integration validation 或 coordinator 处理。
+
+任一复算失败都产生 P1 `DETAIL_DEFECT`，不得输出 clean review 或进入
+`confirm detail`。
+
 ## 诊断流程
 
 **Step 1** EX-1~EX-6（全部 scope 模式都执行）。

@@ -50,6 +50,15 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 
 只允许 `required=true` 的 `critical|high` 决策。`decision_id` 必须跨 slice 唯一，slice 和 `invariant_ids` 必须与 packet 精确匹配；每个 `source_ref` 必须指向 Detail artifact 中恰好出现一次且包含该 decision ID 的 anchor。决策确认后将 `status` 改为 `resolved`，并添加非空 `resolution.choice` 与 `resolution.evidence`；未确认时不得伪造 `resolution`。Detail 结构检查、Detail review/confirm、risk packet 和 guarded start 必须解析同一份清单。
 
+## Full/high slice planning audit
+
+Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少的 commit-stable slices 和最大的安全并发宽度**，不是按 UNIT、`doc_type`、层或章节机械拆分。每个普通 slice 登记 `slice_id`、真实标量 `owner_unit`、`covered_units`、文件级 `owned_paths`、`read_paths`、`depends_on`、`parallel_wave`、`independent_commit_value`、`rollback_contract`、`resource_locks` / 隔离方式、focused checks 和 reviewer context inputs/bytes。`covered_units` 是包含 `owner_unit` 在内的完整 Design UNIT 集合，只属于 planning audit；不得新增或重定义 packet / evidence schema 字段。
+
+- 一个普通 mutable path 在同一 implementation wave 只有一个 owner；symbol、函数或 diff hunk 不能绕过文件级 ownership。共享测试文件也必须唯一归属、分波次或合并。
+- 多个 Design UNIT 可以合并为一个 implementation slice，只要 ownership 不重叠、合同已冻结且该 slice 有独立提交与回滚价值。`depends_on` 默认空；UNIT 编号、`doc_type` 或 data/domain/presentation 写作顺序本身不是实现依赖。无法冻结且没有独立提交价值的候选 slices 必须合并。
+- Full/high 恰好一个 Integration Slice。其 packet `target_paths` 是最终 union snapshot 的 review coverage；planning audit 的 `integration_owned_paths` 才是实际可写范围。普通 slices 只跑 focused checks，full regression 只出现在 Integration deterministic checks。
+- 最终语义/静态证据必须检查 workflow 实际派发的 Implementation writer Skill 及其引用的 implementation standards；仅 Planner、Detail 或 reviewer parity 一致不足以满足 Integration。若任一 active Full/high ordinary consumer 仍要求 project/global build、analyze、lint 或 full regression command，或仍按 UNIT、layer、`doc_type`、ViewModel、UseCase 或 component 机械重切片，按 `IMPLEMENT_DEFECT` 阻断。
+- 每个 v2 packet 保留并填实 `review_evidence_schema_version=2`、`requirements_design_inputs`、`target_paths`、`deterministic_checks`、`semantic_review_provider`、`invariants` 与 `integration_slice`。禁止为结构整齐默认生成一 UNIT 一 slice 或一 `doc_type` 一 slice。
 
 ## 必含四节
 
@@ -57,8 +66,8 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 
 | 字段 | 要求 |
 |------|------|
-| 任务切片 | 每片：承接的设计单元编号（`UNIT-<slug>`，幽灵引用被 gate 拦截）+ doc_type / **`target_paths` 文件范围摘要** / 完成信号 / 验证方式。**每片小到可独立 review**。**P1 high-risk slice 额外必填**：`slice_packet` 路径 + `invariant_ids` + `negative_case` 摘要（机器内容以 packet 为准；`UNIT-<slug>` 同时作 trace unit / packet 文件名 / `--slice` 参数）。 |
-| 执行顺序 | 按依赖排序（通常自下而上：data → domain → presentation），人工选择从最小任务开始。 |
+| 任务切片 | 每片：真实 `owner_unit` + planning audit 中的 `covered_units` + 涉及的 doc_type / **`target_paths` 文件范围摘要** / 完成信号 / 验证方式。切片边界由文件级 mutable ownership、冻结合同、独立 commit/rollback 价值与资源隔离共同决定，不按 UNIT 或层机械拆分。**P1 high-risk slice 额外必填**：`slice_packet` 路径 + `invariant_ids` + `negative_case` 摘要（机器内容以 packet 为准）。 |
+| 执行顺序 | 按 audit 中真实 `depends_on` 与 `parallel_wave` 排序；data → domain → presentation 只约束平台依赖方向，不自动制造 slice 依赖。 |
 | 风险点 | 预判的高风险改动（迁移、共享状态、平台差异），逐条写验证手段。 |
 
 ### 2. 执行（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
@@ -72,8 +81,8 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 
 | 类型 | 要求 |
 |------|------|
-| 静态检查 | `flutter analyze` / `dart run custom_lint` 的执行结果（通过/失败+处理）。 |
-| 测试 | 每个切片对应的测试命令 + 结果（测试名级别，不只写"通过"）；新增测试清单。**P1：测试按 invariant 归档**（不只按文件/命令）——每条 high-risk invariant 至少一个正/负测试作为其 `invariant_evidence`。 |
+| 静态检查 | Full/high ordinary slice 只记录 packet 中 exact focused command 的结果（例如受影响路径的 analyze/custom_lint）；全项目 `flutter analyze`、完整 custom lint 或其他 full regression 只由 Integration 记录。非 Full/high 任务继续按原 route 合同记录。 |
+| 测试 | Full/high ordinary 仅当 current packet 或 planning audit focused checks 明确声明测试时，才记录测试命令、测试名级别结果、新增测试清单及正/负路径；不得为满足通用 trace Gate 自行运行 undeclared tests。Integration 或 non-Full/v1 保留原合同：每个切片记录测试命令与测试名级别结果，并按 invariant 归档 high-risk 正/负测试证据。 |
 | 未验证项 | 无法本地验证的（真机表现、双端差异）→ 显式列出 + 留给哪个环节（Manual QA / 真机池）。 |
 
 ### 4. 阻塞与偏差（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
@@ -85,5 +94,5 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 ## 反模式
 
 - ❌ trace 在 PR 前一次性补写（失去过程证据意义）。
-- ❌ mutable evidence 只写"全部通过"（无命令、无测试名）。
+- ❌ mutable evidence 只写"全部通过"（无命令；当前 route/packet 声明测试时还缺测试名）。
 - ❌ 偏差不记录，PR diff 与计划对不上靠 reviewer 自己发现。

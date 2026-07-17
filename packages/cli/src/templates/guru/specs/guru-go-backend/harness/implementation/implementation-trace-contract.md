@@ -52,6 +52,15 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 
 只允许 `required=true` 的 `critical|high` 决策。`decision_id` 必须跨 slice 唯一，slice 和 `invariant_ids` 必须与 packet 精确匹配；每个 `source_ref` 必须指向 Detail artifact 中恰好出现一次且包含该 decision ID 的 anchor。决策确认后将 `status` 改为 `resolved`，并添加非空 `resolution.choice` 与 `resolution.evidence`；未确认时不得伪造 `resolution`。Detail 结构检查、Detail review/confirm、risk packet 和 guarded start 必须解析同一份清单。
 
+## Full/high slice planning audit
+
+Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少的 commit-stable slices 和最大的安全并发宽度**，不是按 UNIT、internal layer 或章节机械拆分。每个普通 slice 登记 `slice_id`、真实标量 `owner_unit`、`covered_units`、文件级 `owned_paths`、`read_paths`、`depends_on`、`parallel_wave`、`independent_commit_value`、`rollback_contract`、`resource_locks` / 隔离方式、focused checks 和 reviewer context inputs/bytes。`covered_units` 是包含 `owner_unit` 在内的完整 Design UNIT 集合，只属于 planning audit；不得新增或重定义 packet / evidence schema 字段。
+
+- 一个普通 mutable path 在同一 implementation wave 只有一个 owner；symbol、函数或 diff hunk 不能绕过文件级 ownership。共享测试文件也必须唯一归属、分波次或合并。
+- 多个 Design UNIT 和多个合法 owner layer 可以合并为一个 implementation slice，只要每个文件仍遵守 Go 分层与 import 方向、合同已冻结且该 slice 有独立提交与回滚价值。`depends_on` 默认空；UNIT 编号或 domain → repository → service → transport 写作顺序本身不是实现依赖。无法冻结且没有独立提交价值的候选 slices 必须合并。
+- Full/high 恰好一个 Integration Slice。其 packet `target_paths` 是最终 union snapshot 的 review coverage；planning audit 的 `integration_owned_paths` 才是实际可写范围。普通 slices 只跑 focused checks，full regression 只出现在 Integration deterministic checks。
+- 最终语义/静态证据必须检查 workflow 实际派发的 Implementation writer Skill 及其引用的 implementation standards；仅 Planner、Detail 或 reviewer parity 一致不足以满足 Integration。若任一 active Full/high ordinary consumer 仍要求 project/global build、analyze、lint 或 full regression command，或仍按 UNIT、layer、`doc_type`、ViewModel、UseCase 或 component 机械重切片，按 `IMPLEMENT_DEFECT` 阻断。
+- 每个 v2 packet 保留并填实 `review_evidence_schema_version=2`、`requirements_design_inputs`、`target_paths`、`deterministic_checks`、`semantic_review_provider`、`invariants` 与 `integration_slice`。禁止为结构整齐默认生成一 UNIT 一 slice 或一 internal layer 一 slice。
 
 ## 0. 装载与硬前置
 
@@ -61,35 +70,34 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 - P2 `.trellis/spec/guides/golden-path.md` 可读：分层依赖律（handler→service→repository→domain，严格单向无环；除 domain 外不跨 internal 包导入）、轻框架锁定（net/http ServeMux，禁 gin/echo）、错误链式包装（sentinel + `fmt.Errorf("%w: ...")` + `errors.Is`）、启动/关闭契约（`main()` 控信号 → `app.New()` → `app.Run()` → `app.Shutdown()`）已就绪。
 - P3 目标仓库 `project-conventions.md` 可读且校验通过：DI（当前无→可 wire）、ORM（原生 SQL + `lib/pq` + PostgreSQL→可 ent/sqlc）、日志（标准 `log`→可 slog/zap）、测试框架（`testing`→可 testify/ginkgo）、API 风格（REST JSON→可 gRPC）、lint（`golangci-lint`）、会话鉴权（HMAC-SHA256 签名 cookie + bcrypt）等槽位均已选定且未留空。
 - P4 详细设计 Gate 已过、人工确认已落盘；本任务承接的 `UNIT-<slug>` 单元全部可定位（幽灵引用——指向不存在的单元——被 gate 断链拦截）。
-- P5 编译基线可建立：`go.mod` 可读，`go build ./...` 在改动前的基线状态可复现（用于区分"我引入的失败"与"既有失败"）。
+- P5 编译基线可建立：`go.mod` 可读；Full/high ordinary slice 在改动前只复现 packet 对应 service/package 的 focused build baseline，`go build ./...` 仅由 Integration 建立。非 Full/high 任务继续按原 route 合同执行（用于区分"我引入的失败"与"既有失败"）。
 
 ## 必含四节
 
-实现 trace 必须包含以下四节且每节非空；缺任一节，实现 Gate 不予放行（详见 §5）。detail 确认后的命令、测试名、偏差和阻塞记录写入 mutable evidence，并与 trace 字段合同合并恢复。
+实现 trace 必须包含以下四节且每节非空；缺任一节，实现 Gate 不予放行（详见 §5）。detail 确认后的命令、偏差和阻塞记录写入 mutable evidence；当前 route/packet 声明测试时再记录测试名，并与 trace 字段合同合并恢复。
 
 ### 1. 计划（开工前写）
 
 | 字段 | 要求 |
 |------|------|
-| 任务切片 | 每片：承接的设计单元编号（`UNIT-<slug>`，幽灵引用被 gate 拦截）+ 所属服务/层（`services/<svc>/internal/<layer>`）+ 文件范围 + 完成信号 + 验证方式。**每片小到可独立 review**，建议一片不跨越两个 internal 层。 |
-| 执行顺序 | 按依赖排序，**自下而上**：`domain`（实体/sentinel errors）→ `repository`（数据访问 + SQL/迁移）→ `service`（业务编排 + 错误包装）→ `transport`（ServeMux 路由 + handler）→ `app`/`config`/`main`（装配与启动）。人工从最小可独立编译的切片开始；契约变更（`packages/contracts/`）须排在所有消费方之前。 |
+| 任务切片 | 每片：真实 `owner_unit` + planning audit 中的 `covered_units` + 涉及的服务/层（`services/<svc>/internal/<layer>`）+ 文件范围 + 完成信号 + 验证方式。切片可以覆盖多个合法 internal layer，但每个文件仍须遵守 owner 与单向 import；边界由文件级 ownership、冻结合同、独立 commit/rollback 价值与资源隔离决定。 |
+| 执行顺序 | 按 audit 中真实 `depends_on` 与 `parallel_wave` 排序。`domain` → `repository` → `service` → `transport` → `app`/`config`/`main` 继续约束代码依赖方向，但不自动制造 slice 依赖；契约变更（`packages/contracts/`）只有在消费方无法依赖已冻结合同独立实现时才形成前置。 |
 | 风险点 | 逐条预判高风险改动并写验证手段：DB 迁移（向前/向后兼容、回滚脚本）、共享 `app.App` 装配与生命周期（启动顺序/关闭幂等）、跨服务契约 `packages/contracts/` 变更（消费方编译面）、env 前缀冲突（如 `CONTROL_API_*`）、并发与 `context` 超时传递、sentinel error 重命名导致的 `errors.Is` 断裂。 |
 
 **切片登记示例**（合格粒度）：
 
 ```
-切片 S1 | 承接 UNIT-user-domain | services/control-api/internal/domain/user.go
-  范围：定义 User 实体 + ErrUserNotFound/ErrEmailTaken sentinel errors
-  完成信号：go build ./services/control-api/internal/domain/ 通过；无跨层导入
-  验证：go vet ./...；go test ./services/control-api/internal/domain/ -run TestUser
-
-切片 S2 | 承接 UNIT-user-repository | services/control-api/internal/repository/user_repository.go + db/migrations/0003_users.up.sql
-  范围：UserRepository 接口实现（lib/pq 原生 SQL），sql.ErrNoRows → domain.ErrUserNotFound 转换
-  完成信号：go build 通过；迁移可 up/down
-  验证：go test ./services/control-api/internal/repository/ -run TestUserRepository（含 not-found 路径）
+切片 S1 | owner UNIT-user-repository | covered UNIT-user-domain, UNIT-user-repository
+  范围：services/control-api/internal/domain/user.go +
+       services/control-api/internal/repository/user_repository.go +
+       db/migrations/0003_users.up.sql
+  完成信号：User 与 sentinel errors、repository 错误映射、迁移 up/down 作为一个
+           commit-stable 合同闭合；逐文件 import 仍遵守 repository → domain
+  验证：go build ./services/control-api/...；
+       go test ./services/control-api/internal/domain/ ./services/control-api/internal/repository/ -run 'Test(User|UserRepository)'
 ```
 
-❌ 不合格切片登记：「实现用户模块，改 service 和 repository，写完跑测试」——无 UNIT 编号、无文件范围、无完成信号、跨多层无法独立 review。
+❌ 不合格切片登记：「实现用户模块，改 service 和 repository，写完跑测试」——无真实 owner/covered UNIT、无文件范围、无完成信号、无独立提交与回滚说明；问题不是跨层本身，而是 ownership 与合同不可审计。
 
 ### 2. 执行（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
 
@@ -109,9 +117,9 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 
 | 类型 | 要求 |
 |------|------|
-| 编译 | `go build ./...`（全仓库）或 `go build ./services/<svc>/...`（限服务）的执行结果。**必须贴命令与退出态**；失败要写错误摘要 + 处置，不能只写"通过"。这是 Go 的第一道硬证据——编译不过的切片不存在"完成"。 |
-| 静态检查 | `go vet ./...`（标准库内建，检测可疑构造）+ `golangci-lint run ./...`（按 project-conventions lint 槽位）。逐条记录通过/失败 + 处理；nolint 豁免须写理由并指向 `[SLOT-17]` 记债。 |
-| 测试 | 每个切片对应的测试命令 + 结果，**测试名级别**（不只写"通过"）：`go test ./services/control-api/internal/service/ -run TestUserService_Login -v` 输出 `--- PASS: TestUserService_Login/bad_credential (0.00s)` 这样的子测试名。竞态敏感切片附 `go test -race`；覆盖关注切片附 `go test -cover`。新增测试清单逐条列出（文件 + 测试函数名 + 承接的 BHV/UNIT）。 |
+| 编译 | Full/high ordinary slice 只运行 packet 声明的 focused build（例如 `go build ./services/<svc>/...` 或 exact package path）；`go build ./...` 只由 Integration 运行。非 Full/high 任务继续按原 route 合同执行。**必须贴命令与退出态**；失败要写错误摘要 + 处置，不能只写"通过"。 |
+| 静态检查 | Full/high ordinary slice 只运行 packet 声明的 affected service/package `go vet` 与 `golangci-lint` focused commands；`go vet ./...` + `golangci-lint run ./...` 只由 Integration 运行。非 Full/high 任务继续按原 route 合同执行。逐条记录通过/失败 + 处理；nolint 豁免须写理由并指向 `[SLOT-17]` 记债。 |
+| 测试 | Full/high ordinary 仅当 current packet 或 planning audit focused checks 明确声明测试时，才记录测试命令、测试名级别结果、成功/失败路径与新增测试映射；不得为满足通用 trace Gate 自行运行 undeclared tests。Integration 或 non-Full/v1 保留原合同：每个切片记录测试命令与测试名级别结果；竞态/覆盖命令和新增测试清单按原要求追溯到 BHV/UNIT。 |
 | 依赖整洁 | 涉及 `go.mod`/`go.sum` 变更或导入调整时跑 `go mod tidy` 并记录 diff；新增第三方库须落在 project-conventions 已批准槽位内（禁 gin/echo 等被锁框架）。 |
 | 未验证项 | 无法本地验证的显式列出 + 指明留给哪个环节：真实 PostgreSQL 集成行为（→ CI 集成测试 / 容器化 DB）、生产负载下的 `context` 超时与连接池表现（→ 压测/灰度）、跨服务契约在另一服务的运行时兼容（→ 集成环境）、信号驱动的优雅关闭实测（→ Manual QA / staging）。 |
 
@@ -129,7 +137,7 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 - 未验证：真实 PG 唯一约束触发 ErrEmailTaken → 留给 CI 集成测试（本地仅 sqlmock 覆盖）
 ```
 
-❌ 不合格：「全部编译通过，测试通过，vet 无问题」——无命令、无退出态、无测试名、无新增测试映射、未声明任何未验证项。
+❌ 不合格：「全部编译通过，测试通过，vet 无问题」——无命令、无退出态；当前 route/packet 声明测试时还缺测试名与新增测试映射；且未声明任何未验证项。
 
 ### 4. 阻塞与偏差（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
 
@@ -143,9 +151,9 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 实现切片可进入 commit/PR，当且仅当：
 
 - G1 trace 合同与 mutable evidence 齐全：`implement.md` 计划有 `UNIT-<slug>` 承接与完成信号；执行/偏差/验证证据在 `implementation-evidence.jsonl` 与 `verification-evidence.jsonl` 中可按切片恢复；阻塞如无则显式记录「无」。
-- G2 编译证据：`go build` 全绿（贴命令 + 退出 0）；引入的失败已全部收口。
-- G3 静态检查证据：`go vet` + `golangci-lint` 通过或豁免有理由且记债（`[SLOT-17]`）。
-- G4 测试证据：每个切片有测试名级别结果，覆盖承接 UNIT/BHV 的成功路径 + 全部失败路径；新增测试清单可追溯到 UNIT。
+- G2 编译证据：当前 route/slice 类型要求的 `go build` 全绿（Full/high ordinary 为 packet focused build，Integration 为 full build；贴命令 + 退出 0）；引入的失败已全部收口。
+- G3 静态检查证据：当前 route/slice 类型要求的 `go vet` + `golangci-lint` 通过（Full/high ordinary 为 packet focused checks，Integration 为 full checks），或豁免有理由且记债（`[SLOT-17]`）。
+- G4 测试证据：Full/high ordinary 仅在 current packet 或 planning audit focused checks 明确声明测试时，要求测试名级别结果、承接 UNIT/BHV 的成功/失败路径与新增测试映射，不得自行运行 undeclared tests；Integration 或 non-Full/v1 保留每个切片的完整测试合同。
 - G5 分层与错误契约：无跨层反向/越层导入；服务级错误经 sentinel + `%w` 包装、`errors.Is` 可判定；轻框架未被破坏（无新引入的被锁框架）。
 - G6 偏差闭合：PR diff 与计划逐项可对，所有计划外改动均有原因记录；上游缺陷已回退修订而非就地改设计。
 
@@ -154,7 +162,7 @@ Delivery policy is executable, not prose-only. Implementation trace must quote t
 ## 6. 反模式
 
 - ❌ trace 在 PR 前一次性补写（失去过程证据意义，偏差与回退已不可追溯）。
-- ❌ mutable evidence 只写"全部通过"（无命令、无退出态、无测试名）；`go build` 当成隐含步骤不记录。
+- ❌ mutable evidence 只写"全部通过"（无命令、无退出态；当前 route/packet 声明测试时还缺测试名）；`go build` 当成隐含步骤不记录。
 - ❌ 偏差不记录，PR diff 与计划对不上靠 reviewer 自己发现。
 - ❌ 触碰存量违例不挂 `[SLOT-17]` 编号，把绕行/顺手修复混入业务 diff。
 - ❌ 用 `_ = err` 吞错或 `fmt.Errorf("...: " + err.Error())` 拼接（丢 `%w`），破坏 `errors.Is` 链。
