@@ -83,6 +83,14 @@ domain→data→presentation→横切归属和依赖律仍须满足，但按一�
    普通 target union，且实际写范围仅为 `integration_owned_paths`。它只能补
    集成字节、跨切片 invariant、full regression 与最终 spec/sync 检查，不得
    重写普通 owner 核心字节。
+8. Full/high planning 时，从当前 route/platform contract 解析适用的
+   `flutter-implementation-guru-writing` 及其实际引用的 contracts（Flutter
+   没有独立 implementation standard），并将其作为只读 guidance 校验：其声明契约
+   须消费已确认的 packet/planning audit，
+   且 ordinary checks 须保持 packet-focused。不得把这些 framework 文件分配
+   给 application slice，不得依赖固定 `slice_id`、新增 planning-audit 字段或
+   修改已确认的 `implement.md`；实际 framework 维护归属与 receipt bookkeeping
+   由相应 framework maintenance task、Integration validation 或 coordinator 处理。
 
 任一复算失败都产生 P1 `DETAIL_DEFECT`，不得输出 clean review 或进入
 `confirm detail`。

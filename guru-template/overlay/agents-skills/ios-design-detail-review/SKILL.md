@@ -117,6 +117,13 @@ Domain→App→Infrastructure→UI 单向依赖、七类 doc_type 和各层 doma
    普通 target union，且实际写范围仅为 `integration_owned_paths`。它只能补
    集成字节、跨切片 invariant、full regression 与最终 spec/sync 检查，不得
    重写普通 owner 核心字节。
+8. Full/high planning 时，从当前 route/platform contract 解析适用的
+   `ios-implementation-guru-writing` 与 implementation standard，并将其作为
+   只读 guidance 校验：其声明契约须消费已确认的 packet/planning audit，且
+   ordinary checks 须保持 packet-focused。不得把这些 framework 文件分配给
+   application slice，不得依赖固定 `slice_id`、新增 planning-audit 字段或修改
+   已确认的 `implement.md`；实际 framework 维护归属与 receipt bookkeeping 由
+   相应 framework maintenance task、Integration validation 或 coordinator 处理。
 
 任一复算失败都产生 P1 `DETAIL_DEFECT`，不得输出 clean review 或进入
 `confirm detail`。

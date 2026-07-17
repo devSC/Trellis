@@ -106,6 +106,14 @@ domain→data→presentation→横切归属与依赖律继续生效，但不得�
    packet coverage 覆盖普通 target union；`integration_owned_paths` 单独限定
    实际可写路径。Integration 只补集成字节、跨切片 invariant、full regression
    和最终 spec/sync 检查，不重写普通 owner 的核心字节。
+8. Full/high planning 时，从当前 route/platform contract 解析适用的
+   `flutter-implementation-guru-writing` 及其实际引用的 contracts（Flutter
+   没有独立 implementation standard），并将其作为只读 guidance 校验：其声明契约
+   须消费已确认的 packet/planning audit，
+   且 ordinary checks 须保持 packet-focused。不得把这些 framework 文件分配
+   给 application slice，不得依赖固定 `slice_id`、新增 planning-audit 字段或
+   修改已确认的 `implement.md`；实际 framework 维护归属与 receipt bookkeeping
+   由相应 framework maintenance task、Integration validation 或 coordinator 处理。
 
 ## 输出要求（writing 专属）
 
