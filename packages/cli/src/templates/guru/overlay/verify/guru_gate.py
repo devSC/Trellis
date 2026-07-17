@@ -7460,6 +7460,19 @@ def cmd_check_final_receipts(task_dir: str, packets: list[dict]) -> int:
         recovery_slice = integration_id
         integration_receipt = current_receipts[integration_id]
         integration_commit = integration_receipt["commit_sha"]
+        current_supervisor_digest = guru_review_record.supervisor_source_digest(
+            os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "guru_supervise.py",
+            )
+        )
+        if (
+            integration_receipt["supervisor_source_digest"]
+            != current_supervisor_digest
+        ):
+            raise guru_review_record.ReviewRecordError(
+                "integration receipt is stale against current supervisor source"
+            )
         for slice_id, receipt in current_receipts.items():
             if slice_id == integration_id:
                 continue

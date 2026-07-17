@@ -2929,6 +2929,7 @@ class SliceCommitLifecycleTests(unittest.TestCase):
                         "receipt_id": "r4",
                         "commit_sha": integration_commit,
                         "reviewed_target_digest": "digest",
+                        "supervisor_source_digest": "current-supervisor",
                     },
                 }
                 output = io.StringIO()
@@ -2951,6 +2952,11 @@ class SliceCommitLifecycleTests(unittest.TestCase):
                         return_value="",
                     ),
                     mock.patch.object(
+                        guru_gate.guru_review_record,
+                        "supervisor_source_digest",
+                        return_value="current-supervisor",
+                    ),
+                    mock.patch.object(
                         guru_gate,
                         "_git_is_ancestor",
                         return_value=False,
@@ -2971,6 +2977,81 @@ class SliceCommitLifecycleTests(unittest.TestCase):
                 self.assertIn("--slice U4 --staged", message)
                 self.assertIn("check-commit TASK --slice U4", message)
                 self.assertNotIn("--slice U1 --staged", message)
+
+    def test_final_gate_requires_current_integration_supervisor_digest(
+        self,
+    ) -> None:
+        packets = [
+            {
+                "slice_id": "U1",
+                "target_paths": ["lib/a.txt"],
+                "depends_on": [],
+                "integration_slice": False,
+            },
+            {
+                "slice_id": "U4",
+                "target_paths": ["lib/a.txt"],
+                "depends_on": ["U1"],
+                "integration_slice": True,
+            },
+        ]
+        receipts = {
+            "U1": {
+                "slice_id": "U1",
+                "receipt_id": "r1",
+                "commit_sha": "ordinary",
+                "supervisor_source_digest": "historical",
+            },
+            "U4": {
+                "slice_id": "U4",
+                "receipt_id": "r4",
+                "commit_sha": "integration",
+                "reviewed_target_digest": "unchanged-target",
+                "supervisor_source_digest": "old-supervisor",
+            },
+        }
+        output = io.StringIO()
+        with (
+            mock.patch.object(guru_gate, "_repo_root", return_value="/repo"),
+            mock.patch.object(
+                guru_gate,
+                "_receipt_history_by_slice",
+                return_value=guru_gate._ReceiptHistory(),
+            ),
+            mock.patch.object(
+                guru_gate,
+                "_dependency_receipt_for_commit",
+                side_effect=lambda _root, _history, slice_id, _head,
+                require_strict_ancestor: receipts[slice_id],
+            ),
+            mock.patch.object(
+                guru_gate,
+                "_validate_slice_receipt",
+                return_value="",
+            ),
+            mock.patch.object(
+                guru_gate.guru_review_record,
+                "supervisor_source_digest",
+                return_value="current-supervisor",
+            ),
+            mock.patch.object(
+                guru_gate,
+                "_display_task_dir",
+                return_value="TASK",
+            ),
+            contextlib.redirect_stderr(output),
+        ):
+            self.assertEqual(
+                2,
+                guru_gate.cmd_check_final_receipts("TASK", packets),
+            )
+        message = output.getvalue()
+        self.assertIn(
+            "integration receipt is stale against current supervisor source",
+            message,
+        )
+        self.assertIn("--slice U4 --staged", message)
+        self.assertNotIn("--slice U1 --staged", message)
 
     def test_final_gate_accepts_one_atomic_aggregate_integration_batch(
         self,
