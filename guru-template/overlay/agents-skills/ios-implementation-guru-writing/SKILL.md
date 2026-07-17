@@ -14,7 +14,14 @@ description: 按已过 Gate 的 iOS 原生（SwiftUI + DDD 四层）详细设计
 2. 读 `.trellis/spec/harness/implementation/implementation-trace-contract.md`（过程合同 §0 承接关系、§1 计划、§2 执行、§3 证据、§4 阻塞偏差）与 `.trellis/spec/harness/index.md` 的实现 Gate（`implement`，对应 trace 的 GI-1~GI-7）定义、doc_type 权威七类（§3）、编号纪律（§4.1：`BHV-NNN` / `UNIT-<slug>`，下游裸 token）。
 3. 读 `.trellis/spec/conventions/project-conventions.md` 并校验 C1~C6（顺序短路）：C1 元信息齐全；C2 SLOT-01~SLOT-16 全在且「待定」≤2（默认待定候选 SLOT-08 网络层 / SLOT-15 构建自动化，各须写决策人+期限）；C3 已填槽位证据路径在目标仓库真实存在；C4 取值不违反通用硬规则；C5 doc_type 只用七类裸 token；C6 SLOT-16 存量清单存在（可为空但须显式「无」）。任一未通过 → 停止先定槽位/补约定，不在实现里私自拍板。本阶段实际消费的关键槽位：**SLOT-01**（UI 框架，新代码纯 SwiftUI 禁新增 RxSwift）、**SLOT-02**（doc_type→owner 层→物理目录映射）、**SLOT-03**（`IXxx` 前缀 + 接口实现分文件）、**SLOT-04/10**（`enum Error` 分层 + JSON 修复）、**SLOT-05**（FactoryKit 注册形态）、**SLOT-06**（WCDBSwift + `DatabaseManager` 注入）、**SLOT-07**（`AppCoordinator` 导航闭包注入）、**SLOT-09/11/12**（日志门面 `ILogger`/`Logger`/OSLog/主题 `ThemeManager`/本地化）、**SLOT-13**（feature `Views/`+`ViewModels/` 分目录）、**SLOT-14**（XCTest + 手写 mock，待迁 Quick/Nimble + Mockolo）、**SLOT-15**（Fastlane 待定，发布 lane 人工执行）、**SLOT-16**（存量违例豁免数据源）；同时确认项目 logger / logging helper / 日志门面和隐私字段约定。
 4. 定位本任务承接的、已过详细 Gate 且人工确认已落盘的详细设计单元（full=`design_package/chapters/*.md` 逐章；light=`design.md` §详细），建立 `UNIT-<slug>` 单元清单 + 合同八问（①承接行为 ②输入/输出/错误 ③读写状态 ④调用/不调用依赖 ⑤失败收口 ⑥事件/后置 ⑦测试映射 ⑧不得补造）+ 测试映射；每个 UNIT 自带一个 doc_type（七类之一）。缺失或单元为幽灵引用（引用不存在的 UNIT/BHV）→ 终止并提示回退详细阶段（探索性 spike 除外，须显式声明、隔离、不并入交付）。
-5. 建立构建基线：确认构建形态（CocoaPods 工作区 `<App>.xcworkspace` 主用 `xcodebuild`；Domain 抽为独立 SPM package 时可用 `swift build`/`swift test`），记录改动前 `xcodebuild build` 与 `Pods/SwiftLint/swiftlint lint` 的基线状态（用于区分「我引入的失败」与「既有失败」）；不可建立基线 → 记录环境阻塞，不得把未验证当通过。
+5. 判定验证路由：Full/high 读取 current packet 与 `implement.md` 已确认的 minimum commit-stable planning audit；ordinary 只建立 packet focused checks 所需的 scoped 基线，Integration 才建立 workspace `xcodebuild` / SwiftLint 全局基线。Small、Micro、Lite、non-Full 与 v1 保留既有基线行为。
+
+## Active packet 消费边界
+
+- Full/high ordinary worker 把 current packet 和 planning audit 当作不可变 dispatch input，只修改 packet `target_paths`，只运行 packet `deterministic_checks` 与 audit 显式声明的 focused checks。
+- 不得按 UNIT、iOS `doc_type`、ViewModel、UseCase、View、component、symbol 或 hunk 重新切片、转移 mutable ownership、改变 `depends_on` / `parallel_wave`；iOS owner 层和依赖顺序继续约束代码，不生成第二份 slice plan。
+- Full/high ordinary 不运行 workspace-wide `xcodebuild` / SwiftLint 或 full regression；这些只由唯一 `integration_slice=true` 的 Integration 执行。Integration 实际写范围仍限 planning audit 的 exact `integration_owned_paths`。
+- Small、Micro、Lite、non-Full 与兼容 v1 保留既有验证行为。
 
 ## 边界约束
 
@@ -35,11 +42,11 @@ description: 按已过 Gate 的 iOS 原生（SwiftUI + DDD 四层）详细设计
 
 ## 执行流程（WX 步骤）
 
-1. **WX-0 判定实现模式与构建基线**：判定空 feature 初始化 / 已有 feature 增量 / 重构校准；确定本任务落在哪个 `UI/Features/<Feature>/`、复用还是新建 `Domain/Repositories`、`App/UseCases/<Feature>`、`Infrastructure/Persistence/Repositories` 资产，是否需扩 `AppCoordinator.NavigationDestination` 或新建 WCDB 表；记录改动前 `xcodebuild build -workspace <App>.xcworkspace -scheme <App>` 与 SwiftLint 基线（用于区分既有失败）。
-2. **WX-1 计划（开工前写）**：按 trace 合同 §1 在目标仓库 `implement.md`（建议 `docs/design/<feature>/implementation-trace.md`）产出任务切片表；若 detail 已确认则只读取该计划，不在实现阶段补写。每片含：① 承接的 `UNIT-<slug>`（幽灵引用被 `slice_ghost_unit` 拦截）；② doc_type（iOS 七类之一）；③ 文件范围（相对路径，落在该 doc_type 的 owner 层内，按 SLOT-02）；④ 完成信号（可验证、非「做完感」——如「`@Published` 三态字段齐全且 `@Injected` 注入接口」「错误映射表逐条落地」「`Factory` 注册行就位」）；⑤ 验证方式（编译/测试/lint 命令，见 §3）。执行顺序**自底向上**（golden-path 锁定）：`domain-model`（实体/值对象/`enum Error`）→ `repository`（Domain 接口 + Infrastructure 实现 + WCDB 表对象 + mapper）→ `usecase`（编排 + 域错误）→ `viewmodel`（`@Published` + `@Injected`）→ `view` + `coordinator`/`external` 横切（`coordinator` 含 DI 装配，被依赖方稳定后接入）。逐条预判高风险点并写验证手段（WCDB 表/迁移、DI graph 影响全局单例、Rx 遗留桥接内存/线程、导航枚举全量 switch、`MainActor` 线程归属）。人工确认从最小可独立 review 的切片开始（单 ViewModel / 单 UseCase / 单 Repository 接口+实现对 / 单 SwiftUI View 为典型粒度）。
+1. **WX-0 判定实现模式与验证基线**：判定空 feature 初始化 / 已有 feature 增量 / 重构校准并核对 packet scope。Full/high ordinary 只记录 packet focused baseline；Integration 或 non-Full/v1 才按既有合同记录 workspace `xcodebuild` / SwiftLint 基线。
+2. **WX-1 消费已确认计划**：Full/high 只校验 current packet 与 `implement.md` planning audit 的 `owner_unit` / `covered_units` / `owned_paths` / `depends_on` / `parallel_wave` / focused checks 一致；不按 UNIT、`doc_type`、ViewModel、UseCase 或 View 创建、拆分、转移或重排 slices。代码仍遵守 iOS owner 层与单向依赖。packet 缺失即停回 planning。Small、Micro、Lite、non-Full 与 v1 继续按既有 trace 计划行为执行。
 3. **WX-2 逐片实现（随做随记）**：每片对照承接 `UNIT-<slug>` 的合同八问落地——②输入/输出/错误（Swift 签名级 `async throws`、`domain-model` 结构体、`enum XxxError` 的每个 case；`viewmodel` 逐 `@Published` 字段列名称/类型/初值/写入时机 + loading/empty/error 三态去向）；④调用/不调用依赖（`@Injected` 注入接口；`usecase` 调 `IXxxRepository` 不反向；`viewmodel` 不碰 `DatabaseManager`；`view` 不发起导航/不访问持久化）；⑤失败收口（每条失败路径处置 + 错误转换位置：底层异常→`enum Error` 映射表逐行对应一条失败 BHV）；⑥后置副作用（`@Published` 发射 / Combine·RxSwift 流时序 / 导航动作去哪个 destination 带什么参数 / 埋点）。每片完成**立即**追加 `implementation-evidence.jsonl`（实际改动文件清单逐文件标层与新增/修改/删除、与计划偏差及原因、DI 装配登记 `Container+*.swift` 注册行位置、本切片触碰的 golden-path 锁定项逐项确认、`AppCoordinator`/`Container`/`DatabaseManager` 等共享面单独标注），不积压到批末。
 4. **WX-3 代码生成 / 脚手架（仅触发条件满足时）**：按 SLOT-14（mock 生成：手写 → Mockolo）与资源生成选型执行并追加 `implementation-evidence.jsonl`——若已切 Mockolo → 跑生成命令、记产物 mock 文件清单；若用 R.swift / SwiftGen 生成本地化或资源访问器 → 记命令与产物。**当前默认 SLOT-14＝手写 mock、无 Mockolo → 本项写「本切片无生成步骤（手写实现 + 手写 mock）」，不留空、不私自引入生成器。** 任何发布/签名 lane（SLOT-15 Fastlane 待定）一律人工执行，agent 禁自动触发上架/分发。
-5. **WX-4 逐片验证（验证后记）**：按 trace 合同 §3 的字段要求追加 `verification-evidence.jsonl`——**编译**：工作区 `xcodebuild build -workspace <App>.xcworkspace -scheme <App> -destination 'platform=macOS'`（或 SPM 包 `swift build`），贴命令 + 结果（`BUILD SUCCEEDED`/失败摘要 + 处置）；**静态检查**：`Pods/SwiftLint/swiftlint lint --strict --reporter emoji`，零新增违例（存量按 §4 记 SLOT-16），nolint 豁免写理由并指向 SLOT-16；**测试到测试名级别**：`xcodebuild test -workspace <App>.xcworkspace -scheme <App> -destination 'platform=macOS' -only-testing:<App>Tests/<ClassName>/<testMethod>`（或 SPM `swift test --filter <ClassName>`；Quick/Nimble 用 `describe/it` 记到 example 名），新增测试逐条列 `XCTestCase` 子类名 + `test*` 方法名 + 承接 `BHV-NNN`/`UNIT-<slug>`。按 doc_type 取证：`domain-model`＝unit 纯逻辑无 mock；`repository`＝unit（mock `DatabaseManager`）+ integration（真实 WCDBSwift 临时库），错误映射表逐条用例 + mapper 双向；`usecase`＝unit（mock `IXxxRepository`）每条承接行为 ≥1 成功 + ≥1 失败、业务错误枚举逐条（**测试密度最高层**）；`viewmodel`＝unit（mock usecase 接口）断言 `@Published` 三态转移 + 订阅取消无泄漏；`coordinator`＝断言 `NavigationDestination` 转移 + `Container` 解析全部新增 `Factory` 冒烟；`view`＝逻辑已下沉 viewmodel，结构断言列「未验证项」或快照（若有基线）；`external`＝mock SDK 边界 + 真实集成留真机。失败先修复再进下一片；未验证项显式列出并指明留给哪个环节（真机/设备能力/大模型推理/TTS 真实音频/GPU 图像生成/WhisperKit 设备端表现 → Manual QA / 真机池 / 性能基准）。
+5. **WX-4 当前 packet 验证（验证后记）**：Full/high ordinary 只运行 packet `deterministic_checks` 与 audit focused checks（scoped build/lint/test evidence），不得升级为 workspace `xcodebuild` / SwiftLint 或 full regression；Integration 运行 workspace-wide build/lint/full regression。Small、Micro、Lite、non-Full 与 v1 保留原有验证。测试证据仍到测试名级别并遵守各 doc_type 测试映射；失败即阻塞当前 packet，未验证项显式移交。
 6. **WX-5 注释/日志/文档追溯**：逐片完成前补齐维护性证据：
    - 新增核心类型、public/internal API、ViewModel、UseCase、Repository 接口与实现、domain-model、Coordinator、external adapter、跨层 DTO/状态定义：优先用 Swift DocC 风格 `///` 写明职责、承接的 `UNIT-<slug>` / `BHV-NNN`，必要时附设计文档相对路径（如 `docs/design/.../chapters/<slug>.md` 或任务内 `design.md` 锚点）。
    - 复杂私有 helper、错误映射、WCDB 迁移、SwiftUI↔RxSwift 桥接、`MainActor`/异步竞态、DI 装配、导航枚举、降级/恢复、生命周期处置：用局部注释解释"为什么这样做"和对应设计约束。
@@ -62,17 +69,17 @@ description: 按已过 Gate 的 iOS 原生（SwiftUI + DDD 四层）详细设计
 
 - **GI-1 trace 合同与 mutable evidence 齐全**：`implement.md` 必须存在且计划有 `UNIT-<slug>` 承接 + doc_type + 文件范围 + 完成信号；执行/偏差/DI 装配/验证证据在 `implementation-evidence.jsonl` 与 `verification-evidence.jsonl` 中可按切片恢复，阻塞如无则显式记录「无」；trace 不存在直接 fail，无 TODO 占位、无空章节。
 - **GI-2 承接闭合 + 归属合法**：每切片承接的 `UNIT-<slug>` 存在于详细设计（无幽灵引用 `slice_ghost_unit`）；doc_type 为 iOS 七类之一且文件范围落在该 doc_type owner 层内（`view`/`viewmodel`→UI、`coordinator`→App、`usecase`/`domain-model`/`repository` 接口→Domain、`repository` 实现/`external`→Infrastructure，按 SLOT-02）。
-- **GI-3 编译 + 测试 + lint 证据**：每切片有 `xcodebuild build`（或 `swift build`）结果 + 测试命令结果（**测试名级别**，覆盖承接 `UNIT-<slug>`/`BHV-NNN` 的成功路径 + 全部失败路径）+ SwiftLint 结果；无「全部通过」式无命令证据；新增测试清单可追溯到 UNIT；未执行的验证不得写成通过。
+- **GI-3 编译 + 测试 + lint 证据**：Full/high ordinary 只提供 current packet 或 planning audit 声明的 focused build/lint 结果；仅当 current packet 或 planning audit focused checks 声明测试时，才要求测试名级别结果与承接行为的成功/失败路径证据，不得为满足通用 GI-3 自行运行 undeclared tests。Integration 或 non-Full/v1 保留原合同，提供 workspace `xcodebuild`（或 `swift build`）、SwiftLint 与测试名级别结果；未执行不得写成通过。
 - **GI-4 golden-path 锁定项逐项落地**：FactoryKit `@Injected` 无手动初始化 / Repository 模式（接口实现分文件、UI·usecase 不直连 WCDB）/ `enum Error` 分层（Domain 错误在 `Domain/Errors/`、UseCase 错误在各 UseCase 目录、底层异常边界转换不裸抛 UI）/ WCDBSwift 无 CoreData·SwiftData / `ViewModel=ObservableObject+@Published` / `private` 方法在 `private extension`。
 - **GI-5 分层依赖律零违反**：Domain 零依赖（Domain 文件无非 `Foundation`/标准库 import）；`Domain→App→Infrastructure→UI` 单向无逆行；`view` 不直连持久化、不互相导航；`viewmodel` 不 import repository 实现类/`WCDBSwift`；secret 只写 key 名引用无字面量密钥。
 - **GI-6 偏差闭合 + 编号闭合**：PR diff 与计划逐项可对，计划外改动均有原因记录；切片均挂真实 `UNIT-<slug>`（幽灵单元被拦截）；上游结构性缺陷（归属错、合同越界、单元跟随名词而非行为）已回退拥有该决策的阶段修订，禁止在实现阶段补造。
 - **GI-7 DI 装配闭合**：每个新增 `viewmodel`/`usecase`/`repository` 实现/`external` 在 `Container+*.swift` 有对应 `Factory` 注册（`@Injected` 运行期可解析），UI ViewModel 工厂标 `@MainActor`；存量违例均有记录与处置（SLOT-16），未决决策已升级（无私自拍板）。
 
-任一未满足 → 不进 commit。`xcodebuild build` / `swiftlint lint --strict` / `xcodebuild test`（测试名级别）由目标仓库 worktree.yaml verify 条目执行，与本自检同口径；上游结构性缺陷只能回拥有该决策的阶段修订，禁止下游补造。
+任一未满足 → 不进 commit。Full/high ordinary 以 packet focused checks 为准；workspace `xcodebuild build` / `swiftlint lint --strict` / full regression 只在 Integration 执行。Small、Micro、Lite、non-Full 与 v1 保留既有 worktree verify 行为；上游结构性缺陷只能回拥有该决策的阶段修订。
 
 ## 好例 / 坏例
 
-✅ **合格切片登记与证据**（粒度可独立 review、命令级证据、可追溯、自底向上）：
+✅ **Full/high ordinary 合格切片登记与证据**（命令均来自 current packet 或 planning audit focused checks）：
 
 ```
 切片 S3 | 承接 UNIT-story-management-usecase | doc_type=usecase（owner=Domain）
@@ -81,12 +88,10 @@ description: 按已过 Gate 的 iOS 原生（SwiftUI + DDD 四层）详细设计
             + StoryManagementError.swift
             + App/DependencyInjection/Container+UseCases.swift（DI 装配横切）
   完成信号：公开方法签名级齐全；只 @Injected 注入 IStoryRepository 接口（无实现类/无 DatabaseManager）；
-            业务错误枚举 StoryManagementError 落地；private 方法落 private extension；Factory 注册行就位
+            业务错误枚举 StoryManagementError 落地；private 方法落 private extension；Factory 注册行就位；packet focused checks 全绿
   证据：
-    - 编译：xcodebuild build -workspace <App>.xcworkspace -scheme <App>
-            -destination 'platform=macOS' → BUILD SUCCEEDED
-    - 静态检查：Pods/SwiftLint/swiftlint lint --strict → 0 violations（新增 3 文件）
-    - 测试：xcodebuild test ... -only-testing:<App>Tests/StoryManagementUseCaseTests → 全 PASS
+    - 静态检查：swiftlint lint --strict <packet-owned-files> → 0 violations
+    - 测试（packet 声明）：xcodebuild test ... -only-testing:<App>Tests/StoryManagementUseCaseTests → 全 PASS
         · test_fetchAllFullStories_成功_返回按更新时间排序列表
         · test_createStory_校验失败_抛StoryManagementError.validationFailed
         · test_deleteStory_找不到ID_抛StoryManagementError.notFound
@@ -96,7 +101,7 @@ description: 按已过 Gate 的 iOS 原生（SwiftUI + DDD 四层）详细设计
     - 未验证项：无（纯 Domain 编排，本地全覆盖）
 ```
 
-❌ **不合格切片登记**：「实现故事模块，改 usecase 和 repository，写完跑测试」——无 `UNIT` 编号、无 doc_type、无文件范围、无完成信号、跨多层无法独立 review；证据「全部编译通过，测试通过，lint 无问题」——无命令、无 `BUILD SUCCEEDED`、无测试名、无新增测试映射、未声明未验证项（违 GI-1/GI-3）。
+❌ **不合格切片登记**：「实现故事模块，改 usecase 和 repository，写完跑测试」——无 current packet、无 planning audit ownership、无文件范围或完成信号；问题不是跨层本身，而是 active worker 擅自重新划 scope 且证据不可审计。
 
 ❌ **红线违例**：在 `view` 的 `body` 里 `Task { try await storyRepository.findAll() }` 业务漏进 View 且直连 repository（违 §2.1 分层 + GI-5）；`viewmodel` 的 `init` 里 `self.repo = StoryRepository(databaseManager: DatabaseManager.shared)` 手动 new + 直连单例（违 SLOT-05 + GI-4/GI-7）；故事卡片 View 内 `NavigationLink(destination: StoryDetailView(...))` 硬跳绕 `AppCoordinator`（违 SLOT-07 + GI-5）；`repository` 实现 `catch { return [] }` 把 WCDB 失败伪装成空结果（违 SLOT-04）；`usecase` 文件 `import SwiftUI` 或持 `@Published`（违 §2.1/GI-5）；`domain-model` 文件 `import WCDBSwift`（破坏 Domain 零依赖，GI-5）；实现里擅自引入 Mockolo/Quick·Nimble 未升级 SLOT-14（违边界约束）；trace 在 PR 前一次性补写（失去过程证据，违反模式）。
 

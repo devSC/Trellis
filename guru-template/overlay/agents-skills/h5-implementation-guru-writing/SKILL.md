@@ -38,7 +38,14 @@ description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript str
 2. 读 `.trellis/spec/harness/implementation/implementation-trace-contract.md`（过程合同 §0~§7）与 `.trellis/spec/harness/index.md` 的实现 Gate 定义、doc_type 七类、编号纪律（行为 `BHV-NNN`、设计单元 `UNIT-<slug>`，下游引用裸 token，不带前缀解释）。
 3. 读 `.trellis/spec/conventions/project-conventions.md` 并校验项目约定槽位均已选定且未留空：内容源（MDX/CMS）、状态管理（none/Zustand/Context）、UI 组件库（shadcn/MUI）、样式方案（Tailwind/CSS Modules）、测试（Vitest+RTL/Playwright）、lint（ESLint+Prettier）、数据库、认证（NextAuth）、图像优化（`next/image`）、部署（Vercel）、路由模式（App vs Pages），并确认项目 logger / logging helper / observability 门面和 server/client 日志边界。任一未填 → 停止先定槽位，不在实现里私自拍板（尤其「路由模式」必须显式确认为 App Router 才走生产链，留空或为 Pages 须升级人工 Gate）。
 4. 定位本任务承接的、已过详细 Gate 且人工确认已落盘的详细设计单元（full=L2 章节 `detail-type-*.md` 对应的设计章节；light=`design.md` §详细），建立 `UNIT-<slug>` 单元清单 + 合同八问 + 测试映射；缺失或单元为幽灵引用（无对应详细文档）→ 终止并提示回退设计阶段（探索性 spike 除外，须显式声明、隔离、不并入交付）。
-5. 建立构建基线：`package.json`（确认 scripts：`dev`/`build`/`start` 等）与 `tsconfig.json`（确认 `strict: true`；若残留 `strict:false` 须以 golden-path 为准修正或升级人工 Gate）可读，记录改动前 `tsc --noEmit` 与 `next build`（或 `next lint`）的基线状态（用于区分「我引入的失败」与「既有失败」）；不可建立基线 → 记录环境阻塞，不得把未验证当通过。
+5. 判定验证路由：Full/high 读取 current packet 与 `implement.md` 已确认的 minimum commit-stable planning audit；ordinary 只建立 packet focused checks 所需的 scoped 基线，Integration 才建立 workspace `tsc` / `next build` / lint 全局基线。Small、Micro、Lite、non-Full 与 v1 保留既有基线行为。
+
+## Active packet 消费边界
+
+- Full/high ordinary worker 把 current packet 和 planning audit 当作不可变 dispatch input，只修改 packet `target_paths`，只运行 packet `deterministic_checks` 与 audit 显式声明的 focused checks。
+- 不得按 UNIT、`doc_type`、server/client layer、component、symbol 或 hunk 重新切片、转移 mutable ownership、改变 `depends_on` / `parallel_wave`；H5 分层顺序继续约束代码依赖，但不生成第二份 slice plan。
+- Full/high ordinary 不运行 workspace-wide typecheck/build/lint 或 full regression；这些只由唯一 `integration_slice=true` 的 Integration 执行。Integration 实际写范围仍限 planning audit 的 exact `integration_owned_paths`。
+- Small、Micro、Lite、non-Full 与兼容 v1 保留既有验证行为。
 
 ## 边界约束
 
@@ -56,11 +63,11 @@ description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript str
 
 ## 执行流程（WX 步骤）
 
-1. **WX-0 判定实现模式与构建基线**：判定空项目初始化 / 已有项目增量 / 重构校准；确定本任务落在哪个 route 段与模块目录，复用还是新建 `server-component`/`client-component`/`data-access`/`ui-component`/`domain-type`/`server-action` 资产，是否触碰共享面（`layout.tsx`、`globals.css`、`metadata` 基线、`next.config`）。记录改动前 `tsc --noEmit` + `next lint`（或 `eslint`）基线退出态到 `implementation-evidence.jsonl`。
-2. **WX-1 计划（开工前写）**：按 trace 合同 §1 在目标仓库 `implement.md`（建议 `docs/design/<feature>/implementation-trace.md`）产出任务切片；若 detail 已确认则只读取该计划，不在实现阶段补写。每片含：承接的 `UNIT-<slug>`（幽灵引用被 Gate 拦截）+ 所属 doc_type + 文件范围 + 完成信号 + 验证方式。执行顺序**自底向上**（钉死）：`domain-type`（TS 类型/zod schema）→ `data-access`（fetch/内容源/查询封装）→ `server-action`（变更/handler）→ `server-component`（渲染编排）→ `client-component`（交互）→ `ui-component`（展示复用）→ `route`（段装配 + metadata）。逐条预判高风险点（server/client 边界划分、私有 secret 是否会越界进客户端 bundle、`fetch` 缓存与 `revalidate` 语义、`error.tsx`/`loading.tsx` 边界、`generateMetadata` 与动态参数、hydration 不匹配）。人工确认从最小可独立通过 `tsc` 的切片开始。**P1 high-risk slice（仅校验，不创建）**：校验 `<task_dir>/slice-packets/<unit_id>.json` 已由 planning / 主会话在 implement-check 前创建存在，在 `implementation-evidence.jsonl` 摘要 `slice_packet` 路径 / `invariant_ids` / `negative_case`；packet 缺失即停回 planning 补 packet，绝不在实现 worker 内创建/补造 packet 或按实现倒推 invariant。packet 存在时以其 `target_paths` / `invariants[]` 为机器 SSOT；实现后只向 mutable evidence 补 deterministic check evidence / 测试名 / 证据文件，不改 `implement.md` 或 invariant 语义字段。
+1. **WX-0 判定实现模式与验证基线**：判定空项目初始化 / 已有项目增量 / 重构校准并核对 packet scope。Full/high ordinary 只记录 packet focused baseline；Integration 或 non-Full/v1 才按既有合同记录 workspace typecheck/build/lint 基线。
+2. **WX-1 消费已确认计划**：Full/high 只校验 current packet 与 `implement.md` planning audit 的 `owner_unit` / `covered_units` / `owned_paths` / `depends_on` / `parallel_wave` / focused checks 一致；不按 UNIT、`doc_type` 或 component 创建、拆分、转移或重排 slices。代码仍遵守 H5 server/client 与单向依赖。packet 缺失即停回 planning。Small、Micro、Lite、non-Full 与 v1 继续按既有 trace 计划行为执行。
 3. **WX-2 逐片实现（随做随记）**：每片对照承接 `UNIT-<slug>` 的合同八问落地——②输入/输出/错误（组件 props 类型、`server-action` 入参与返回、`data-access` 函数签名、zod schema 校验失败分支）；④调用关系单向（`server-component` 调 `data-access` 不反向、`client-component` 只组合 `ui-component`、`server-action` 走 `data-access`）；⑤失败收口（`error.tsx` 错误边界、`data-access` 失败抛错或返回判别联合、`server-action` 校验失败的结构化返回）；⑥后置副作用（`server-action` 后 `revalidatePath`/`revalidateTag`、`redirect`）。每片完成**立即**追加 `implementation-evidence.jsonl`（实际改动文件清单标 doc_type、与计划偏差及原因、触碰 `layout.tsx`/`globals.css`/`metadata` 基线/共享 `ui-component` 的共享面单独标注），不积压到批末。
 4. **WX-3 代码生成 / 内容流水线（仅触发条件满足时）**：按 project-conventions 选型执行并追加 `implementation-evidence.jsonl`——内容源为 MDX → 记 MDX 编译/frontmatter 解析约定（如提取 `title/date/description/tag/author`；若保留 RSS/sitemap 生成须把命令与产物记清）；启用 ORM 代码生成（如 Prisma `prisma generate`）→ 记命令与产物；zod schema 推导类型 → 记 `z.infer` 落点。**当前 golden-path 默认无强制代码生成槽位 → 本项写「N/A：无代码生成槽位启用」，不留空、不私自引入生成器。**
-5. **WX-4 逐片验证（验证后记）**：按 trace 合同 §3 的字段要求追加 `verification-evidence.jsonl`——类型检查 `tsc --noEmit`（贴命令 + 退出态，失败写错误摘要 + 处置；strict 下不得用 `any`/`@ts-ignore` 掩盖）；构建/lint `next build` 或 `next lint`（或 `eslint .`，逐条通过/失败，eslint-disable 豁免写理由并指向存量违例清单）；测试到**测试名级别**（Vitest+RTL：`vitest run src/components/PostCard.test.tsx -t "renders title"` 给出用例名；Playwright：`playwright test post-detail.spec.ts --grep "loads post"`），新增测试逐条列文件 + 用例名 + 承接 `BHV-NNN`/`UNIT-<slug>`；依赖变更跑包管理器安装记 diff（新增库须落在已批准槽位内，禁被锁红线绕开，如擅自引入状态库/UI 库）。失败先修复再进下一片；未验证项显式列出并指明留给哪个环节（真实数据源/CMS 联调 → 集成环境；SEO/metadata 实际抓取 → 部署后 Lighthouse/抓取验证；hydration/交互真机表现 → Manual QA / 真机；缓存与 `revalidate` 生产行为 → 灰度/预发）。
+5. **WX-4 当前 packet 验证（验证后记）**：Full/high ordinary 只运行 packet `deterministic_checks` 与 audit focused checks（scoped typecheck/lint/test/build evidence），不得升级为 workspace `tsc` / `next build` / `eslint .` 或 full regression；Integration 运行 workspace-wide typecheck/build/lint/full regression。Small、Micro、Lite、non-Full 与 v1 保留原有验证。测试证据仍到测试名级别，失败即阻塞当前 packet；未验证项显式移交。
 6. **WX-5 注释/日志/文档追溯**：逐片完成前补齐维护性证据：
    - 新增导出组件、server/client 组件、`data-access` 函数、`server-action`、route 段入口、domain-type/zod schema：优先用 TSDoc/JSDoc 写明职责、承接的 `UNIT-<slug>` / `BHV-NNN`，必要时附设计文档相对路径（如 `docs/design/.../chapters/<slug>.md` 或任务内 `design.md` 锚点）。
    - 复杂私有 helper、server/client 边界解释、缓存/`revalidate`、鉴权、错误边界、hydration 规避、内容源兼容、SEO metadata 生成策略：用局部注释解释"为什么这样做"和对应设计约束。
@@ -82,26 +89,25 @@ description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript str
 切片可进入 commit/PR，当且仅当：
 
 - **G1 trace 合同与 mutable evidence 齐全**：`implement.md` 必须存在且计划有 `UNIT-<slug>` 承接与完成信号；执行/偏差/验证证据在 `implementation-evidence.jsonl` 与 `verification-evidence.jsonl` 中可按切片恢复，阻塞如无则显式记录「无」；trace 不存在直接 fail。
-- **G2 类型与构建证据**：`tsc --noEmit` 全绿（贴命令 + 退出 0，strict 下无新增 `any`/无理由 `@ts-ignore`）；`next build` 或 `next lint` 通过；本任务引入的失败已全部收口（类型/构建不过的切片不存在「完成」）。
-- **G3 静态检查证据**：`next lint`/`eslint .`（+ Prettier 如槽位启用）通过，或豁免有理由且记债（指向存量违例清单）。
-- **G4 测试证据**：每个切片有测试名级别结果（Vitest+RTL 用例名 / Playwright grep 名），覆盖承接 `UNIT-<slug>`/`BHV-NNN` 的成功路径 + 全部失败路径（如 `server-action` 校验失败、`data-access` 取数失败、`error.tsx` 触发）；新增测试清单可追溯到 UNIT；未执行的验证不得写成通过。
+- **G2 类型与构建证据**：Full/high ordinary 的 packet scoped type/build checks 全绿；Integration 或 non-Full/v1 按既有合同执行 workspace `tsc --noEmit` 与 `next build`。本任务引入的失败必须全部收口。
+- **G3 静态检查证据**：Full/high ordinary 的 packet scoped lint checks 通过；Integration 或 non-Full/v1 执行既有 workspace `next lint` / `eslint .`，豁免须有理由并记债。
+- **G4 测试证据**：Full/high ordinary 仅当 current packet 或 planning audit focused checks 声明测试时，才要求测试名级别结果（Vitest+RTL 用例名 / Playwright grep 名）、成功/失败路径证据与新增测试映射；不得为满足通用 G4 自行运行 undeclared tests。Integration 或 non-Full/v1 保留原合同：测试覆盖承接 `UNIT-<slug>`/`BHV-NNN` 的成功路径 + 全部失败路径（如 `server-action` 校验失败、`data-access` 取数失败、`error.tsx` 触发），新增测试清单可追溯到 UNIT；未执行的验证不得写成通过。
 - **G5 分层与 server-first 契约**：分层依赖律无反向/越层（`client-component` 未直取私有 `data-access`/`fetch`、`route` 未直查 DB、`data-access` 未反向 import `route`/`server-component`）；`'use client'` 最小化未把整页标客户端；私有 secret 未越界进客户端 bundle（无 `NEXT_PUBLIC_` 误放敏感值、无 secret 经 props 透传到 `'use client'` 边界）；`metadata`/SEO 标准化、`error.tsx`/`loading.tsx` 按 route 约定就位；样式隔离未新增全局污染。
 - **G6 偏差闭合 + 编号闭合**：PR diff 与计划逐项可对，计划外改动均有原因记录；切片均挂真实 `UNIT-<slug>`（幽灵单元被拦截）；上游结构性缺陷（归属错、合同越界、单元跟随名词而非行为）已回退拥有该决策的阶段修订，禁止在实现阶段补造。
 
-任一未满足 → 不进 commit。`tsc --noEmit` / `next lint` / `next build` / 测试（测试名级别）由 worktree 验证条目执行，与本自检同口径。
+任一未满足 → 不进 commit。Full/high ordinary 以 packet focused checks 为准；workspace `tsc --noEmit` / `next lint` / `next build` / full regression 只在 Integration 执行。Small、Micro、Lite、non-Full 与 v1 保留既有 worktree verify 行为。
 
 ## 好例 / 坏例
 
-✅ **合格切片登记与证据**（粒度可独立 review、命令级证据、可追溯、server-first 守住）：
+✅ **Full/high ordinary 合格切片登记与证据**（命令均来自 current packet 或 planning audit focused checks）：
 
 ```
 切片 S2 | 承接 UNIT-post-data-access (doc_type: data-access)
   范围：lib/posts.ts —— getPostBySlug(slug) 读取并解析 MDX frontmatter（title/date/description/tag/author），
         失败返回判别联合 { ok:false; reason:'not-found' }；类型来自 UNIT-post-type(domain-type)
-  完成信号：tsc --noEmit 退出 0；私有读取仅在服务端模块；无被 client-component import
+  完成信号：packet scoped lint/test 全绿；私有读取仅在服务端模块；无被 client-component import
   证据：
-    - tsc --noEmit → 退出 0（strict，无 any）
-    - next lint → 0 problems
+    - npx eslint lib/posts.ts lib/posts.test.ts → 0 problems
     - vitest run lib/posts.test.ts -t "getPostBySlug"
         ✓ getPostBySlug > returns post when slug exists
         ✓ getPostBySlug > returns not-found when missing
@@ -109,7 +115,7 @@ description: 按已过 Gate 的 H5（Next.js App Router + React + TypeScript str
     - 未验证：真实 CMS 源联调 → 留给集成环境；RSS/sitemap 生成本切片不涉
 ```
 
-❌ **不合格**：「实现文章详情页，改 page 和组件，写完跑一下」——无 `UNIT` 编号、无 doc_type、无文件范围、无完成信号、跨多层无法独立 review；证据「全部编译通过，测试通过，lint 无问题」——无命令、无退出态、无测试名、无新增测试映射、未声明未验证项。
+❌ **不合格**：「实现文章详情页，改 page 和组件，写完跑一下」——无 current packet、无 planning audit ownership、无文件范围或完成信号；问题不是跨层本身，而是 active worker 擅自重新划 scope 且证据不可审计；证据「全部编译通过，测试通过，lint 无问题」——无命令、无退出态、无测试名、无新增测试映射、未声明未验证项。
 
 ❌ **红线违例**：把整个 `page.tsx` 标 `'use client'` 只为用一个 `useState`（违反 server-first，应下沉交互到叶子 `client-component`）；在 `client-component` 里直接 `fetch('/internal-api', { headers:{ Authorization: process.env.SECRET }})`（私有 secret 越界进客户端 bundle，违反隔离红线）；新增 `globals.css` 写组件级样式（破坏样式隔离）；route 段缺 `error.tsx` 又用 `try/catch` 在组件里吞错（绕过错误边界约定）；实现里擅自引入 Zustand/MUI 未升级 project-conventions；trace 在 PR 前一次性补写（失去过程证据）。
 

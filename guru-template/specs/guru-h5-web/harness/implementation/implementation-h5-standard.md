@@ -28,7 +28,14 @@
 - 本标准包**不执行**代码修改，也**不输出**审核 Findings。它定义"代码编写"与"实现审核"共同遵守的合同与判定口径。
 - golden-path 的硬规则（TS strict、server/client 边界、数据获取层、样式隔离、错误边界、分层依赖律）在本文件中是**锁定前提（不可豁免）**；project-conventions 的槽位（内容源 / 状态管理 / UI 库 / 测试框架 / lint 等）是**可按项目调整的取值**，实现时读 `project-conventions.md` 当前值，不在本文件硬编码。
 
-### 0.1 doc_type 权威七类（全程唯一，禁止改名/增减/换数）
+### 0.1 Active packet 与验证路由
+
+- Full/high active worker 必须消费 current packet 与 `implement.md` 已确认的 minimum commit-stable planning audit；它们是不可变 dispatch input。
+- Full/high ordinary 只写 packet `target_paths`，只运行 packet `deterministic_checks` 与 planning audit focused checks；不得按 UNIT、layer、`doc_type`、component、symbol 或 hunk 重新切片或转移 ownership。
+- Workspace-wide typecheck/build/lint/full regression 只由唯一 Integration 执行；Integration 实际写范围限 exact `integration_owned_paths`。
+- Small、Micro、Lite、non-Full 与 v1 保留本标准原有验证合同。下文的 workspace 命令均按此路由解释，不得覆盖 Full/high ordinary 的 packet 边界。
+
+### 0.2 doc_type 权威七类（全程唯一，禁止改名/增减/换数）
 
 H5 详细设计 doc_type 一律以 H5_BRIEF 为权威，**勿照抄 flutter（controller/usecase/repository）或 Go（handler/service/repository）的类型名**。
 
@@ -212,7 +219,7 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 
 - 坏例子：`export type Post = any` 或 `export interface Post { data: object }` ——类型不收窄，破坏 LOCK-1。
 
-出口条件：所有承接单元的类型、可空语义、校验 schema 落地；`tsc --noEmit` 对类型层通过。
+出口条件：所有承接单元的类型、可空语义、校验 schema 落地；Full/high ordinary 的 packet focused typecheck 通过，Integration 或 non-Full/v1 的 `tsc --noEmit` 通过。
 
 失败判定：`domain-type` 含 React/取数逻辑；用 `any`/`object` 占位；外部输入无 schema 校验入口。
 
@@ -373,7 +380,7 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 
 - 坏例子：动态详情页缺 `generateMetadata` 导致全站同标题（违 LOCK-4）；异步 route 段无 `error.tsx`（违 LOCK-6）；`layout.tsx` 顶层标 `'use client'` 把整站拉 client（违 LOCK-2）。
 
-出口条件：route 段文件齐全；SEO/metadata 与设计一致；`generateStaticParams` 覆盖动态参数；`next build` 对该路由通过。
+出口条件：route 段文件齐全；SEO/metadata 与设计一致；`generateStaticParams` 覆盖动态参数；Full/high ordinary 的 packet focused route check 通过，Integration 或 non-Full/v1 的 `next build` 通过。
 
 失败判定：缺 metadata/动态页同标题；缺 error/loading 边界；route 段顶层无差别 `'use client'`；`params` 不收窄。
 
@@ -385,18 +392,19 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 
 ## 5. 实现 Gate（tsc / next build / eslint / test + 证据）
 
-实现 Gate 是"证据感，不是做完感"。每次实现闭环至少运行下列命令，并把命令与结果（命令 + 失败项/测试名级别，非"全部通过"）追加到 `verification-evidence.jsonl`；implementation review verdict 进入 `review-records/implementation-reviews.jsonl`。
+实现 Gate 是"证据感，不是做完感"。Full/high ordinary 运行 packet-declared deterministic/focused checks；Integration 运行一次下表 workspace 命令。Small、Micro、Lite、non-Full 与 v1 继续按下表既有命令。命令与结果追加到 `verification-evidence.jsonl`；implementation review verdict 进入 `review-records/implementation-reviews.jsonl`。
 
-### 5.1 必跑验证命令（既有命令优先）
+### 5.1 路由解析后的必跑验证命令
 
 | 类型 | 命令 | 通过判据 |
 |------|------|---------|
-| 类型检查 | `npx tsc --noEmit`（或 `package.json` 既有 `typecheck` 脚本） | 退出码 0，无类型错误（strict 下） |
-| 生产构建 | `next build` | 退出码 0；route 段、`generateStaticParams`、RSC/client 边界编译通过 |
-| lint | `npx eslint .`（lint 取值见 `project-conventions.md`，含 ESLint + Prettier） | 退出码 0，无新增告警；`next lint` 的 RSC/`'use client'` 相关规则不报错 |
-| 测试 | `project-conventions.md` 指定命令（Vitest+RTL / Playwright） | 退出码 0；记录受影响用例名 |
-| 启动/冒烟 | 最小真实启动（`next dev` / `next start`）+ 关键 route 渲染冒烟 | 关键页面 200、首屏由 server 渲染、交互可用 |
-| Secret 残留 | 检查代码 / `.env.example` / fixture / `implement.md` / mutable evidence 无明文 secret，且无 `NEXT_PUBLIC_` 前缀承载 secret | 仅出现 env var 名 / 引用，无真实 key/AK/SK/token |
+| Full/high ordinary | packet `deterministic_checks` + planning audit focused checks | 全部通过；不得扩成 workspace-wide 命令 |
+| Integration / non-Full / v1 类型检查 | `npx tsc --noEmit`（或既有 `typecheck`） | 退出码 0，无类型错误（strict 下） |
+| Integration / non-Full / v1 生产构建 | `next build` | 退出码 0；route、RSC/client 边界编译通过 |
+| Integration / non-Full / v1 lint | `npx eslint .` | 退出码 0，无新增告警 |
+| Integration / non-Full / v1 测试 | `project-conventions.md` 指定命令（Vitest+RTL / Playwright） | 退出码 0；记录受影响用例名 |
+| Integration / non-Full / v1 启动/冒烟 | 最小真实启动（`next dev` / `next start`）+ 关键 route 渲染冒烟 | 关键页面 200、首屏由 server 渲染、交互可用 |
+| Integration / non-Full / v1 Secret 残留 | 检查代码 / `.env.example` / fixture / `implement.md` / mutable evidence 无明文 secret，且无 `NEXT_PUBLIC_` 前缀承载 secret | 仅出现 env var 名 / 引用，无真实 key/AK/SK/token |
 
 > 示例对照：`next.js/examples/blog` 的 `package.json` 仅有 `dev`/`build`/`start`，且 `build` 为 `node ./scripts/gen-rss.js && next build`（示例实证），**无 typecheck/eslint/test 脚本**（示例简化）。生产工程必须补齐 `typecheck`/`lint`/`test`（生产级补充），不照抄示例缺省。
 
@@ -420,7 +428,7 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 
 `pass` / `fail` / `blocked` 三态，语义判定由实现审核（人工 Gate）逐条核：
 
-- `pass`：所有承接单元切片为 `verified` 或明确 `skipped_with_reason`；无悬空 `in_progress`；无被当成完成交付的未验证 `implemented`；LOCK-1~7 全部满足；§5.1 必跑命令全部执行成功并有证据；合同八项无偏离；Secret 残留检查通过；doc_type 严格落在七类内。
+- `pass`：先按当前 route 解析验证闭合条件，再检查共同条件。Full/high ordinary 只要求 singular current packet 为 `verified`，且 current packet/audit 选中的 focused checks 成功，不等待或检查 sibling packets；Integration 要求完整依赖 packet set 均有 current receipt，并完成 Integration-selected checks；non-Full/v1 保留原合同，所有计划设计单元 slices 为 `verified` 或明确 `skipped_with_reason`、无悬空 `in_progress`、无被当成完成交付的未验证 `implemented`，且 legacy checks 通过。三路都必须满足 LOCK-1~7、合同八项无偏离、doc_type 严格落在七类内，并在当前 route 要求时通过 Secret 检查。
 - `fail`：存在合同未实现 / 实现偏离；无 plan 先行证据却已写生产代码；计划已 `blocked` 但代码绕过继续；`implemented` 未验证却交付为完成；触碰任一 LOCK 锁定项；明文 secret 写入代码/`.env.example`/fixture 或 `NEXT_PUBLIC_` 承载 secret；fake / 占位 / 内存 mock 生产路径；`any` 逃逸/`@ts-ignore` 抹平；把示例简化写法当生产合同照抄；新增测试超出 §6 allowlist；测试补写业务语义。
 - `blocked`：详细设计缺失 / 冲突 / 需确认且已按 §7 记录并回退，未写临时代码绕过；或环境 / 凭据 / CMS/DB 基础设施缺失导致验证无法继续，保留恢复条件；或四类 `pending` doc_type 无 L2 且未取豁免。
 
@@ -484,8 +492,8 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 
 | 字段 | 要求 |
 |------|------|
-| 切片 | 每片承接的设计单元编号（`UNIT-<slug>`，幽灵引用被 Gate 拦截）+ doc_type（七类之一）/ 文件范围 / 完成信号 / 验证方式；每片小到可独立 review |
-| 执行顺序 | 按依赖排序（§3 自下而上：domain-type → data-access → server-action → server-component → client-component → ui-component → route），从最小切片开始 |
+| 切片 | Full/high 读取已确认 planning audit 的真实 `owner_unit`、`covered_units`、文件级 `owned_paths`、完成信号与 focused checks；active worker 不按 UNIT / `doc_type` / component 重切。non-Full/v1 保留原有计划合同 |
+| 执行顺序 | Full/high 按 audit 的真实 `depends_on` 与 `parallel_wave`；H5 自下而上顺序只约束代码依赖，不机械生成 slices |
 | 风险点 | 预判高风险改动（server/client 边界变更、缓存/重验策略、动态 SEO、旧 Pages Router 迁移、secret 边界），逐条写验证手段 |
 
 #### 2. 执行（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
@@ -499,12 +507,9 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 
 | 类型 | 要求 |
 |------|------|
-| 类型 | `tsc --noEmit` 结果（通过 / 失败文件 + 处理） |
-| 构建 | `next build` 结果（含 RSC/client 边界、`generateStaticParams`、route 段编译） |
-| lint | `eslint .` / `next lint` 结果 |
-| 测试 | 每个切片对应测试命令 + 结果（用例名级别，非"通过"）；新增测试清单（限 §6 allowlist） |
-| 启动 | 最小启动 + 关键 route 渲染冒烟（首屏 server 渲染、交互可用） |
-| Secret | Secret 残留检查结果（含 `NEXT_PUBLIC_` 审查） |
+| Full/high ordinary evidence | 只记录 current packet `deterministic_checks` 与 planning audit focused checks；test / startup / Secret 仅在 packet/audit 明确声明时记录，不自行扩展命令 |
+| Integration evidence | 记录完整 workspace typecheck / build / lint / test / startup / Secret / full regression；测试结果到用例名级别，新增测试清单限 §6 allowlist |
+| non-Full/v1 evidence | 保留 legacy evidence 合同：类型、构建、lint、测试名级别结果、关键 route 启动冒烟、Secret 残留与 `NEXT_PUBLIC_` 检查 |
 | 未验证项 | 无法本地验证的（真机、外部 CMS/DB 联调、视觉回归）→ 显式列出 + 留给哪个环节 |
 
 #### 4. 阻塞与偏差（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
@@ -516,7 +521,7 @@ Phase 8  验证与符合性审查：tsc / next build / eslint / test + 证据回
 ### 8.2 切片状态机
 
 - 固定枚举：`pending` / `in_progress` / `implemented` / `verified` / `blocked` / `skipped_with_reason`。
-- 同一时间最多一个切片 `in_progress`；detail 确认后该状态写入 `implementation-evidence.jsonl`。
+- 一个 active worker 只推进分配给它的 current packet，不创建或转换 sibling slices；并行宽度由已确认 planning audit 的 `parallel_wave` 决定。
 - `implemented` 只表示代码落地；未通过 `checkpoint` 与 `validation_commands` 的切片不得 `verified`。
 - `blocked` 必须写明恢复条件与回指（详细设计回修 / L2 豁免待批 / 凭据 / 基础设施）。
 - `skipped_with_reason` 必须说明设计范围 / 用户范围为何不需要；不得用来隐藏未实现的 required 切片。
