@@ -12,9 +12,20 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
 3. 读取**`.trellis/spec/conventions/project-conventions.md`**，**重点装载 SLOT-15 存量违例清单**（存量豁免判定的数据源），并确认项目 logger / logging helper / 日志门面。
 4. 定位：被审改动（diff/分支）、详细设计文档、`implement.md`（digest-bearing trace 计划合同）与 task-local mutable evidence（`implementation-evidence.jsonl`、`verification-evidence.jsonl`、`review-records/implementation-reviews.jsonl`）。trace 缺失或 mutable evidence 缺执行/验证记录 → 前置失败（实现 Gate 证据链不存在）。
 5. **装载 slice packet / invariant matrix**（P1，high-risk slice 必做）：supervisor 经 `build_run_plan` 把
-   resolved `slice-packets/<unit_id>.json` 注入为 `--file`，brief 含 `active_slice=<unit_id>`。读 packet 的
-   `invariants[]`（**唯一机器 SSOT**）、`target_paths`、`semantic_review_provider`。packet/matrix 缺失而 brief
+   resolved `slice_packet=<path>` 注入为 `--file`，brief 含 `active_slice=<slice_id>`。以 resolved
+   `slice_packet` 路径为准读取 packet 的
+   `review_evidence_schema_version`、`requirements_design_inputs`、`invariants[]`（**唯一机器 SSOT**）、
+   `target_paths`、`deterministic_checks`、`semantic_review_provider` 与 `integration_slice`。packet/matrix 缺失而 brief
    标记 high-risk → 输出 `DETAIL_DEFECT`/`PROCESS_DEFECT`，不得 clean。
+
+## Full/high snapshot 与 evidence Gate
+
+- 先审核 `implement.md` 的 slice planning audit：普通 slice 是否以最少 commit-stable slices 和最大安全并发宽度为目标，是否登记唯一文件级 mutable owner、`covered_units`、真实 `depends_on`、parallel wave、独立 commit/rollback 价值、资源隔离、focused checks 与 reviewer context。仅因 UNIT、`doc_type` 或 data/domain/presentation 层级整齐而机械拆片，按 `DETAIL_DEFECT` 阻断。
+- 一个 current snapshot 恰好由一个 semantic reviewer 负责。snapshot 绑定 target bytes、`invariants`、`requirements_design_inputs`、`deterministic_checks`、review policy / `semantic_review_provider` 与 supervisor digest；同一 snapshot 不得启动第二 reviewer 或重新 aggregate。
+- clean evidence 只有在 `review_evidence_schema_version=2` 且上述每个绑定组件逐项相等时才能复用。snapshot 改变后可产生一个新 current review；v1、缺组件或部分相等的 evidence 不得复用。
+- finding 只使绑定组件实际变化的 receipt 失效，不自动保留或作废所有 sibling receipts。已有 current receipt 的 slice 不得再次 aggregate；未变化的 current receipts 保持可复用。
+- 普通 slice 只审 packet、planning audit、目标 diff、选定 requirements/design 与 focused evidence，只消费或执行 ordinary focused checks；不得运行 full regression。Integration 才审最终 union snapshot、ordinary current receipts、cross-slice invariants 与 final deterministic summaries，且 full regression 只属于 Integration deterministic checks。
+- Integration packet `target_paths` 是 review coverage，不是写授权。实际改动路径必须是 planning audit 中 exact `integration_owned_paths` 的子集；即使路径位于 packet coverage 内，只要不在 `integration_owned_paths` 也按 `PROCESS_DEFECT` 阻断。reviewer 只读，不派 implement worker、不改 planning artifact、不直接写 receipt，也不重复执行 supervisor 已运行的同一 deterministic command。
 
 ## 执行流程
 
@@ -24,7 +35,7 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
    - 命中清单且未扩大违例面 → **tech-debt 注记，不阻塞**；
    - 清单外或扩大违例面 → **新增违例，P1 阻塞**；
    - 改动修复了清单条目 → 标注"可从清单移除"。
-4. **D4 证据核查**（G2）：`implement.md` 计划合同与 mutable evidence 齐全性；analyze/测试命令与结果在 `verification-evidence.jsonl` 中真实可复跑（抽查至少 1 条复跑）；代码生成执行记录在 `implementation-evidence.jsonl`；测试覆盖对照详细设计测试映射（漏失败路径用例 = P2 起步，高风险链路漏测 = P1）。**有 packet 时（P1）：每条 high-risk invariant 至少一个正向或负向测试作为 `invariant_evidence`**——`pass` 无证据按 `invariant_coverage=missing` 阻断;高风险负向语义（排除/遗漏类）缺测试按 P1/P2。
+4. **D4 证据核查**（G2）：`implement.md` 计划合同与 mutable evidence 齐全性；analyze/测试命令与结果在 `verification-evidence.jsonl` 中真实可复现；代码生成执行记录在 `implementation-evidence.jsonl`；测试覆盖对照详细设计测试映射（漏失败路径用例 = P2 起步，高风险链路漏测 = P1）。Full/high ordinary slice 只要求并消费 packet 声明的 focused commands；全项目 `flutter analyze`、完整测试或其他 full regression 只由 Integration 承担。非 Full/high 任务继续按原有 route 合同取证。消费 supervisor 已记录的 deterministic 结果，不重复执行同一命令；需要额外语义抽查时只选未重复的 focused check。**有 packet 时（P1）：每条 high-risk invariant 至少一个正向或负向测试作为 `invariant_evidence`**——`pass` 无证据按 `invariant_coverage=missing` 阻断;高风险负向语义（排除/遗漏类）缺测试按 P1/P2。
 5. **D5 注释/日志/文档追溯核查**（维护性证据）：检查实现是否能让后续维护者从代码回到设计决策。
    - 新增核心类、public API、Controller/UseCase/Repository/DataSource、跨层 DTO/状态定义，必须有 Dart doc comment 或等价注释说明职责、承接的 `UNIT-<slug>` / `BHV-NNN`；必要时附设计文档相对路径（`docs/design/.../chapters/<slug>.md` 或任务内 `design.md` 锚点）。缺失通常为 P2；高风险链路或新增核心 owner 完全无追溯为 P1。
    - 非显然业务分支、错误/降级/恢复、缓存、异步竞态、生命周期处置、外部依赖边界必须解释"为什么这样做"，不能只靠代码形状猜意图。缺失按 P2 处理。
@@ -46,7 +57,7 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
 
 **前置通过时**：
 0. **机器可读收口字段（必须置顶）**：
-   - clean / final-verification-ready 分支必须置顶输出**全部 7 字段**：`review_result=clean`（或 `final-verification-ready`，supervisor 归一为 clean）、`route_class=none`、`review_target=slice:<unit_id>`、`review_provider=<本 check worker 的 provider>`、`deterministic_checks=passed|failed|missing`、`dirty_scope=clean|isolated|invalid`、`invariant_coverage=all_passed|failed|missing`、`validation_summary=<命令与证据摘要>`。**有 slice packet 时还须逐条输出 per-invariant**：`invariant_status.<id>=pass|fail|not_applicable`（`pass` 必随 `invariant_evidence.<id>=<非空证据：测试名/命令/代码路径>`；`not_applicable` 必随 `invariant_reason.<id>=<理由>`）。**缺任一 gating 字段、或取非通过值却声明 clean、或 provider 不满足 packet `semantic_review_provider` → supervisor 判 `MALFORMED_REVIEW_OUTPUT` 阻断**（不接受为成功）。
+   - clean / final-verification-ready 分支必须置顶输出**全部 7 字段**：`review_result=clean`（或 `review_result=final-verification-ready`，supervisor 归一为 clean）、`route_class=none`、`review_target=slice:<slice_id>`、`review_provider=<本 check worker 的 provider>`、`deterministic_checks=passed|failed|missing`、`dirty_scope=clean|isolated|invalid`、`invariant_coverage=all_passed|failed|missing`、`validation_summary=<命令与证据摘要>`。**有 slice packet 时还须逐条输出 per-invariant**：`invariant_status.<id>=pass|fail|not_applicable`（`pass` 必随 `invariant_evidence.<id>=<非空证据：测试名/命令/代码路径>`；`not_applicable` 必随 `invariant_reason.<id>=<理由>`）。**不得输出 `review_result=clean/final-verification-ready` 这类组合值。缺任一 gating 字段、或取非通过值却声明 clean、或 provider 不满足 packet `semantic_review_provider` → supervisor 判 `MALFORMED_REVIEW_OUTPUT` 阻断**（不接受为成功）。
    - 有 finding 或阻塞时输出：`review_result=findings` 或 `review_result=blocked`，并给出最高优先级 `route_class`。
    - route class 只能取：`IMPLEMENT_DEFECT`（代码/测试/验证/注释/日志/脱敏缺陷）、`PROCESS_DEFECT`（trace/证据/流程执行缺陷）、`DETAIL_DEFECT`（详细设计合同错误或缺失）、`OVERVIEW_DEFECT`（概要归属/承接错误）、`REQ_BLOCKER`（需求行为/验收/边界缺陷）、`none`。
 1. 逐条 findings：`severity(P1/P2/P3) / location(文件:行) / problem / suggestion(最小修订)`，先证据后结论。
@@ -66,7 +77,7 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
   ```bash
   python3 .trellis/scripts/guru/guru_review_record.py append --task-dir <task> --packet <packet> \
     --provider manual --reviewer <name> --run-id <run_id> --result clean --route-class none \
-    --review-target slice:<unit_id> --deterministic-checks passed --dirty-scope isolated \
+    --review-target slice:<slice_id> --deterministic-checks passed --dirty-scope isolated \
     --invariant-coverage all_passed --evidence-file <task>/review-records/manual-review-<run_id>.md
   ```
   `--run-id` 必须与 `--evidence-file` 名一致；`channel`/`worker` 由命令派生。

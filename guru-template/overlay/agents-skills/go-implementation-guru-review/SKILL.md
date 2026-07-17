@@ -16,9 +16,18 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
 3. 读取目标仓库 `.trellis/spec/conventions/project-conventions.md`，先跑校验清单 C1~C5；**重点装载 SLOT-17 存量违例清单**（存量豁免判定的唯一数据源）与本服务的 SLOT-01~SLOT-16 取值（DI/ORM/日志/测试框架/API 风格/DB 驱动/lint/配置/文档生成/会话鉴权/分层目录/迁移/错误风格/生命周期/接口抽象/枚举表达），并确认项目 logger / logging helper / 日志门面和字段约定。槽位缺失或待定超限 → 前置失败。
 4. 定位审核对象：被审改动（diff/分支）、本任务承接的详细设计单元（full 链 `design_package/chapters/*.md` 的 `UNIT-<slug>`；light 链 `design.md` §详细）、`implement.md`（digest-bearing trace 计划合同）与 task-local mutable evidence（`implementation-evidence.jsonl`、`verification-evidence.jsonl`、`review-records/implementation-reviews.jsonl`）。trace 缺失或 mutable evidence 缺执行/验证记录 → 前置失败（实现 Gate 证据链不存在，不进入符合性判断）。
 5. 命中需要项目级取值才能判定的项（如 lint 是否真按 `golangci-lint` 跑、DB 驱动是否落在 repository/app 层、会话鉴权是否 HMAC-SHA256 签名 cookie + bcrypt），其取值只能来自 project-conventions 槽位与仓库真实代码，不得从详细设计正文或参考工程习惯推断。
-6. **装载 slice packet / invariant matrix**（P1，high-risk slice 必做）：supervisor 经 `build_run_plan` 把 resolved `slice-packets/<unit_id>.json` 注入为 `--file`，brief 含 `active_slice=<unit_id>`。读 packet 的 `invariants[]`（唯一机器 SSOT）、`target_paths`、`semantic_review_provider`。packet/matrix 缺失而 brief 标记 high-risk → 输出 `DETAIL_DEFECT` / `PROCESS_DEFECT`，不得 clean。
+6. **装载 slice packet / invariant matrix**（P1，high-risk slice 必做）：supervisor 经 `build_run_plan` 把 resolved `slice_packet=<path>` 注入为 `--file`，brief 含 `active_slice=<slice_id>`。以 resolved `slice_packet` 路径为准读取 packet 的 `review_evidence_schema_version`、`requirements_design_inputs`、`invariants[]`（唯一机器 SSOT）、`target_paths`、`deterministic_checks`、`semantic_review_provider` 与 `integration_slice`。packet/matrix 缺失而 brief 标记 high-risk → 输出 `DETAIL_DEFECT` / `PROCESS_DEFECT`，不得 clean。
 
 前置全部通过后，才进入下面的执行流程。
+
+## Full/high snapshot 与 evidence Gate
+
+- 先审核 `implement.md` 的 slice planning audit：普通 slice 是否以最少 commit-stable slices 和最大安全并发宽度为目标，是否登记唯一文件级 mutable owner、`covered_units`、真实 `depends_on`、parallel wave、独立 commit/rollback 价值、资源隔离、focused checks 与 reviewer context。仅因 UNIT 或 internal layer 整齐而机械拆片，按 `DETAIL_DEFECT` 阻断；一个 slice 覆盖多个合法 layer 本身不是缺陷，每个文件仍须遵守 Go owner 与单向 import。
+- 一个 current snapshot 恰好由一个 semantic reviewer 负责。snapshot 绑定 target bytes、`invariants`、`requirements_design_inputs`、`deterministic_checks`、review policy / `semantic_review_provider` 与 supervisor digest；同一 snapshot 不得启动第二 reviewer 或重新 aggregate。
+- clean evidence 只有在 `review_evidence_schema_version=2` 且上述每个绑定组件逐项相等时才能复用。snapshot 改变后可产生一个新 current review；v1、缺组件或部分相等的 evidence 不得复用。
+- finding 只使绑定组件实际变化的 receipt 失效，不自动保留或作废所有 sibling receipts。已有 current receipt 的 slice 不得再次 aggregate；未变化的 current receipts 保持可复用。
+- 普通 slice 只审 packet、planning audit、目标 diff、选定 requirements/design 与 focused evidence，只消费或执行 ordinary focused checks；不得运行 full regression。Integration 才审最终 union snapshot、ordinary current receipts、cross-slice invariants 与 final deterministic summaries，且 full regression 只属于 Integration deterministic checks。
+- Integration packet `target_paths` 是 review coverage，不是写授权。实际改动路径必须是 planning audit 中 exact `integration_owned_paths` 的子集；即使路径位于 packet coverage 内，只要不在 `integration_owned_paths` 也按 `PROCESS_DEFECT` 阻断。reviewer 只读，不派 implement worker、不改 planning artifact、不直接写 receipt，也不重复执行 supervisor 已运行的同一 deterministic command。
 
 ## 执行流程（D 步骤诊断）
 
@@ -53,11 +62,11 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
 
 4. **D4 证据核查**（对应 Gate 4 G2/G3/G4 + `verification-evidence.jsonl`，强调「证据感而非做完感」）：
    - **计划合同与 mutable evidence 齐全且非空**：`implement.md` 计划节有 `UNIT-<slug>` 承接与完成信号；`implementation-evidence.jsonl` 有改动清单、偏差说明和阻塞/恢复记录；`verification-evidence.jsonl` 有命令级记录。缺任一证据链 = 实现 Gate 不放行（P1）。
-   - **编译证据**（G2）：`go build ./...` 或 `go build ./services/<svc>/...` 贴命令 + 退出态；只写「通过」无命令/退出态 = 证据不可信（P2 起步）。引入的失败未收口 = P1。
-   - **静态检查证据**（G3）：`go vet ./...` + `golangci-lint run ./...`（按 SLOT-07）逐条通过/失败 + 处理；`nolint` 豁免须写理由并指向 `[SLOT-17]`。
+   - **编译证据**（G2）：Full/high ordinary slice 只要求 packet 声明的 focused build（例如 `go build ./services/<svc>/...` 或 exact package path）并贴命令 + 退出态；`go build ./...` 只由 Integration 承担。非 Full/high 任务继续按原 route 合同取证。只写「通过」无命令/退出态 = 证据不可信（P2 起步）。引入的失败未收口 = P1。
+   - **静态检查证据**（G3）：Full/high ordinary slice 只要求 packet 声明的 affected service/package `go vet` 与 `golangci-lint` focused commands；`go vet ./...`、`golangci-lint run ./...` 只由 Integration 承担。非 Full/high 任务继续按原 route 合同取证。逐条记录通过/失败 + 处理；`nolint` 豁免须写理由并指向 `[SLOT-17]`。
    - **测试证据**（G4）：测试名级别结果（如 `--- PASS: TestUserService_Login/bad_credential`），不只写「全部通过」；覆盖承接 UNIT/BHV 的成功路径 + **全部失败路径**；新增测试清单可追溯到 `UNIT-<slug>`/`BHV-NNN`。漏失败路径用例 = P2 起步；高风险链路（鉴权/迁移/契约/并发超时）漏测 = P1。竞态敏感切片应附 `go test -race`。
    - **invariant 证据**（P1 high-risk slice）：每条 high-risk invariant 至少一个正向或负向测试、命令或代码路径作为 `invariant_evidence`；`pass` 无证据按 `invariant_coverage=missing` 阻断。负向语义（排除/遗漏/不得绕过鉴权/不得破坏错误链或迁移兼容）缺测试或等价确定性检查按 P1/P2 判级。
-   - **可复跑抽查**：抽至少 1 条 `verification-evidence.jsonl` 中声明的命令实际复跑，结果与记录不符 = 证据造假（P1）。
+   - **可复现抽查**：核对至少 1 条 `verification-evidence.jsonl` 命令的当前输入与输出证据；不得重复执行 supervisor 已运行的同一 deterministic command。需要额外语义取证时只跑未重复的 ordinary focused check；证据与当前 snapshot 不符 = 证据造假（P1）。
    - **代码生成执行记录**：启用了生成型槽位（wire DI / sqlc / ent / mockgen / stringer 等，依 project-conventions 选型）且触发条件满足时，须有生成命令与产物清单记录（如 `wire_gen.go`/`db/*.sql.go` 是否变更）；当前 golden-path 默认无代码生成（原生 SQL + 标准库）则 `implementation-evidence.jsonl` 须写「N/A：无代码生成槽位启用」，不得留空。
    - **依赖整洁**：`go.mod`/`go.sum` 变更须 `go mod tidy` 并记 diff；新增第三方库须落在 project-conventions 已批准槽位（禁被锁框架）。
    - **未验证项**：无法本地验证的（真实 PostgreSQL 集成、生产负载下 `context` 超时与连接池、跨服务契约在另一服务的运行时兼容、信号驱动优雅关闭实测）须显式列出并指明移交环节（CI 集成 / 压测灰度 / Manual QA staging），不得隐瞒。
@@ -85,10 +94,10 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
 **前置通过时**，按以下顺序输出：
 
 1. **结论（三选一，置顶）**：
-   - **可进入 PR**：D1~D7 全过；`implement.md` 计划合同齐全，mutable evidence 中 `go build`/`go vet`/`golangci-lint`/`go test` 有命令级证据且全绿、承接 UNIT 的成功 + 全部失败路径有测试、注释/日志/文档路径追溯可审计、无 P1、无清单外新增违例、无未闭合偏差。
+   - **可进入 PR**：D1~D7 全过；`implement.md` 计划合同齐全，mutable evidence 中当前 route/slice 类型要求的 `go build`/`go vet`/`golangci-lint`/`go test` 证据有命令级结果且全绿（Full/high ordinary 仅 packet focused checks，Integration 才含 full regression）、承接 UNIT 的成功 + 全部失败路径有测试、注释/日志/文档路径追溯可审计、无 P1、无清单外新增违例、无未闭合偏差。
    - **修复 P2 后可进入**：无 P1，但存在 P2（证据不完整、偏差未全闭合、非高风险漏测、绕行未挂编号等）；列出 P2 修复项。
    - **不可进入 PR**：存在任一 P1（合同未实现 / 八问断链 / 分层反向 / 轻框架破坏 / 丢 `%w` / 生命周期破坏 / 硬编码 secret / 清单外新增违例 / 高风险漏测 / 编译未收口 / 证据造假 / 就地改设计）；逐条列阻塞 P1。验证因环境/凭据/DB/网络阻塞无法完成时，结论为 blocked，记录命令、错误摘要、缺失依赖与恢复条件，不得降级为 pass。
-   - 机器可读收口字段必须同步输出：clean 且可进入 PR 时写 `review_result=clean/final-verification-ready`、`route_class=none`、`review_target=slice:<unit_id>`、`review_provider=<本 check worker 的 provider>`、`deterministic_checks=passed|failed|missing`、`dirty_scope=clean|isolated|invalid`、`invariant_coverage=all_passed|failed|missing`、`validation_summary=<命令与证据摘要>`。有 slice packet 时还须逐条输出 per-invariant：`invariant_status.<id>=pass|fail|not_applicable`；`pass` 必随 `invariant_evidence.<id>=<非空证据：测试名/命令/代码路径>`；`not_applicable` 必随 `invariant_reason.<id>=<理由>`。缺任一 gating 字段、或取非通过值却声明 clean、或 provider 不满足 packet `semantic_review_provider` → supervisor 判 `MALFORMED_REVIEW_OUTPUT` 阻断。有 finding 或阻塞时写 `review_result=findings|blocked` 与最高优先级 `route_class`。
+   - 机器可读收口字段必须同步输出：clean 且可进入 PR 时写 `review_result=clean`（或 `review_result=final-verification-ready`，supervisor 归一为 clean）、`route_class=none`、`review_target=slice:<slice_id>`、`review_provider=<本 check worker 的 provider>`、`deterministic_checks=passed|failed|missing`、`dirty_scope=clean|isolated|invalid`、`invariant_coverage=all_passed|failed|missing`、`validation_summary=<命令与证据摘要>`。有 slice packet 时还须逐条输出 per-invariant：`invariant_status.<id>=pass|fail|not_applicable`；`pass` 必随 `invariant_evidence.<id>=<非空证据：测试名/命令/代码路径>`；`not_applicable` 必随 `invariant_reason.<id>=<理由>`。不得输出 `review_result=clean/final-verification-ready` 这类组合值。缺任一 gating 字段、或取非通过值却声明 clean、或 provider 不满足 packet `semantic_review_provider` → supervisor 判 `MALFORMED_REVIEW_OUTPUT` 阻断。有 finding 或阻塞时写 `review_result=findings|blocked` 与最高优先级 `route_class`。
    - route class 只能取：`IMPLEMENT_DEFECT`（代码/测试/验证/注释/日志/脱敏缺陷）、`PROCESS_DEFECT`（trace/证据/流程执行缺陷）、`DETAIL_DEFECT`（详细设计合同错误或缺失）、`OVERVIEW_DEFECT`（概要归属/承接错误）、`REQ_BLOCKER`（需求行为/验收/边界缺陷）、`none`。
 
 2. **逐条 Findings**（按 `P1 → P2 → P3` 排序；无则写 `none`），每条字段：
@@ -118,7 +127,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
 
 ## 好例 / 坏例（审核判读对照）
 
-- ✅ 合格切片（放行）：`切片 S2 | 承接 UNIT-user-repository | repository/user_repository.go + db/migrations/0003_users.up.sql`；`verification-evidence.jsonl` 记录 `go build ./services/<svc>/... → 退出 0`、`golangci-lint run → 0 issues`、`go test -run TestUserRepository_FindByEmail -v` 含 `not_found_maps_ErrUserNotFound` 子测试，新增测试映射到 `UNIT-user-repository` 覆盖 `BHV-012` 成功 + 失败路径，未验证项（真实 PG 唯一约束触发 `ErrEmailTaken`）显式留 CI 集成。审核判：可进入 PR。
+- ✅ 合格 ordinary 切片（放行）：`切片 S2 | 承接 UNIT-user-repository | repository/user_repository.go + db/migrations/0003_users.up.sql`；`verification-evidence.jsonl` 记录 packet focused checks：`go build ./services/<svc>/... → 退出 0`、`golangci-lint run ./services/<svc>/internal/repository/... → 0 issues`、`go test -run TestUserRepository_FindByEmail -v` 含 `not_found_maps_ErrUserNotFound` 子测试，新增测试映射到 `UNIT-user-repository` 覆盖 `BHV-012` 成功 + 失败路径；全仓库 regression 留给 Integration，真实 PG 唯一约束显式留 CI 集成。审核判：可进入 PR。
 - ❌ 坏例（不可进入）：handler 内直接 `db.QueryRowContext(...)` 跳过 service 层（D2 分层反向，P1）；service 用 `fmt.Errorf("login failed: " + err.Error())` 拼接丢 `%w`（D2 错误链断裂，P1）；mutable evidence 只写「全部编译通过，测试通过」无命令无测试名（D4，P2）；新引入 `github.com/gin-gonic/gin`（D2 轻框架红线，P1）。
 - ❌ 坏例（八问断链）：切片挂 `UNIT-user-cache` 但详细设计无此单元（幽灵单元，P1）；或 `BHV-012` 在概要有 owner 但无任何 `UNIT-<slug>` 承接（断链，P1）。
 
@@ -134,7 +143,7 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
   ```bash
   python3 .trellis/scripts/guru/guru_review_record.py append --task-dir <task> --packet <packet> \
     --provider manual --reviewer <name> --run-id <run_id> --result clean --route-class none \
-    --review-target slice:<unit_id> --deterministic-checks passed --dirty-scope isolated \
+    --review-target slice:<slice_id> --deterministic-checks passed --dirty-scope isolated \
     --invariant-coverage all_passed --evidence-file <task>/review-records/manual-review-<run_id>.md
   ```
   `--run-id` 必须与 `--evidence-file` 名一致；`channel` / `worker` 由命令派生。

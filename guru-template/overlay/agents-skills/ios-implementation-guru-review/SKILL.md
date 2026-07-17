@@ -17,8 +17,18 @@ description: 按通用 golden-path 与实现 trace 合同审核 Guru iOS 原生�
 3. 读取目标仓库 `.trellis/spec/conventions/project-conventions.md`，先跑 Pre-Dev 校验清单 C1~C6；**重点装载 SLOT-16 存量违例清单**（存量豁免判定的唯一数据源）与本仓库各槽位取值（UI 框架 SwiftUI 主+RxSwift 遗留→纯 SwiftUI / 网络层 URLSession·Moya / 日志 SwiftyBeaver→OSLog / JSON 修复策略 / 测试框架 XCTest→Quick·Nimble / i18n / 主题 ThemeManager / feature 模块结构 / mock 生成 手写→Mockolo / 构建自动化 Fastlane），并确认项目 logger / logging helper / 日志门面和隐私字段约定。槽位缺失或 C1~C6 未过 → 前置失败。
 4. 定位审核对象：被审改动（diff/分支）、本任务承接的详细设计单元（full 链 `design_package/chapters/*.md` 的 `UNIT-<slug>`；light 链 `design.md` §详细）、`implement.md`（digest-bearing trace 计划合同）与 task-local mutable evidence（`implementation-evidence.jsonl`、`verification-evidence.jsonl`、`review-records/implementation-reviews.jsonl`）。trace 缺失或 mutable evidence 缺执行/验证记录 → 前置失败（实现 Gate 证据链不存在，不进入符合性判断）。
 5. 命中需要项目级取值才能判定的项（如 lint 是否真按 SwiftLint 规则集跑、网络栈是否落在 `[SLOT-network]`、新代码是否禁引入 RxSwift、mock 是否按 `[SLOT-mock]` 生成），其取值只能来自 project-conventions 槽位与仓库真实代码，**不得从详细设计正文或参考工程习惯推断**。
+6. **装载 slice packet / invariant matrix**（P1，high-risk slice 必做）：supervisor 经 `build_run_plan` 把 resolved `slice_packet=<path>` 注入为 `--file`，brief 含 `active_slice=<slice_id>`。以 resolved `slice_packet` 路径为准读取 packet 的 `review_evidence_schema_version`、`requirements_design_inputs`、`invariants[]`（唯一机器 SSOT）、`target_paths`、`deterministic_checks`、`semantic_review_provider` 与 `integration_slice`。packet/matrix 缺失而当前 slice 为 high-risk → 输出 `DETAIL_DEFECT` / `PROCESS_DEFECT`，不得 clean。
 
 前置全部通过后，才进入下面的执行流程。
+
+## Full/high snapshot 与 evidence Gate
+
+- 先审核 `implement.md` 的 slice planning audit：普通 slice 是否以最少 commit-stable slices 和最大安全并发宽度为目标，是否登记唯一文件级 mutable owner、`covered_units`、真实 `depends_on`、parallel wave、独立 commit/rollback 价值、资源隔离、focused checks 与 reviewer context。仅因 UNIT、`doc_type`、ViewModel、UseCase 或 View 结构整齐而机械拆片，按 `DETAIL_DEFECT` 阻断；一个 slice 覆盖多个合法 iOS `doc_type` 本身不是缺陷，每个文件仍须遵守 owner 层与单向依赖。
+- 一个 current snapshot 恰好由一个 semantic reviewer 负责。snapshot 绑定 target bytes、`invariants`、`requirements_design_inputs`、`deterministic_checks`、review policy / `semantic_review_provider` 与 supervisor digest；同一 snapshot 不得启动第二 reviewer 或重新 aggregate。
+- clean evidence 只有在 `review_evidence_schema_version=2` 且上述每个绑定组件逐项相等时才能复用。snapshot 改变后可产生一个新 current review；v1、缺组件或部分相等的 evidence 不得复用。
+- finding 只使绑定组件实际变化的 receipt 失效，不自动保留或作废所有 sibling receipts。已有 current receipt 的 slice 不得再次 aggregate；未变化的 current receipts 保持可复用。
+- 普通 slice 只审 packet、planning audit、目标 diff、选定 requirements/design 与 focused evidence，只消费或执行 ordinary focused checks；不得运行 full regression。Integration 才审最终 union snapshot、ordinary current receipts、cross-slice invariants 与 final deterministic summaries，且 full regression 只属于 Integration deterministic checks。
+- Integration packet `target_paths` 是 review coverage，不是写授权。实际改动路径必须是 planning audit 中 exact `integration_owned_paths` 的子集；即使路径位于 packet coverage 内，只要不在 `integration_owned_paths` 也按 `PROCESS_DEFECT` 阻断。reviewer 只读，不派 implement worker、不改 planning artifact、不直接写 receipt，也不重复执行 supervisor 已运行的同一 deterministic command。
 
 ## 执行流程（D 步骤诊断）
 
@@ -69,8 +79,8 @@ D1/D2 发现的每个违例对照 SLOT-16 清单——
 > 构建系统二选一按目标仓库实际形态：CocoaPods 工作区（`xcodebuild`，SwiftLint 经 Pods 集成）或纯 SPM 包（`swift build`/`swift test`）。`verification-evidence.jsonl` 记录实际所用那套。
 
 - **计划合同与 mutable evidence 齐全且非空（GI-1）**：`implement.md` 计划节有 `UNIT-<slug>` 承接 + doc_type/文件范围 + 完成信号 + 验证方式；`implementation-evidence.jsonl` 有改动文件清单、偏差原因、DI 装配登记和阻塞/恢复记录；`verification-evidence.jsonl` 有命令级记录。缺任一证据链或留 TODO 占位 = 实现 Gate 不放行（P1）。
-- **编译证据**：`xcodebuild build -workspace <App>.xcworkspace -scheme <App> -destination 'platform=macOS'`（或 SPM 包 `swift build`）贴命令 + 结果（`BUILD SUCCEEDED`/退出态）；只写「编译通过」无命令 = 证据不可信（P2 起步）。引入的编译失败未收口 = P1。
-- **静态检查证据**：SwiftLint（`Pods/SwiftLint/swiftlint lint --strict` 或 `swiftlint`，按 `[SLOT-lint]`）逐条通过/失败 + 新增文件零新增违例；存量违例按 D3 记债。只写「lint 通过」无命令/无 violations 计数 = P2 起步。
+- **编译证据**：Full/high ordinary slice 只要求 packet 声明的 focused build/test command；全 workspace `xcodebuild build`（或 SPM `swift build`）只由 Integration 承担。非 Full/high 任务继续按原 route 合同取证。任何实际运行的命令都须贴结果与退出态；只写「编译通过」无命令 = 证据不可信（P2 起步）。
+- **静态检查证据**：Full/high ordinary slice 只要求 packet 声明的 affected-file SwiftLint command；全项目 SwiftLint 只由 Integration 承担。非 Full/high 任务继续按原 route 合同取证。逐条记录通过/失败 + 新增文件零新增违例；存量违例按 D3 记债。
 - **测试证据（GI-3）**：测试名级别结果（XCTest 如 `test_createStory_校验失败_抛StoryManagementError.validationFailed`；Quick/Nimble 到 example 名级），**不只写「全部通过」**；覆盖承接 UNIT/BHV 的成功路径 + **全部失败路径**；新增测试清单（`XCTestCase` 子类名 + `test*` 方法名）可追溯到 `UNIT-<slug>`/`BHV-NNN`。按 doc_type↔测试分层映射核对——
   - `domain-model`：unit（不变量/`enum Error` 等值/值对象构造，纯逻辑无 mock）。
   - `repository`：unit（mock `DatabaseManager`，错误映射表逐条 + mapper 双向 + CRUD 幂等）+ integration（真实 WCDBSwift 临时库，多为未验证项）。
@@ -80,7 +90,7 @@ D1/D2 发现的每个违例对照 SLOT-16 清单——
   - `coordinator`：unit（`NavigationDestination` 转移）+ DI 解析冒烟（`Container` 能解析全部新增 `Factory`）。
   - `external`：unit（mock SDK 边界，错误上抛不吞）+ integration（真实 SDK/网络留真机/Manual QA）。
   漏失败路径用例 = P2 起步；高风险链路（导航 case 覆盖/WCDBSwift 迁移/SDK 错误转换/RxSwift↔SwiftUI 桥接/`@MainActor` 线程归属）漏测 = P1。
-- **可复跑抽查**：抽至少 1 条 `verification-evidence.jsonl` 中声明的命令实际复跑，结果与记录不符 = 证据造假（P1）。
+- **可复现抽查**：核对至少 1 条 `verification-evidence.jsonl` 命令的当前输入与输出证据；不得重复执行 supervisor 已运行的同一 deterministic command。需要额外语义取证时只跑未重复的 ordinary focused check；证据与当前 snapshot 不符 = 证据造假（P1）。
 - **代码生成/脚手架记录**：启用 mock 生成（`[SLOT-mock]` 手写→Mockolo）或 R.swift 资源生成且触发条件满足时，须有生成命令与产物清单；未用生成则 `implementation-evidence.jsonl` 须写「本切片无生成步骤（手写实现 + 手写 mock）」，不得留空。
 - **依赖整洁**：`Podfile`/`Podfile.lock`（CocoaPods）或 `Package.swift`/`Package.resolved`（SPM）变更须记 diff；新增第三方库须落在 project-conventions 已批准槽位（禁被锁框架，如纯 SwiftUI 仓库新增 RxSwift）。
 - **未验证项**：无法本地验证的（真机/设备能力/大模型推理/TTS 真实音频/GPU 图像生成/WhisperKit 设备端表现/真实 WCDBSwift 唯一约束/RxSwift 桥接内存与线程）须显式列出并指明移交环节（Manual QA / 真机池 / 性能基准跑 / CI），不得隐瞒。
@@ -113,10 +123,10 @@ PR diff 与计划逐项可对；所有计划外改动均有原因记录（如「
 **前置通过时**，按以下顺序输出：
 
 1. **结论（三选一，置顶）**：
-   - **可进入 PR**：D1~D7 全过；`implement.md` 计划合同齐全（`GI-1`），mutable evidence 中 `xcodebuild build`/`xcodebuild test`（或 `swift build`/`swift test`）/SwiftLint 有命令级证据且全绿（`GI-3`）、承接 UNIT 的成功 + 全部失败路径有测试、注释/日志/文档路径追溯可审计、golden-path 锁定项逐项落地（`GI-4`：FactoryKit `@Injected` 无手动初始化 / Repository 模式 / `enum Error` 分层 / WCDBSwift 无 CoreData·SwiftData / ViewModel=`ObservableObject`+`@Published` / `private` 在 `private extension`）、分层依赖律零违反（`GI-5`）、DI 装配闭合（`GI-7`：新增单元在 `Container+*.swift` 有 `Factory` 注册且 `@Injected` 可解析）、无 P1、无清单外新增违例、无未闭合偏差。
+   - **可进入 PR**：D1~D7 全过；`implement.md` 计划合同齐全（`GI-1`），mutable evidence 中当前 route/slice 类型要求的 build/test/SwiftLint 证据有命令级结果且全绿（Full/high ordinary 仅 packet focused checks，Integration 才含 full build/regression）（`GI-3`）、承接 UNIT 的成功 + 全部失败路径有测试、注释/日志/文档路径追溯可审计、golden-path 锁定项逐项落地（`GI-4`：FactoryKit `@Injected` 无手动初始化 / Repository 模式 / `enum Error` 分层 / WCDBSwift 无 CoreData·SwiftData / ViewModel=`ObservableObject`+`@Published` / `private` 在 `private extension`）、分层依赖律零违反（`GI-5`）、DI 装配闭合（`GI-7`：新增单元在 `Container+*.swift` 有 `Factory` 注册且 `@Injected` 可解析）、无 P1、无清单外新增违例、无未闭合偏差。
    - **修复 P2 后可进入**：无 P1，但存在 P2（证据不完整、偏差未全闭合、非高风险漏测、绕行未挂编号、`private extension` 组织小瑕等）；列出 P2 修复项。
    - **不可进入 PR**：存在任一 P1（合同未实现 / 八问断链 / 分层反向·越层 / Domain 零依赖破坏 / `view` 直连持久化或互相导航 / 手动 `new` 替代 `@Injected` / `usecase` 触碰 UI 或环形依赖 / `WCDBSwift` 原始错误裸抛 UI / CoreData·SwiftData 替代 WCDBSwift / 自创 doc_type / 硬编码 secret / 清单外新增违例 / 高风险漏测 / 编译未收口 / 证据造假 / 就地改设计）；逐条列阻塞 P1。验证因环境/设备/真机/网络阻塞无法完成时，结论为 **blocked**，记录命令、错误摘要、缺失依赖与恢复条件，不得降级为 pass。
-   - 机器可读收口字段必须同步输出：clean 且可进入 PR 时写 `review_result=clean/final-verification-ready`、`route_class=none`、`validation_summary=<命令与证据摘要>`；有 finding 或阻塞时写 `review_result=findings|blocked` 与最高优先级 `route_class`。
+   - 机器可读收口字段必须同步输出：clean 且可进入 PR 时写 `review_result=clean`（或 `review_result=final-verification-ready`，supervisor 归一为 clean）、`route_class=none`、`review_target=slice:<slice_id>`、`review_provider=<本 check worker 的 provider>`、`deterministic_checks=passed|failed|missing`、`dirty_scope=clean|isolated|invalid`、`invariant_coverage=all_passed|failed|missing`、`validation_summary=<命令与证据摘要>`。有 slice packet 时还须逐条输出 per-invariant：`invariant_status.<id>=pass|fail|not_applicable`；`pass` 必随 `invariant_evidence.<id>=<非空证据：测试名/命令/代码路径>`；`not_applicable` 必随 `invariant_reason.<id>=<理由>`。不得输出 `review_result=clean/final-verification-ready` 这类组合值。缺任一 gating 字段、或取非通过值却声明 clean、或 provider 不满足 packet `semantic_review_provider` → supervisor 判 `MALFORMED_REVIEW_OUTPUT` 阻断。有 finding 或阻塞时写 `review_result=findings|blocked` 与最高优先级 `route_class`。
    - route class 只能取：`IMPLEMENT_DEFECT`（代码/测试/验证/注释/日志/脱敏缺陷）、`PROCESS_DEFECT`（trace/证据/流程执行缺陷）、`DETAIL_DEFECT`（详细设计合同错误或缺失）、`OVERVIEW_DEFECT`（概要归属/承接错误）、`REQ_BLOCKER`（需求行为/验收/边界缺陷）、`none`。
 
 2. **逐条 Findings**（按 `P1 → P2 → P3` 排序；无则写 `none`），每条字段：
@@ -132,8 +142,8 @@ PR diff 与计划逐项可对；所有计划外改动均有原因记录（如「
    ```
    同一轮多类缺陷按 `REQ_BLOCKER > OVERVIEW_DEFECT > DETAIL_DEFECT > PROCESS_DEFECT > IMPLEMENT_DEFECT` 给最高优先级路由，供 implement-check 自动回退。
    先证据后结论，严重度排序：
-   - **P1**：合同未实现 / 执行流程步骤缺失·改序·下沉·上移无设计依据 / 八问断链（幽灵 BHV·UNIT）/ 实现期猜测发明未定义合同 / 分层反向·越层（Domain 非 `Foundation` import、`view` 直连持久化、`view` 间硬导航、`viewmodel`/`usecase` 触碰实现或 `WCDBSwift`、`usecase` 环形依赖）/ 手动 `new` 替代 FactoryKit `@Injected` / `WCDBSwift` 原始错误裸抛 UI 或缺 `enum XxxError` / 高风险核心 owner 完全无文档追溯 / 高风险路径不可观测 / 日志泄露 secret 或 PII / CoreData·SwiftData 替代 WCDBSwift / 自创第八类 doc_type / 硬编码 secret / 私有 API·动态执行 / 清单外新增违例（含扩大违例面）/ 高风险链路漏测 / 编译未收口 / 证据与复跑不符 / 就地改设计而非回退。
-   - **P2**：编译/静态/测试证据不完整（无命令·无退出态·无测试名·无 violations 计数）/ 非高风险失败路径漏测 / 新增核心类型或 public/internal API 缺 DocC 设计锚点 / 非显然分支缺"为什么"注释 / 关键流程日志缺入口或失败上下文 / 偏差未全闭合靠 reviewer 发现 / 触碰存量绕行未挂编号 / DI 装配登记缺位（Factory 已注册但 trace 未记）/ `private` 方法未进 `private extension` / 计划与验证命令轻微不一致但未绕过实现 / 因环境阻塞验证未完成。
+   - **P1**：合同未实现 / 执行流程步骤缺失·改序·下沉·上移无设计依据 / 八问断链（幽灵 BHV·UNIT）/ 实现期猜测发明未定义合同 / 分层反向·越层（Domain 非 `Foundation` import、`view` 直连持久化、`view` 间硬导航、`viewmodel`/`usecase` 触碰实现或 `WCDBSwift`、`usecase` 环形依赖）/ 手动 `new` 替代 FactoryKit `@Injected` / `WCDBSwift` 原始错误裸抛 UI 或缺 `enum XxxError` / 高风险核心 owner 完全无文档追溯 / 高风险路径不可观测 / 日志泄露 secret 或 PII / CoreData·SwiftData 替代 WCDBSwift / 自创第八类 doc_type / 硬编码 secret / 私有 API·动态执行 / 清单外新增违例（含扩大违例面）/ 高风险链路漏测 / 当前 route/slice 类型要求的编译未收口 / 证据与复跑不符 / 就地改设计而非回退。
+   - **P2**：当前 route/slice 类型要求的编译/静态/测试证据不完整（无命令·无退出态·无测试名·无 violations 计数）/ 非高风险失败路径漏测 / 新增核心类型或 public/internal API 缺 DocC 设计锚点 / 非显然分支缺"为什么"注释 / 关键流程日志缺入口或失败上下文 / 偏差未全闭合靠 reviewer 发现 / 触碰存量绕行未挂编号 / DI 装配登记缺位（Factory 已注册但 trace 未记）/ `private` 方法未进 `private extension` / 计划与验证命令轻微不一致但未绕过实现 / 因环境阻塞验证未完成。
    - **P3**：命名后缀（`I` 前缀/`View`/`ViewModel` 后缀）、目录/文件组织、`MARK` 分组、注释措辞、验证记录可读性问题，不影响合同闭合与红线。
 
 3. **存量豁免清单**：本次触碰的 SLOT-16 条目 + 分类结果（记债不阻塞 / 新增阻塞 / 可移除）+ 对应 `[SLOT-NN]` 编号。
@@ -146,7 +156,7 @@ PR diff 与计划逐项可对；所有计划外改动均有原因记录（如「
 
 ## 好例 / 坏例（审核判读对照）
 
-- ✅ **合格切片（放行）**：`切片 S2 | 承接 UNIT-story-repository | doc_type=repository | Domain/Repositories/IStoryRepository.swift + Infrastructure/Persistence/Repositories/StoryRepository.swift + Infrastructure/Persistence/Models/StoryObject.swift + Container+UseCases.swift`；`verification-evidence.jsonl` 记录 `xcodebuild build ... → BUILD SUCCEEDED`、`swiftlint --strict → 0 violations（新增 3 文件）`、`xcodebuild test ... -only-testing:<App>Tests/StoryRepositoryTests` 含 `test_save_找不到ID_映射PersistenceError.notFound` 等测试名，新增测试映射到 `UNIT-story-repository` 覆盖 `BHV-012` 成功 + 失败路径，DI 装配登记 `Container+UseCases.swift var storyRepository: Factory<any IStoryRepository>`（见对应文件），未验证项（真实 WCDBSwift 唯一约束触发）显式留 Manual QA。审核判：可进入 PR。
+- ✅ **合格 ordinary 切片（放行）**：`切片 S2 | 承接 UNIT-story-repository | doc_type=repository | Domain/Repositories/IStoryRepository.swift + Infrastructure/Persistence/Repositories/StoryRepository.swift + Infrastructure/Persistence/Models/StoryObject.swift + Container+UseCases.swift`；`verification-evidence.jsonl` 记录 packet focused checks：affected-file SwiftLint 与 `xcodebuild test ... -only-testing:<App>Tests/StoryRepositoryTests`，包含 `test_save_找不到ID_映射PersistenceError.notFound` 等测试名；全 workspace build/regression 留给 Integration。新增测试映射到 `UNIT-story-repository` 覆盖 `BHV-012` 成功 + 失败路径，DI 装配登记闭合，真实 WCDBSwift 唯一约束显式留 Manual QA。审核判：可进入 PR。
 - ❌ **坏例（不可进入）**：`HomeViewModel` 里 `let repo = StoryRepository(databaseManager: ...)` 手动 `new` 并 `import WCDBSwift`（D2 §2.3 手动初始化 + §2.1 viewmodel 直连持久化，P1）；`StoryRepository` 把 WCDBSwift 原始 `Error` 直接 `throw` 到 ViewModel（D2 §2.5 裸抛，P1）；mutable evidence 只写「全部编译通过，测试通过」无命令无测试名（D4，P2）；新引入 CoreData 替代 WCDBSwift（D2/D5 红线，P1）；`HomeView` 里 `NavigationLink(destination: SettingView())` 跨 feature 硬跳绕过 `AppCoordinator`（D2 §2.1，P1）。
 - ❌ **坏例（八问断链）**：切片挂 `UNIT-home-cache` 但详细设计无此单元（幽灵单元 `slice_ghost_unit`，P1）；或 `BHV-012` 在概要有 owner 但无任何 `UNIT-<slug>` 承接（断链 `bhv_no_unit`，P1）。
 - ❌ **坏例（doc_type 自创）**：trace 把切片 doc_type 写成 `service`/`db-dao`/`transport-handler`（非 iOS 七类，归属红线，P1，应回退用 `usecase`/`repository`/`external`）。
