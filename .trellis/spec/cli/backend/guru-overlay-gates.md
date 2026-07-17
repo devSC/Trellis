@@ -823,6 +823,59 @@ Guru verify tests must cover:
 - Source/template mirror checks cover gate, supervisor, tests, and workflow
   copies.
 
+### Full/high Slice Commit Receipts
+
+Schema-v2 Full/high-like work uses this lifecycle:
+
+```text
+stage exact slice
+-> unique deterministic checks once
+-> independent read-only semantic review
+-> SLICE_COMMIT_READY
+-> main-session commit
+-> official append-only slice receipt
+```
+
+The evidence key binds target bytes, invariant set, selected
+requirements/design bytes, deterministic command set, provider/review policy,
+and supervisor source. A clean review is reusable only while every component is
+identical. Reviewers must not repeat successful supervisor commands, but may run
+distinct read-only adversarial probes.
+
+`check-commit --slice <id>` requires exact staged scope, current clean
+per-invariant evidence, and valid ancestor receipts for every dependency.
+`record-slice-commit --slice <id>` is the only receipt producer and runs only
+after the main-session work commit. A later slice may modify a shared path, but
+its new bytes require a new review; the earlier receipt remains historical
+commit-tree evidence.
+
+All-missing bootstrap may use one explicit aggregate review. The selected slice
+set must exactly equal the dependency-complete set covering staged paths in both
+directions. Targets, invariants, requirements/design selectors, and commands are
+unioned; commands are deduplicated and the strictest risk/provider policy wins.
+The official aggregate producer writes one topological batch. Same-commit
+dependencies are valid only when every constituent receipt belongs to that one
+schema-valid batch; partial, split, duplicate, or conflicting replay fails.
+
+Final `check-commit` without `--slice` activates only for a Full/high-like task
+with one explicit integration packet. It validates the packet DAG, exactly one
+integration slice, target-union coverage, every required receipt and dependency,
+HEAD ancestry, historical commit-tree bytes, receipt-time supervisor bytes, and
+the integration receipt against final HEAD, index, and worktree bytes. The
+integration receipt must be newer than all ordinary current slice receipts.
+Equal commit SHAs are allowed only for receipts in the same validated atomic
+aggregate batch and official aggregate review. The success record includes
+topological slice-to-commit mappings, `reviewers_spawned=0`, and `elapsed_ms`;
+slice-specific failures include an exact recovery command. This path must not
+run deterministic commands or spawn a reviewer and must complete within ten
+seconds.
+
+Legacy Full tasks without an integration packet, v1 review evidence, non-Full,
+Lite, Micro, and direct commit routes retain their existing dispatch. Known
+canonical/template mirror drift blocks sync/install/canary only; it does not
+block canonical source implementation or tests, and the mirror must not be
+edited manually to manufacture a pass.
+
 ### 7. Wrong vs Correct
 
 #### Wrong
