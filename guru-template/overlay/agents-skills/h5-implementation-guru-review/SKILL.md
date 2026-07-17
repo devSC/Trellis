@@ -93,7 +93,7 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
    - **类型检查证据**（G2）：Full/high ordinary slice 只要求 packet 声明的 focused type command；全项目 `tsc --noEmit`（或 `next build` 内含类型检查）只由 Integration 承担。非 Full/high 任务继续按原 route 合同取证。项目须保持 TS strict，出现 `any` 泛滥、`@ts-ignore`/`@ts-expect-error` 无理由、关闭 strict 子项 = 证据不可信（P2 起步，关闭 strict 倒退 P1）。只写「类型通过」无命令/退出态 = 证据不可信（P2 起步）。引入的类型失败未收口 = P1。
    - **静态检查证据**（G3）：Full/high ordinary slice 只要求 packet 声明的 affected-path `eslint` + `prettier --check`；全项目检查只由 Integration 承担。非 Full/high 任务继续按原 route 合同取证。逐条记录通过/失败 + 处理；`eslint-disable` 豁免须写理由并指向 `[SLOT-15]`；已运行 build 时，其 RSC 边界告警（如 client 引服务端模块）须收口。
    - **构建证据**：Full/high ordinary slice 不要求全局 `next build`，除非 packet 明确将 bounded build 列为 focused command；完整 `next build` 只由 Integration 承担。非 Full/high 任务继续按原 route 合同取证。任何实际运行的 build 都须贴命令 + 退出态 + 关键告警处理。
-   - **测试证据**（G4，按测试槽位 Vitest+RTL / Playwright）：测试名级别结果（如 `✓ PostList renders empty state`、Playwright `✓ [chromium] › detail page shows 404`），不只写「全部通过」；覆盖承接 UNIT/BHV 的成功路径 + **全部失败路径**（错误边界触发、空数据、加载态、表单校验失败、未授权）；新增测试清单可追溯到 `UNIT-<slug>`/`BHV-NNN`。漏失败路径用例 = P2 起步；高风险链路（认证 / server-action 变更 / server-client 边界 / 私有数据获取 / SEO 关键页）漏测 = P1。client-component 交互应有 RTL/事件测试；route 关键流应有 e2e。
+   - **测试证据**（G4，按测试槽位 Vitest+RTL / Playwright）：Full/high ordinary 仅当 current packet 或 planning audit focused checks 明确声明测试时，才要求测试名级别结果、UNIT/BHV 成功/失败路径与新增测试映射，不得为通用 G4 自行运行 undeclared tests。Integration 或 non-Full/v1 保留原完整测试合同；声明测试时漏失败路径用例 = P2 起步，高风险链路漏测 = P1。
    - **invariant 证据**（P1 high-risk slice）：每条 high-risk invariant 至少一个正向或负向测试、命令或代码路径作为 `invariant_evidence`；`pass` 无证据按 `invariant_coverage=missing` 阻断。负向语义（排除/遗漏/不得暴露 secret/不得 client 直取私有数据）缺测试或等价确定性检查按 P1/P2 判级。
    - **可复现抽查**：核对至少 1 条 `verification-evidence.jsonl` 命令的当前输入与输出证据；不得重复执行 supervisor 已运行的同一 deterministic command。需要额外语义取证时只跑未重复的 ordinary focused check；证据与当前 snapshot 不符 = 证据造假（P1）。
    - **代码生成 / 派生产物执行记录**：启用了生成型槽位（如 ORM 客户端生成 `prisma generate`、zod 推导、CMS 类型生成、内容索引/RSS 生成 `scripts/gen-rss.js` 等，依 project-conventions 选型）且触发条件满足时，须有生成命令与产物清单记录；当前 golden-path 默认无代码生成时 `implementation-evidence.jsonl` 须写「N/A：无代码生成槽位启用」，不得留空。
@@ -141,7 +141,7 @@ import 方向严格单向无环；反向 import（如 `data-access` 反向依赖
    - route class 只能取：`IMPLEMENT_DEFECT`（代码/测试/验证/注释/日志/脱敏缺陷）、`PROCESS_DEFECT`（trace/证据/流程执行缺陷）、`DETAIL_DEFECT`（详细设计合同错误或缺失）、`OVERVIEW_DEFECT`（概要归属/承接错误）、`REQ_BLOCKER`（需求行为/验收/边界缺陷）、`none`。
 
 1. **结论（三选一）**：
-   - **可进入 PR**：D1~D7 全过；`implement.md` 计划合同齐全，mutable evidence 中当前 route/slice 类型要求的类型、lint、format、build、测试证据有命令级结果且全绿（Full/high ordinary 仅 packet focused checks，Integration 才含全项目 `tsc`/`next build`/full regression）、承接 UNIT 的成功 + 全部失败路径有测试、注释/日志/文档路径追溯可审计、无 P1、无清单外新增违例、无未闭合偏差、server-client 边界与 secret 合规。
+   - **可进入 PR**：D1~D7 全过；`implement.md` 计划合同齐全，mutable evidence 中当前 route/slice 类型要求的命令级结果全绿（Full/high ordinary 仅 packet focused checks，且 packet/audit 声明测试时才要求测试证据；Integration 或 non-Full/v1 保留完整测试合同）、注释/日志/文档路径追溯可审计、无 P1、无清单外新增违例、无未闭合偏差、server-client 边界与 secret 合规。
    - **修复 P2 后可进入**：无 P1，但存在 P2（证据不完整、偏差未全闭合、非高风险漏测、`'use client'` 越界但有降级、metadata/SEO 字段缺失、绕行未挂编号等）；列出 P2 修复项。
    - **不可进入 PR**：存在任一 P1（合同未实现 / 八问断链 / 分层反向·越层 / server-client 边界破坏 / 私有数据获取下沉 client / 硬编码 secret 或私密 env 外泄 / strict 倒退 / 错误吞噬关键链路 / doc_type 用错名 / 清单外新增违例 / 高风险漏测 / 类型或构建未收口 / 证据造假 / 就地改设计）；逐条列阻塞 P1。验证因环境/凭据/CMS/网络阻塞无法完成时，结论为 blocked，记录命令、错误摘要、缺失依赖与恢复条件，不得降级为 pass。
 

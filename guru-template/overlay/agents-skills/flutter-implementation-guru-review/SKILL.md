@@ -36,7 +36,7 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
    - 命中清单且未扩大违例面 → **tech-debt 注记，不阻塞**；
    - 清单外或扩大违例面 → **新增违例，P1 阻塞**；
    - 改动修复了清单条目 → 标注"可从清单移除"。
-4. **D4 证据核查**（G2）：`implement.md` 计划合同与 mutable evidence 齐全性；analyze/测试命令与结果在 `verification-evidence.jsonl` 中真实可复现；代码生成执行记录在 `implementation-evidence.jsonl`；测试覆盖对照详细设计测试映射（漏失败路径用例 = P2 起步，高风险链路漏测 = P1）。Full/high ordinary slice 只要求并消费 packet 声明的 focused commands；全项目 `flutter analyze`、完整测试或其他 full regression 只由 Integration 承担。非 Full/high 任务继续按原有 route 合同取证。消费 supervisor 已记录的 deterministic 结果，不重复执行同一命令；需要额外语义抽查时只选未重复的 focused check。**有 packet 时（P1）：每条 high-risk invariant 至少一个正向或负向测试作为 `invariant_evidence`**——`pass` 无证据按 `invariant_coverage=missing` 阻断;高风险负向语义（排除/遗漏类）缺测试按 P1/P2。
+4. **D4 证据核查**（G2）：`implement.md` 计划合同与 mutable evidence 齐全性；analyze/测试命令与结果在 `verification-evidence.jsonl` 中真实可复现；代码生成执行记录在 `implementation-evidence.jsonl`。Full/high ordinary slice 只要求并消费 packet 声明的 focused commands；仅当 current packet 或 planning audit focused checks 明确声明测试时，才核对测试名、正/负路径与新增测试映射，不得为通用 D4 自行运行 undeclared tests。全项目 `flutter analyze`、完整测试或其他 full regression 只由 Integration 承担；Integration 或 non-Full/v1 保留原测试覆盖合同。消费 supervisor 已记录的 deterministic 结果，不重复执行同一命令；需要额外语义抽查时只选未重复的 focused check。每条 high-risk invariant 必须有 packet 允许的测试、命令或代码路径作为 `invariant_evidence`；不得把测试当作唯一证据形态。
 5. **D5 注释/日志/文档追溯核查**（维护性证据）：检查实现是否能让后续维护者从代码回到设计决策。
    - 新增核心类、public API、Controller/UseCase/Repository/DataSource、跨层 DTO/状态定义，必须有 Dart doc comment 或等价注释说明职责、承接的 `UNIT-<slug>` / `BHV-NNN`；必要时附设计文档相对路径（`docs/design/.../chapters/<slug>.md` 或任务内 `design.md` 锚点）。缺失通常为 P2；高风险链路或新增核心 owner 完全无追溯为 P1。
    - 非显然业务分支、错误/降级/恢复、缓存、异步竞态、生命周期处置、外部依赖边界必须解释"为什么这样做"，不能只靠代码形状猜意图。缺失按 P2 处理。

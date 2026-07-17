@@ -114,13 +114,13 @@ Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少�
 
 ### 3. 证据（字段合同，post-detail 记录进 `verification-evidence.jsonl`）
 
-> `verification-evidence.jsonl` 只写「全部通过」= 反模式。每条必须带**命令 + 结果（测试名级别）**。
+> `verification-evidence.jsonl` 只写「全部通过」= 反模式。每条必须带**命令 + 结果**；当前 route/packet 声明测试时，结果还必须到测试名级别。
 > 构建系统基准：本平台为 CocoaPods 工作区（`Podfile` 依赖 SwiftLint 0.31.0 / RxSwift / Moya / SwiftyBeaver 等），主用 `xcodebuild`；纯 SPM 包（Domain 抽离为独立 package 时）可用 `swift build` / `swift test`。两套命令按目标仓库实际构建形态二选一，trace 记录实际所用那套。
 
 | 类型 | 要求 | iOS 命令基线（按实际仓库填实参） |
 |------|------|------|
 | 编译 / 静态检查 | Full/high ordinary slice 只运行 packet 声明的 focused build/test/lint；全 workspace build 与全项目 SwiftLint 只由 Integration 运行。非 Full/high 任务继续按原 route 合同。记录命令 + 通过/失败 + 失败处理。 | ordinary：affected-file SwiftLint 与 packet exact focused command；Integration：SPM `swift build` 或 workspace `xcodebuild build ...` + full SwiftLint |
-| 测试 | 每个切片对应测试命令 + 结果**到测试名级别**（不只写「通过」）；新增测试清单逐条列出（`XCTestCase` 子类名 + `test*` 方法名）。 | SPM 包：`swift test --filter <ClassName>`；工作区：`xcodebuild test -workspace StoryVerse.xcworkspace -scheme StoryVerse -destination 'platform=macOS' -only-testing:StoryVerseTests/<ClassName>/<testMethod>` |
+| 测试 | Full/high ordinary 仅当 current packet 或 planning audit focused checks 明确声明测试时，才记录测试命令、测试名级别结果、成功/失败路径与新增测试映射；不得为满足通用 trace Gate 自行运行 undeclared tests。Integration 或 non-Full/v1 保留每个切片的完整测试合同。 | 声明测试时使用 packet/audit exact bounded command；Integration 或 non-Full/v1 按实际仓库使用 `swift test` 或 workspace `xcodebuild test`。 |
 | 未验证项 | 无法本地验证的（真机 / 设备能力 / 大模型推理 / TTS 真实音频 / GPU 图像生成 / WhisperKit 设备端表现）→ **显式列出** + 留给哪个环节（Manual QA / 真机池 / 性能基准跑）。 | — |
 
 **测试分层与 doc_type 映射（取证口径，与详细设计「测试映射」八问之七对齐）：**
@@ -177,7 +177,7 @@ Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少�
 
 - **GI-1** `implement.md` 计划合同与 mutable evidence 齐全（计划 / 执行 / 证据 / 阻塞偏差），无空记录、无 TODO 占位。
 - **GI-2** 每个切片的真实 `owner_unit` 与 planning audit `covered_units` 均存在于详细设计（无幽灵引用）；涉及的每个 `doc_type` 均为 iOS 七类之一，且每个文件落在对应 doc_type owner 层内。
-- **GI-3** `verification-evidence.jsonl`：Full/high ordinary slice 有 packet focused commands 的结果，Integration 有 full build/regression/SwiftLint 结果；非 Full/high 任务按原 route 合同。测试结果必须到测试名级别；无「全部通过」式无命令证据。
+- **GI-3** `verification-evidence.jsonl`：Full/high ordinary slice 有 packet focused commands 的结果，且仅在 packet/audit 明确声明测试时提供测试名级别结果；不得自行运行 undeclared tests。Integration 有 full build/regression/SwiftLint 与完整测试结果；非 Full/high 任务按原 route 合同。无「全部通过」式无命令证据。
 - **GI-4** golden-path 锁定项逐项落地（FactoryKit `@Injected` 无手动初始化 / Repository 模式 / `enum Error` 分层 / WCDBSwift 无 CoreData·SwiftData / ViewModel=`ObservableObject`+`@Published` / `private` 在 `private extension`）。
 - **GI-5** 分层依赖律零违反（Domain 零依赖；Domain→App→Infrastructure→UI 单向；View 不直连持久化、不互相导航）。
 - **GI-6** 偏差与存量违例均有记录与处置；未决决策已升级（无私自拍板）。
@@ -190,7 +190,7 @@ Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少�
 ## 反模式
 
 - ❌ trace 在 PR 前一次性补写（失去过程证据意义）。
-- ❌ mutable evidence 只写「全部通过」/「编译 OK」（无命令、无测试名、无 SwiftLint 结果）。
+- ❌ mutable evidence 只写「全部通过」/「编译 OK」（无命令、无 SwiftLint 结果；当前 route/packet 声明测试时还缺测试名）。
 - ❌ 偏差不记录，PR diff 与计划对不上靠 reviewer 自己发现。
 - ❌ doc_type 自创（写成 `service` / `controller` / `data-source` / `transport-handler`——必须用 iOS 权威七类）。
 - ❌ 切片不承接 UNIT 或承接不存在的 UNIT（幽灵引用）。

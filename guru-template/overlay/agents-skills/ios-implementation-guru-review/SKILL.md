@@ -82,7 +82,7 @@ D1/D2 发现的每个违例对照 SLOT-16 清单——
 - **计划合同与 mutable evidence 齐全且非空（GI-1）**：`implement.md` 计划节有 `UNIT-<slug>` 承接 + doc_type/文件范围 + 完成信号 + 验证方式；`implementation-evidence.jsonl` 有改动文件清单、偏差原因、DI 装配登记和阻塞/恢复记录；`verification-evidence.jsonl` 有命令级记录。缺任一证据链或留 TODO 占位 = 实现 Gate 不放行（P1）。
 - **编译证据**：Full/high ordinary slice 只要求 packet 声明的 focused build/test command；全 workspace `xcodebuild build`（或 SPM `swift build`）只由 Integration 承担。非 Full/high 任务继续按原 route 合同取证。任何实际运行的命令都须贴结果与退出态；只写「编译通过」无命令 = 证据不可信（P2 起步）。
 - **静态检查证据**：Full/high ordinary slice 只要求 packet 声明的 affected-file SwiftLint command；全项目 SwiftLint 只由 Integration 承担。非 Full/high 任务继续按原 route 合同取证。逐条记录通过/失败 + 新增文件零新增违例；存量违例按 D3 记债。
-- **测试证据（GI-3）**：测试名级别结果（XCTest 如 `test_createStory_校验失败_抛StoryManagementError.validationFailed`；Quick/Nimble 到 example 名级），**不只写「全部通过」**；覆盖承接 UNIT/BHV 的成功路径 + **全部失败路径**；新增测试清单（`XCTestCase` 子类名 + `test*` 方法名）可追溯到 `UNIT-<slug>`/`BHV-NNN`。按 doc_type↔测试分层映射核对——
+- **测试证据（GI-3）**：Full/high ordinary 仅当 current packet 或 planning audit focused checks 明确声明测试时，才要求测试名级别结果、UNIT/BHV 成功/失败路径与新增测试映射，不得为通用 GI-3 自行运行 undeclared tests。Integration 或 non-Full/v1 保留原完整测试合同；声明测试时按 doc_type↔测试分层映射核对——
   - `domain-model`：unit（不变量/`enum Error` 等值/值对象构造，纯逻辑无 mock）。
   - `repository`：unit（mock `DatabaseManager`，错误映射表逐条 + mapper 双向 + CRUD 幂等）+ integration（真实 WCDBSwift 临时库，多为未验证项）。
   - `usecase`：unit（mock `IXxxRepository` 接口）——**测试密度最高层**，每条承接行为 ≥1 成功 + ≥1 失败，业务错误枚举逐条。
@@ -141,7 +141,7 @@ PR diff 与计划逐项可对；所有计划外改动均有原因记录（如「
    - route class 只能取：`IMPLEMENT_DEFECT`（代码/测试/验证/注释/日志/脱敏缺陷）、`PROCESS_DEFECT`（trace/证据/流程执行缺陷）、`DETAIL_DEFECT`（详细设计合同错误或缺失）、`OVERVIEW_DEFECT`（概要归属/承接错误）、`REQ_BLOCKER`（需求行为/验收/边界缺陷）、`none`。
 
 1. **结论（三选一）**：
-   - **可进入 PR**：D1~D7 全过；`implement.md` 计划合同齐全（`GI-1`），mutable evidence 中当前 route/slice 类型要求的 build/test/SwiftLint 证据有命令级结果且全绿（Full/high ordinary 仅 packet focused checks，Integration 才含 full build/regression）（`GI-3`）、承接 UNIT 的成功 + 全部失败路径有测试、注释/日志/文档路径追溯可审计、golden-path 锁定项逐项落地（`GI-4`：FactoryKit `@Injected` 无手动初始化 / Repository 模式 / `enum Error` 分层 / WCDBSwift 无 CoreData·SwiftData / ViewModel=`ObservableObject`+`@Published` / `private` 在 `private extension`）、分层依赖律零违反（`GI-5`）、DI 装配闭合（`GI-7`：新增单元在 `Container+*.swift` 有 `Factory` 注册且 `@Injected` 可解析）、无 P1、无清单外新增违例、无未闭合偏差。
+   - **可进入 PR**：D1~D7 全过；`implement.md` 计划合同齐全（`GI-1`），mutable evidence 中当前 route/slice 类型要求的命令级结果全绿（Full/high ordinary 仅 packet focused checks，且 packet/audit 声明测试时才要求测试证据；Integration 或 non-Full/v1 保留完整测试合同）（`GI-3`）、注释/日志/文档路径追溯可审计、golden-path 锁定项逐项落地、分层依赖律零违反、DI 装配闭合、无 P1、无清单外新增违例、无未闭合偏差。
    - **修复 P2 后可进入**：无 P1，但存在 P2（证据不完整、偏差未全闭合、非高风险漏测、绕行未挂编号、`private extension` 组织小瑕等）；列出 P2 修复项。
    - **不可进入 PR**：存在任一 P1（合同未实现 / 八问断链 / 分层反向·越层 / Domain 零依赖破坏 / `view` 直连持久化或互相导航 / 手动 `new` 替代 `@Injected` / `usecase` 触碰 UI 或环形依赖 / `WCDBSwift` 原始错误裸抛 UI / CoreData·SwiftData 替代 WCDBSwift / 自创 doc_type / 硬编码 secret / 清单外新增违例 / 高风险漏测 / 编译未收口 / 证据造假 / 就地改设计）；逐条列阻塞 P1。验证因环境/设备/真机/网络阻塞无法完成时，结论为 **blocked**，记录命令、错误摘要、缺失依赖与恢复条件，不得降级为 pass。
 

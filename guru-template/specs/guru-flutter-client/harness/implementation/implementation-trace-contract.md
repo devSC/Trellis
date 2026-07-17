@@ -82,7 +82,7 @@ Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少�
 | 类型 | 要求 |
 |------|------|
 | 静态检查 | Full/high ordinary slice 只记录 packet 中 exact focused command 的结果（例如受影响路径的 analyze/custom_lint）；全项目 `flutter analyze`、完整 custom lint 或其他 full regression 只由 Integration 记录。非 Full/high 任务继续按原 route 合同记录。 |
-| 测试 | 每个切片对应的测试命令 + 结果（测试名级别，不只写"通过"）；新增测试清单。**P1：测试按 invariant 归档**（不只按文件/命令）——每条 high-risk invariant 至少一个正/负测试作为其 `invariant_evidence`。 |
+| 测试 | Full/high ordinary 仅当 current packet 或 planning audit focused checks 明确声明测试时，才记录测试命令、测试名级别结果、新增测试清单及正/负路径；不得为满足通用 trace Gate 自行运行 undeclared tests。Integration 或 non-Full/v1 保留原合同：每个切片记录测试命令与测试名级别结果，并按 invariant 归档 high-risk 正/负测试证据。 |
 | 未验证项 | 无法本地验证的（真机表现、双端差异）→ 显式列出 + 留给哪个环节（Manual QA / 真机池）。 |
 
 ### 4. 阻塞与偏差（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
@@ -94,5 +94,5 @@ Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少�
 ## 反模式
 
 - ❌ trace 在 PR 前一次性补写（失去过程证据意义）。
-- ❌ mutable evidence 只写"全部通过"（无命令、无测试名）。
+- ❌ mutable evidence 只写"全部通过"（无命令；当前 route/packet 声明测试时还缺测试名）。
 - ❌ 偏差不记录，PR diff 与计划对不上靠 reviewer 自己发现。

@@ -157,14 +157,14 @@ v1 的 L2（render/interactive/data 三元组，对应 flutter 的 controller/us
 
 ## 3. 证据（字段合同，post-detail 记录进 `verification-evidence.jsonl`）
 
-`verification-evidence.jsonl` 是 Gate 取证的核心。**只写"全部通过"无效**——必须给命令、给关键输出、给测试名。所有切片的完成信号都要在此回填为可复现命令。Full/high ordinary slice 只运行 packet 声明的 focused checks；全项目 typecheck、build、lint 与 full regression 只由 Integration 运行。非 Full/high 任务继续按原 route 合同。
+`verification-evidence.jsonl` 是 Gate 取证的核心。**只写"全部通过"无效**——必须给命令和关键输出；当前 route/packet 声明测试时还必须给测试名。所有切片的完成信号都要在此回填为可复现命令。Full/high ordinary slice 只运行 packet 声明的 focused checks；全项目 typecheck、build、lint 与 full regression 只由 Integration 运行。非 Full/high 任务继续按原 route 合同。
 
 | 类型 | 命令（统一口径） | 要求 |
 |------|------|------|
 | 类型检查 | Integration：`pnpm exec tsc --noEmit`（或 `npx tsc --noEmit`）；ordinary：仅 packet 声明的 focused type command | 在 `strict: true` 下 **0 error**；贴出 error 数量与（若有）处理记录。strict 是 golden-path 锁定项，不得临时关 strict 或加 `// @ts-ignore` 绕过。 |
 | 构建 | Integration：`pnpm next build`（或 `npx next build`）；ordinary：不运行全局 build，除非 packet 明确声明 bounded build | Integration 构建成功并贴出受影响 route 的形态行，与设计预期逐条对照；确认无 server/client 边界报错与异常 bundle 膨胀。 |
 | Lint | ordinary：`pnpm eslint <paths>`；Integration：`pnpm eslint .` | **0 error**（warning 逐条说明保留/修复）；启用 React Hooks 与 Next.js 官方规则集，拦截 server/client、image/link 误用。 |
-| 单元测试 | `pnpm vitest run <path>`（CI 用 `vitest run` 非 watch） | 每个切片对应测试命令 + 结果，**精确到测试名**（不只写"通过"）；新增测试逐个列清单。覆盖：成功路径 + 全部失败路径（data-access 的 fetch 失败/解析失败/未命中；server-action 的校验失败/写入失败；domain-type 的 schema 拒绝非法输入）。 |
+| 单元测试 | Full/high ordinary 仅在 current packet 或 planning audit focused checks 明确声明测试时运行 bounded `pnpm vitest run <path>`；不得为满足通用 trace Gate 自行运行 undeclared tests。Integration 或 non-Full/v1 使用 route 合同指定命令。 | 声明测试时记录精确测试名、新增测试清单和成功/失败路径；Integration 或 non-Full/v1 保留每个切片的完整测试合同。 |
 
 ### 3.1 切片粒度的测试挂载（UNIT → 测试）
 
@@ -266,7 +266,7 @@ trace 的命令与判定依赖项目约定的实际取值。开工前在 `.trell
 ### 反模式（命中即 fail）
 
 - ❌ trace 在 PR 前一次性补写（失去过程证据意义）。
-- ❌ mutable evidence 只写"全部通过"（无命令、无测试名、无 route 形态对照）。
+- ❌ mutable evidence 只写"全部通过"（无命令、无 route 形态对照；当前 route/packet 声明测试时还缺测试名）。
 - ❌ 偏差不记录，PR diff 与计划对不上靠 reviewer 自己发现。
 - ❌ 为过 `tsc` 临时关 `strict` 或撒 `// @ts-ignore`、`any` 绕过类型（不记入偏差）。
 - ❌ 把私有数据获取 / secret 写进 `'use client'` 组件（边界泄露）。

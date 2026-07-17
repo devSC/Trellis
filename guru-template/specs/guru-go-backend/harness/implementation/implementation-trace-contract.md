@@ -74,7 +74,7 @@ Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少�
 
 ## 必含四节
 
-实现 trace 必须包含以下四节且每节非空；缺任一节，实现 Gate 不予放行（详见 §5）。detail 确认后的命令、测试名、偏差和阻塞记录写入 mutable evidence，并与 trace 字段合同合并恢复。
+实现 trace 必须包含以下四节且每节非空；缺任一节，实现 Gate 不予放行（详见 §5）。detail 确认后的命令、偏差和阻塞记录写入 mutable evidence；当前 route/packet 声明测试时再记录测试名，并与 trace 字段合同合并恢复。
 
 ### 1. 计划（开工前写）
 
@@ -119,7 +119,7 @@ Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少�
 |------|------|
 | 编译 | Full/high ordinary slice 只运行 packet 声明的 focused build（例如 `go build ./services/<svc>/...` 或 exact package path）；`go build ./...` 只由 Integration 运行。非 Full/high 任务继续按原 route 合同执行。**必须贴命令与退出态**；失败要写错误摘要 + 处置，不能只写"通过"。 |
 | 静态检查 | Full/high ordinary slice 只运行 packet 声明的 affected service/package `go vet` 与 `golangci-lint` focused commands；`go vet ./...` + `golangci-lint run ./...` 只由 Integration 运行。非 Full/high 任务继续按原 route 合同执行。逐条记录通过/失败 + 处理；nolint 豁免须写理由并指向 `[SLOT-17]` 记债。 |
-| 测试 | 每个切片对应的测试命令 + 结果，**测试名级别**（不只写"通过"）：`go test ./services/control-api/internal/service/ -run TestUserService_Login -v` 输出 `--- PASS: TestUserService_Login/bad_credential (0.00s)` 这样的子测试名。竞态敏感切片附 `go test -race`；覆盖关注切片附 `go test -cover`。新增测试清单逐条列出（文件 + 测试函数名 + 承接的 BHV/UNIT）。 |
+| 测试 | Full/high ordinary 仅当 current packet 或 planning audit focused checks 明确声明测试时，才记录测试命令、测试名级别结果、成功/失败路径与新增测试映射；不得为满足通用 trace Gate 自行运行 undeclared tests。Integration 或 non-Full/v1 保留原合同：每个切片记录测试命令与测试名级别结果；竞态/覆盖命令和新增测试清单按原要求追溯到 BHV/UNIT。 |
 | 依赖整洁 | 涉及 `go.mod`/`go.sum` 变更或导入调整时跑 `go mod tidy` 并记录 diff；新增第三方库须落在 project-conventions 已批准槽位内（禁 gin/echo 等被锁框架）。 |
 | 未验证项 | 无法本地验证的显式列出 + 指明留给哪个环节：真实 PostgreSQL 集成行为（→ CI 集成测试 / 容器化 DB）、生产负载下的 `context` 超时与连接池表现（→ 压测/灰度）、跨服务契约在另一服务的运行时兼容（→ 集成环境）、信号驱动的优雅关闭实测（→ Manual QA / staging）。 |
 
@@ -137,7 +137,7 @@ Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少�
 - 未验证：真实 PG 唯一约束触发 ErrEmailTaken → 留给 CI 集成测试（本地仅 sqlmock 覆盖）
 ```
 
-❌ 不合格：「全部编译通过，测试通过，vet 无问题」——无命令、无退出态、无测试名、无新增测试映射、未声明任何未验证项。
+❌ 不合格：「全部编译通过，测试通过，vet 无问题」——无命令、无退出态；当前 route/packet 声明测试时还缺测试名与新增测试映射；且未声明任何未验证项。
 
 ### 4. 阻塞与偏差（字段合同，post-detail 记录进 `implementation-evidence.jsonl`）
 
@@ -153,7 +153,7 @@ Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少�
 - G1 trace 合同与 mutable evidence 齐全：`implement.md` 计划有 `UNIT-<slug>` 承接与完成信号；执行/偏差/验证证据在 `implementation-evidence.jsonl` 与 `verification-evidence.jsonl` 中可按切片恢复；阻塞如无则显式记录「无」。
 - G2 编译证据：当前 route/slice 类型要求的 `go build` 全绿（Full/high ordinary 为 packet focused build，Integration 为 full build；贴命令 + 退出 0）；引入的失败已全部收口。
 - G3 静态检查证据：当前 route/slice 类型要求的 `go vet` + `golangci-lint` 通过（Full/high ordinary 为 packet focused checks，Integration 为 full checks），或豁免有理由且记债（`[SLOT-17]`）。
-- G4 测试证据：每个切片有测试名级别结果，覆盖承接 UNIT/BHV 的成功路径 + 全部失败路径；新增测试清单可追溯到 UNIT。
+- G4 测试证据：Full/high ordinary 仅在 current packet 或 planning audit focused checks 明确声明测试时，要求测试名级别结果、承接 UNIT/BHV 的成功/失败路径与新增测试映射，不得自行运行 undeclared tests；Integration 或 non-Full/v1 保留每个切片的完整测试合同。
 - G5 分层与错误契约：无跨层反向/越层导入；服务级错误经 sentinel + `%w` 包装、`errors.Is` 可判定；轻框架未被破坏（无新引入的被锁框架）。
 - G6 偏差闭合：PR diff 与计划逐项可对，所有计划外改动均有原因记录；上游缺陷已回退修订而非就地改设计。
 
@@ -162,7 +162,7 @@ Full/high 的 `implement.md` 必须有 slice planning audit，目标是**最少�
 ## 6. 反模式
 
 - ❌ trace 在 PR 前一次性补写（失去过程证据意义，偏差与回退已不可追溯）。
-- ❌ mutable evidence 只写"全部通过"（无命令、无退出态、无测试名）；`go build` 当成隐含步骤不记录。
+- ❌ mutable evidence 只写"全部通过"（无命令、无退出态；当前 route/packet 声明测试时还缺测试名）；`go build` 当成隐含步骤不记录。
 - ❌ 偏差不记录，PR diff 与计划对不上靠 reviewer 自己发现。
 - ❌ 触碰存量违例不挂 `[SLOT-17]` 编号，把绕行/顺手修复混入业务 diff。
 - ❌ 用 `_ = err` 吞错或 `fmt.Errorf("...: " + err.Error())` 拼接（丢 `%w`），破坏 `errors.Is` 链。
