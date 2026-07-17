@@ -58,8 +58,20 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
 
 **前置通过时**：
 0. **机器可读收口字段（必须置顶）**：
-   - clean / final-verification-ready 分支必须置顶输出**全部 7 字段**：`review_result=clean`（或 `review_result=final-verification-ready`，supervisor 归一为 clean）、`route_class=none`、`review_target=slice:<slice_id>`、`review_provider=<本 check worker 的 provider>`、`deterministic_checks=passed|failed|missing`、`dirty_scope=clean|isolated|invalid`、`invariant_coverage=all_passed|failed|missing`、`validation_summary=<命令与证据摘要>`。**有 slice packet 时还须逐条输出 per-invariant**：`invariant_status.<id>=pass|fail|not_applicable`（`pass` 必随 `invariant_evidence.<id>=<非空证据：测试名/命令/代码路径>`；`not_applicable` 必随 `invariant_reason.<id>=<理由>`）。**不得输出 `review_result=clean/final-verification-ready` 这类组合值。缺任一 gating 字段、或取非通过值却声明 clean、或 provider 不满足 packet `semantic_review_provider` → supervisor 判 `MALFORMED_REVIEW_OUTPUT` 阻断**（不接受为成功）。
-   - 有 finding 或阻塞时输出：`review_result=findings` 或 `review_result=blocked`，并给出最高优先级 `route_class`。
+   - 第一段只能逐行输出以下 7 个字段；等号右侧只能是单个合法值，不得附加解释、分号摘要、斜杠组合值或 Markdown：
+     ```text
+     review_result=clean
+     route_class=none
+     review_target=slice:<slice_id>
+     review_provider=<本 check worker 的 provider>
+     deterministic_checks=passed
+     dirty_scope=isolated
+     invariant_coverage=all_passed
+     ```
+   - clean 分支固定使用 `review_result=clean`，不得输出 `final-verification-ready` 或 `clean/final-verification-ready`。有 finding 或阻塞时只把 `review_result` 改为 `findings` 或 `blocked`，并把 `route_class` 改为单个最高优先级 defect 枚举；其余字段仍各占一行且只含单值。
+   - 有 slice packet 时，紧接 7 字段逐条输出 `invariant_status.<id>=pass|fail|not_applicable`；`pass` 必随单行 `invariant_evidence.<id>=<非空证据>`，`not_applicable` 必随单行 `invariant_reason.<id>=<理由>`。无 findings 时另起一行输出 `findings=none`；摘要放在 verdict block 之后，不得拼入 7 字段取值。
+   - 不运行开放式再发现 probe，不输出 multiline probe。确有必要补充 supervisor deterministic evidence 之外的只读检查时，只允许单行、单命令、边界明确的 `reviewer_probe_command.N=<exact command>`；不得重复 packet command。
+   - 缺任一 gating 字段、取值带解释或组合值、取非通过值却声明 clean、或 provider 不满足 packet `semantic_review_provider`，supervisor 均按 `MALFORMED_REVIEW_OUTPUT` 阻断。
    - route class 只能取：`IMPLEMENT_DEFECT`（代码/测试/验证/注释/日志/脱敏缺陷）、`PROCESS_DEFECT`（trace/证据/流程执行缺陷）、`DETAIL_DEFECT`（详细设计合同错误或缺失）、`OVERVIEW_DEFECT`（概要归属/承接错误）、`REQ_BLOCKER`（需求行为/验收/边界缺陷）、`none`。
 1. 逐条 findings：`severity(P1/P2/P3) / location(文件:行) / problem / suggestion(最小修订)`，先证据后结论。
    - 每条 finding 必须附 `route_class`；同一轮多类缺陷按 `REQ_BLOCKER > OVERVIEW_DEFECT > DETAIL_DEFECT > PROCESS_DEFECT > IMPLEMENT_DEFECT` 给最高优先级路由。

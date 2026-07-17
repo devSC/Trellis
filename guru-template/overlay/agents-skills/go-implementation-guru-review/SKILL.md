@@ -94,12 +94,27 @@ description: 按通用 golden-path 与实现 trace 合同审核 Go monorepo 后�
 
 **前置通过时**，按以下顺序输出：
 
-1. **结论（三选一，置顶）**：
+0. **机器可读收口字段（必须置顶）**：
+   - 机器 verdict 第一段只能逐行输出以下 7 个字段；等号右侧只能是单个合法值，不得附加解释、分号摘要、斜杠组合值或 Markdown：
+     ```text
+     review_result=clean
+     route_class=none
+     review_target=slice:<slice_id>
+     review_provider=<本 check worker 的 provider>
+     deterministic_checks=passed
+     dirty_scope=isolated
+     invariant_coverage=all_passed
+     ```
+   - clean 分支固定使用 `review_result=clean`，不得输出 `final-verification-ready` 或 `clean/final-verification-ready`。有 finding 或阻塞时只把 `review_result` 改为 `findings` 或 `blocked`，并把 `route_class` 改为单个最高优先级 defect 枚举；其余字段仍各占一行且只含单值。
+   - 有 slice packet 时紧接 7 字段逐条输出 `invariant_status.<id>=pass|fail|not_applicable`；`pass` 必随单行 `invariant_evidence.<id>=<非空证据>`，`not_applicable` 必随单行 `invariant_reason.<id>=<理由>`。无 findings 时另起一行输出 `findings=none`；摘要放在 verdict block 之后，不得拼入 7 字段取值。
+   - 不运行开放式再发现 probe，不输出 multiline probe。确有必要补充 supervisor deterministic evidence 之外的只读检查时，只允许单行、单命令、边界明确的 `reviewer_probe_command.N=<exact command>`；不得重复 packet command。
+   - 缺任一 gating 字段、取值带解释或组合值、取非通过值却声明 clean、或 provider 不满足 packet `semantic_review_provider`，supervisor 均按 `MALFORMED_REVIEW_OUTPUT` 阻断。
+   - route class 只能取：`IMPLEMENT_DEFECT`（代码/测试/验证/注释/日志/脱敏缺陷）、`PROCESS_DEFECT`（trace/证据/流程执行缺陷）、`DETAIL_DEFECT`（详细设计合同错误或缺失）、`OVERVIEW_DEFECT`（概要归属/承接错误）、`REQ_BLOCKER`（需求行为/验收/边界缺陷）、`none`。
+
+1. **结论（三选一）**：
    - **可进入 PR**：D1~D7 全过；`implement.md` 计划合同齐全，mutable evidence 中当前 route/slice 类型要求的 `go build`/`go vet`/`golangci-lint`/`go test` 证据有命令级结果且全绿（Full/high ordinary 仅 packet focused checks，Integration 才含 full regression）、承接 UNIT 的成功 + 全部失败路径有测试、注释/日志/文档路径追溯可审计、无 P1、无清单外新增违例、无未闭合偏差。
    - **修复 P2 后可进入**：无 P1，但存在 P2（证据不完整、偏差未全闭合、非高风险漏测、绕行未挂编号等）；列出 P2 修复项。
    - **不可进入 PR**：存在任一 P1（合同未实现 / 八问断链 / 分层反向 / 轻框架破坏 / 丢 `%w` / 生命周期破坏 / 硬编码 secret / 清单外新增违例 / 高风险漏测 / 编译未收口 / 证据造假 / 就地改设计）；逐条列阻塞 P1。验证因环境/凭据/DB/网络阻塞无法完成时，结论为 blocked，记录命令、错误摘要、缺失依赖与恢复条件，不得降级为 pass。
-   - 机器可读收口字段必须同步输出：clean 且可进入 PR 时写 `review_result=clean`（或 `review_result=final-verification-ready`，supervisor 归一为 clean）、`route_class=none`、`review_target=slice:<slice_id>`、`review_provider=<本 check worker 的 provider>`、`deterministic_checks=passed|failed|missing`、`dirty_scope=clean|isolated|invalid`、`invariant_coverage=all_passed|failed|missing`、`validation_summary=<命令与证据摘要>`。有 slice packet 时还须逐条输出 per-invariant：`invariant_status.<id>=pass|fail|not_applicable`；`pass` 必随 `invariant_evidence.<id>=<非空证据：测试名/命令/代码路径>`；`not_applicable` 必随 `invariant_reason.<id>=<理由>`。不得输出 `review_result=clean/final-verification-ready` 这类组合值。缺任一 gating 字段、或取非通过值却声明 clean、或 provider 不满足 packet `semantic_review_provider` → supervisor 判 `MALFORMED_REVIEW_OUTPUT` 阻断。有 finding 或阻塞时写 `review_result=findings|blocked` 与最高优先级 `route_class`。
-   - route class 只能取：`IMPLEMENT_DEFECT`（代码/测试/验证/注释/日志/脱敏缺陷）、`PROCESS_DEFECT`（trace/证据/流程执行缺陷）、`DETAIL_DEFECT`（详细设计合同错误或缺失）、`OVERVIEW_DEFECT`（概要归属/承接错误）、`REQ_BLOCKER`（需求行为/验收/边界缺陷）、`none`。
 
 2. **逐条 Findings**（按 `P1 → P2 → P3` 排序；无则写 `none`），每条字段：
    ```md
