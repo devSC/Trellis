@@ -2,7 +2,7 @@
 
 > 基于 Trellis native workflow 定制（官方定制契约见原版 "Customizing Trellis (for forks)" 节）。
 > 五阶段 = 需求 → 概要设计 → 详细设计 → 实现 → 审核，映射进 Trellis 的 planning/in_progress 状态机：
-> **Phase 1 Plan 承载需求确认、概要/详细 review Gate 与详细确认，Phase 2/3 承载实现与审核（verify 强制：`tsc --noEmit` + `next build` + `eslint`）。**
+> **Phase 1 Plan 承载需求确认、概要/详细 review Gate 与详细确认，Phase 2/3 承载实现与审核；verify 按 route 和 slice role 执行：Full/high ordinary 只运行 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 Integration 才运行 project-wide typecheck/build/lint/full regression，其他 route 保持既有验证合同。**
 > 平台 = H5 / Web（Next.js App Router 生产形态为目标 + React + TypeScript strict）。规则唯一真源：`.trellis/spec/`（guru-h5-web spec 库）；本文件只做流程路由，不复写规则正文。
 > **基线声明**：golden-path 以 **App Router 生产最佳实践**为准；参考示例 `examples/blog`（Pages Router + Nextra + MDX + gray-matter 的轻量 blog starter，故意简化）仅作**内容模型基线与示例实证**，不作生产形态权威。全程显式区分"示例实证（blog/Pages Router）"与"App Router 生产级补充"。
 
@@ -100,7 +100,7 @@
 ```
 Phase 1: Plan    → 需求 Gate → 概要 Gate → 详细 Gate → 激活任务
 Phase 2: Execute → 实现（golden-path 迷你路径 + trace）→ 质检（guru H5 口径）
-Phase 3: Finish  → 验证（tsc --noEmit / next build / eslint）→ 萃取回写 spec → commit → 收尾
+Phase 3: Finish  → route/slice-role 验证 → 萃取回写 spec → commit → 收尾
 ```
 
 ### Request Triage
@@ -160,11 +160,11 @@ Lite 不进入 channel/Worker 路径；以下 channel 行为仅适用于 Full。
 [/workflow-state:in_progress-channel]
 
 [workflow-state:in_progress-sub-agent]
-route=`gate-contract.json.route`. Lite: no sub-agent. Full: dispatch trellis-implement/check with `Active task: <path>`; require tsc/build/eslint evidence.
+route=`gate-contract.json.route`. Lite: no sub-agent and keep its existing verification. Full: dispatch trellis-implement/check with `Active task: <path>`; ordinary slices require only packet-declared `deterministic_checks` and focused evidence, and the unique Integration requires project-wide typecheck/build/lint/full-regression evidence.
 [/workflow-state:in_progress-sub-agent]
 
 [workflow-state:in_progress-inline]
-实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 H5 spec，编辑后 trellis-check（guru H5 口径）；tsc/next build/eslint 证据记 `verification-evidence.jsonl` 等 task-local mutable evidence，无证据不 commit；设计缺陷回 Phase1。
+实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 H5 spec，编辑后 trellis-check（guru H5 口径）；Full/high ordinary 只记录 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 Integration 记录 project-wide typecheck/build/lint/full-regression evidence，Small/Micro/Lite/non-Full/v1 仍按原 route 记录验证；缺少当前角色必需证据不得 commit，设计缺陷回 Phase1。
 [/workflow-state:in_progress-inline]
 
 ### Phase 3: Finish（审核与收尾）
@@ -224,7 +224,7 @@ route=`gate-contract.json.route`. Lite: no sub-agent. Full: dispatch trellis-imp
 - 任务创建同意 ≠ 实现同意；Full/high-risk 等确认与 current digests 后必须走 guarded wrapper，direct `task.py start` 不是文档化的 Full 入口。
 - Lite 与 Full 各只有一次 route-specific confirmation batch；确认后自动推进，只有 material scope/digest 变化、新 High-risk 或新不可逆决定才重新确认。
 - 合规 STOP：任何可能违反 App Store / Google Play 政策（H5 套壳/WebView 嵌入场景）或美国法规（隐私 / Cookie 同意 / 数据采集）的不确定性 → 立即停止，输出风险点+替代方案+人类确认清单。
-- H5 三条最高禁令（见 Trellis System 节）全程生效；planning 必须落盘到 task artifacts；完成报告前必须有 `tsc --noEmit` + `next build` + `eslint` 验证证据。
+- H5 三条最高禁令（见 Trellis System 节）全程生效；planning 必须落盘到 task artifacts；完成报告前必须有当前 route/slice role 的验证证据：Full/high ordinary 只需 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 Integration 才需 project-wide typecheck/build/lint/full regression，其他 route 保持既有验证。
 - 产物语言中文优先（英文仅限标识符/命令/路径/协议字段/专有名词/缩写/原文引用）；面向用户的提问与结论一律中文。
 
 ### Loading Step Detail
@@ -313,7 +313,7 @@ Full 与 Trellis 原版同构（dispatch 协议、guarded commit 与 finish-work
 - `Design UNIT` 只负责需求、行为和 invariant 追溯；`Implementation Slice` 才是独占修改、focused validation、review、commit 与 rollback 单元。多个 Design UNIT 可合并进一个 Implementation Slice，但 packet 继续只保留一个真实 `owner_unit`，其余写入 `implement.md.covered_units`；禁止按 UNIT、设计章节、doc_type 或技术层机械生成 slice。
 - 所有四端都遵循 delivery policy 的同一组 Agent-only 默认值：`full_high_default_strategy=minimum_commit_stable_parallel_first`、`max_ordinary_slices=4`、`mutable_path_overlap=0`、`review_context_target_bytes=262144`、`ordinary_depends_on_default=[]`、`single_integration_slice=true`、`formal_evidence_control_worktree=serial`。Detail 应先冻结接口、schema、digest、错误语义和共享数据结构；共享 mutable path 必须重新分配唯一 owner 或合并，资源锁与 focused test 修改范围必须隔离、分波次或触发合并。
 - `guru_supervise.py implement-slices ... --dry-run` 只输出 dispatch plan/brief，不启动 sub-agent，也不是实际 spawn 或 writer-parallel 的证明。完整 packet 集可能因 Integration coverage overlap 被当前 `slice-plan` 保守标为 serial；coordinator 必须回读 Detail planning audit，只派发 ownership 不重叠、`depends_on=[]` 且工具资源可隔离的 ordinary Implementation Slices。
-- ordinary implementation 可以并发，但同一 snapshot 只启动一个 semantic reviewer；正式 staged review、commit 与 receipt 只在唯一 control worktree 串行收口。最后才运行唯一 `Integration Slice`，由它执行跨 slice invariants、full regression 和最终组合验证；Integration packet 的普通 target union 只是 review coverage，不授予重写 ordinary owner 核心字节的权限。Small、Micro、Lite、non-Full 和 v1 lifecycle 不受此策略影响。
+- ordinary implementation 可以并发，但同一 snapshot 只启动一个 semantic reviewer；Full/high ordinary 只运行 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 `Integration Slice` 才运行 project-wide typecheck/build/lint/full regression；Small、Micro、Lite、non-Full 和 v1 保留原 route verification。正式 staged review、commit 与 receipt 只在唯一 control worktree 串行收口；Integration 最后执行跨 slice invariants 和最终组合验证，其普通 target union 只是 review coverage，不授予重写 ordinary owner 核心字节的权限。
 
 #### 2.1 实现 `[required · repeatable]`
 
@@ -324,7 +324,7 @@ golden-path 硬约束逐片落实：TS strict、server-first 且 `'use client'` 
 
 #### 2.2 质检 `[required · repeatable]`
 
-dispatch-mode aware：`sub-agent` 模式 dispatch `trellis-check`（prompt 第一行必须是 `Active task: <path>`，且不得再嵌套 spawn check/implement）；`channel` 模式才运行 `python3 .trellis/scripts/guru/guru_supervise.py check <task-dir>` 并可读 `trellis channel messages --raw`；`inline` 模式加载 `trellis-check`。helper 只注入存在的 `check.jsonl`、任务产物和 `h5-implementation-guru-review` skill，等待后端结果。按 `h5-implementation-guru-review` 口径审核（实现 trace 四节对齐）：需求/设计/实现合同一致性、**分层依赖律**（import 方向、服务端链/交互链/变更链单向、`data-access`/`domain-type` 不反向依赖 `server-component`）、**server-client 边界**（`client-component` 不直取私有数据/secret、不直连 DB、`'use client'` 最小化、props 可序列化）、doc_type 归属与七类台账一致、项目约定槽位取值、样式隔离、`metadata`/SEO 与错误边界齐备、合规红线（隐私 / Cookie 同意 / 数据采集）与验证证据。无 `tsc --noEmit` / `next build` / `eslint`（按约定槽位含 Vitest+RTL / Playwright）证据不得进入 commit。
+dispatch-mode aware：`sub-agent` 模式 dispatch `trellis-check`（prompt 第一行必须是 `Active task: <path>`，且不得再嵌套 spawn check/implement）；`channel` 模式才运行 `python3 .trellis/scripts/guru/guru_supervise.py check <task-dir>` 并可读 `trellis channel messages --raw`；`inline` 模式加载 `trellis-check`。helper 只注入存在的 `check.jsonl`、任务产物和 `h5-implementation-guru-review` skill，等待后端结果。按 `h5-implementation-guru-review` 口径审核（实现 trace 四节对齐）：需求/设计/实现合同一致性、**分层依赖律**（import 方向、服务端链/交互链/变更链单向、`data-access`/`domain-type` 不反向依赖 `server-component`）、**server-client 边界**（`client-component` 不直取私有数据/secret、不直连 DB、`'use client'` 最小化、props 可序列化）、doc_type 归属与七类台账一致、项目约定槽位取值、样式隔离、`metadata`/SEO 与错误边界齐备、合规红线（隐私 / Cookie 同意 / 数据采集）与 route/slice-role 验证证据。Full/high ordinary 只核对 packet 声明的 `deterministic_checks` 与 focused evidence；唯一 Integration 才核对 project-wide typecheck/build/lint/full regression；Small/Micro/Lite/non-Full/v1 沿用原验证合同。缺少当前角色要求的 evidence/compliance 证据不得进入 commit。
 
 #### 2.3 回退 `[on demand]`
 
@@ -332,7 +332,7 @@ dispatch-mode aware：`sub-agent` 模式 dispatch `trellis-check`（prompt 第�
 
 #### 3.1 质量验证 `[required · repeatable]`
 
-复跑与变更范围匹配的验证命令（`tsc --noEmit`、`next build`、`eslint`，按约定槽位补 `vitest` / `playwright test`），确认 `verification-evidence.jsonl`（或等价 task-local mutable evidence）已记录命令、结果与说明。若必须修改 `implement.md`，视为主动返回 detail Gate。验证失败回 2.1/2.2；验证缺失不得进入 3.3。
+按 route/slice role 复跑验证：Full/high ordinary 只运行 packet 声明的 `deterministic_checks` 与 focused evidence；唯一 Integration 才运行 project-wide `tsc --noEmit`、`next build`、`eslint` 与 full regression（按约定槽位含 Vitest/RTL/Playwright）；Small/Micro/Lite/non-Full/v1 运行各自原 route 的 H5 验证。确认 `verification-evidence.jsonl`（或等价 task-local mutable evidence）已记录命令、结果与说明。若必须修改 `implement.md`，视为主动返回 detail Gate。当前角色验证失败回 2.1/2.2；必需证据缺失不得进入 3.3。
 
 #### 3.2 Debug 复盘 `[on demand]`
 
@@ -348,7 +348,7 @@ dispatch-mode aware：`sub-agent` 模式 dispatch `trellis-check`（prompt 第�
 
 若实现已发生但缺有效合同，且 staged scope 是低风险 scoped implementation diff，commit-plan 必须进入 post-implementation route recovery：阻断 direct commit，只推荐创建/切换 `micro_task` 并运行 `init-contract --route micro_task --risk low`，不得倒逼补 full PRD / overview / detail。
 
-提交前展示 `commit-plan` 摘要、`tsc`/`next build`/`eslint` 验证证据与建议 commit 切分。若 commit 已包含在当前 Lite/Full 唯一确认批次或用户初始指令中，则通过 Gate 后自动执行；否则停在可逆 commit-ready，不消耗第二次需求确认。不 amend、不 push；只处理本任务相关文件，不回滚用户改动。
+提交前展示 `commit-plan` 摘要、当前 route/slice role 的验证证据与建议 commit 切分：Full/high ordinary 只展示 packet 声明的 `deterministic_checks` 与 focused evidence，Integration 展示 project-wide typecheck/build/lint/full regression，Small/Micro/Lite/non-Full/v1 展示原 route evidence。若 commit 已包含在当前 Lite/Full 唯一确认批次或用户初始指令中，则通过 Gate 后自动执行；否则停在可逆 commit-ready，不消耗第二次需求确认。不 amend、不 push；只处理本任务相关文件，不回滚用户改动。
 
 #### 3.5 收尾提醒
 
