@@ -438,6 +438,52 @@ class SliceCommitLifecycleTests(unittest.TestCase):
             },
         )()
 
+    def _aggregate_args(self, run_id: str = "aggregate") -> object:
+        args = self._supervisor_args(run_id)
+        args.slice = ["U1", "U2"]
+        args.aggregate = True
+        return args
+
+    def _aggregate_worker_verdict(self) -> str:
+        return (
+            "review_result=clean\n"
+            "route_class=none\n"
+            "review_target=aggregate:U1,U2\n"
+            "review_provider=codex\n"
+            "deterministic_checks=passed\n"
+            "dirty_scope=isolated\n"
+            "invariant_coverage=all_passed\n"
+            "invariant_status.INV-U1=pass\n"
+            "invariant_evidence.INV-U1=reviewed aggregate U1 bytes\n"
+            "invariant_status.INV-U2=pass\n"
+            "invariant_evidence.INV-U2=reviewed aggregate U2 bytes\n"
+        )
+
+    @contextlib.contextmanager
+    def _aggregate_runtime(self):
+        runtime = (
+            self.root
+            / "packages/cli/src/templates/guru/overlay/verify"
+        )
+        record_path = runtime / "guru_review_record.py"
+        self._write(
+            str(record_path.relative_to(self.root)),
+            b"# review record\n",
+        )
+        with (
+            mock.patch.object(
+                guru_supervise,
+                "__file__",
+                str(runtime / "guru_supervise.py"),
+            ),
+            mock.patch.object(
+                guru_review_record,
+                "__file__",
+                str(record_path),
+            ),
+        ):
+            yield
+
     def _supervision_config(self) -> guru_supervise.SupervisionConfig:
         return guru_supervise.SupervisionConfig(
             root=self.root,
@@ -545,6 +591,1148 @@ class SliceCommitLifecycleTests(unittest.TestCase):
             guru_review_record.requirements_design_digest(
                 str(self.task),
                 [{"path": "prd.md", "heading": "BHV-001 First"}],
+            )
+
+    def test_aggregate_packet_unions_contract_and_rejects_conflicts(self) -> None:
+        u2 = self._write_packet("U2", ["lib/b.txt"], depends_on=["U1"])
+        self._update_packet(
+            "U1",
+            lambda packet: packet["deterministic_checks"].append("shared-check"),
+        )
+        self._update_packet(
+            "U2",
+            lambda packet: packet["deterministic_checks"].insert(0, "shared-check"),
+        )
+        packet = guru_review_record.build_aggregate_packet(
+            str(self.task),
+            ["U2", "U1"],
+            ["lib/a.txt", "lib/b.txt"],
+        )
+        self.assertEqual(["U1", "U2"], packet["aggregate_slice_ids"])
+        self.assertEqual(["lib/a.txt", "lib/b.txt"], packet["target_paths"])
+        self.assertEqual(
+            ["true", "shared-check"],
+            packet["deterministic_checks"],
+        )
+        self.assertEqual(
+            {"INV-U1", "INV-U2"},
+            {item["invariant_id"] for item in packet["invariants"]},
+        )
+        self.assertNotIn("staged_scope_reviewed", json.dumps(packet))
+        self.assertEqual(
+            {"U1", "U2"},
+            set(packet["per_slice_requirements_design_digests"]),
+        )
+
+        self._write_packet("U3", ["lib/a.txt"])
+        with self.assertRaisesRegex(
+            guru_review_record.ReviewRecordError,
+            "omits covering slices",
+        ):
+            guru_review_record.build_aggregate_packet(
+                str(self.task),
+                ["U1", "U2"],
+                ["lib/a.txt", "lib/b.txt"],
+        )
+        (self.task / "slice-packets" / "U3.json").unlink()
+
+        self._write_packet("U3", ["lib/unstaged.txt"])
+        with self.assertRaisesRegex(
+            guru_review_record.ReviewRecordError,
+            "selected slices do not cover staged paths: U3",
+        ):
+            guru_review_record.build_aggregate_packet(
+                str(self.task),
+                ["U1", "U2", "U3"],
+                ["lib/a.txt", "lib/b.txt"],
+            )
+        (self.task / "slice-packets" / "U3.json").unlink()
+
+        self._update_packet(
+            "U2",
+            lambda candidate: candidate["invariants"].__setitem__(
+                0,
+                dict(
+                    u2["invariants"][0],
+                    invariant_id="INV-U1",
+                    rule="Conflicting aggregate rule.",
+                ),
+            ),
+        )
+        with self.assertRaisesRegex(
+            guru_review_record.ReviewRecordError,
+            "invariant conflict",
+        ):
+            guru_review_record.build_aggregate_packet(
+                str(self.task),
+                ["U1", "U2"],
+                ["lib/a.txt", "lib/b.txt"],
+            )
+        self._update_packet(
+            "U2",
+            lambda candidate: candidate.__setitem__("invariants", u2["invariants"]),
+        )
+        self._update_packet(
+            "U2",
+            lambda candidate: candidate.__setitem__(
+                "semantic_review_provider",
+                {"required": True, "provider": "claude", "ocr": "disabled"},
+            ),
+        )
+        with self.assertRaisesRegex(
+            guru_review_record.ReviewRecordError,
+            "provider policy is ambiguous",
+        ):
+            guru_review_record.build_aggregate_packet(
+                str(self.task),
+                ["U1", "U2"],
+                ["lib/a.txt", "lib/b.txt"],
+            )
+        with self.assertRaisesRegex(
+            guru_review_record.ReviewRecordError,
+            "not covered",
+        ):
+            guru_review_record.build_aggregate_packet(
+                str(self.task),
+                ["U1", "U2"],
+                ["lib/a.txt", "lib/c.txt"],
+            )
+
+    def test_aggregate_unknown_and_low_risk_uses_effective_task_risk(self) -> None:
+        self._write_packet("U2", ["lib/b.txt"], depends_on=["U1"])
+        self._update_packet(
+            "U1",
+            lambda packet: packet.__setitem__("risk", "unknown"),
+        )
+        self._update_packet(
+            "U2",
+            lambda packet: packet.__setitem__("risk", "low"),
+        )
+        packet = guru_review_record.build_aggregate_packet(
+            str(self.task),
+            ["U1", "U2"],
+            ["lib/a.txt", "lib/b.txt"],
+        )
+        self.assertEqual("high", packet["risk"])
+        self.assertTrue(
+            guru_supervise._slice_uses_high_risk_review_policy(
+                packet,
+                self.task,
+            )
+        )
+        policy = guru_review_record.review_policy_payload(packet, {})
+        self.assertEqual("high", policy["packet_risk"])
+
+        (self.task / "task.json").write_text(
+            json.dumps(
+                {
+                    "status": "in_progress",
+                    "route": "full_chain",
+                    "risk": "unknown",
+                }
+            ),
+            encoding="utf-8",
+        )
+        unknown_task_packet = guru_review_record.build_aggregate_packet(
+            str(self.task),
+            ["U1", "U2"],
+            ["lib/a.txt", "lib/b.txt"],
+        )
+        self.assertIsNone(unknown_task_packet["risk"])
+        self.assertFalse(
+            guru_supervise._slice_uses_high_risk_review_policy(
+                unknown_task_packet,
+                self.task,
+            )
+        )
+
+    def test_aggregate_review_runs_unique_commands_and_one_worker(self) -> None:
+        self._write_packet("U2", ["lib/b.txt"], depends_on=["U1"])
+        self._update_packet(
+            "U2",
+            lambda packet: packet["deterministic_checks"].append("true"),
+        )
+        self._write("lib/a.txt", b"aggregate-a\n")
+        self._write("lib/b.txt", b"aggregate-b\n")
+        self._git("add", "--", "lib/a.txt", "lib/b.txt")
+        calls = []
+
+        with (
+            self._aggregate_runtime(),
+            mock.patch.object(
+                guru_supervise,
+                "_guru_gate_check_implementation",
+                return_value=0,
+            ),
+            mock.patch.object(
+                guru_supervise,
+                "_load_config",
+                return_value=self._supervision_config(),
+            ),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                return_value=(0, "done", self._aggregate_worker_verdict()),
+            ) as worker,
+            mock.patch.object(
+                guru_review_record,
+                "run_deterministic_checks",
+                wraps=lambda commands, cwd: (
+                    calls.append(list(commands))
+                    or ("passed", [
+                        {
+                            "command": command,
+                            "cwd": cwd,
+                            "exit_code": 0,
+                            "timed_out": False,
+                            "duration_ms": 1,
+                            "stdout_summary": "",
+                            "stderr_summary": "",
+                            "run_at": "2026-07-17T00:00:00Z",
+                        }
+                        for command in commands
+                    ])
+                ),
+            ),
+        ):
+            rc = guru_supervise.run_implementation_review(
+                self._aggregate_args("aggregate-one")
+            )
+        self.assertEqual(0, rc)
+        self.assertEqual(1, worker.call_count)
+        self.assertEqual([["true"]], calls)
+        record_path = self.task / "review-records" / "implementation-reviews.jsonl"
+        record = json.loads(record_path.read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual(["U1", "U2"], record["aggregate_slice_ids"])
+        self.assertEqual({"U1", "U2"}, set(record["per_slice_component_digests"]))
+        self.assertEqual(
+            {"U1", "U2"},
+            set(record["per_slice_requirements_design_digests"]),
+        )
+
+    def test_aggregate_key_binds_per_slice_inputs_hidden_by_union(self) -> None:
+        self._write_packet("U2", ["lib/b.txt"], depends_on=["U1"])
+        self._update_packet(
+            "U2",
+            lambda packet: packet.__setitem__(
+                "requirements_design_inputs",
+                [
+                    {"path": "prd.md", "whole_file": True},
+                    {
+                        "path": "design-package/chapters/receipt.md",
+                        "whole_file": True,
+                    },
+                ],
+            ),
+        )
+        policy_record = {
+            "deterministic_results": [],
+            "provider_override_source": "config_policy",
+            "same_provider_user_quote": None,
+            "high_risk_review_provider_policy": "codex",
+            "review_target_kind": "aggregate",
+            "implement_provider": "codex",
+            "check_provider": "codex",
+            "review_provider": "codex",
+        }
+        before_packet = guru_review_record.build_aggregate_packet(
+            str(self.task), ["U1", "U2"], ["lib/a.txt", "lib/b.txt"]
+        )
+        before = guru_review_record.review_evidence_components(
+            str(self.task),
+            before_packet,
+            policy_record,
+            supervisor_path=str(
+                self.root
+                / "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py"
+            ),
+        )
+        self._update_packet(
+            "U1",
+            lambda packet: packet["requirements_design_inputs"].__setitem__(
+                0,
+                {"path": "prd.md", "heading": "BHV-002 Second"},
+            ),
+        )
+        after_packet = guru_review_record.build_aggregate_packet(
+            str(self.task), ["U1", "U2"], ["lib/a.txt", "lib/b.txt"]
+        )
+        after = guru_review_record.review_evidence_components(
+            str(self.task),
+            after_packet,
+            policy_record,
+            supervisor_path=str(
+                self.root
+                / "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py"
+            ),
+        )
+        self.assertEqual(
+            before_packet["requirements_design_inputs"],
+            after_packet["requirements_design_inputs"],
+        )
+        self.assertNotEqual(
+            before["requirements_design_digest"],
+            after["requirements_design_digest"],
+        )
+
+    def test_partial_receipt_blocks_aggregate_before_checks_or_worker(self) -> None:
+        self._write_packet("U2", ["lib/b.txt"], depends_on=["U1"])
+        receipt = {
+            "schema_version": 1,
+            "slice_id": "U1",
+            "commit_sha": "a" * 40,
+            "parent_sha": "b" * 40,
+            "review_run_id": "existing",
+            "reviewed_target_digest": "0" * 64,
+            "target_paths_digest": "1" * 64,
+            "invariant_set_digest": "2" * 64,
+            "requirements_design_digest": "3" * 64,
+            "deterministic_commands_digest": "4" * 64,
+            "deterministic_results_digest": "5" * 64,
+            "review_policy_digest": "6" * 64,
+            "supervisor_source_digest": "7" * 64,
+            "committed_at": "2026-07-17T00:00:00Z",
+        }
+        guru_review_record.append_receipt_batch(str(self.task), [receipt])
+        self._write("lib/a.txt", b"partial-a\n")
+        self._write("lib/b.txt", b"partial-b\n")
+        self._git("add", "--", "lib/a.txt", "lib/b.txt")
+        with (
+            mock.patch.object(
+                guru_supervise,
+                "_guru_gate_check_implementation",
+                return_value=0,
+            ),
+            mock.patch.object(
+                guru_supervise,
+                "_load_config",
+                return_value=self._supervision_config(),
+            ),
+            mock.patch.object(
+                guru_review_record,
+                "run_deterministic_checks",
+            ) as checks,
+            mock.patch.object(guru_supervise, "_execute_plan") as worker,
+        ):
+            rc = guru_supervise.run_implementation_review(
+                self._aggregate_args("partial")
+            )
+        self.assertEqual(2, rc)
+        checks.assert_not_called()
+        worker.assert_not_called()
+
+    def test_v2_staged_fallback_requires_explicit_aggregate(self) -> None:
+        self._write("lib/a.txt", b"weak fallback blocked\n")
+        self._git("add", "--", "lib/a.txt")
+        args = self._supervisor_args("weak-fallback")
+        args.slice = None
+        args.aggregate = False
+        with (
+            mock.patch.object(
+                guru_supervise,
+                "_guru_gate_check_implementation",
+                return_value=0,
+            ),
+            mock.patch.object(
+                guru_review_record,
+                "run_deterministic_checks",
+            ) as checks,
+            mock.patch.object(guru_supervise, "_execute_plan") as worker,
+        ):
+            self.assertEqual(2, guru_supervise.run_implementation_review(args))
+        checks.assert_not_called()
+        worker.assert_not_called()
+
+    def test_full_unknown_v2_staged_fallback_requires_explicit_aggregate(
+        self,
+    ) -> None:
+        contract = guru_contract.default_contract(
+            guru_contract.ROUTE_FULL_CHAIN,
+            guru_contract.RISK_UNKNOWN,
+            created_by="test",
+        )
+        contract["scope"]["allowed_paths"] = ["lib/a.txt"]
+        contract["scope"]["max_files"] = None
+        (self.task / "gate-contract.json").write_text(
+            json.dumps(contract),
+            encoding="utf-8",
+        )
+        self._write("lib/a.txt", b"unknown risk weak fallback blocked\n")
+        self._git("add", "--", "lib/a.txt")
+        args = self._supervisor_args("unknown-risk-weak-fallback")
+        args.slice = None
+        args.aggregate = False
+        with (
+            mock.patch.object(
+                guru_supervise,
+                "_guru_gate_check_implementation",
+                return_value=0,
+            ),
+            mock.patch.object(
+                guru_review_record,
+                "run_deterministic_checks",
+            ) as checks,
+            mock.patch.object(guru_supervise, "_execute_plan") as worker,
+        ):
+            self.assertEqual(2, guru_supervise.run_implementation_review(args))
+        checks.assert_not_called()
+        worker.assert_not_called()
+
+    def test_full_high_missing_or_malformed_contract_never_uses_weak_staged_review(
+        self,
+    ) -> None:
+        self._write("lib/a.txt", b"contract fail closed\n")
+        self._git("add", "--", "lib/a.txt")
+        args = self._supervisor_args("contract-fail-closed")
+        args.slice = None
+        args.aggregate = False
+        contract_path = self.task / "gate-contract.json"
+        with (
+            mock.patch.object(
+                guru_supervise,
+                "_guru_gate_check_implementation",
+                return_value=0,
+            ),
+            mock.patch.object(
+                guru_review_record,
+                "run_deterministic_checks",
+            ) as checks,
+            mock.patch.object(guru_supervise, "_execute_plan") as worker,
+        ):
+            for label, contract_bytes in (
+                ("missing", None),
+                ("malformed", b"{not-json\n"),
+            ):
+                with self.subTest(label=label):
+                    if contract_bytes is None:
+                        contract_path.unlink(missing_ok=True)
+                    else:
+                        contract_path.write_bytes(contract_bytes)
+                    args.run_id = f"contract-{label}"
+                    self.assertEqual(
+                        2,
+                        guru_supervise.run_implementation_review(args),
+                    )
+        checks.assert_not_called()
+        worker.assert_not_called()
+
+    def test_aggregate_cli_accepts_repeated_explicit_slices(self) -> None:
+        parsed = guru_supervise.build_parser().parse_args(
+            [
+                "implementation-review",
+                str(self.task),
+                "--aggregate",
+                "--staged",
+                "--slice",
+                "U2",
+                "--slice",
+                "U1",
+            ]
+        )
+        self.assertTrue(parsed.aggregate)
+        self.assertEqual(["U2", "U1"], parsed.slice)
+        with (
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "guru_gate.py",
+                    "check-commit",
+                    str(self.task),
+                    "--aggregate",
+                    "--slice",
+                    "U2",
+                    "--slice",
+                    "U1",
+                ],
+            ),
+            mock.patch.object(
+                guru_gate,
+                "cmd_check_aggregate_slice_commit",
+                return_value=0,
+            ) as aggregate_gate,
+        ):
+            self.assertEqual(0, guru_gate.main())
+        aggregate_gate.assert_called_once_with(str(self.task), ["U2", "U1"])
+
+    def test_non_full_v2_staged_review_keeps_legacy_behavior(self) -> None:
+        contract = guru_contract.default_contract(
+            guru_contract.ROUTE_LITE_TASK,
+            guru_contract.RISK_LOW,
+            created_by="test",
+        )
+        contract["scope"]["allowed_paths"] = ["lib/a.txt"]
+        contract["scope"]["max_files"] = None
+        contract_path = self.task / "gate-contract.json"
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        self._write("lib/a.txt", b"non-full legacy staged\n")
+        self._git("add", "--", "lib/a.txt")
+        args = self._supervisor_args("non-full-v2")
+        args.slice = None
+        args.aggregate = False
+        legacy_config = guru_supervise.replace(
+            self._supervision_config(),
+            current_provider="claude",
+            provider="claude",
+        )
+        with (
+            mock.patch.object(guru_supervise, "_guru_gate_check_implementation", return_value=0),
+            mock.patch.object(guru_supervise, "_load_config", return_value=legacy_config),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                return_value=(0, "done", self._staged_worker_verdict()),
+            ) as worker,
+        ):
+            self.assertEqual(0, guru_supervise.run_implementation_review(args))
+        worker.assert_called_once()
+
+    def test_focused_context_v2_slice_omits_full_task_manifests(self) -> None:
+        (self.task / "design.md").write_text(
+            "FULL DESIGN MUST NOT BE INJECTED\n", encoding="utf-8"
+        )
+        (self.task / "implement.md").write_text(
+            "FULL IMPLEMENT MUST NOT BE INJECTED\n", encoding="utf-8"
+        )
+        (self.task / "check.jsonl").write_text(
+            '{"secret":"FULL CHECK MUST NOT BE INJECTED"}\n',
+            encoding="utf-8",
+        )
+        self._write("lib/a.txt", b"focused slice bytes\n")
+        self._git("add", "--", "lib/a.txt")
+        captured = []
+
+        def capture_plan(plan, _config):
+            captured.append(plan)
+            return 0, "done", self._clean_worker_verdict()
+
+        with (
+            mock.patch.object(
+                guru_supervise,
+                "_guru_gate_check_implementation",
+                return_value=0,
+            ),
+            mock.patch.object(
+                guru_supervise,
+                "_load_config",
+                return_value=self._supervision_config(),
+            ),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                side_effect=capture_plan,
+            ),
+        ):
+            self.assertEqual(
+                0,
+                guru_supervise.run_implementation_review(
+                    self._supervisor_args("focused-context-slice")
+                ),
+            )
+        self.assertEqual(1, len(captured))
+        plan = captured[0]
+        self.assertEqual([], plan.jsonls)
+        self.assertIn(
+            (self.task / "slice-packets" / "U1.json").resolve(),
+            [path.resolve() for path in plan.files],
+        )
+        self.assertNotIn(self.task / "prd.md", plan.files)
+        self.assertNotIn(self.task / "design.md", plan.files)
+        self.assertNotIn(self.task / "implement.md", plan.files)
+        self.assertIn("focused_review_context=", plan.brief)
+        self.assertIn("focused slice bytes", plan.brief)
+        self.assertIn("Exact bytes.", plan.brief)
+        self.assertIn("Bind every byte.", plan.brief)
+        self.assertNotIn("Other bytes.", plan.brief)
+        self.assertNotIn("FULL DESIGN MUST NOT BE INJECTED", plan.brief)
+        self.assertNotIn("FULL IMPLEMENT MUST NOT BE INJECTED", plan.brief)
+        self.assertNotIn("FULL CHECK MUST NOT BE INJECTED", plan.brief)
+
+    def test_focused_staged_diff_uses_literal_target_paths(self) -> None:
+        literal_path = "lib/literal*.txt"
+        pattern_match = "lib/literal-match.txt"
+        self._write(literal_path, b"literal metachar target\n")
+        self._write(pattern_match, b"pattern-only decoy\n")
+        self._git(
+            "--literal-pathspecs",
+            "add",
+            "--",
+            literal_path,
+            pattern_match,
+        )
+        focused = guru_supervise._focused_staged_diff(
+            self.root,
+            [literal_path],
+        )
+        self.assertIn("literal metachar target", focused)
+        self.assertNotIn("pattern-only decoy", focused)
+
+    def test_focused_context_v2_aggregate_omits_full_task_manifests(self) -> None:
+        self._write_packet("U2", ["lib/b.txt"], depends_on=["U1"])
+        (self.task / "design.md").write_text(
+            "FULL AGGREGATE DESIGN MUST NOT BE INJECTED\n", encoding="utf-8"
+        )
+        (self.task / "implement.md").write_text(
+            "FULL AGGREGATE IMPLEMENT MUST NOT BE INJECTED\n", encoding="utf-8"
+        )
+        (self.task / "check.jsonl").write_text(
+            '{"secret":"FULL AGGREGATE CHECK MUST NOT BE INJECTED"}\n',
+            encoding="utf-8",
+        )
+        self._write("lib/a.txt", b"focused aggregate a\n")
+        self._write("lib/b.txt", b"focused aggregate b\n")
+        self._git("add", "--", "lib/a.txt", "lib/b.txt")
+        captured = []
+
+        def capture_plan(plan, _config):
+            captured.append(plan)
+            return 0, "done", self._aggregate_worker_verdict()
+
+        with (
+            self._aggregate_runtime(),
+            mock.patch.object(
+                guru_supervise,
+                "_guru_gate_check_implementation",
+                return_value=0,
+            ),
+            mock.patch.object(
+                guru_supervise,
+                "_load_config",
+                return_value=self._supervision_config(),
+            ),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                side_effect=capture_plan,
+            ),
+        ):
+            self.assertEqual(
+                0,
+                guru_supervise.run_implementation_review(
+                    self._aggregate_args("focused-context-aggregate")
+                ),
+            )
+        self.assertEqual(1, len(captured))
+        plan = captured[0]
+        self.assertEqual([], plan.jsonls)
+        self.assertNotIn(self.task / "prd.md", plan.files)
+        self.assertNotIn(self.task / "design.md", plan.files)
+        self.assertNotIn(self.task / "implement.md", plan.files)
+        self.assertIn("focused_review_context=", plan.brief)
+        self.assertIn("focused aggregate a", plan.brief)
+        self.assertIn("focused aggregate b", plan.brief)
+        self.assertIn('"state":"same_aggregate_pending"', plan.brief)
+        self.assertIn("INV-U1", plan.brief)
+        self.assertIn("INV-U2", plan.brief)
+        self.assertNotIn("FULL AGGREGATE DESIGN MUST NOT BE INJECTED", plan.brief)
+        self.assertNotIn("FULL AGGREGATE IMPLEMENT MUST NOT BE INJECTED", plan.brief)
+        self.assertNotIn("FULL AGGREGATE CHECK MUST NOT BE INJECTED", plan.brief)
+
+    def test_focused_context_legacy_v1_keeps_full_task_manifests(self) -> None:
+        (self.task / "design.md").write_text(
+            "legacy design context\n", encoding="utf-8"
+        )
+        (self.task / "implement.md").write_text(
+            "legacy implementation context\n", encoding="utf-8"
+        )
+        (self.task / "check.jsonl").write_text(
+            '{"legacy":"check context"}\n', encoding="utf-8"
+        )
+        plan = guru_supervise.build_run_plan(
+            "implementation-review",
+            self.task,
+            self._supervision_config(),
+            "legacy-context",
+        )
+        resolved_files = {path.resolve() for path in plan.files}
+        self.assertIn((self.task / "prd.md").resolve(), resolved_files)
+        self.assertIn((self.task / "design.md").resolve(), resolved_files)
+        self.assertIn((self.task / "implement.md").resolve(), resolved_files)
+        self.assertEqual(
+            [(self.task / "check.jsonl").resolve()],
+            [path.resolve() for path in plan.jsonls],
+        )
+        self.assertNotIn("focused_review_context=", plan.brief)
+
+    def test_aggregate_gate_and_atomic_topological_receipts(self) -> None:
+        contract = guru_contract.default_contract(
+            guru_contract.ROUTE_FULL_CHAIN,
+            guru_contract.RISK_UNKNOWN,
+            created_by="test",
+        )
+        contract["scope"]["allowed_paths"] = ["lib/a.txt", "lib/b.txt"]
+        contract["scope"]["max_files"] = None
+        (self.task / "gate-contract.json").write_text(
+            json.dumps(contract),
+            encoding="utf-8",
+        )
+        self._write_packet("U2", ["lib/b.txt"], depends_on=["U1"])
+        self._write("lib/a.txt", b"aggregate receipt a\n")
+        self._write("lib/b.txt", b"aggregate receipt b\n")
+        self._git("add", "--", "lib/a.txt", "lib/b.txt")
+        with (
+            self._aggregate_runtime(),
+            mock.patch.object(guru_supervise, "_guru_gate_check_implementation", return_value=0),
+            mock.patch.object(guru_supervise, "_load_config", return_value=self._supervision_config()),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                return_value=(0, "done", self._aggregate_worker_verdict()),
+            ),
+        ):
+            self.assertEqual(
+                0,
+                guru_supervise.run_implementation_review(
+                    self._aggregate_args("aggregate-receipt")
+                ),
+            )
+        output = io.StringIO()
+        errors = io.StringIO()
+        with self._gate_root(), contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            self.assertEqual(
+                0,
+                guru_gate.cmd_check_aggregate_slice_commit(
+                    str(self.task), ["U2", "U1"]
+                ),
+            )
+        self.assertIn("SLICE_COMMIT_READY aggregate=U1,U2", output.getvalue())
+        self._git("commit", "-m", "aggregate implementation")
+        with self._gate_root(), contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            self.assertEqual(
+                0,
+                guru_gate.cmd_record_aggregate_slice_commit(
+                    str(self.task),
+                    ["U2", "U1"],
+                    "aggregate-receipt-review-1",
+                ),
+                errors.getvalue(),
+            )
+        batches = guru_review_record.load_receipt_batches(str(self.task))
+        self.assertEqual(1, len(batches))
+        self.assertEqual(
+            ["U1", "U2"],
+            [receipt["slice_id"] for receipt in batches[0]["receipts"]],
+        )
+        self.assertEqual(
+            batches[0]["receipts"][0]["commit_sha"],
+            batches[0]["receipts"][1]["commit_sha"],
+        )
+        history = guru_gate._receipt_history_by_slice(str(self.task))
+        with self._gate_root():
+            self.assertEqual(
+                "",
+                guru_gate._validate_slice_receipt(
+                    str(self.task),
+                    str(self.root),
+                    history["U2"][-1],
+                receipt_history=history,
+            ),
+        )
+        receipt_path = Path(guru_review_record.receipts_path(str(self.task)))
+        before_replay = receipt_path.read_bytes()
+        replay = io.StringIO()
+        with self._gate_root(), contextlib.redirect_stdout(replay):
+            self.assertEqual(
+                0,
+                guru_gate.cmd_record_aggregate_slice_commit(
+                    str(self.task),
+                    ["U2", "U1"],
+                    "aggregate-receipt-review-1",
+                ),
+            )
+        self.assertIn("RECEIPTS_EXIST", replay.getvalue())
+        self.assertEqual(before_replay, receipt_path.read_bytes())
+
+    def test_aggregate_receipt_replay_rejects_partial_batch(self) -> None:
+        self._write_packet("U2", ["lib/b.txt"], depends_on=["U1"])
+        self._write("lib/a.txt", b"aggregate partial a\n")
+        self._write("lib/b.txt", b"aggregate partial b\n")
+        self._git("add", "--", "lib/a.txt", "lib/b.txt")
+        with (
+            self._aggregate_runtime(),
+            mock.patch.object(guru_supervise, "_guru_gate_check_implementation", return_value=0),
+            mock.patch.object(guru_supervise, "_load_config", return_value=self._supervision_config()),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                return_value=(0, "done", self._aggregate_worker_verdict()),
+            ),
+        ):
+            self.assertEqual(
+                0,
+                guru_supervise.run_implementation_review(
+                    self._aggregate_args("aggregate-partial")
+                ),
+            )
+        self._git("commit", "-m", "aggregate partial")
+        with self._gate_root():
+            self.assertEqual(
+                0,
+                guru_gate.cmd_record_aggregate_slice_commit(
+                    str(self.task),
+                    ["U1", "U2"],
+                    "aggregate-partial-review-1",
+                ),
+            )
+        receipt_path = Path(guru_review_record.receipts_path(str(self.task)))
+        receipts = guru_review_record.receipt_records(str(self.task))
+        receipt_path.unlink()
+        guru_review_record.append_receipt_batch(str(self.task), receipts[:1])
+        before_replay = receipt_path.read_bytes()
+        output = io.StringIO()
+        with self._gate_root(), contextlib.redirect_stderr(output):
+            self.assertEqual(
+                2,
+                guru_gate.cmd_record_aggregate_slice_commit(
+                    str(self.task),
+                    ["U1", "U2"],
+                    "aggregate-partial-review-1",
+                ),
+            )
+        self.assertIn("replay is partial", output.getvalue())
+        self.assertEqual(before_replay, receipt_path.read_bytes())
+
+    def test_aggregate_receipt_replay_rejects_conflicting_batch(self) -> None:
+        self._write_packet("U2", ["lib/b.txt"], depends_on=["U1"])
+        self._write("lib/a.txt", b"aggregate conflict a\n")
+        self._write("lib/b.txt", b"aggregate conflict b\n")
+        self._git("add", "--", "lib/a.txt", "lib/b.txt")
+        with (
+            self._aggregate_runtime(),
+            mock.patch.object(guru_supervise, "_guru_gate_check_implementation", return_value=0),
+            mock.patch.object(guru_supervise, "_load_config", return_value=self._supervision_config()),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                return_value=(0, "done", self._aggregate_worker_verdict()),
+            ),
+        ):
+            self.assertEqual(
+                0,
+                guru_supervise.run_implementation_review(
+                    self._aggregate_args("aggregate-conflict")
+                ),
+            )
+        self._git("commit", "-m", "aggregate conflict")
+        with self._gate_root():
+            self.assertEqual(
+                0,
+                guru_gate.cmd_record_aggregate_slice_commit(
+                    str(self.task),
+                    ["U1", "U2"],
+                    "aggregate-conflict-review-1",
+                ),
+            )
+        receipt_path = Path(guru_review_record.receipts_path(str(self.task)))
+        receipts = guru_review_record.receipt_records(str(self.task))
+        receipt_path.unlink()
+        receipts[1]["review_run_id"] = "conflicting-aggregate-run"
+        receipts[1]["receipt_id"] = guru_review_record.canonical_digest(
+            "guru-slice-commit-receipt-v1",
+            guru_review_record.receipt_digest_payload(receipts[1]),
+        )
+        guru_review_record.append_receipt_batch(str(self.task), receipts)
+        before_replay = receipt_path.read_bytes()
+        output = io.StringIO()
+        with self._gate_root(), contextlib.redirect_stderr(output):
+            self.assertEqual(
+                2,
+                guru_gate.cmd_record_aggregate_slice_commit(
+                    str(self.task),
+                    ["U1", "U2"],
+                    "aggregate-conflict-review-1",
+                ),
+            )
+        self.assertIn("replay conflicts", output.getvalue())
+        self.assertEqual(before_replay, receipt_path.read_bytes())
+        receipt_path.unlink()
+        split_receipts = [dict(receipt) for receipt in receipts]
+        split_receipts[1]["review_run_id"] = "aggregate-conflict-review-1"
+        split_receipts[1]["receipt_id"] = guru_review_record.canonical_digest(
+            "guru-slice-commit-receipt-v1",
+            guru_review_record.receipt_digest_payload(split_receipts[1]),
+        )
+        guru_review_record.append_receipt_batch(
+            str(self.task), split_receipts[:1]
+        )
+        guru_review_record.append_receipt_batch(
+            str(self.task), split_receipts[1:]
+        )
+        before_split_replay = receipt_path.read_bytes()
+        split_output = io.StringIO()
+        with self._gate_root(), contextlib.redirect_stderr(split_output):
+            self.assertEqual(
+                2,
+                guru_gate.cmd_record_aggregate_slice_commit(
+                    str(self.task),
+                    ["U1", "U2"],
+                    "aggregate-conflict-review-1",
+                ),
+            )
+        self.assertIn("across receipt batches", split_output.getvalue())
+        self.assertEqual(before_split_replay, receipt_path.read_bytes())
+        split_history = guru_gate._receipt_history_by_slice(str(self.task))
+        with self._gate_root():
+            split_problem = guru_gate._validate_slice_receipt(
+                str(self.task),
+                str(self.root),
+                split_history["U2"][-1],
+                receipt_history=split_history,
+            )
+        self.assertIn("does not match official review", split_problem)
+
+    def test_aggregate_receipt_validation_rejects_split_or_duplicate_batch(
+        self,
+    ) -> None:
+        self._write_packet("U2", ["lib/b.txt"])
+        self._write("lib/a.txt", b"independent aggregate a\n")
+        self._write("lib/b.txt", b"independent aggregate b\n")
+        self._git("add", "--", "lib/a.txt", "lib/b.txt")
+        with (
+            self._aggregate_runtime(),
+            mock.patch.object(guru_supervise, "_guru_gate_check_implementation", return_value=0),
+            mock.patch.object(guru_supervise, "_load_config", return_value=self._supervision_config()),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                return_value=(0, "done", self._aggregate_worker_verdict()),
+            ),
+        ):
+            self.assertEqual(
+                0,
+                guru_supervise.run_implementation_review(
+                    self._aggregate_args("aggregate-independent")
+                ),
+            )
+        self._git("commit", "-m", "independent aggregate")
+        with self._gate_root():
+            self.assertEqual(
+                0,
+                guru_gate.cmd_record_aggregate_slice_commit(
+                    str(self.task),
+                    ["U1", "U2"],
+                    "aggregate-independent-review-1",
+                ),
+            )
+        receipt_path = Path(guru_review_record.receipts_path(str(self.task)))
+        receipts = guru_review_record.receipt_records(str(self.task))
+        receipt_path.unlink()
+        guru_review_record.append_receipt_batch(str(self.task), receipts[:1])
+        guru_review_record.append_receipt_batch(str(self.task), receipts[1:])
+        split_history = guru_gate._receipt_history_by_slice(str(self.task))
+        with self._gate_root():
+            for slice_id in ("U1", "U2"):
+                problem = guru_gate._validate_slice_receipt(
+                    str(self.task),
+                    str(self.root),
+                    split_history[slice_id][-1],
+                    receipt_history=split_history,
+                )
+                self.assertIn("does not match official review", problem)
+        receipt_path.unlink()
+        guru_review_record.append_receipt_batch(str(self.task), receipts)
+        guru_review_record.append_receipt_batch(str(self.task), receipts)
+        duplicate_history = guru_gate._receipt_history_by_slice(str(self.task))
+        with self._gate_root():
+            for slice_id in ("U1", "U2"):
+                problem = guru_gate._validate_slice_receipt(
+                    str(self.task),
+                    str(self.root),
+                    duplicate_history[slice_id][-1],
+                    receipt_history=duplicate_history,
+                )
+                self.assertIn("exactly one atomic receipt batch", problem)
+
+    def test_historical_aggregate_receipt_binds_commit_supervisor(self) -> None:
+        self._write_packet("U2", ["lib/b.txt"], depends_on=["U1"])
+        self._write("lib/a.txt", b"aggregate historical a\n")
+        self._write("lib/b.txt", b"aggregate historical b\n")
+        self._git("add", "--", "lib/a.txt", "lib/b.txt")
+        with (
+            self._aggregate_runtime(),
+            mock.patch.object(guru_supervise, "_guru_gate_check_implementation", return_value=0),
+            mock.patch.object(guru_supervise, "_load_config", return_value=self._supervision_config()),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                return_value=(0, "done", self._aggregate_worker_verdict()),
+            ),
+        ):
+            self.assertEqual(
+                0,
+                guru_supervise.run_implementation_review(
+                    self._aggregate_args("aggregate-historical")
+                ),
+            )
+        self._git("commit", "-m", "aggregate historical")
+        aggregate_commit = self._git("rev-parse", "HEAD")
+        with self._gate_root():
+            self.assertEqual(
+                0,
+                guru_gate.cmd_record_aggregate_slice_commit(
+                    str(self.task),
+                    ["U1", "U2"],
+                    "aggregate-historical-review-1",
+                ),
+            )
+        supervisor_path = (
+            "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py"
+        )
+        self._write(supervisor_path, b"# later supervisor revision\n")
+        self._git("add", "--", supervisor_path)
+        self._git("commit", "-m", "later supervisor revision")
+        later_commit = self._git("rev-parse", "HEAD")
+        history = guru_gate._receipt_history_by_slice(str(self.task))
+        with self._gate_root():
+            self.assertEqual(
+                "",
+                guru_gate._validate_slice_receipt(
+                    str(self.task),
+                    str(self.root),
+                    history["U2"][-1],
+                    receipt_history=history,
+                ),
+            )
+        receipt_path = Path(guru_review_record.receipts_path(str(self.task)))
+        batch = json.loads(receipt_path.read_text(encoding="utf-8"))
+        committed_at = self._git("show", "-s", "--format=%cI", later_commit)
+        for receipt in batch["receipts"]:
+            receipt["commit_sha"] = later_commit
+            receipt["parent_sha"] = aggregate_commit
+            receipt["committed_at"] = committed_at
+        self._refresh_batch_id(batch)
+        receipt_path.write_text(json.dumps(batch) + "\n", encoding="utf-8")
+        tampered_history = guru_gate._receipt_history_by_slice(str(self.task))
+        with self._gate_root():
+            problem = guru_gate._validate_slice_receipt(
+                str(self.task),
+                str(self.root),
+                tampered_history["U2"][-1],
+                receipt_history=tampered_history,
+            )
+        self.assertIn("supervisor", problem)
+
+    def test_aggregate_receipt_rejects_ambiguous_review_run_ownership(self) -> None:
+        self._write_packet("U2", ["lib/b.txt"], depends_on=["U1"])
+        self._write("lib/a.txt", b"aggregate collision a\n")
+        self._write("lib/b.txt", b"aggregate collision b\n")
+        self._git("add", "--", "lib/a.txt", "lib/b.txt")
+        with (
+            self._aggregate_runtime(),
+            mock.patch.object(guru_supervise, "_guru_gate_check_implementation", return_value=0),
+            mock.patch.object(guru_supervise, "_load_config", return_value=self._supervision_config()),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                return_value=(0, "done", self._aggregate_worker_verdict()),
+            ),
+        ):
+            self.assertEqual(
+                0,
+                guru_supervise.run_implementation_review(
+                    self._aggregate_args("aggregate-collision")
+                ),
+            )
+        run_id = "aggregate-collision-review-1"
+        self._append_review("U1", ["lib/a.txt"], run_id=run_id)
+        review, error, aggregate = guru_gate._receipt_review_record(
+            str(self.task),
+            "U1",
+            run_id,
+        )
+        self.assertIsNone(review)
+        self.assertFalse(aggregate)
+        self.assertIn("ownership ambiguous", error)
+        self._git("commit", "-m", "aggregate collision")
+        output = io.StringIO()
+        with self._gate_root(), contextlib.redirect_stderr(output):
+            self.assertEqual(
+                2,
+                guru_gate.cmd_record_aggregate_slice_commit(
+                    str(self.task),
+                    ["U1", "U2"],
+                    run_id,
+                ),
+            )
+        self.assertIn("ownership ambiguous", output.getvalue())
+        self.assertFalse(
+            Path(guru_review_record.receipts_path(str(self.task))).exists()
+        )
+
+    def test_ordinary_receipt_rejects_ambiguous_review_run_ownership(self) -> None:
+        self._write_packet("U2", ["lib/b.txt"], depends_on=["U1"])
+        self._write("lib/a.txt", b"ordinary collision a\n")
+        self._write("lib/b.txt", b"ordinary collision b\n")
+        self._git("add", "--", "lib/a.txt", "lib/b.txt")
+        with (
+            self._aggregate_runtime(),
+            mock.patch.object(guru_supervise, "_guru_gate_check_implementation", return_value=0),
+            mock.patch.object(guru_supervise, "_load_config", return_value=self._supervision_config()),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                return_value=(0, "done", self._aggregate_worker_verdict()),
+            ),
+        ):
+            self.assertEqual(
+                0,
+                guru_supervise.run_implementation_review(
+                    self._aggregate_args("ordinary-collision")
+                ),
+            )
+        run_id = "ordinary-collision-review-1"
+        self._append_review("U1", ["lib/a.txt"], run_id=run_id)
+        self._git("commit", "-m", "ordinary collision", "--", "lib/a.txt")
+        rc, output = self._record_slice("U1", run_id)
+        self.assertEqual(2, rc)
+        self.assertIn("ownership ambiguous", output)
+        self.assertFalse(
+            Path(guru_review_record.receipts_path(str(self.task))).exists()
+        )
+
+    def test_aggregate_gate_rejects_byte_drift_and_component_map_tamper(self) -> None:
+        self._write_packet("U2", ["lib/b.txt"], depends_on=["U1"])
+        self._write("lib/a.txt", b"aggregate stable a\n")
+        self._write("lib/b.txt", b"aggregate stable b\n")
+        self._git("add", "--", "lib/a.txt", "lib/b.txt")
+        with (
+            self._aggregate_runtime(),
+            mock.patch.object(guru_supervise, "_guru_gate_check_implementation", return_value=0),
+            mock.patch.object(guru_supervise, "_load_config", return_value=self._supervision_config()),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                return_value=(0, "done", self._aggregate_worker_verdict()),
+            ),
+        ):
+            self.assertEqual(
+                0,
+                guru_supervise.run_implementation_review(
+                    self._aggregate_args("aggregate-drift")
+                ),
+            )
+        self._write("lib/a.txt", b"aggregate changed after review\n")
+        self._git("add", "--", "lib/a.txt")
+        with self._gate_root():
+            self.assertEqual(
+                2,
+                guru_gate.cmd_check_aggregate_slice_commit(
+                    str(self.task), ["U1", "U2"]
+                ),
+            )
+        self._write("lib/a.txt", b"aggregate stable a\n")
+        self._git("add", "--", "lib/a.txt")
+        self._update_latest_review(
+            lambda record: record["per_slice_component_digests"]["U2"].__setitem__(
+                "invariant_set_digest", "f" * 64
+            )
+        )
+        with self._gate_root():
+            self.assertEqual(
+                2,
+                guru_gate.cmd_check_aggregate_slice_commit(
+                    str(self.task), ["U1", "U2"]
+                ),
             )
 
     def test_commit_digest_matches_staged_digest_without_line_normalization(self) -> None:
@@ -2952,6 +4140,67 @@ class SliceCommitLifecycleTests(unittest.TestCase):
         latest = json.loads(review_path.read_text(encoding="utf-8").splitlines()[-1])
         self.assertEqual("SCOPE_INVALID", latest["supervisor_failure"])
 
+    def test_host_turn_diff_ref_does_not_mask_reviewer_findings(self) -> None:
+        self._write("lib/a.txt", b"u2 host observation ref\n")
+        self._git("add", "--", "lib/a.txt")
+
+        def create_host_ref(_plan, _config):
+            tree = self._git("write-tree")
+            self._git(
+                "update-ref",
+                "refs/codex/turn-diffs/captures/123/worker/base",
+                tree,
+            )
+            return (
+                0,
+                "done",
+                "review_result=findings\n"
+                "route_class=IMPLEMENT_DEFECT\n"
+                "review_target=slice:U1\n"
+                "review_provider=codex\n"
+                "deterministic_checks=passed\n"
+                "dirty_scope=isolated\n"
+                "invariant_coverage=failed\n"
+                "invariant_status.INV-U1=fail\n"
+                "invariant_evidence.INV-U1=independent semantic blocker\n",
+            )
+
+        with (
+            mock.patch.object(
+                guru_supervise,
+                "_guru_gate_check_implementation",
+                return_value=0,
+            ),
+            mock.patch.object(
+                guru_supervise,
+                "_load_config",
+                return_value=self._supervision_config(),
+            ),
+            mock.patch.object(
+                guru_supervise,
+                "_execute_plan",
+                side_effect=create_host_ref,
+            ),
+        ):
+            self.assertEqual(
+                2,
+                guru_supervise.run_implementation_review(
+                    self._supervisor_args("host-observation-ref")
+                ),
+            )
+        review_path = (
+            self.task
+            / "review-records"
+            / "implementation-reviews.jsonl"
+        )
+        latest = json.loads(
+            review_path.read_text(encoding="utf-8").splitlines()[-1]
+        )
+        self.assertEqual("host-observation-ref-review-1", latest["run_id"])
+        self.assertEqual("findings", latest["review_result"])
+        self.assertEqual("IMPLEMENT_DEFECT", latest["route_class"])
+        self.assertEqual("none", latest["supervisor_failure"])
+
     def test_reviewer_ref_mutation_blocks_clean_normalization(self) -> None:
         self._write("lib/a.txt", b"u2 reviewer ref mutation\n")
         self._git("add", "--", "lib/a.txt")
@@ -3176,6 +4425,12 @@ class SliceCommitLifecycleTests(unittest.TestCase):
                 guru_supervise._review_read_only_snapshot(Path(temp))
 
     def test_non_slice_staged_review_keeps_legacy_execution_path(self) -> None:
+        self._update_packet(
+            "U1",
+            lambda packet: packet.pop(
+                guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD
+            ),
+        )
         self._write("lib/a.txt", b"legacy staged review\n")
         self._git("add", "--", "lib/a.txt")
         legacy_config = guru_supervise.replace(

@@ -9,7 +9,7 @@ Usage:
     python3 guru_supervise.py [--adversarial] check <task-dir> [--dry-run]
     python3 guru_supervise.py [--adversarial] implement-check <task-dir> [--dry-run]
     python3 guru_supervise.py implement-slices <task-dir> [--dry-run] [--parallel N] [--group <id>] [--backend auto|sub-agent|channel]
-    python3 guru_supervise.py implementation-review <task-dir> [--slice <UNIT>] [--staged] [--same-provider --user-quote <quote>]
+    python3 guru_supervise.py implementation-review <task-dir> [--aggregate] [--slice <UNIT> ...] [--staged] [--same-provider --user-quote <quote>]
     python3 guru_supervise.py status <task-dir> [--json]
     python3 guru_supervise.py kill <task-dir> --channel <name> --worker <name>
 """
@@ -70,6 +70,8 @@ DEFAULT_ADVERSARIAL_CODEX_REASONING_EFFORT = "high"
 HIGH_RISK_REVIEW_PROVIDER_POLICIES = {"current", "opposite", "codex", "claude"}
 DEFAULT_HIGH_RISK_REVIEW_PROVIDER_POLICY = "current"
 DETERMINISTIC_REVIEW_BRIEF_MAX_CHARS = 16000
+FOCUSED_REQUIREMENTS_CONTEXT_MAX_CHARS = 32000
+FOCUSED_REQUIREMENT_ITEM_MAX_CHARS = 12000
 ADVERSARIAL_MODEL_ACTIONS = {"requirements", "overview", "detail"}
 GATES_KEY = "guru_gates"
 ADVERSARIAL_SKIPS_KEY = "adversarial_skips"
@@ -507,9 +509,10 @@ def _implementation_review_check_config(
     review_target_kind: str,
     same_provider_user_quote: str | None = None,
 ) -> ReviewProviderResolution:
-    if review_target_kind not in {"slice", "staged"}:
+    if review_target_kind not in {"slice", "staged", "aggregate"}:
         raise GuruSupervisionError(
-            f"review_target_kind must be slice|staged; got {review_target_kind!r}"
+            "review_target_kind must be slice|staged|aggregate; "
+            f"got {review_target_kind!r}"
         )
     if not isinstance(high_risk_policy_applies, bool):
         raise GuruSupervisionError("high_risk_policy_applies must be bool")
@@ -527,7 +530,7 @@ def _implementation_review_check_config(
             review_target_kind=review_target_kind,
         )
 
-    if review_target_kind == "slice" and high_risk_policy_applies:
+    if review_target_kind in {"slice", "aggregate"} and high_risk_policy_applies:
         policy = config.high_risk_review_provider_policy
         if policy == "current":
             check_provider = config.provider
@@ -716,6 +719,7 @@ def build_run_plan(
     run_id: str,
     extra_brief: str = "",
     slice_packet_path: Path | None = None,
+    focused_review_context: dict | None = None,
 ) -> RunPlan:
     if action not in VALID_ACTIONS:
         raise GuruSupervisionError(f"unknown action {action!r}")
@@ -736,12 +740,19 @@ def build_run_plan(
 
     skill_rels = SKILL_BY_PLATFORM[config.platform][action]
     skill_paths = [config.root / rel for rel in skill_rels]
-    artifact_candidates = [
-        *skill_paths,
-        task_dir / "prd.md",
-        task_dir / "design.md",
-        task_dir / "implement.md",
-    ]
+    focused_implementation_review = (
+        action == "implementation-review"
+        and isinstance(focused_review_context, dict)
+    )
+    artifact_candidates = [*skill_paths]
+    if not focused_implementation_review:
+        artifact_candidates.extend(
+            [
+                task_dir / "prd.md",
+                task_dir / "design.md",
+                task_dir / "implement.md",
+            ]
+        )
     if action == "requirements":
         artifact_candidates.extend(
             [
@@ -749,12 +760,16 @@ def build_run_plan(
                 *_requirements_reference_files(config.root, task_dir),
             ]
         )
-    if config.platform == "flutter" and action in {
-        "implement",
-        "check",
-        "implement-check",
-        "implementation-review",
-    }:
+    if (
+        not focused_implementation_review
+        and config.platform == "flutter"
+        and action in {
+            "implement",
+            "check",
+            "implement-check",
+            "implementation-review",
+        }
+    ):
         # ② 为 flutter 实现期 review 注入正式 requirement/design 包(SSOT 否决基线);
         # 声明却非法/缺失的包由 collect_review_artifacts → GuruSupervisionError 在 spawn 前 fail-closed
         artifact_candidates.extend(collect_review_artifacts(task_dir, "detail", config.root))
@@ -764,7 +779,9 @@ def build_run_plan(
     jsonl_names = [f"{worker_action}.jsonl"]
     if action == "implement-check":
         jsonl_names = ["implement.jsonl", "check.jsonl"]
-    if action == "requirements":
+    if focused_implementation_review:
+        jsonls = []
+    elif action == "requirements":
         jsonls = _dedupe_paths(sorted(task_dir.glob("*.jsonl")))
     else:
         jsonls = _existing_paths([task_dir / name for name in jsonl_names])
@@ -964,6 +981,16 @@ def build_run_plan(
     )
     if extra_brief:
         brief = f"{brief}\n{extra_brief}"
+    if focused_implementation_review:
+        brief = (
+            f"{brief}\nfocused_review_context="
+            + json.dumps(
+                focused_review_context,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
 
     return RunPlan(
         action=action,
@@ -2017,6 +2044,79 @@ def _slice_review_target(task_dir: Path, root: Path, unit_id: str, *, staged: bo
     )
 
 
+def _aggregate_review_target(
+    task_dir: Path,
+    root: Path,
+    slice_ids: list[str],
+) -> ReviewTarget:
+    staged_paths, staged_error = _staged_paths(str(root))
+    if staged_error:
+        raise GuruSupervisionError(f"SCOPE_INVALID:{staged_error}")
+    if not staged_paths:
+        raise GuruSupervisionError("SCOPE_INVALID:no staged code paths to review")
+    artifacts = [
+        path
+        for path in staged_paths
+        if _guru_gate_is_task_artifact_path(path, str(task_dir), str(root))
+    ]
+    if artifacts:
+        raise GuruSupervisionError(
+            "SCOPE_INVALID:aggregate staged scope contains task/workspace artifacts: "
+            + ", ".join(artifacts[:5])
+        )
+    try:
+        existing = {
+            receipt["slice_id"]
+            for receipt in guru_review_record.receipt_records(str(task_dir))
+            if receipt.get("slice_id") in set(slice_ids)
+        }
+        if existing:
+            raise guru_review_record.ReviewRecordError(
+                "aggregate bootstrap requires all selected slice receipts missing; "
+                f"existing={sorted(existing)}"
+            )
+        packet = guru_review_record.build_aggregate_packet(
+            str(task_dir),
+            slice_ids,
+            staged_paths,
+        )
+        reviewed_target_digest = guru_review_record.target_snapshot_digest(
+            str(root),
+            packet["target_paths"],
+            "index",
+        )
+        packet["aggregate_target_digest"] = reviewed_target_digest
+        packet["per_slice_target_digests"] = {
+            slice_id: guru_review_record.target_snapshot_digest(
+                str(root),
+                paths,
+                "index",
+            )
+            for slice_id, paths in packet["per_slice_target_paths"].items()
+        }
+    except guru_review_record.ReviewRecordError as exc:
+        raise GuruSupervisionError(f"PACKET_INVALID:{exc}") from exc
+    aggregate_label = ",".join(packet["aggregate_slice_ids"])
+    review_target = f"aggregate:{aggregate_label}"
+    return ReviewTarget(
+        unit_id="aggregate",
+        review_target=review_target,
+        packet=packet,
+        slice_packet_path=None,
+        digest_source="index",
+        active_brief=_active_review_brief(
+            label=aggregate_label,
+            review_target=review_target,
+            target_paths=packet["target_paths"],
+            semantic_provider=packet["semantic_review_provider"],
+            digest_source="index",
+            invariants=packet["invariants"],
+            reviewed_target_digest=reviewed_target_digest,
+        ),
+        reviewed_target_digest=reviewed_target_digest,
+    )
+
+
 def _staged_review_target(task_dir: Path, root: Path) -> ReviewTarget:
     staged_paths, staged_error = _staged_paths(str(root))
     if staged_error:
@@ -2107,6 +2207,41 @@ def _append_supervisor_review_record(
         raise GuruSupervisionError(
             "target snapshot changed during implementation-review,硬停(SCOPE_INVALID)"
         )
+    aggregate_context = {}
+    if target.review_target.startswith("aggregate:"):
+        aggregate_record = _implementation_review_policy_record(config, resolution)
+        aggregate_record["deterministic_results"] = det_results
+        try:
+            per_components = guru_review_record.aggregate_per_slice_components(
+                str(task_dir),
+                target.packet,
+                aggregate_record,
+                supervisor_path=str(Path(__file__).resolve()),
+            )
+            per_target_digests = target.packet["per_slice_target_digests"]
+            per_keys = {
+                slice_id: guru_review_record.review_evidence_key(
+                    per_target_digests[slice_id],
+                    per_components[slice_id],
+                )
+                for slice_id in target.packet["aggregate_slice_ids"]
+            }
+        except (KeyError, guru_review_record.ReviewRecordError) as exc:
+            raise GuruSupervisionError(
+                f"aggregate review component maps invalid:{exc}"
+            ) from exc
+        aggregate_context = {
+            "aggregate_slice_ids": target.packet["aggregate_slice_ids"],
+            "reviewed_staged_paths": target.packet["reviewed_staged_paths"],
+            "aggregate_target_digest": target.reviewed_target_digest,
+            "per_slice_target_paths": target.packet["per_slice_target_paths"],
+            "per_slice_target_digests": per_target_digests,
+            "per_slice_requirements_design_digests": target.packet[
+                "per_slice_requirements_design_digests"
+            ],
+            "per_slice_component_digests": per_components,
+            "per_slice_evidence_keys": per_keys,
+        }
     record, failure = guru_review_record.normalize_review_record(verdict, {
         "mode": "supervisor", "packet": target.packet, "implement_provider": config.provider,
         "supervisor_deterministic_status": det_status, "deterministic_results": det_results,
@@ -2132,6 +2267,7 @@ def _append_supervisor_review_record(
             if result.get("exit_code") == 0
             and result.get("timed_out") is False
         ],
+        **aggregate_context,
     })
     if resolution.same_provider_user_quote and failure is None:
         record["message"] = (
@@ -2222,11 +2358,20 @@ def _require_current_slice_evidence(
         raise GuruSupervisionError(
             "implementation review evidence lifecycle requires a slice id"
         )
-    current_target = _slice_review_target(
-        task_dir,
-        root,
-        target.unit_id,
-        staged=target.digest_source == "index",
+    aggregate_review = target.review_target.startswith("aggregate:")
+    current_target = (
+        _aggregate_review_target(
+            task_dir,
+            root,
+            target.packet.get("aggregate_slice_ids", []),
+        )
+        if aggregate_review
+        else _slice_review_target(
+            task_dir,
+            root,
+            target.unit_id,
+            staged=target.digest_source == "index",
+        )
     )
     current_config = _load_config(
         root,
@@ -2241,7 +2386,7 @@ def _require_current_slice_evidence(
                 str(task_dir),
                 current_config.platform,
                 str(root),
-                unit_id=current_target.unit_id,
+                unit_id=None if aggregate_review else current_target.unit_id,
             )
         )
     except guru_review_record.ReviewRecordError as exc:
@@ -2257,7 +2402,7 @@ def _require_current_slice_evidence(
             current_target.packet,
             task_dir,
         ),
-        review_target_kind="slice",
+        review_target_kind="aggregate" if aggregate_review else "slice",
         same_provider_user_quote=same_provider_user_quote,
     )
     policy_record = _implementation_review_policy_record(
@@ -2292,8 +2437,13 @@ def _require_current_slice_evidence(
 
 def _slice_evidence_lifecycle_enabled(target: ReviewTarget) -> bool:
     return (
-        target.review_target.startswith("slice:")
-        and target.slice_packet_path is not None
+        (
+            (
+                target.review_target.startswith("slice:")
+                and target.slice_packet_path is not None
+            )
+            or target.review_target.startswith("aggregate:")
+        )
         and target.packet.get(
             guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD,
             1,
@@ -2682,6 +2832,204 @@ def _deterministic_reviewer_brief(
     )
 
 
+def _focused_requirements_design_context(
+    task_dir: Path,
+    manifest: list,
+) -> list[dict]:
+    guru_review_record.requirements_design_digest(str(task_dir), manifest)
+    task_root = task_dir.resolve()
+    remaining = FOCUSED_REQUIREMENTS_CONTEXT_MAX_CHARS
+    selected = []
+    for entry in manifest:
+        rel = guru_review_record._clean_target_paths([entry["path"]])[0]
+        path = (task_root / rel).resolve()
+        if path != task_root and task_root not in path.parents:
+            raise GuruSupervisionError(
+                f"focused requirements/design path escapes task root:{rel}"
+            )
+        heading = entry.get("heading")
+        if isinstance(heading, str) and heading.strip():
+            selector = f"heading:{heading.strip()}"
+            content = guru_review_record._markdown_section_bytes(
+                str(path), heading.strip()
+            )
+        else:
+            selector = "whole_file"
+            try:
+                content = path.read_bytes()
+            except OSError as exc:
+                raise GuruSupervisionError(
+                    f"cannot read focused requirements/design input:{path}:{exc}"
+                ) from exc
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise GuruSupervisionError(
+                f"focused requirements/design input is not UTF-8:{path}:{exc}"
+            ) from exc
+        limit = min(FOCUSED_REQUIREMENT_ITEM_MAX_CHARS, remaining)
+        exact = len(text) <= limit
+        if exact:
+            rendered = text
+        elif limit >= 64:
+            head = max(32, (limit * 3) // 4)
+            tail = max(16, limit - head - 24)
+            rendered = text[:head] + "\n...[bounded]...\n" + text[-tail:]
+        else:
+            rendered = ""
+        remaining = max(0, remaining - len(rendered))
+        selected.append(
+            {
+                "path": rel,
+                "selector": selector,
+                "content_kind": "exact" if exact else "bounded_excerpt",
+                "content_sha256": hashlib.sha256(content).hexdigest(),
+                "content_bytes": len(content),
+                "content": rendered,
+            }
+        )
+    return selected
+
+
+def _focused_dependency_receipts(task_dir: Path, packet: dict) -> list[dict]:
+    aggregate_ids = packet.get("aggregate_slice_ids")
+    selected_ids = set(aggregate_ids if isinstance(aggregate_ids, list) else [])
+    packets = (
+        [
+            guru_review_record.load_packet(str(task_dir), slice_id)
+            for slice_id in aggregate_ids
+        ]
+        if selected_ids
+        else [packet]
+    )
+    latest = {
+        receipt["slice_id"]: receipt
+        for receipt in guru_review_record.receipt_records(str(task_dir))
+    }
+    summary = []
+    for owner in packets:
+        for dependency in owner.get("depends_on") or []:
+            receipt = latest.get(dependency)
+            row = {
+                "slice_id": owner.get("slice_id"),
+                "depends_on": dependency,
+            }
+            if isinstance(receipt, dict):
+                row.update(
+                    {
+                        "state": "receipt_present",
+                        "commit_sha": receipt.get("commit_sha"),
+                        "receipt_id": receipt.get("receipt_id"),
+                        "review_run_id": receipt.get("review_run_id"),
+                    }
+                )
+            elif dependency in selected_ids:
+                row["state"] = "same_aggregate_pending"
+            else:
+                row["state"] = "receipt_missing"
+            summary.append(row)
+    return summary
+
+
+def _focused_staged_diff(root: Path, target_paths: list) -> str:
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "--literal-pathspecs",
+                "diff",
+                "--cached",
+                "--binary",
+                "--no-ext-diff",
+                "--",
+                *target_paths,
+            ],
+            cwd=root,
+            capture_output=True,
+            text=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise GuruSupervisionError(
+            f"cannot build focused staged diff:{exc}"
+        ) from exc
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or b"").decode(
+            "utf-8", errors="replace"
+        ).strip()
+        raise GuruSupervisionError(f"cannot build focused staged diff:{message}")
+    return result.stdout.decode("utf-8", errors="replace")
+
+
+def _focused_review_context_payload(
+    task_dir: Path,
+    root: Path,
+    target: ReviewTarget,
+    evidence_components: dict,
+    deterministic_results: list,
+) -> dict:
+    packet_fields = (
+        "schema_version",
+        guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD,
+        "slice_id",
+        "aggregate_slice_ids",
+        "target_paths",
+        "reviewed_staged_paths",
+        "risk",
+        "risk_reasons",
+        "depends_on",
+        "requirements_design_inputs",
+        "deterministic_checks",
+        "semantic_review_provider",
+        "invariants",
+        "per_slice_target_paths",
+    )
+    deterministic_summary = [
+        {
+            "command": result.get("command"),
+            "exit_code": result.get("exit_code"),
+            "timed_out": result.get("timed_out"),
+            "duration_ms": result.get("duration_ms"),
+            "stdout_summary": str(result.get("stdout_summary", ""))[:1000],
+            "stderr_summary": str(result.get("stderr_summary", ""))[:1000],
+        }
+        for result in deterministic_results
+        if isinstance(result, dict)
+    ]
+    return {
+        "schema_version": 1,
+        "review_target": target.review_target,
+        "reviewed_target_digest": target.reviewed_target_digest,
+        "target_paths": target.packet.get("target_paths", []),
+        "exact_staged_diff": _focused_staged_diff(
+            root, target.packet.get("target_paths", [])
+        ),
+        "invariants": target.packet.get("invariants", []),
+        "selected_requirements_design": (
+            _focused_requirements_design_context(
+                task_dir,
+                target.packet.get("requirements_design_inputs", []),
+            )
+        ),
+        "component_digests": evidence_components,
+        "deterministic_results": deterministic_summary,
+        "deterministic_results_digest": (
+            guru_review_record.deterministic_results_digest(
+                deterministic_results
+            )
+        ),
+        "dependency_receipts": _focused_dependency_receipts(
+            task_dir, target.packet
+        ),
+        "packet_manifest": {
+            field: target.packet[field]
+            for field in packet_fields
+            if field in target.packet
+        },
+        "reviewer_may_run_distinct_read_only_probes": True,
+    }
+
+
 def _review_read_only_snapshot(root: Path) -> str:
     """Bind HEAD, index, tracked edits, and untracked bytes around the reviewer."""
     h = hashlib.sha256()
@@ -2722,6 +3070,14 @@ def _review_read_only_snapshot(root: Path) -> str:
                 f"cannot snapshot reviewer read-only boundary:{message}"
             )
         output = result.stdout
+        if args[0] == "for-each-ref":
+            # Codex creates these observation refs outside the reviewer process.
+            # Product/history refs remain bound by the snapshot.
+            output = b"".join(
+                line
+                for line in output.splitlines(keepends=True)
+                if not line.startswith(b"refs/codex/turn-diffs/")
+            )
         if result.returncode != 0 and args == [
             "rev-parse",
             "--verify",
@@ -3183,12 +3539,65 @@ def run_implementation_review(args: argparse.Namespace) -> int:
         adversarial=False,
         trellis_bin=args.trellis_bin,
     )
-    unit_id = getattr(args, "slice", None)
+    raw_slices = getattr(args, "slice", None)
+    slice_ids = (
+        [raw_slices]
+        if isinstance(raw_slices, str) and raw_slices.strip()
+        else list(raw_slices or [])
+    )
+    slice_ids = [str(slice_id).strip() for slice_id in slice_ids if str(slice_id).strip()]
+    aggregate_mode = bool(getattr(args, "aggregate", False))
+    if aggregate_mode and (not bool(args.staged) or not slice_ids):
+        sys.stderr.write(
+            "[guru-supervise] --aggregate requires --staged and at least one explicit --slice\n"
+        )
+        return 2
+    if not aggregate_mode and len(slice_ids) > 1:
+        sys.stderr.write(
+            "[guru-supervise] repeated --slice requires --aggregate\n"
+        )
+        return 2
+    unit_id = slice_ids[0] if slice_ids else None
     record_unit_id = unit_id
     try:
-        if unit_id:
+        if aggregate_mode:
+            target = _aggregate_review_target(task_dir, root, slice_ids)
+        elif unit_id:
             target = _slice_review_target(task_dir, root, unit_id, staged=bool(args.staged))
         elif args.staged or args.contract:
+            contract, contract_error = guru_contract.load_contract(str(task_dir))
+            packet_ids = guru_review_record.list_packets(str(task_dir))
+            lifecycle_packets = []
+            for packet_id in packet_ids:
+                try:
+                    packet = guru_review_record.load_packet(str(task_dir), packet_id)
+                except guru_review_record.ReviewRecordError as exc:
+                    raise GuruSupervisionError(f"PACKET_INVALID:{exc}") from exc
+                if (
+                    packet.get(guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD, 1)
+                    == guru_review_record.REVIEW_EVIDENCE_SCHEMA_VERSION
+                ):
+                    lifecycle_packets.append(packet_id)
+            if lifecycle_packets and (
+                contract_error or not isinstance(contract, dict)
+            ):
+                raise GuruSupervisionError(
+                    "SCOPE_INVALID:schema-v2 staged fallback requires a valid "
+                    f"route contract:{contract_error or 'gate-contract.json missing'}"
+                )
+            full_high_lifecycle = (
+                isinstance(contract, dict)
+                and guru_contract.contract_route(contract)
+                == guru_contract.ROUTE_FULL_CHAIN
+                and guru_contract.contract_risk(contract)
+                in {guru_contract.RISK_HIGH, guru_contract.RISK_UNKNOWN}
+            )
+            if lifecycle_packets and full_high_lifecycle:
+                raise GuruSupervisionError(
+                    "PACKET_AMBIGUOUS:schema-v2 staged fallback requires "
+                    "--aggregate with every explicit --slice; weak synthetic "
+                    "staged_scope_reviewed is not valid"
+                )
             target = _staged_review_target(task_dir, root)
         else:
             resolved_unit, ambiguous = _resolve_slice_packet(str(task_dir), None)
@@ -3220,6 +3629,8 @@ def run_implementation_review(args: argparse.Namespace) -> int:
             kind = "PACKET_MISSING"
         elif str(exc).startswith("PACKET_INVALID:"):
             kind = "PACKET_INVALID"
+        elif str(exc).startswith("PACKET_AMBIGUOUS:"):
+            kind = "PACKET_AMBIGUOUS"
         guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
             kind, f"{base_run_id}-review-1", unit_id=record_unit_id))
         sys.stderr.write(f"[guru-supervise] implementation-review preflight failed({kind}):{exc}\n")
@@ -3235,7 +3646,11 @@ def run_implementation_review(args: argparse.Namespace) -> int:
         sys.stderr.write(f"[guru-supervise] implementation-review target invalid,硬停(PACKET_INVALID):{exc}\n")
         return 2
 
-    review_target_kind = "slice" if target.review_target.startswith("slice:") else "staged"
+    review_target_kind = (
+        "aggregate"
+        if target.review_target.startswith("aggregate:")
+        else ("slice" if target.review_target.startswith("slice:") else "staged")
+    )
     resolution = _implementation_review_check_config(
         config,
         packet=target.packet,
@@ -3398,6 +3813,7 @@ def run_implementation_review(args: argparse.Namespace) -> int:
         "supervisor_source": supervisor_source_ref,
         "supervisor_source_sha256": hashlib.sha256(supervisor_source.read_bytes()).hexdigest(),
         "slice_id": target.unit_id,
+        "aggregate_slice_ids": target.packet.get("aggregate_slice_ids"),
         "review_target": target.review_target,
         "digest_source": target.digest_source,
         "reviewed_target_digest": target.reviewed_target_digest,
@@ -3436,6 +3852,17 @@ def run_implementation_review(args: argparse.Namespace) -> int:
         if lifecycle_enabled
         else ""
     )
+    focused_context = (
+        _focused_review_context_payload(
+            task_dir,
+            root,
+            target,
+            evidence_components,
+            det_results,
+        )
+        if lifecycle_enabled
+        else None
+    )
     check_plan = build_run_plan(
         "implementation-review",
         task_dir,
@@ -3447,6 +3874,7 @@ def run_implementation_review(args: argparse.Namespace) -> int:
         + deterministic_brief
         + target.active_brief,
         slice_packet_path=target.slice_packet_path,
+        focused_review_context=focused_context,
     )
 
     if args.dry_run:
@@ -3818,7 +4246,16 @@ def build_parser() -> argparse.ArgumentParser:
     implementation_review.add_argument("task_dir")
     implementation_review.add_argument("--run-id")
     implementation_review.add_argument("--dry-run", action="store_true")
-    implementation_review.add_argument("--slice", help="Review an existing slice packet without running implement worker")
+    implementation_review.add_argument(
+        "--slice",
+        action="append",
+        help="Review an existing slice packet; repeat only with --aggregate",
+    )
+    implementation_review.add_argument(
+        "--aggregate",
+        action="store_true",
+        help="Review one explicit all-missing slice set with one worker",
+    )
     implementation_review.add_argument("--staged", action="store_true", help="Bind reviewed_target_digest to the staged index")
     implementation_review.add_argument("--contract", action="store_true", help="Derive review target from gate-contract and staged code paths")
     implementation_review.add_argument("--same-provider", action="store_true", help="Use the current provider for implementation-review when the user explicitly skips the opposite provider")

@@ -217,6 +217,10 @@ _RECORD_FIELDS = (
     "deterministic_commands_digest", "deterministic_results_digest",
     "review_policy_digest", "supervisor_source_digest", "evidence_key",
     "deterministic_evidence_key", REVIEW_EVIDENCE_SCHEMA_FIELD,
+    "aggregate_slice_ids", "reviewed_staged_paths", "aggregate_target_digest",
+    "per_slice_target_paths", "per_slice_target_digests",
+    "per_slice_requirements_design_digests",
+    "per_slice_component_digests", "per_slice_evidence_keys",
 )
 
 
@@ -846,12 +850,310 @@ def requirements_design_digest(task_dir: str, manifest) -> str:
     return h.hexdigest()
 
 
+def _aggregate_topological_packets(task_dir: str, slice_ids) -> list[dict]:
+    """Load an explicit aggregate set and return a stable dependency order."""
+    ids = _require_str_list(slice_ids, "aggregate_slice_ids")
+    ids = [slice_id.strip() for slice_id in ids]
+    if not ids or len(set(ids)) != len(ids):
+        raise ReviewRecordError(
+            "aggregate_slice_ids 必须是非空且无重复的显式 slice 数组"
+        )
+    packets = {slice_id: load_packet(task_dir, slice_id) for slice_id in ids}
+    for slice_id, packet in packets.items():
+        if packet.get("slice_id") != slice_id:
+            raise ReviewRecordError(f"aggregate slice packet id mismatch:{slice_id}")
+        if (
+            packet.get(REVIEW_EVIDENCE_SCHEMA_FIELD, 1)
+            != REVIEW_EVIDENCE_SCHEMA_VERSION
+        ):
+            raise ReviewRecordError(
+                f"aggregate slice {slice_id} requires review evidence schema v2"
+            )
+        dependencies = _require_str_list(
+            packet.get("depends_on"),
+            f"{slice_id}.depends_on",
+        )
+        missing = [dependency for dependency in dependencies if dependency not in packets]
+        if missing:
+            raise ReviewRecordError(
+                f"aggregate slice {slice_id} dependency must be selected: {missing}"
+            )
+    ordered = []
+    remaining = list(ids)
+    while remaining:
+        ready = [
+            slice_id
+            for slice_id in remaining
+            if all(
+                dependency in {packet["slice_id"] for packet in ordered}
+                for dependency in (packets[slice_id].get("depends_on") or [])
+            )
+        ]
+        if not ready:
+            raise ReviewRecordError("aggregate slice dependency graph contains a cycle")
+        for slice_id in ready:
+            ordered.append(packets[slice_id])
+            remaining.remove(slice_id)
+    return ordered
+
+
+def _aggregate_requirements_design_inputs(packets: list[dict]) -> list[dict]:
+    """Canonical selector union; whole-file coverage supersedes headings."""
+    ordered_paths = []
+    selectors: dict[str, list[dict]] = {}
+    for packet in packets:
+        manifest = packet.get("requirements_design_inputs")
+        if not isinstance(manifest, list) or not manifest:
+            raise ReviewRecordError(
+                f"aggregate slice {packet['slice_id']} requirements_design_inputs missing"
+            )
+        for index, entry in enumerate(manifest):
+            if not isinstance(entry, dict):
+                raise ReviewRecordError(
+                    f"aggregate requirements selector {packet['slice_id']}[{index}] invalid"
+                )
+            raw_path = entry.get("path")
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                raise ReviewRecordError("aggregate requirements selector path invalid")
+            path = _clean_target_paths([raw_path])[0]
+            if path not in selectors:
+                ordered_paths.append(path)
+                selectors[path] = []
+            if entry.get("whole_file") is True and entry.get("heading") is None:
+                selectors[path] = [{"path": path, "whole_file": True}]
+                continue
+            heading = entry.get("heading")
+            if not isinstance(heading, str) or not heading.strip() or entry.get("whole_file") is True:
+                raise ReviewRecordError("aggregate requirements selector must bind one heading or whole file")
+            if any(item.get("whole_file") is True for item in selectors[path]):
+                continue
+            normalized = {"path": path, "heading": heading.strip()}
+            if normalized not in selectors[path]:
+                selectors[path].append(normalized)
+    return [entry for path in ordered_paths for entry in selectors[path]]
+
+
+def _task_effective_packet_risk(task_dir: str) -> str | None:
+    """Resolve the task fallback used only by packets with unknown risk."""
+    try:
+        with open(os.path.join(task_dir, "task.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    candidates = [data.get("risk_level"), data.get("guru_risk_level")]
+    has_low = False
+    for key in ("guru_risk", "risk"):
+        value = data.get(key)
+        if isinstance(value, dict):
+            if value.get("high_risk") is True:
+                return "high"
+            if value.get("low_risk") is True:
+                has_low = True
+            candidates.extend([value.get("risk_level"), value.get("level")])
+        elif isinstance(value, str):
+            candidates.append(value)
+    for value in candidates:
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip().lower().replace("_", "-")
+        if normalized in {"high", "critical", "p0"}:
+            return "high"
+        if normalized in {"low", "minor", "trivial"}:
+            has_low = True
+    return "low" if has_low else None
+
+
+def build_aggregate_packet(
+    task_dir: str,
+    slice_ids,
+    reviewed_staged_paths,
+) -> dict:
+    """Build the strong aggregate contract shared by supervisor and Gate."""
+    packets = _aggregate_topological_packets(task_dir, slice_ids)
+    staged_paths = _clean_target_paths(reviewed_staged_paths)
+    if not staged_paths:
+        raise ReviewRecordError("aggregate review requires staged code paths")
+    targets = _clean_target_paths(
+        [path for packet in packets for path in packet["target_paths"]]
+    )
+    uncovered = [
+        path
+        for path in staged_paths
+        if not any(path == target or path.startswith(target + "/") for target in targets)
+    ]
+    if uncovered:
+        raise ReviewRecordError(
+            "aggregate staged paths are not covered by selected slices: "
+            + ", ".join(uncovered[:5])
+        )
+    non_covering = [
+        packet["slice_id"]
+        for packet in packets
+        if not any(
+            staged == target or staged.startswith(target + "/")
+            for staged in staged_paths
+            for target in _clean_target_paths(packet["target_paths"])
+        )
+    ]
+    if non_covering:
+        raise ReviewRecordError(
+            "aggregate selected slices do not cover staged paths: "
+            + ", ".join(non_covering)
+        )
+    selected_ids = {packet["slice_id"] for packet in packets}
+    omitted_covering = []
+    for candidate_id in list_packets(task_dir):
+        if candidate_id in selected_ids:
+            continue
+        candidate = load_packet(task_dir, candidate_id)
+        candidate_targets = _clean_target_paths(candidate["target_paths"])
+        if any(
+            staged == target or staged.startswith(target + "/")
+            for staged in staged_paths
+            for target in candidate_targets
+        ):
+            omitted_covering.append(candidate_id)
+    if omitted_covering:
+        raise ReviewRecordError(
+            "aggregate explicit slice set omits covering slices: "
+            + ", ".join(omitted_covering)
+        )
+
+    invariants = []
+    invariant_by_id = {}
+    for packet in packets:
+        for invariant in packet["invariants"]:
+            invariant_id = invariant["invariant_id"]
+            previous = invariant_by_id.get(invariant_id)
+            if previous is not None and previous != invariant:
+                raise ReviewRecordError(
+                    f"aggregate invariant conflict:{invariant_id}"
+                )
+            if previous is None:
+                invariant_by_id[invariant_id] = invariant
+                invariants.append(invariant)
+
+    required_providers = {
+        packet["semantic_review_provider"]["provider"]
+        for packet in packets
+        if packet["semantic_review_provider"]["required"] is True
+    }
+    if len(required_providers) > 1:
+        raise ReviewRecordError(
+            "aggregate semantic review provider policy is ambiguous: "
+            + ", ".join(sorted(required_providers))
+        )
+    required = bool(required_providers)
+    provider = next(iter(required_providers), "opposite")
+    ocr = (
+        "disabled"
+        if any(
+            packet["semantic_review_provider"].get("ocr") == "disabled"
+            for packet in packets
+        )
+        else "optional"
+    )
+    task_risk = _task_effective_packet_risk(task_dir)
+    effective_risks = [packet.get("risk") or task_risk for packet in packets]
+    if "critical" in effective_risks:
+        risk = "critical"
+    elif "high" in effective_risks:
+        risk = "high"
+    elif None in effective_risks:
+        risk = None
+    else:
+        risk = "low"
+    commands = stable_unique_commands(
+        [command for packet in packets for command in packet["deterministic_checks"]]
+    )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        REVIEW_EVIDENCE_SCHEMA_FIELD: REVIEW_EVIDENCE_SCHEMA_VERSION,
+        "slice_id": "aggregate",
+        "aggregate_slice_ids": [packet["slice_id"] for packet in packets],
+        "owner_unit": "UNIT-aggregate-review-fallback",
+        "target_kind": "implementation",
+        "target_paths": targets,
+        "reviewed_staged_paths": staged_paths,
+        "risk": risk,
+        "risk_reasons": list(dict.fromkeys(
+            reason
+            for packet in packets
+            for reason in (packet.get("risk_reasons") or [])
+        )),
+        "requirements_design_inputs": _aggregate_requirements_design_inputs(packets),
+        "deterministic_checks": commands,
+        "semantic_review_provider": {
+            "required": required,
+            "provider": provider,
+            "ocr": ocr,
+        },
+        "invariants": invariants,
+        "per_slice_target_paths": {
+            packet["slice_id"]: _clean_target_paths(packet["target_paths"])
+            for packet in packets
+        },
+        "per_slice_requirements_design_digests": {
+            packet["slice_id"]: requirements_design_digest(
+                task_dir,
+                packet["requirements_design_inputs"],
+            )
+            for packet in packets
+        },
+        "per_slice_invariant_set_digests": {
+            packet["slice_id"]: invariant_set_digest(packet["invariants"])
+            for packet in packets
+        },
+        "per_slice_deterministic_commands_digests": {
+            packet["slice_id"]: deterministic_commands_digest(
+                packet["deterministic_checks"]
+            )
+            for packet in packets
+        },
+    }
+
+
+def aggregate_per_slice_components(
+    task_dir: str,
+    aggregate_packet: dict,
+    record: dict,
+    *,
+    supervisor_path: str | None = None,
+    supervisor_digest: str | None = None,
+) -> dict[str, dict]:
+    """Derive receipt components for each constituent from one aggregate run."""
+    results = record.get("deterministic_results")
+    if not isinstance(results, list):
+        raise ReviewRecordError("aggregate deterministic_results 必须是数组")
+    components = {}
+    for slice_id in aggregate_packet.get("aggregate_slice_ids", []):
+        packet = load_packet(task_dir, slice_id)
+        command_set = set(packet["deterministic_checks"])
+        per_record = dict(record)
+        per_record["deterministic_results"] = [
+            result
+            for result in results
+            if isinstance(result, dict) and result.get("command") in command_set
+        ]
+        components[slice_id] = review_evidence_components(
+            task_dir,
+            packet,
+            per_record,
+            supervisor_path=supervisor_path,
+            supervisor_digest=supervisor_digest,
+        )
+    return components
+
+
 def review_evidence_components(
     task_dir: str,
     packet: dict,
     record: dict,
     *,
     supervisor_path: str | None = None,
+    supervisor_digest: str | None = None,
 ) -> dict:
     if not isinstance(packet, dict) or not isinstance(record, dict):
         raise ReviewRecordError("review evidence inputs 必须是对象")
@@ -859,7 +1161,11 @@ def review_evidence_components(
         os.path.dirname(os.path.abspath(__file__)),
         "guru_supervise.py",
     )
-    return {
+    if supervisor_digest is not None and not re.fullmatch(
+        r"[0-9a-f]{64}", supervisor_digest
+    ):
+        raise ReviewRecordError("supervisor_digest 必须是 sha256")
+    components = {
         "target_paths_digest": target_paths_digest(packet.get("target_paths")),
         "invariant_set_digest": invariant_set_digest(packet.get("invariants")),
         "requirements_design_digest": requirements_design_digest(
@@ -875,8 +1181,67 @@ def review_evidence_components(
         "review_policy_digest": review_policy_digest(
             review_policy_payload(packet, record)
         ),
-        "supervisor_source_digest": supervisor_source_digest(source_path),
+        "supervisor_source_digest": (
+            supervisor_digest
+            if supervisor_digest is not None
+            else supervisor_source_digest(source_path)
+        ),
     }
+    aggregate_ids = packet.get("aggregate_slice_ids")
+    if isinstance(aggregate_ids, list) and aggregate_ids:
+        per_target_paths = packet.get("per_slice_target_paths")
+        per_requirements = packet.get("per_slice_requirements_design_digests")
+        per_invariants = packet.get("per_slice_invariant_set_digests")
+        per_commands = packet.get("per_slice_deterministic_commands_digests")
+        expected_ids = set(aggregate_ids)
+        for name, value in (
+            ("per_slice_target_paths", per_target_paths),
+            ("per_slice_requirements_design_digests", per_requirements),
+            ("per_slice_invariant_set_digests", per_invariants),
+            ("per_slice_deterministic_commands_digests", per_commands),
+        ):
+            if not isinstance(value, dict) or set(value) != expected_ids:
+                raise ReviewRecordError(f"aggregate {name} invalid")
+        per_policy = {
+            slice_id: review_policy_digest(
+                review_policy_payload(load_packet(task_dir, slice_id), record)
+            )
+            for slice_id in aggregate_ids
+        }
+        components.update(
+            {
+                "target_paths_digest": canonical_digest(
+                    "guru-aggregate-target-paths-v1",
+                    {
+                        "union": components["target_paths_digest"],
+                        "per_slice": per_target_paths,
+                    },
+                ),
+                "invariant_set_digest": canonical_digest(
+                    "guru-aggregate-invariant-set-v1",
+                    {
+                        "union": components["invariant_set_digest"],
+                        "per_slice": per_invariants,
+                        "deterministic_command_ownership": per_commands,
+                    },
+                ),
+                "requirements_design_digest": canonical_digest(
+                    "guru-aggregate-requirements-design-v1",
+                    {
+                        "union": components["requirements_design_digest"],
+                        "per_slice": per_requirements,
+                    },
+                ),
+                "review_policy_digest": canonical_digest(
+                    "guru-aggregate-review-policy-v1",
+                    {
+                        "union": components["review_policy_digest"],
+                        "per_slice": per_policy,
+                    },
+                ),
+            }
+        )
+    return components
 
 
 def review_evidence_key(reviewed_target_digest: str, components: dict) -> str:
@@ -1199,6 +1564,95 @@ def append_receipt_batch(task_dir: str, receipts: list) -> None:
         os.close(fd)
 
 
+def _validate_aggregate_record_for_append(task_dir: str, record: dict) -> dict:
+    if not isinstance(record, _NormalizedReviewRecord):
+        raise ReviewRecordError(
+            "v2 clean aggregate implementation review must come from the official normalized producer"
+        )
+    aggregate_ids = record.get("aggregate_slice_ids")
+    staged_paths = record.get("reviewed_staged_paths")
+    aggregate_packet = build_aggregate_packet(
+        task_dir,
+        aggregate_ids,
+        staged_paths,
+    )
+    expected_target = "aggregate:" + ",".join(
+        aggregate_packet["aggregate_slice_ids"]
+    )
+    if record.get("slice_id") != "aggregate" or record.get("review_target") != expected_target:
+        raise ReviewRecordError("aggregate review target does not bind explicit slice set")
+    if _clean_target_paths(record.get("target_paths")) != aggregate_packet["target_paths"]:
+        raise ReviewRecordError("aggregate review target_paths differ from packet union")
+    if record.get("reviewed_staged_paths") != aggregate_packet["reviewed_staged_paths"]:
+        raise ReviewRecordError("aggregate reviewed_staged_paths are not canonical")
+    reviewed_digest = record.get("reviewed_target_digest")
+    if record.get("aggregate_target_digest") != reviewed_digest:
+        raise ReviewRecordError("aggregate_target_digest differs from reviewed_target_digest")
+    components = review_evidence_components(task_dir, aggregate_packet, record)
+    expected_key = review_evidence_key(reviewed_digest, components)
+    if record.get(REVIEW_EVIDENCE_SCHEMA_FIELD) != REVIEW_EVIDENCE_SCHEMA_VERSION:
+        raise ReviewRecordError("aggregate review evidence schema is stale or missing")
+    if record.get("evidence_key") != expected_key:
+        raise ReviewRecordError(
+            "aggregate review evidence key is stale or missing: "
+            f"record={record.get('evidence_key')} expected={expected_key}"
+        )
+    if record.get("deterministic_evidence_key") != expected_key:
+        raise ReviewRecordError(
+            "aggregate deterministic evidence key is stale or missing"
+        )
+    invariant_verdicts = validate_persisted_invariant_verdicts(
+        aggregate_packet["invariants"],
+        record.get("invariant_verdicts"),
+        require_all_pass=record.get("review_result") == "clean",
+    )
+    if record.get("invariant_verdicts_digest") != invariant_verdicts_digest(
+        invariant_verdicts
+    ):
+        raise ReviewRecordError("aggregate invariant_verdicts_digest mismatch")
+    if aggregate_invariant_coverage(
+        aggregate_packet["invariants"],
+        invariant_verdicts,
+    ) != record.get("invariant_coverage"):
+        raise ReviewRecordError("aggregate invariant_coverage mismatch")
+    validate_review_deterministic_evidence(task_dir, record, components)
+
+    target_digests = record.get("per_slice_target_digests")
+    if not isinstance(target_digests, dict):
+        raise ReviewRecordError("aggregate per_slice_target_digests missing")
+    ids = aggregate_packet["aggregate_slice_ids"]
+    if set(target_digests) != set(ids) or not all(
+        isinstance(target_digests[slice_id], str)
+        and re.fullmatch(r"[0-9a-f]{64}", target_digests[slice_id])
+        for slice_id in ids
+    ):
+        raise ReviewRecordError("aggregate per_slice_target_digests invalid")
+    if record.get("per_slice_target_paths") != aggregate_packet["per_slice_target_paths"]:
+        raise ReviewRecordError("aggregate per_slice_target_paths mismatch")
+    if record.get("per_slice_requirements_design_digests") != aggregate_packet[
+        "per_slice_requirements_design_digests"
+    ]:
+        raise ReviewRecordError(
+            "aggregate per_slice_requirements_design_digests mismatch"
+        )
+    per_components = aggregate_per_slice_components(
+        task_dir,
+        aggregate_packet,
+        record,
+    )
+    if record.get("per_slice_component_digests") != per_components:
+        raise ReviewRecordError("aggregate per_slice_component_digests mismatch")
+    per_keys = {
+        slice_id: review_evidence_key(target_digests[slice_id], per_components[slice_id])
+        for slice_id in ids
+    }
+    if record.get("per_slice_evidence_keys") != per_keys:
+        raise ReviewRecordError("aggregate per_slice_evidence_keys mismatch")
+    normalized = dict(record)
+    normalized.update(components)
+    return normalized
+
+
 def append_record(task_dir: str, record: dict) -> None:
     """**唯一 writer**:校验 record 关键枚举后追加 review-records/implementation-reviews.jsonl。
     调用方永远经 normalize_review_record / preflight_failure_record → append_record,绝不拒绝后手写
@@ -1333,6 +1787,11 @@ def append_record(task_dir: str, record: dict) -> None:
                     else:
                         record["evidence_key"] = expected_key
                     record.update(components)
+        if (
+            record.get("supplemental") is not True
+            and record.get("review_target", "").startswith("aggregate:")
+        ):
+            record = _validate_aggregate_record_for_append(task_dir, record)
     os.makedirs(os.path.dirname(_reviews_path(task_dir)), exist_ok=True)
     line = json.dumps(
         {k: record[k] for k in _RECORD_FIELDS if k in record},
@@ -2200,6 +2659,18 @@ def normalize_review_record(fields, context):
         ]
     if context.get("reviewed_target_digest"):
         base["reviewed_target_digest"] = context.get("reviewed_target_digest")
+    for aggregate_field in (
+        "aggregate_slice_ids",
+        "reviewed_staged_paths",
+        "aggregate_target_digest",
+        "per_slice_target_paths",
+        "per_slice_target_digests",
+        "per_slice_requirements_design_digests",
+        "per_slice_component_digests",
+        "per_slice_evidence_keys",
+    ):
+        if context.get(aggregate_field) is not None:
+            base[aggregate_field] = context[aggregate_field]
 
     def blocked(code):
         rec = dict(base)
@@ -2242,7 +2713,7 @@ def normalize_review_record(fields, context):
     if (
         source not in PROVIDER_OVERRIDE_SOURCES
         or policy not in HIGH_RISK_REVIEW_PROVIDER_POLICIES
-        or target_kind not in {"slice", "staged"}
+        or target_kind not in {"slice", "staged", "aggregate"}
         or actual not in _CHANNEL_PROVIDERS
         or impl not in _CHANNEL_PROVIDERS
         or check_provider not in _CHANNEL_PROVIDERS
@@ -2256,7 +2727,7 @@ def normalize_review_record(fields, context):
         if not normalized_quote or check_provider != impl:
             return blocked("MALFORMED_REVIEW_OUTPUT")
     elif source == "config_policy":
-        if normalized_quote or target_kind != "slice":
+        if normalized_quote or target_kind not in {"slice", "aggregate"}:
             return blocked("MALFORMED_REVIEW_OUTPUT")
         if policy == "current":
             expected_provider = impl
@@ -2269,7 +2740,7 @@ def normalize_review_record(fields, context):
     else:
         if normalized_quote or not isinstance(pkt, dict):
             return blocked("MALFORMED_REVIEW_OUTPUT")
-        if target_kind == "slice" and pkt.get("risk") in {"high", "critical"}:
+        if target_kind in {"slice", "aggregate"} and pkt.get("risk") in {"high", "critical"}:
             return blocked("MALFORMED_REVIEW_OUTPUT")
         semantic_provider = pkt.get("semantic_review_provider")
         if semantic_provider is None:
