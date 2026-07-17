@@ -116,6 +116,45 @@ light 链执行 WX-3/WX-4/WX-5/WX-6 的等价检查（索引在 `design.md §概
 11. 中断升级仅限四种情形：概要源缺失 / 业务语义必须人工确认 / 技术决策（含 `external` provider/SDK）未选定或槽位待定 / 修复无法收敛（同一 finding 修 2 轮仍不收敛）；其余情况自动闭环推进，不停下等用户人工 review。
 12. 全目录完成后提示送审：加载 `go-design-detail-review`（人工 Gate 判定能否进入编码，区别于 `trellis-check` 的实现后代码质检）；Gate 结论「可进入编码」后先用 `record-review detail` 留下当前 digest 的两次 clean review evidence，再按 config `guru.gate_mode` 完成 `confirm detail` 人工收口——strict 由用户本人在终端跑 `guru_gate.py confirm detail <task_dir>`（agent 不得代跑），soft 在用户对话明确确认后按 `--via-agent --user-quote` 代跑。
 
+## Full/high 实现切片计划（与章节批次解耦）
+
+full/high 全目录完成时，写作者必须在 `implement.md` 建立切片 planning
+audit；章节写作批次不是实现切片边界。Go 的
+domain→repository-data→biz→entry-api→横切写作顺序，以及
+transport/service/repository/domain 的归属与单向依赖律继续生效，但不得机械
+要求每个 `UNIT`、`doc_type` 或层各占一个切片。
+
+1. 每个普通切片记录 `owner_unit`、`covered_units`、`read_paths`、
+   `owned_paths`、`focused_checks`、`parallel_wave`、`resource_locks`、
+   `resource_isolation`、`check_wave`、`independent_commit_value`、
+   `rollback_contract`、`review_context_inputs`、`review_context_bytes` 和
+   `rejected_merge_candidates`。packet 的 `owner_unit` 保持一个真实标量；
+   `covered_units` 可包含多个 Design UNIT。
+2. `owned_paths` 按文件级声明，同一 `parallel_wave` 的一个 mutable path
+   只能有一个 ordinary slice **mutable owner**；不得以 symbol、函数、类或
+   diff hunk 绕过。重叠路径须重新分配唯一 owner 或合并切片。
+3. 普通切片默认 `depends_on=[]`。先在已确认 Detail 中冻结跨切片接口、
+   schema、digest、错误语义和共享数据结构；只有必须读取另一切片实际输出
+   bytes 时才允许非空依赖。UNIT、章节、doc_type、层级或 review 顺序都不是
+   实现依赖。
+4. 每个被修改的测试文件只能有一个 owner。普通切片只跑 focused checks；
+   相同工具状态须以独立 worktree/cache/output 隔离，或记录同一
+   `resource_locks` 并分配串行 `check_wave`；不能隔离时合并。full regression
+   只交给 Integration。
+5. 普通切片默认最多四个。每片必须有可独立提交的用户/合同价值和可独立执行
+   的 rollback；缺任一项就拒绝该切片候选并合并。对考虑过但决定不合并的
+   组合，在 `rejected_merge_candidates` 逐项写切片集合与保持分离的理由；
+   超过四片时还须逐片说明独立价值和 rollback 例外理由。
+6. `review_context_inputs` 必须列出 reviewer 实际选中的精确、有序 inventory
+   （packet、planning audit、target diff/owned paths、相关 frozen contracts
+   与 focused evidence），每项写选择范围和该 snapshot 的 UTF-8 bytes。
+   `review_context_bytes` 是各项的精确整数和，必须 `<= 262144`；禁止 wildcard、
+   “相关文件”或只写未实测不等式。超限先缩减到上述最小输入，再阻断确认。
+7. 普通分组稳定后创建恰好一个 Integration Slice：它依赖全部普通切片，
+   packet coverage 覆盖普通 target union；`integration_owned_paths` 单独限定
+   实际可写路径。Integration 只补集成字节、跨切片 invariant、full regression
+   和最终 spec/sync 检查，不重写普通 owner 的核心字节。
+
 ## 输出要求（writing 专属）
 
 每批输出：
@@ -132,7 +171,8 @@ light 链执行 WX-3/WX-4/WX-5/WX-6 的等价检查（索引在 `design.md §概
 - `未决问题与升级项`（如有，按强制约束 11 分类）。
 - `下一目标推荐`（下一批建议 + 剩余目标清单）。
 
-全目录完成时追加：`完成判定`（L1 §5.5 三要素）+ 送审与人工确认指引（强制约束 12）。
+全目录完成时追加：`完成判定`（L1 §5.5 三要素）+ 上述切片 planning audit +
+送审与人工确认指引（强制约束 12）。
 
 前置失败输出：`writing_stage=blocked_requires_overview_fix` + `draft_blockers` 缺口清单 + 概要修订动作 + `recommended_next_step`，不产出正文。
 
