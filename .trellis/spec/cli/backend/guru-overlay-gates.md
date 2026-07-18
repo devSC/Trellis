@@ -1106,3 +1106,121 @@ This mutates the detail digest after confirmation and forces unnecessary re-revi
 ```
 
 This records the Finish decision without changing the planning/detail contract digest.
+
+## Scenario: Serialized Integration Proof Review
+
+### 1. Scope / Trigger
+
+Apply this contract when a Full/high `SL-INTEGRATION` implementation review is
+projected from current ordinary-slice receipts, generated peers, Integration-owned
+staged paths, requirements/design evidence, and deterministic results. The semantic
+reviewer must judge the serialized proof only; it must not rediscover repository
+context.
+
+### 2. Signatures
+
+- Operator command:
+  - `python3 guru_supervise.py implementation-review <task_dir> --slice SL-INTEGRATION --staged`
+- Proof projection:
+  - `_integration_proof_bundle(...) -> dict`
+  - `_serialize_integration_proof_prompt(bundle, invocation_contract, component_digests) -> (prompt, projected_bundle, retry_identity)`
+- Context-free reviewer plan:
+  - `_without_injected_context(plan, prompt, isolated_cwd)` removes `--agent`,
+    `--file`, `--jsonl`, and any inherited `--cwd`, then adds exactly the isolated
+    cwd and sets `files=[]`, `jsonls=[]`.
+
+### 3. Contracts
+
+- The serialized payload must include `integration_proof_bundle`, the exact
+  nine-field `retry_identity`, `expected_invariant_ids`, `verdict_contract`, and
+  first-class `acceptance_metrics`.
+- `acceptance_metrics` must expose `semantic_reviewer_count=1`,
+  `duplicate_read_probe_count=0`, `integration_full_regression_count=1`,
+  `projection_counts`, `formatting_retry_count=0`,
+  `receipt_invalidation_set`, and structured `provider_input_tokens` availability.
+  Serialization adds stable `payload_bytes`, `estimated_tokens`, `budget_verdict`,
+  budget limits, and `formatting_retry_identity`.
+- The proof-only reviewer runs from a temporary isolated cwd with no agent card or
+  repository/task file injection. Removing only `--file` and `--jsonl` is
+  insufficient: an inherited `--agent check` resolves relative to the isolated cwd
+  and makes the review environment-dependent.
+- The deterministic evidence set must contain the exact full lifecycle regression
+  command once. Zero or duplicate occurrences are invalid proof, even when all
+  command exit codes are zero.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+| --- | --- |
+| Proof-only plan retains `--agent`, `--file`, or `--jsonl` | Block before semantic review |
+| Reviewer plan has no isolated cwd | Block; do not permit repository context discovery |
+| Full lifecycle regression count is not exactly one | Raise `Integration proof requires exactly one full lifecycle regression` |
+| Payload exceeds byte or estimated-token limits | Raise `Integration proof prompt budget exceeded` |
+| Payload metrics do not stabilize with the proof digest | Raise `Integration proof prompt metrics did not stabilize` |
+| Reviewer tool trace reports a source probe | Record the probe and reject a clean proof verdict |
+| Acceptance metrics are absent or implicit only in logs | Treat the proof as incomplete; do not issue a current receipt |
+
+### 5. Good/Base/Bad Cases
+
+- Good: one isolated Codex reviewer receives only the serialized proof, the tool
+  trace contains no source probe, every expected invariant has passed evidence,
+  and all acceptance metrics are present in the reviewed payload.
+- Base: provider input-token usage is unavailable, so the payload records
+  `{ "available": false, "value": null }` instead of inventing a value.
+- Bad: the supervisor retains `--agent check` while moving the reviewer into an
+  empty temp directory; agent-card resolution fails before the proof is reviewed.
+- Bad: lifecycle regression ran once in an earlier wave but is absent from the
+  current proof evidence set; historical success cannot satisfy the current proof.
+
+### 6. Tests Required
+
+- Assert the proof-only plan has `files=[]`, `jsonls=[]`, no `--agent`, `--file`,
+  or `--jsonl`, and ends with the explicit isolated `--cwd`.
+- Assert prompt serialization reaches stable byte/token metrics, records the same
+  metrics inside `acceptance_metrics`, passes budget enforcement, and binds the
+  exact nine-field formatting retry identity.
+- Assert the acceptance metric schema and projection counts are complete, including
+  explicit provider-token unavailability and an empty receipt invalidation set.
+- Assert zero and duplicate full lifecycle regression commands fail; exactly one
+  current command passes.
+- Assert undeclared source-tool events are counted from the channel trace and cannot
+  be hidden by zero injected files.
+- Run source/template parity checks plus the focused proof-context, verdict-retry,
+  and lifecycle regression suites before recording the Integration receipt.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+spawn ... --agent check --cwd /tmp/guru-integration-proof-semantic-XYZ
+files=[] jsonls=[]
+metrics are mentioned only in the operator log
+```
+
+This still depends on repository-relative agent-card resolution and gives the
+reviewer no auditable acceptance-metric contract.
+
+#### Correct
+
+```json
+{
+  "spawn_contract": {
+    "agent": null,
+    "files": [],
+    "jsonls": [],
+    "cwd": "/tmp/guru-integration-proof-semantic-XYZ"
+  },
+  "acceptance_metrics": {
+    "semantic_reviewer_count": 1,
+    "duplicate_read_probe_count": 0,
+    "integration_full_regression_count": 1,
+    "formatting_retry_count": 0,
+    "receipt_invalidation_set": [],
+    "provider_input_tokens": {"available": false, "value": null}
+  }
+}
+```
+
+The isolated reviewer is environment-independent, and the proof carries the
+acceptance evidence that the reviewer and receipt validator must consume.
