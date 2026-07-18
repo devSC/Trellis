@@ -18,7 +18,11 @@ P0 ①逐行数据语义密度(D7)②SSOT 加载+collect_gate_artifacts fail-clo
 
 ### Main Changes
 
-(Add details)
+- Restored canonical/package runtime parity and delivered the proof supervisor,
+  verdict retry evidence, acceptance metrics, and generated Integration peers.
+- Recorded current clean reviews and append-only receipts for all four slices.
+- Documented the serialized Integration proof contract and archived the completed
+  parent task without including parallel-window task artifacts.
 
 ### Git Commits
 
@@ -39,7 +43,10 @@ P0 ①逐行数据语义密度(D7)②SSOT 加载+collect_gate_artifacts fail-clo
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] 7 source/template parity pairs
+- [OK] proof-context 17/17 and verdict-retry 21/21
+- [OK] lifecycle regression 105/105
+- [OK] FINAL_COMMIT_READY with all four current receipts
 
 ### Status
 
@@ -248,6 +255,44 @@ Added dynamic high-risk slice review provider policy, strict evidence validation
 | Hash | Message |
 |------|---------|
 | `f46cea60` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 8: Complete Guru Integration proof runtime optimization
+
+**Date**: 2026-07-18
+**Task**: Complete Guru Integration proof runtime optimization
+**Branch**: `codex/guru-minimum-stable-parallel-slices-20260717`
+
+### Summary
+
+Delivered four current-receipt slices, isolated serialized Integration proof review, explicit acceptance metrics, deterministic verdict retry evidence, generated runtime parity, and FINAL_COMMIT_READY verification.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c6f86cd8` | (see git log) |
+| `d899ba0b` | (see git log) |
+| `08457498` | (see git log) |
+| `51ea2c5b` | (see git log) |
+| `655f6f74` | (see git log) |
+| `d5b0bd0a` | (see git log) |
 
 ### Testing
 

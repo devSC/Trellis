@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
-- **Last Active**: 2026-07-14
+- **Total Sessions**: 8
+- **Last Active**: 2026-07-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~262 | Active |
+| `journal-1.md` | ~300 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-07-18 | Complete Guru Integration proof runtime optimization | `c6f86cd8`, `d899ba0b`, `08457498`, `51ea2c5b`, `655f6f74`, `d5b0bd0a` | `codex/guru-minimum-stable-parallel-slices-20260717` |
 | 7 | 2026-07-14 | Configure high-risk slice review provider | `f46cea60` | `codex/preserve-guru-target-wip-75887690` |
 | 6 | 2026-07-10 | Guru workflow slice dispatcher parity | `b575a472`, `3da89ab9`, `308ed856` | `codex/guru-0.6.0-ga-worktree` |
 | 5 | 2026-07-09 | Route-aware Guru slice supervision | `613c8fd3` | `codex/guru-0.6.0-ga-worktree` |
