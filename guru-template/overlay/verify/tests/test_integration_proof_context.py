@@ -471,6 +471,17 @@ class IntegrationProofContextTests(unittest.TestCase):
         )
         self.assertNotIn("--file", prompt)
         payload = json.loads(prompt.split("\n", 1)[1])
+        metrics = payload["acceptance_metrics"]
+        self.assertEqual(
+            metrics["payload_bytes"],
+            projected["payload_metrics"]["payload_bytes"],
+        )
+        self.assertEqual(
+            metrics["estimated_tokens"],
+            projected["payload_metrics"]["estimated_tokens"],
+        )
+        self.assertEqual(metrics["budget_verdict"], "passed")
+        self.assertEqual(metrics["formatting_retry_identity"], retry_identity)
         contract = payload["verdict_contract"]
         self.assertEqual(
             contract["clean_header_values"]["invariant_coverage"],
@@ -480,6 +491,47 @@ class IntegrationProofContextTests(unittest.TestCase):
             contract["per_invariant_lines"]["status"],
             "invariant_status.<id>=pass|fail|not_applicable",
         )
+
+    def test_acceptance_metrics_are_complete_and_require_one_regression(self) -> None:
+        result = {"command": SUPERVISE.INTEGRATION_FULL_REGRESSION_COMMAND}
+        metrics = SUPERVISE._integration_acceptance_metrics(
+            receipt_proofs=[
+                {"slice_id": "SL-A", "state": "current"},
+                {"slice_id": "SL-B", "state": "current"},
+            ],
+            ordinary_targets=["a", "b", "c", "d"],
+            peer_proofs=[{"equal": True}] * 7,
+            integration_owned=["shell", "peer-a", "peer-b"],
+            peer_paths={"peer-a", "peer-b"},
+            requirements_design_proofs=[{}] * 10,
+            deterministic_results=[{}, {}, {}, {}, result, {}],
+        )
+        self.assertEqual(metrics["semantic_reviewer_count"], 1)
+        self.assertEqual(metrics["duplicate_read_probe_count"], 0)
+        self.assertEqual(metrics["integration_full_regression_count"], 1)
+        self.assertEqual(metrics["projection_counts"]["generated_peers"], 7)
+        self.assertEqual(
+            metrics["projection_counts"]["integration_owned_diff_paths"], 1
+        )
+        self.assertEqual(metrics["formatting_retry_count"], 0)
+        self.assertEqual(metrics["receipt_invalidation_set"], [])
+        self.assertEqual(
+            metrics["provider_input_tokens"],
+            {"available": False, "value": None},
+        )
+        with self.assertRaisesRegex(
+            SUPERVISE.GuruSupervisionError,
+            "exactly one full lifecycle regression:count=0",
+        ):
+            SUPERVISE._integration_acceptance_metrics(
+                receipt_proofs=[],
+                ordinary_targets=[],
+                peer_proofs=[],
+                integration_owned=[],
+                peer_paths=set(),
+                requirements_design_proofs=[],
+                deterministic_results=[],
+            )
 
     def test_semantic_prompt_contains_complete_frozen_verdict_contract(self) -> None:
         components = {

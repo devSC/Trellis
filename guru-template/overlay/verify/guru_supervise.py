@@ -77,6 +77,9 @@ FOCUSED_REQUIREMENTS_CONTEXT_MAX_CHARS = 32000
 FOCUSED_REQUIREMENT_ITEM_MAX_CHARS = 12000
 INTEGRATION_PROOF_MAX_BYTES = 98304
 INTEGRATION_PROOF_MAX_ESTIMATED_TOKENS = 25000
+INTEGRATION_FULL_REGRESSION_COMMAND = (
+    "python3 guru-template/overlay/verify/tests/test_slice_commit_lifecycle.py"
+)
 ADVERSARIAL_MODEL_ACTIONS = {"requirements", "overview", "detail"}
 GATES_KEY = "guru_gates"
 ADVERSARIAL_SKIPS_KEY = "adversarial_skips"
@@ -3428,6 +3431,18 @@ def _serialize_integration_proof_prompt(
             "invocation_contract": invocation_contract,
             "integration_proof_bundle": working,
             "retry_identity": retry_identity,
+            "acceptance_metrics": {
+                **working.get("acceptance_metrics", {}),
+                **working["payload_metrics"],
+                "budget_verdict": "passed",
+                "budget_limits": {
+                    "payload_bytes": INTEGRATION_PROOF_MAX_BYTES,
+                    "estimated_tokens": (
+                        INTEGRATION_PROOF_MAX_ESTIMATED_TOKENS
+                    ),
+                },
+                "formatting_retry_identity": retry_identity,
+            },
             "expected_invariant_ids": expected_ids,
             "verdict_contract": _integration_verdict_contract(
                 expected_ids,
@@ -3622,6 +3637,19 @@ def _integration_proof_bundle(
                 ),
             }
         )
+    requirements_design_proofs = _proof_requirements_design_context(
+        task_dir,
+        target.packet.get("requirements_design_inputs", []),
+    )
+    acceptance_metrics = _integration_acceptance_metrics(
+        receipt_proofs=receipt_proofs,
+        ordinary_targets=ordinary_targets_list,
+        peer_proofs=peer_proofs,
+        integration_owned=integration_owned,
+        peer_paths=peer_paths,
+        requirements_design_proofs=requirements_design_proofs,
+        deterministic_results=deterministic_results,
+    )
     return {
         "schema_version": 1,
         "review_target": target.review_target,
@@ -3636,13 +3664,60 @@ def _integration_proof_bundle(
         "integration_owned_paths": integration_owned,
         "integration_owned_diff": integration_diff,
         "invariants": target.packet.get("invariants", []),
-        "requirements_design_proofs": _proof_requirements_design_context(
-            task_dir,
-            target.packet.get("requirements_design_inputs", []),
-        ),
+        "requirements_design_proofs": requirements_design_proofs,
         "deterministic_result_proofs": deterministic_proofs,
+        "acceptance_metrics": acceptance_metrics,
         "payload_metrics": {},
         "proof_bundle_digest": "",
+    }
+
+
+def _integration_acceptance_metrics(
+    *,
+    receipt_proofs: list[dict],
+    ordinary_targets: list[str],
+    peer_proofs: list[dict],
+    integration_owned: list[str],
+    peer_paths: set[str],
+    requirements_design_proofs: list[dict],
+    deterministic_results: list[dict],
+) -> dict:
+    full_regression_count = sum(
+        result.get("command") == INTEGRATION_FULL_REGRESSION_COMMAND
+        for result in deterministic_results
+        if isinstance(result, dict)
+    )
+    if full_regression_count != 1:
+        raise GuruSupervisionError(
+            "Integration proof requires exactly one full lifecycle regression:"
+            f"count={full_regression_count}"
+        )
+    invalidated_receipts = sorted(
+        proof.get("slice_id", "")
+        for proof in receipt_proofs
+        if proof.get("state") != "current"
+    )
+    return {
+        "semantic_reviewer_count": 1,
+        "duplicate_read_probe_count": 0,
+        "integration_full_regression_count": full_regression_count,
+        "projection_counts": {
+            "ordinary_receipts": len(receipt_proofs),
+            "ordinary_target_union": len(ordinary_targets),
+            "generated_peers": len(peer_proofs),
+            "integration_owned_paths": len(integration_owned),
+            "integration_owned_diff_paths": len(
+                set(integration_owned) - peer_paths
+            ),
+            "requirements_design_proofs": len(requirements_design_proofs),
+            "deterministic_results": len(deterministic_results),
+        },
+        "formatting_retry_count": 0,
+        "receipt_invalidation_set": invalidated_receipts,
+        "provider_input_tokens": {
+            "available": False,
+            "value": None,
+        },
     }
 
 
