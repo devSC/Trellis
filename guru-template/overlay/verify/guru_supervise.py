@@ -3467,7 +3467,7 @@ def _without_injected_context(
         if skip_value:
             skip_value = False
             continue
-        if argument in {"--file", "--jsonl", "--cwd"}:
+        if argument in {"--agent", "--file", "--jsonl", "--cwd"}:
             skip_value = True
             continue
         spawn_cmd.append(argument)

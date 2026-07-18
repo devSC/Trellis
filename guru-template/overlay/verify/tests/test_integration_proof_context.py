@@ -83,6 +83,8 @@ def _plan(task_dir: Path) -> SUPERVISE.RunPlan:
             "trellis",
             "channel",
             "spawn",
+            "--agent",
+            "check",
             "--file",
             "skill.md",
             "--jsonl",
@@ -303,6 +305,7 @@ class IntegrationProofContextTests(unittest.TestCase):
         self.assertEqual(plan.jsonls, [])
         self.assertNotIn("--file", plan.spawn_cmd)
         self.assertNotIn("--jsonl", plan.spawn_cmd)
+        self.assertNotIn("--agent", plan.spawn_cmd)
         self.assertEqual(
             plan.spawn_cmd[-2:],
             ["--cwd", "/tmp/proof-isolated"],
