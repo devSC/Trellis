@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "risk": "high",
+  "route": "full_chain",
+  "assessment": {
+    "confidence": 0.95,
+    "reasons": [
+      "high-risk signal: gate",
+      "high-risk signal: guru_gate.py",
+      "high-risk signal: guru_supervise.py"
+    ],
+    "risk_flags": [
+      "gate",
+      "guru_gate.py",
+      "guru_supervise.py"
+    ],
+    "recommended_route": "full_chain"
+  },
+  "route_selection": {
+    "selected_route": "full_chain",
+    "source": "risk_promotion",
+    "recommended_route": "full_chain",
+    "risk_acknowledged": false,
+    "user_quote": "",
+    "selected_by": "system",
+    "selected_at": "2026-07-18T09:04:53+08:00",
+    "selection_generation": 1,
+    "scope_fingerprint": "ba03e057506893df0abe3e31e07e8f6d48ca14ba40c0635dc677c95b9677644b"
+  },
+  "scope": {
+    "allowed_paths": [
+      "guru-template/overlay/verify/guru_supervise.py",
+      "guru-template/overlay/verify/guru_review_record.py",
+      "guru-template/overlay/verify/guru_gate.py",
+      "guru-template/overlay/verify/tests/test_slice_commit_lifecycle.py",
+      "guru-template/overlay/verify/tests/test_integration_proof_context.py",
+      "guru-template/overlay/verify/tests/test_integration_verdict_retry.py",
+      "guru-template/overlay/tests/integration_proof_runtime_test.sh",
+      "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py",
+      "packages/cli/src/templates/guru/overlay/verify/guru_review_record.py",
+      "packages/cli/src/templates/guru/overlay/verify/guru_gate.py",
+      "packages/cli/src/templates/guru/overlay/verify/tests/test_slice_commit_lifecycle.py",
+      "packages/cli/src/templates/guru/overlay/verify/tests/test_integration_proof_context.py",
+      "packages/cli/src/templates/guru/overlay/verify/tests/test_integration_verdict_retry.py",
+      "packages/cli/src/templates/guru/overlay/tests/integration_proof_runtime_test.sh"
+    ],
+    "forbidden_path_patterns": [],
+    "max_files": 14
+  },
+  "required_gates": [],
+  "optional_gates": [],
+  "allowed_degradations": [],
+  "commit_policy": {
+    "require_in_progress": true,
+    "require_clean_implementation_review": true,
+    "allow_task_artifacts_only": false
+  },
+  "risk_decision_inventory": {
+    "schema_version": 1,
+    "required": true,
+    "source": "implement.md"
+  },
+  "created_by": "intake",
+  "created_at": "2026-07-18T01:04:53Z",
+  "policy_version": "guru-risk-contract-v2",
+  "execution_policy": {
+    "schema_version": 1,
+    "policy_version": "guru-delivery-policy-v2",
+    "intent": "review",
+    "route": "full_chain",
+    "recommended_route": "full_chain",
+    "selected_route": "full_chain",
+    "selection_source": "risk_promotion",
+    "selection_generation": 1,
+    "risk": "high",
+    "first_value_metric": "first_verified_evidence",
+    "required_gate_ids": [
+      "requirements_confirmed",
+      "overview_review_clean",
+      "detail_review_clean",
+      "evidence_package"
+    ],
+    "budget": {
+      "idle_seconds": 120,
+      "confirmation_batches": 1,
+      "planned_context_bytes": 589824,
+      "planning_deadline_seconds": 300,
+      "no_progress_cycles": 3,
+      "model_cycles": 10,
+      "duplicate_reads": 4,
+      "terminal_deadline_seconds": 1800,
+      "first_value_deadline_seconds": 300,
+      "wait_calls": 3,
+      "repairs": 1,
+      "tool_calls": 40,
+      "observed_context_bytes": 589824,
+      "live_workers": 1,
+      "started_workers": 2
+    },
+    "scope_fingerprint": "ba03e057506893df0abe3e31e07e8f6d48ca14ba40c0635dc677c95b9677644b",
+    "scope_max_files": null,
+    "topology": "managed_single",
+    "enforcement_mode": "enforced",
+    "promotion_reasons": [
+      "high_or_unknown_high_signal_requires_full_chain"
+    ],
+    "capability_probe_digest": "82388e62f742623cc259f472743e936010ccaa9f28f0fc615d343c8a3ba05120",
+    "evidence_cache_key": "6a621c158cf42899cce91002f6528f74f11dd41f78088e1e46bd0af57f209f3b",
+    "evidence_reused": false,
+    "planning_cost_ratio_percent": 100,
+    "route_acceptance": {
+      "ttfc_seconds": 300,
+      "pre_risk_required": true,
+      "confirmation_limit": 1,
+      "autonomous_close": true,
+      "evidence_reuse": true,
+      "docs_code_test_consistency": false,
+      "gate_rework": "bounded",
+      "metrics_enforcement": "enforced",
+      "provider": "codex",
+      "claude_forbidden": true,
+      "brainstorm_mode": "not_required",
+      "brainstorm_required": false
+    },
+    "delivery_metrics": [
+      "time_to_first_code",
+      "user_confirmation_count",
+      "review_worker_count",
+      "full_suite_run_count",
+      "digest_invalidation_count",
+      "finding_to_fix_cycles",
+      "wall_time_per_route",
+      "token_cost_per_completed_slice",
+      "gate_rework_count"
+    ],
+    "brainstorm_required": false
+  }
+}

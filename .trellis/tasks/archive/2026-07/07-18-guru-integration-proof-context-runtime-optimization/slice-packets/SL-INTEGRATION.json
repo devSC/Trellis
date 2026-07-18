@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "review_evidence_schema_version": 2,
+  "slice_id": "SL-INTEGRATION",
+  "owner_unit": "UNIT-integration-proof",
+  "target_kind": "implementation",
+  "integration_slice": true,
+  "target_paths": [
+    "guru-template/overlay/verify/guru_supervise.py",
+    "guru-template/overlay/verify/guru_review_record.py",
+    "guru-template/overlay/verify/guru_gate.py",
+    "guru-template/overlay/verify/tests/test_slice_commit_lifecycle.py",
+    "guru-template/overlay/verify/tests/test_integration_proof_context.py",
+    "guru-template/overlay/verify/tests/test_integration_verdict_retry.py",
+    "guru-template/overlay/tests/integration_proof_runtime_test.sh",
+    "packages/cli/src/templates/guru/overlay/verify/guru_supervise.py",
+    "packages/cli/src/templates/guru/overlay/verify/guru_review_record.py",
+    "packages/cli/src/templates/guru/overlay/verify/guru_gate.py",
+    "packages/cli/src/templates/guru/overlay/verify/tests/test_slice_commit_lifecycle.py",
+    "packages/cli/src/templates/guru/overlay/verify/tests/test_integration_proof_context.py",
+    "packages/cli/src/templates/guru/overlay/verify/tests/test_integration_verdict_retry.py",
+    "packages/cli/src/templates/guru/overlay/tests/integration_proof_runtime_test.sh"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "cross_slice_runtime_integration",
+    "generated_package_peers",
+    "full_lifecycle_regression"
+  ],
+  "depends_on": [
+    "SL-PROOF-SUPERVISOR",
+    "SL-VERDICT-EVIDENCE"
+  ],
+  "requirements_design_inputs": [
+    {
+      "path": "prd.md",
+      "heading": "BHV-005 Selective Receipt Currentness"
+    },
+    {
+      "path": "prd.md",
+      "heading": "BHV-008 Observability"
+    },
+    {
+      "path": "design-package/chapters/integration-proof.md",
+      "heading": "核心数据结构 (Core Data Structures)"
+    },
+    {
+      "path": "design-package/chapters/integration-proof.md",
+      "heading": "逐行为设计 (Per-Behavior Design)"
+    },
+    {
+      "path": "design-package/chapters/integration-proof.md",
+      "heading": "状态/边界 (State And Boundary)"
+    },
+    {
+      "path": "design-package/chapters/integration-proof.md",
+      "heading": "数据合同 (Data Contract)"
+    },
+    {
+      "path": "design-package/chapters/integration-proof.md",
+      "heading": "失败收口 (Failure Closure)"
+    },
+    {
+      "path": "design-package/chapters/integration-proof.md",
+      "heading": "测试映射 (Test Mapping)"
+    },
+    {
+      "path": "implement.md",
+      "heading": "计划与切片 (Slice Planning Audit)"
+    },
+    {
+      "path": "implement.md",
+      "heading": "Child 4: RT-INTEGRATION-PROOF"
+    }
+  ],
+  "deterministic_checks": [
+    "bash guru-template/overlay/tests/integration_proof_runtime_test.sh --sync",
+    "bash guru-template/overlay/tests/integration_proof_runtime_test.sh",
+    "python3 -m unittest guru-template/overlay/verify/tests/test_integration_proof_context.py",
+    "python3 -m unittest guru-template/overlay/verify/tests/test_integration_verdict_retry.py",
+    "python3 guru-template/overlay/verify/tests/test_slice_commit_lifecycle.py",
+    "git diff --check"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "codex",
+    "ocr": "disabled"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/check.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/implement.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/review-records/deterministic-evidence.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/review-records/implementation-reviews.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/review-records/slice-commit-receipts.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-context-runtime-optimization/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-context-runtime-optimization/implement.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-runtime/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-runtime/implement.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-supervisor/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-supervisor/implement.jsonl",
+      ".trellis/tasks/07-18-guru-integration-verdict-retry-evidence/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-verdict-retry-evidence/implement.jsonl",
+      ".trellis/tasks/07-18-guru-runtime-canonical-baseline-parity/check.jsonl",
+      ".trellis/tasks/07-18-guru-runtime-canonical-baseline-parity/implement.jsonl"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-RT-009",
+      "rule": "Integration depends on both ordinary runtime receipts, covers the complete canonical union and owns only one bounded Shell test plus seven package peers.",
+      "source": "design-package/chapters/integration-proof.md",
+      "owner": "UNIT-integration-proof",
+      "positive_case": "Both receipts are current, 14 exact target paths are covered, and ordinary canonical staged writes are absent.",
+      "negative_case": "A dependency or union path is missing, an ordinary canonical path is rewritten, or an undeclared path is owned.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "slice packet validation",
+        "receipt currentness",
+        "staged scope check"
+      ]
+    },
+    {
+      "invariant_id": "INV-RT-010",
+      "rule": "The closed seven-pair sync generates exact package peers without deletion, table-external writes, or full repository sync.",
+      "source": "design-package/chapters/integration-proof.md",
+      "owner": "UNIT-integration-proof",
+      "positive_case": "Bounded sync and read-only parity report seven equal pairs and no unrelated drift.",
+      "negative_case": "A peer is missing, ambiguous, unequal, deleted, manually edited, or generated outside the table.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "bounded --sync",
+        "read-only parity",
+        "deletion and external path negatives"
+      ]
+    },
+    {
+      "invariant_id": "INV-RT-011",
+      "rule": "The final snapshot preserves legacy routes and selective receipt currentness, records integration_full_regression_count=1 for the single post-feature Integration execution, and records every acceptance metric.",
+      "source": "design-package/chapters/integration-proof.md",
+      "owner": "UNIT-integration-proof",
+      "positive_case": "Compatibility and currentness regressions pass, integration_full_regression_count=1, reviewer/read counts are exact, budgets pass, and final review/receipt are current.",
+      "negative_case": "A sibling receipt stales without binding drift, a legacy route changes, regression or semantic review repeats, or a required metric is absent.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "legacy compatibility suite",
+        "receipt invalidation matrix",
+        "real Full/high fixture metrics"
+      ]
+    }
+  ]
+}

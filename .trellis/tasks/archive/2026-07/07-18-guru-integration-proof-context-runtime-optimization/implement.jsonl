@@ -1,0 +1,10 @@
+{"file":".trellis/spec/cli/backend/guru-overlay-gates.md","reason":"Full/high packet, deterministic admission, staged implementation review, receipt, provider-policy, and fail-closed commit-Gate contracts."}
+{"file":".trellis/spec/cli/backend/script-conventions.md","reason":"Python lifecycle-script structure, dependency, entrypoint, and maintainability conventions for the existing Guru runtime modules."}
+{"file":".trellis/spec/cli/backend/error-handling.md","reason":"Fail-closed validation, actionable deterministic failures, and exception-boundary conventions for projection and retry evidence."}
+{"file":".trellis/spec/cli/backend/quality-guidelines.md","reason":"Repository quality, dependency restraint, scoped ownership, and forbidden implementation patterns."}
+{"file":".trellis/spec/cli/backend/migrations.md","reason":"Canonical guru-template ownership and generated package-peer synchronization boundaries without a full repository sync."}
+{"file":".trellis/spec/cli/unit-test/conventions.md","reason":"Exact assertions, regression-test requirements, isolation, and deterministic negative-path coverage for the runtime changes."}
+{"file":".trellis/spec/cli/unit-test/integration-patterns.md","reason":"Cross-module lifecycle, byte-parity, compatibility, and end-to-end Integration proof patterns."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Freeze supervisor, review-record, Gate, evidence, and provider boundaries before concurrent child implementation."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse current receipt validation, normalization, digest, and append-only helpers instead of introducing parallel schemas or modules."}
+{"file":".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/follow-up-integration-proof-runtime-optimization.md","reason":"Predecessor performance evidence, no-runtime boundary, proof-bundle target, failure routing, and measured Integration baseline."}

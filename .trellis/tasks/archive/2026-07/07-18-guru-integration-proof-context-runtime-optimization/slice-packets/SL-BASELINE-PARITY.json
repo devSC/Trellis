@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "review_evidence_schema_version": 2,
+  "slice_id": "SL-BASELINE-PARITY",
+  "owner_unit": "UNIT-baseline-parity",
+  "target_kind": "implementation",
+  "integration_slice": false,
+  "target_paths": [
+    "guru-template/overlay/verify/guru_supervise.py",
+    "guru-template/overlay/verify/guru_review_record.py",
+    "guru-template/overlay/verify/guru_gate.py",
+    "guru-template/overlay/verify/tests/test_slice_commit_lifecycle.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "canonical_runtime_authority",
+    "existing_runtime_drift",
+    "serial_prerequisite"
+  ],
+  "depends_on": [],
+  "requirements_design_inputs": [
+    {
+      "path": "prd.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/chapters/baseline-parity.md",
+      "whole_file": true
+    },
+    {
+      "path": "implement.md",
+      "whole_file": true
+    }
+  ],
+  "deterministic_checks": [
+    "python3 -m py_compile guru-template/overlay/verify/guru_supervise.py guru-template/overlay/verify/guru_review_record.py guru-template/overlay/verify/guru_gate.py packages/cli/src/templates/guru/overlay/verify/guru_supervise.py packages/cli/src/templates/guru/overlay/verify/guru_review_record.py packages/cli/src/templates/guru/overlay/verify/guru_gate.py",
+    "python3 guru-template/overlay/verify/tests/test_slice_commit_lifecycle.py",
+    "python3 packages/cli/src/templates/guru/overlay/verify/tests/test_slice_commit_lifecycle.py",
+    "cmp -s guru-template/overlay/verify/guru_supervise.py packages/cli/src/templates/guru/overlay/verify/guru_supervise.py",
+    "cmp -s guru-template/overlay/verify/guru_review_record.py packages/cli/src/templates/guru/overlay/verify/guru_review_record.py",
+    "cmp -s guru-template/overlay/verify/guru_gate.py packages/cli/src/templates/guru/overlay/verify/guru_gate.py",
+    "cmp -s guru-template/overlay/verify/tests/test_slice_commit_lifecycle.py packages/cli/src/templates/guru/overlay/verify/tests/test_slice_commit_lifecycle.py",
+    "git diff --quiet -- packages/cli/src/templates/guru/overlay/verify/guru_supervise.py packages/cli/src/templates/guru/overlay/verify/guru_review_record.py packages/cli/src/templates/guru/overlay/verify/guru_gate.py packages/cli/src/templates/guru/overlay/verify/tests/test_slice_commit_lifecycle.py",
+    "git diff --check -- guru-template/overlay/verify/guru_supervise.py guru-template/overlay/verify/guru_review_record.py guru-template/overlay/verify/guru_gate.py guru-template/overlay/verify/tests/test_slice_commit_lifecycle.py packages/cli/src/templates/guru/overlay/verify/guru_supervise.py packages/cli/src/templates/guru/overlay/verify/guru_review_record.py packages/cli/src/templates/guru/overlay/verify/guru_gate.py packages/cli/src/templates/guru/overlay/verify/tests/test_slice_commit_lifecycle.py"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "codex",
+    "ocr": "disabled"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/check.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/implement.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/review-records/deterministic-evidence.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/review-records/implementation-reviews.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/review-records/slice-commit-receipts.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-context-runtime-optimization/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-context-runtime-optimization/implement.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-runtime/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-runtime/implement.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-supervisor/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-supervisor/implement.jsonl",
+      ".trellis/tasks/07-18-guru-integration-verdict-retry-evidence/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-verdict-retry-evidence/implement.jsonl",
+      ".trellis/tasks/07-18-guru-runtime-canonical-baseline-parity/check.jsonl",
+      ".trellis/tasks/07-18-guru-runtime-canonical-baseline-parity/implement.jsonl"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-RT-001",
+      "rule": "The current package runtime and lifecycle test are copied byte-for-byte to exactly four canonical paths before feature implementation.",
+      "source": "design-package/chapters/baseline-parity.md",
+      "owner": "UNIT-baseline-parity",
+      "positive_case": "All four canonical/package pairs are byte-identical and package bytes have no diff.",
+      "negative_case": "A pair differs, a package path changes, a fifth path changes, or full sync is used.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "four exact byte comparisons",
+        "package diff absence"
+      ]
+    },
+    {
+      "invariant_id": "INV-RT-002",
+      "rule": "Baseline parity preserves the currently executed package lifecycle behavior and publishes a current prerequisite receipt.",
+      "source": "design-package/chapters/baseline-parity.md",
+      "owner": "UNIT-baseline-parity",
+      "positive_case": "Runtime files compile, lifecycle checks pass, and descendants remain blocked until the receipt is current.",
+      "negative_case": "Compilation or lifecycle fails, behavior is repaired in this child, or a descendant starts without the receipt.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "py_compile",
+        "lifecycle regression",
+        "current receipt"
+      ]
+    }
+  ]
+}

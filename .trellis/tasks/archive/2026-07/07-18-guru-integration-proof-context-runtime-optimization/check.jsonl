@@ -1,0 +1,10 @@
+{"file":".trellis/spec/cli/backend/guru-overlay-gates.md","reason":"Verify current-snapshot binding, provider policy, deterministic admission, append-only records, receipts, and final commit-Gate behavior."}
+{"file":".trellis/spec/cli/backend/script-conventions.md","reason":"Verify changes remain in the existing Python lifecycle modules with no new production module or TypeScript command."}
+{"file":".trellis/spec/cli/backend/error-handling.md","reason":"Verify over-budget, stale proof, malformed retry, path escape, and provider failures block deterministically before unsafe side effects."}
+{"file":".trellis/spec/cli/backend/quality-guidelines.md","reason":"Verify exact scope, dependency-free token estimation, bounded artifacts, and no unrelated cleanup or generated churn."}
+{"file":".trellis/spec/cli/backend/migrations.md","reason":"Verify canonical source ownership and exact bounded package parity without full sync or deletion."}
+{"file":".trellis/spec/cli/unit-test/conventions.md","reason":"Verify positive, negative, tamper, compatibility, retry-limit, call-count, and receipt-currentness assertions."}
+{"file":".trellis/spec/cli/unit-test/integration-patterns.md","reason":"Verify the final combined runtime flow, one full regression, generated-peer equality, and legacy-route compatibility."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify the frozen cross-child API, zero mutable overlap, ownership, and failure routing across supervisor and review-record modules."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify existing Gate receipt currentness and official review normalization remain authoritative and no duplicate mechanism was added."}
+{"file":".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/follow-up-integration-proof-runtime-optimization.md","reason":"Verify acceptance against the measured predecessor bottleneck and the independently approved runtime follow-up boundary."}

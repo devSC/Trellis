@@ -1,0 +1,25 @@
+{
+  "artifact_digest": "d47cf4de72c18a378507bba7ef9cfd799f154f73d83d27c24d35f57ec05f1591",
+  "confirmation_required": true,
+  "decision_items": [],
+  "decision_set_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "decision_universe_digest": "e6358e7a7fbec76d37493ff68a1f27476b5ad418a5be073e97a87dfc0fea678a",
+  "detail_artifact_digest": "152b487a88e3415b036a03ed0fb2c8728632b0e9905c2f594ba8f2f537bc5308",
+  "intent": "review",
+  "invariant_ids": [
+    "INV-RT-001",
+    "INV-RT-002"
+  ],
+  "owner_unit": "UNIT-delivery-policy",
+  "packet_id": "risk-ba03e057506893df",
+  "policy_snapshot_digest": "6a6bbea512688a94a5233a33f06f545dae1a343c2ba0adb2f18d5472ab1dbc88",
+  "policy_version": "guru-delivery-policy-v2",
+  "pre_write_required": true,
+  "risk": "high",
+  "route": "full_chain",
+  "schema_version": 1,
+  "scope_fingerprint": "ba03e057506893df0abe3e31e07e8f6d48ca14ba40c0635dc677c95b9677644b",
+  "slice_id": "SL-BASELINE-PARITY",
+  "slice_packet_digest": "96a7a589664b9e60330e602b9ca5626e8bca66ceac25dc8b0d7f195bafacc9ac",
+  "task_id": "guru-integration-proof-context-runtime-optimization"
+}

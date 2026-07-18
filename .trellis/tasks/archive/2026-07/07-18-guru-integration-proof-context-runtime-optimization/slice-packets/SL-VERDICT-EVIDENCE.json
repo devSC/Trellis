@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "review_evidence_schema_version": 2,
+  "slice_id": "SL-VERDICT-EVIDENCE",
+  "owner_unit": "UNIT-verdict-evidence",
+  "target_kind": "implementation",
+  "integration_slice": false,
+  "target_paths": [
+    "guru-template/overlay/verify/guru_review_record.py",
+    "guru-template/overlay/verify/tests/test_integration_verdict_retry.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "official_review_normalization",
+    "append_only_retry_evidence",
+    "malformed_output_recovery"
+  ],
+  "depends_on": [
+    "SL-BASELINE-PARITY"
+  ],
+  "requirements_design_inputs": [
+    {
+      "path": "prd.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/chapters/verdict-evidence.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/design-main.md",
+      "whole_file": true
+    }
+  ],
+  "deterministic_checks": [
+    "python3 -m py_compile guru-template/overlay/verify/guru_review_record.py",
+    "python3 -m unittest guru-template/overlay/verify/tests/test_integration_verdict_retry.py",
+    "git diff --check -- guru-template/overlay/verify/guru_review_record.py guru-template/overlay/verify/tests/test_integration_verdict_retry.py"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "codex",
+    "ocr": "disabled"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/check.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/implement.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/review-records/deterministic-evidence.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/review-records/implementation-reviews.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/review-records/slice-commit-receipts.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-context-runtime-optimization/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-context-runtime-optimization/implement.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-runtime/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-runtime/implement.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-supervisor/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-supervisor/implement.jsonl",
+      ".trellis/tasks/07-18-guru-integration-verdict-retry-evidence/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-verdict-retry-evidence/implement.jsonl",
+      ".trellis/tasks/07-18-guru-runtime-canonical-baseline-parity/check.jsonl",
+      ".trellis/tasks/07-18-guru-runtime-canonical-baseline-parity/implement.jsonl"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-RT-006",
+      "rule": "RetryIdentity binds the complete unchanged semantic snapshot and rejects missing, extra, malformed, or changed components.",
+      "source": "design-package/chapters/verdict-evidence.md",
+      "owner": "UNIT-verdict-evidence",
+      "positive_case": "Stable components reproduce one identity and every component tamper is rejected.",
+      "negative_case": "A partial identity, changed digest, or non-string component is accepted for retry reuse.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "identity stability",
+        "component tamper matrix"
+      ]
+    },
+    {
+      "invariant_id": "INV-RT-007",
+      "rule": "Formatting retry evidence is immutable and append-only, and one identity permits at most one serialization-only attempt.",
+      "source": "design-package/chapters/verdict-evidence.md",
+      "owner": "UNIT-verdict-evidence",
+      "positive_case": "Raw artifacts and events persist safely; success writes one final official row and failure writes one final blocked row.",
+      "negative_case": "Path escape, overwrite, duplicate artifact, second retry, intermediate official row, or evidence deletion succeeds.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "append-only replay",
+        "path and overwrite negatives",
+        "retry and official row counts"
+      ]
+    },
+    {
+      "invariant_id": "INV-RT-008",
+      "rule": "Semantic findings, provider failures, missing evidence, and snapshot drift never enter formatting-only retry, while legacy normalization remains unchanged.",
+      "source": "design-package/chapters/verdict-evidence.md",
+      "owner": "UNIT-verdict-evidence",
+      "positive_case": "The classification matrix routes only recoverable envelope errors and all legacy tests pass.",
+      "negative_case": "A semantic or provider failure is retried as formatting, source is reread, or the official schema changes.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "classification matrix",
+        "legacy normalization regression"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "id": "guru-integration-proof-context-runtime-optimization",
+  "name": "guru-integration-proof-context-runtime-optimization",
+  "title": "Guru Integration proof context runtime optimization",
+  "description": "",
+  "design_package": ".trellis/tasks/07-18-guru-integration-proof-context-runtime-optimization/design-package",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-07-18",
+  "completedAt": "2026-07-18",
+  "branch": null,
+  "base_branch": "codex/guru-minimum-stable-parallel-slices-20260717",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-18-guru-runtime-canonical-baseline-parity",
+    "07-18-guru-integration-proof-supervisor",
+    "07-18-guru-integration-verdict-retry-evidence",
+    "07-18-guru-integration-proof-runtime"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "route": "full_chain",
+    "risk": "high",
+    "recommended_route": "full_chain",
+    "selected_route": "full_chain",
+    "selection_source": "risk_promotion",
+    "selection_generation": 1,
+    "scope_fingerprint": "ba03e057506893df0abe3e31e07e8f6d48ca14ba40c0635dc677c95b9677644b"
+  },
+  "guru_chain": "full",
+  "route": "full_chain",
+  "risk": "high",
+  "guru_gates": {
+    "review_runs": {
+      "overview": [
+        {
+          "run_id": "overview-proof-runtime-final-a",
+          "reviewer": "clean-context-codex-overview-a",
+          "recorded_at": "2026-07-18T09:46:31+08:00",
+          "artifact_digest": "b8309f066beced859758a09c67810b7c264cc8dc12281470cc84f62535e82cf0",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Current package clean: BHV-001..008 closed; parent-only lifecycle authority; Wave 1 zero overlap; Integration 14 coverage and 8 writes; selector digest 8ff0be0e06ee6867d57f41b95dfb8e91f3e569dc60117e5f6ca1a4ea8d9521d0."
+        },
+        {
+          "run_id": "overview-proof-runtime-final-b",
+          "reviewer": "clean-context-adversarial-codex",
+          "recorded_at": "2026-07-18T09:46:31+08:00",
+          "artifact_digest": "b8309f066beced859758a09c67810b7c264cc8dc12281470cc84f62535e82cf0",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Independent adversarial Codex clean: six substantive Integration H2 selectors, frozen baseline and Integration commands, requirements/overview/detail/implement/strict trace all pass; no P1/P2."
+        }
+      ],
+      "detail": [
+        {
+          "run_id": "detail-proof-runtime-final-a",
+          "reviewer": "clean-context-codex-detail-a",
+          "recorded_at": "2026-07-18T09:46:31+08:00",
+          "artifact_digest": "152b487a88e3415b036a03ed0fb2c8728632b0e9905c2f594ba8f2f537bc5308",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Current-byte Detail clean: selector digest reproduced; budget boundaries 75000/75001/98304/98305 exact; baseline nine checks complete; full regression metric scoped; isolated dispatch and parent authority closed.",
+          "deletion_audit": "CLEAN: no tracked or staged deletions; baseline copies four exact canonical destinations; Integration copies seven closed peers and rejects deletion/external writes; append-only evidence preserved."
+        },
+        {
+          "run_id": "detail-proof-runtime-final-b",
+          "reviewer": "clean-context-adversarial-codex",
+          "recorded_at": "2026-07-18T09:46:32+08:00",
+          "artifact_digest": "152b487a88e3415b036a03ed0fb2c8728632b0e9905c2f594ba8f2f537bc5308",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Independent adversarial Codex Detail clean: all selectors substantive and unique, packet/child commands identical, 11 invariants and dependencies closed, 14 targets/8 writes, no remaining P1/P2.",
+          "deletion_audit": "CLEAN: no whole-file deletion planned or present; bounded copy tables reject missing/deleted/extra paths; rollback uses commit reversion and preserves history."
+        }
+      ]
+    },
+    "requirements": {
+      "schema_version": 2,
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-18T10:02:51+08:00",
+      "confirmation_scope": "full_requirements_risk_irreversible_design_batch",
+      "allowed_next_action": "task_start_and_autonomous_close",
+      "prompt_summary": "One Full confirmation binds requirements, current risk packets and irreversible design",
+      "confirmation_batch_id": "confirm-687598dd11c608e6",
+      "confirmation_batch_digest": "687598dd11c608e6144dd3ee2a4212a94282e213a444468332b4fe8b56143147",
+      "requirements_digest": "204c02447b714a1bbad4ea013669250ad6f78571a3d8b4f6b0cd9ec12eb76bdf",
+      "detail_artifact_digest": "152b487a88e3415b036a03ed0fb2c8728632b0e9905c2f594ba8f2f537bc5308",
+      "risk_packet_set_digest": "4f5af7cbb8198cb977c49670eb3c1247ebd0b2bde5785b8403dd3e6375f984d4",
+      "confirmation_projection_digest": "c6af1372b56c71f42a8b5e2ea9c7008a8133b61fde6bf4879510c93da2c52988",
+      "artifact_digest": "204c02447b714a1bbad4ea013669250ad6f78571a3d8b4f6b0cd9ec12eb76bdf"
+    },
+    "detail": {
+      "schema_version": 2,
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-18T10:02:51+08:00",
+      "confirmation_scope": "full_requirements_risk_irreversible_design_batch",
+      "allowed_next_action": "task_start_and_autonomous_close",
+      "prompt_summary": "One Full confirmation binds requirements, current risk packets and irreversible design",
+      "confirmation_batch_id": "confirm-687598dd11c608e6",
+      "confirmation_batch_digest": "687598dd11c608e6144dd3ee2a4212a94282e213a444468332b4fe8b56143147",
+      "requirements_digest": "204c02447b714a1bbad4ea013669250ad6f78571a3d8b4f6b0cd9ec12eb76bdf",
+      "detail_artifact_digest": "152b487a88e3415b036a03ed0fb2c8728632b0e9905c2f594ba8f2f537bc5308",
+      "risk_packet_set_digest": "4f5af7cbb8198cb977c49670eb3c1247ebd0b2bde5785b8403dd3e6375f984d4",
+      "confirmation_projection_digest": "c6af1372b56c71f42a8b5e2ea9c7008a8133b61fde6bf4879510c93da2c52988",
+      "artifact_digest": "152b487a88e3415b036a03ed0fb2c8728632b0e9905c2f594ba8f2f537bc5308"
+    }
+  }
+}

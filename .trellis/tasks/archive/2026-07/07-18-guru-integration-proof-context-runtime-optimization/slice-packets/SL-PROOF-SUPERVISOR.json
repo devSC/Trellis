@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "review_evidence_schema_version": 2,
+  "slice_id": "SL-PROOF-SUPERVISOR",
+  "owner_unit": "UNIT-proof-supervisor",
+  "target_kind": "implementation",
+  "integration_slice": false,
+  "target_paths": [
+    "guru-template/overlay/verify/guru_supervise.py",
+    "guru-template/overlay/verify/tests/test_integration_proof_context.py"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "provider_context_assembly",
+    "dispatch_budget_gate",
+    "review_orchestration"
+  ],
+  "depends_on": [
+    "SL-BASELINE-PARITY"
+  ],
+  "requirements_design_inputs": [
+    {
+      "path": "prd.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/chapters/proof-supervisor.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/design-main.md",
+      "whole_file": true
+    }
+  ],
+  "deterministic_checks": [
+    "python3 -m py_compile guru-template/overlay/verify/guru_supervise.py",
+    "python3 -m unittest guru-template/overlay/verify/tests/test_integration_proof_context.py",
+    "git diff --check -- guru-template/overlay/verify/guru_supervise.py guru-template/overlay/verify/tests/test_integration_proof_context.py"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "codex",
+    "ocr": "disabled"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/check.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/implement.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/review-records/deterministic-evidence.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/review-records/implementation-reviews.jsonl",
+      ".trellis/tasks/07-17-guru-minimum-stable-parallel-slices/review-records/slice-commit-receipts.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-context-runtime-optimization/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-context-runtime-optimization/implement.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-runtime/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-runtime/implement.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-supervisor/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-proof-supervisor/implement.jsonl",
+      ".trellis/tasks/07-18-guru-integration-verdict-retry-evidence/check.jsonl",
+      ".trellis/tasks/07-18-guru-integration-verdict-retry-evidence/implement.jsonl",
+      ".trellis/tasks/07-18-guru-runtime-canonical-baseline-parity/check.jsonl",
+      ".trellis/tasks/07-18-guru-runtime-canonical-baseline-parity/implement.jsonl"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-RT-003",
+      "rule": "Only current Full/high schema-v2 Integration selects proof context; all other routes preserve current behavior.",
+      "source": "design-package/chapters/proof-supervisor.md",
+      "owner": "UNIT-proof-supervisor",
+      "positive_case": "The exact eligibility tuple selects proof context and compatibility fixtures preserve ordinary and legacy routes.",
+      "negative_case": "An ineligible route changes behavior or malformed eligible input falls back to full context.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "eligibility matrix",
+        "legacy compatibility fixtures"
+      ]
+    },
+    {
+      "invariant_id": "INV-RT-004",
+      "rule": "The semantic brief contains receipt/peer proofs, exact invariant evidence and Integration-owned diff without clean ordinary or equal peer bodies.",
+      "source": "design-package/chapters/proof-supervisor.md",
+      "owner": "UNIT-proof-supervisor",
+      "positive_case": "Projection completeness and omission assertions pass with zero duplicate semantic reads or probes.",
+      "negative_case": "A clean ordinary body, equal peer body, whole task artifact, incomplete invariant, or ordinary diff enters the brief.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "projection fixture",
+        "duplicate read/probe counters"
+      ]
+    },
+    {
+      "invariant_id": "INV-RT-005",
+      "rule": "The complete serialized prompt passes both hard budgets before exactly one semantic reviewer is started.",
+      "source": "design-package/chapters/proof-supervisor.md",
+      "owner": "UNIT-proof-supervisor",
+      "positive_case": "A 75000-byte prompt passes both limits and dispatches once; 75001 and 98304 bytes fail the token limit; 98305 bytes fail both limits; every failure dispatches zero providers with no fallback.",
+      "negative_case": "Budget measurement omits prompt bytes, uses a tokenizer dependency, occurs after dispatch, or permits a second semantic reviewer.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "75000-byte passing boundary",
+        "75001-byte token-budget failure",
+        "98304-byte token-budget failure",
+        "98305-byte dual-budget failure",
+        "provider call counts"
+      ]
+    }
+  ]
+}
