@@ -164,7 +164,7 @@ route=`gate-contract.json.route`. Lite: no sub-agent and keep its existing verif
 [/workflow-state:in_progress-sub-agent]
 
 [workflow-state:in_progress-inline]
-实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 H5 spec，编辑后 trellis-check（guru H5 口径）；Full/high ordinary 只记录 packet 声明的 `deterministic_checks` 与 focused evidence，唯一 Integration 记录 project-wide typecheck/build/lint/full-regression evidence，Small/Micro/Lite/non-Full/v1 仍按原 route 记录验证；缺少当前角色必需证据不得 commit，设计缺陷回 Phase1。
+实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 H5 spec，编辑后 trellis-check。Full/high ordinary 仅记录 packet `deterministic_checks` + focused evidence；Integration 才记录 project-wide typecheck/build/lint/full regression；其他 route 保持原验证合同。缺证据不得 commit；设计缺陷回 Phase1。
 [/workflow-state:in_progress-inline]
 
 ### Phase 3: Finish（审核与收尾）
