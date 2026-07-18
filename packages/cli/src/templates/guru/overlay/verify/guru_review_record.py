@@ -16,6 +16,7 @@ import hashlib
 import os
 import re
 import select
+import stat
 import subprocess
 import sys
 import tempfile
@@ -2844,6 +2845,958 @@ def _normalized_reuse_record(record: dict) -> dict:
             "semantic review reuse record is not an official v2 clean row"
         )
     return _NormalizedReviewRecord(record)
+
+
+# ============================================================================
+# Full/high Integration formatting-retry identity, evidence, and normalization.
+# ============================================================================
+
+RETRY_IDENTITY_FIELDS = (
+    "reviewed_target_digest",
+    "target_paths_digest",
+    "invariant_set_digest",
+    "requirements_design_digest",
+    "deterministic_commands_digest",
+    "deterministic_results_digest",
+    "review_policy_digest",
+    "supervisor_source_digest",
+    "proof_bundle_digest",
+)
+FORMAT_RETRY_EVIDENCE_SCHEMA_VERSION = 1
+FORMAT_RETRY_CLASSIFICATIONS = {
+    "valid",
+    "retryable_format",
+    "semantic_finding",
+    "non_retryable",
+}
+_FORMAT_RETRY_EVENT_FIELDS = {
+    "schema_version",
+    "event_kind",
+    "run_id",
+    "review_target",
+    "provider",
+    "retry_identity",
+    "retry_identity_digest",
+    "artifact_path",
+    "artifact_digest",
+    "attempt",
+    "status",
+    "timestamp",
+}
+_FORMAT_RETRY_EVENT_KINDS = {
+    0: "semantic_output",
+    1: "serialization_output",
+}
+_FORMAT_RETRY_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _validated_retry_identity(value) -> dict:
+    if not isinstance(value, dict):
+        raise ReviewRecordError("RetryIdentity 必须是对象")
+    if set(value) != set(RETRY_IDENTITY_FIELDS):
+        raise ReviewRecordError(
+            "RetryIdentity 必须完整且仅包含冻结的 digest 字段"
+        )
+    identity = {}
+    for field in RETRY_IDENTITY_FIELDS:
+        digest = value.get(field)
+        if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+            raise ReviewRecordError(
+                f"RetryIdentity.{field} 必须是 lowercase sha256"
+            )
+        identity[field] = digest
+    return identity
+
+
+def build_retry_identity(component_digests) -> dict:
+    """Return the exact frozen nine-component RetryIdentity tuple."""
+    return _validated_retry_identity(component_digests)
+
+
+def _retry_identity_digest(retry_identity) -> str:
+    return canonical_digest(
+        "guru-format-retry-identity-v1",
+        _validated_retry_identity(retry_identity),
+    )
+
+
+def _expected_invariant_ids(expected_invariants) -> list[str]:
+    if not isinstance(expected_invariants, list) or not expected_invariants:
+        raise ReviewRecordError("expected_invariants 必须是非空数组")
+    ids = []
+    for index, invariant in enumerate(expected_invariants):
+        invariant_id = (
+            invariant.get("invariant_id")
+            if isinstance(invariant, dict)
+            else invariant
+        )
+        if not isinstance(invariant_id, str) or not invariant_id.strip():
+            raise ReviewRecordError(
+                f"expected_invariants[{index}] 缺少非空 invariant_id"
+            )
+        ids.append(invariant_id.strip())
+    if len(set(ids)) != len(ids):
+        raise ReviewRecordError("expected_invariants invariant_id 必须唯一")
+    return ids
+
+
+def classify_retryable_format_failure(
+    raw_output,
+    expected_invariants,
+    retry_identity,
+) -> str:
+    """Classify output without provider dispatch or evidence side effects."""
+    _validated_retry_identity(retry_identity)
+    expected_ids = _expected_invariant_ids(expected_invariants)
+    if not isinstance(raw_output, str) or not raw_output.strip():
+        return "non_retryable"
+
+    fields = parse_verdict_block(raw_output)
+    statuses = fields.get("_invariants")
+    result = _norm_result(fields.get("review_result"))
+    route = fields.get("route_class")
+    if result == "blocked":
+        return "non_retryable"
+    if result == "findings" or route in ROUTE_CLASS - {"none"}:
+        return "semantic_finding"
+    if not isinstance(statuses, dict) or set(statuses) != set(expected_ids):
+        return "non_retryable"
+
+    for invariant_id in expected_ids:
+        verdict = statuses.get(invariant_id)
+        if not isinstance(verdict, dict):
+            return "non_retryable"
+        status = verdict.get("status")
+        evidence = verdict.get("evidence")
+        reason = verdict.get("reason")
+        if status == "fail":
+            return "semantic_finding"
+        if (
+            status != "pass"
+            or not isinstance(evidence, str)
+            or not evidence.strip()
+            or (isinstance(reason, str) and reason.strip())
+        ):
+            return "non_retryable"
+
+    if validate_verdict_values(fields) is None and result == "clean":
+        return "valid"
+    return "retryable_format"
+
+
+def _format_retry_path_is_within(task_root: str, path: str) -> bool:
+    try:
+        return os.path.commonpath((task_root, os.path.realpath(path))) == task_root
+    except ValueError:
+        return False
+
+
+def _format_retry_locations(task_dir: str, *, create: bool) -> tuple[str, str, str]:
+    if not isinstance(task_dir, str) or not task_dir.strip():
+        raise ReviewRecordError("format retry task_dir 必须是非空字符串")
+    task_root = os.path.realpath(task_dir)
+    if not os.path.isdir(task_root):
+        raise ReviewRecordError("format retry task_dir 必须是已存在目录")
+    records_dir = os.path.join(task_root, "review-records")
+    artifacts_dir = os.path.join(
+        records_dir,
+        "implementation-review-format-retries",
+    )
+    if create and not os.path.lexists(records_dir):
+        os.mkdir(records_dir, mode=0o700)
+    if os.path.lexists(records_dir):
+        if os.path.islink(records_dir) or not os.path.isdir(records_dir):
+            raise ReviewRecordError("format retry review-records 必须是安全目录")
+        if not _format_retry_path_is_within(task_root, records_dir):
+            raise ReviewRecordError("format retry evidence path escapes task root")
+    if create and not os.path.lexists(artifacts_dir):
+        os.mkdir(artifacts_dir, mode=0o700)
+    for directory in (records_dir, artifacts_dir):
+        if os.path.lexists(directory):
+            if os.path.islink(directory) or not os.path.isdir(directory):
+                raise ReviewRecordError("format retry evidence 目录不得是 symlink")
+            if not _format_retry_path_is_within(task_root, directory):
+                raise ReviewRecordError("format retry evidence path escapes task root")
+    stream_path = os.path.join(
+        records_dir,
+        "implementation-review-format-retries.jsonl",
+    )
+    if os.path.islink(stream_path):
+        raise ReviewRecordError("format retry evidence stream 不得是 symlink")
+    return task_root, stream_path, artifacts_dir
+
+
+def _format_retry_artifact_path(
+    task_root: str,
+    artifacts_dir: str,
+    run_id: str,
+    attempt: int,
+) -> tuple[str, str]:
+    if not isinstance(run_id, str) or not _FORMAT_RETRY_RUN_ID.fullmatch(run_id):
+        raise ReviewRecordError("format retry run_id 非法")
+    if (
+        not isinstance(attempt, int)
+        or isinstance(attempt, bool)
+        or attempt not in _FORMAT_RETRY_EVENT_KINDS
+    ):
+        raise ReviewRecordError("format retry attempt 仅允许 0 或 1")
+    suffix = "semantic" if attempt == 0 else "serialization"
+    artifact_path = os.path.join(artifacts_dir, f"{run_id}-{suffix}.txt")
+    if not _format_retry_path_is_within(task_root, artifacts_dir):
+        raise ReviewRecordError("format retry artifact path escapes task root")
+    artifact_rel = os.path.relpath(artifact_path, task_root).replace(os.sep, "/")
+    return artifact_path, artifact_rel
+
+
+def _validate_format_retry_event(
+    event,
+    task_root: str,
+    artifacts_dir: str,
+    *,
+    verify_artifact: bool,
+) -> dict:
+    if not isinstance(event, dict) or set(event) != _FORMAT_RETRY_EVENT_FIELDS:
+        raise ReviewRecordError("format retry event schema 非法")
+    if event.get("schema_version") != FORMAT_RETRY_EVIDENCE_SCHEMA_VERSION:
+        raise ReviewRecordError("format retry event schema_version 非法")
+    attempt = event.get("attempt")
+    if (
+        not isinstance(attempt, int)
+        or isinstance(attempt, bool)
+        or attempt not in _FORMAT_RETRY_EVENT_KINDS
+    ):
+        raise ReviewRecordError("format retry event attempt 非法")
+    if event.get("event_kind") != _FORMAT_RETRY_EVENT_KINDS[attempt]:
+        raise ReviewRecordError("format retry event kind/attempt mismatch")
+    run_id = event.get("run_id")
+    if not isinstance(run_id, str) or not _FORMAT_RETRY_RUN_ID.fullmatch(run_id):
+        raise ReviewRecordError("format retry event run_id 非法")
+    for field in ("review_target", "provider"):
+        value = event.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ReviewRecordError(f"format retry event {field} 非法")
+    if event["provider"] not in _CHANNEL_PROVIDERS:
+        raise ReviewRecordError("format retry event provider 非法")
+    identity = _validated_retry_identity(event.get("retry_identity"))
+    if event.get("retry_identity_digest") != _retry_identity_digest(identity):
+        raise ReviewRecordError("format retry event identity digest mismatch")
+    expected_path, expected_rel = _format_retry_artifact_path(
+        task_root,
+        artifacts_dir,
+        run_id,
+        attempt,
+    )
+    if event.get("artifact_path") != expected_rel:
+        raise ReviewRecordError("format retry event artifact path 非法")
+    artifact_digest = event.get("artifact_digest")
+    if not isinstance(artifact_digest, str) or not _SHA256.fullmatch(artifact_digest):
+        raise ReviewRecordError("format retry event artifact digest 非法")
+    status = event.get("status")
+    if not isinstance(status, str) or status not in FORMAT_RETRY_CLASSIFICATIONS:
+        raise ReviewRecordError("format retry event status 非法")
+    if attempt == 0 and status != "retryable_format":
+        raise ReviewRecordError("semantic retry evidence 必须为 retryable_format")
+    _timezone_aware_timestamp(event.get("timestamp"), "format retry timestamp")
+    if verify_artifact:
+        if os.path.islink(expected_path) or not os.path.isfile(expected_path):
+            raise ReviewRecordError("format retry artifact missing or unsafe")
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            fd = os.open(expected_path, flags)
+            try:
+                artifact_hash = hashlib.sha256()
+                while True:
+                    chunk = os.read(fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    artifact_hash.update(chunk)
+                actual_digest = artifact_hash.hexdigest()
+            finally:
+                os.close(fd)
+        except OSError as exc:
+            raise ReviewRecordError(
+                f"cannot read immutable retry artifact:{exc}"
+            ) from exc
+        if actual_digest != artifact_digest:
+            raise ReviewRecordError("format retry artifact digest mismatch")
+    return dict(event)
+
+
+def _validate_format_retry_sequence(events: list[dict]) -> None:
+    artifact_paths = set()
+    semantic_by_run = {}
+    semantic_identities = set()
+    retried_identities = set()
+    for event in events:
+        artifact_path = event["artifact_path"]
+        if artifact_path in artifact_paths:
+            raise ReviewRecordError("duplicate format retry artifact name")
+        artifact_paths.add(artifact_path)
+        run_id = event["run_id"]
+        identity_digest = event["retry_identity_digest"]
+        if event["attempt"] == 0:
+            if run_id in semantic_by_run:
+                raise ReviewRecordError("duplicate semantic retry event")
+            semantic_by_run[run_id] = identity_digest
+            semantic_identities.add(identity_digest)
+            continue
+        if identity_digest not in semantic_identities:
+            raise ReviewRecordError("format retry identity mismatch")
+        if identity_digest in retried_identities:
+            raise ReviewRecordError("RetryIdentity 已消费 serialization retry")
+        retried_identities.add(identity_digest)
+
+
+def load_format_retry_evidence(task_dir: str) -> list[dict]:
+    """Replay and validate the complete immutable formatting-retry history."""
+    task_root, stream_path, artifacts_dir = _format_retry_locations(
+        task_dir,
+        create=False,
+    )
+    _recover_pending_retry_event(
+        task_root,
+        stream_path,
+        artifacts_dir,
+    )
+    if not os.path.exists(stream_path):
+        _validate_retry_consumption_markers([], artifacts_dir)
+        return []
+    events = []
+    try:
+        with open(stream_path, "r", encoding="utf-8") as stream:
+            for line_number, raw_line in enumerate(stream, 1):
+                if not raw_line.strip():
+                    raise ReviewRecordError(
+                        f"format retry event line {line_number} 为空"
+                    )
+                try:
+                    event = json.loads(raw_line)
+                except json.JSONDecodeError as exc:
+                    raise ReviewRecordError(
+                        f"format retry event line {line_number} JSON 非法"
+                    ) from exc
+                event = _validate_format_retry_event(
+                    event,
+                    task_root,
+                    artifacts_dir,
+                    verify_artifact=False,
+                )
+                _recover_pending_retry_artifact(
+                    event,
+                    task_root,
+                    artifacts_dir,
+                )
+                events.append(
+                    _validate_format_retry_event(
+                        event,
+                        task_root,
+                        artifacts_dir,
+                        verify_artifact=True,
+                    )
+                )
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot read format retry evidence:{exc}") from exc
+    _validate_format_retry_sequence(events)
+    _validate_retry_consumption_markers(events, artifacts_dir)
+    return events
+
+
+def _read_retry_bytes(path: str, label: str) -> bytes:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags)
+        try:
+            chunks = []
+            while True:
+                chunk = os.read(fd, 1024 * 1024)
+                if not chunk:
+                    return b"".join(chunks)
+                chunks.append(chunk)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot read {label}:{exc}") from exc
+
+
+def _fsync_retry_file(fd: int, label: str) -> None:
+    try:
+        os.fsync(fd)
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot fsync {label}:{exc}") from exc
+
+
+def _retry_directory_fsync_supported() -> bool:
+    return os.name != "nt"
+
+
+def _fsync_retry_directory(path: str, label: str) -> None:
+    if not _retry_directory_fsync_supported():
+        return
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    try:
+        fd = os.open(path, flags)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot fsync {label} directory:{exc}") from exc
+
+
+def _atomic_write_retry_pending(path: str, encoded: bytes, label: str) -> None:
+    if os.path.lexists(path):
+        if os.path.islink(path) or not os.path.isfile(path):
+            raise ReviewRecordError(f"{label} pending path is unsafe")
+        if _read_retry_bytes(path, f"{label} pending") != encoded:
+            raise ReviewRecordError(f"{label} pending content mismatch")
+        return
+    temporary = f"{path}.{uuid.uuid4().hex}.tmp"
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(temporary, flags, 0o600)
+        try:
+            offset = 0
+            while offset < len(encoded):
+                written = os.write(fd, encoded[offset:])
+                if written <= 0:
+                    raise ReviewRecordError(f"{label} pending write incomplete")
+                offset += written
+            _fsync_retry_file(fd, f"{label} pending")
+        finally:
+            os.close(fd)
+    except (OSError, ReviewRecordError) as exc:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        if isinstance(exc, ReviewRecordError):
+            raise
+        raise ReviewRecordError(f"cannot create {label} pending file:{exc}") from exc
+    published = False
+    try:
+        os.replace(temporary, path)
+        published = True
+        _fsync_retry_directory(os.path.dirname(path), label)
+    except (OSError, ReviewRecordError) as exc:
+        if not published:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+        if isinstance(exc, ReviewRecordError):
+            raise
+        raise ReviewRecordError(f"cannot publish {label} pending file:{exc}") from exc
+
+
+def _pending_retry_artifact_path(artifact_path: str) -> str:
+    return artifact_path + ".pending"
+
+
+def _pending_retry_stream_path(
+    stream_path: str,
+    run_id: str,
+    attempt: int,
+) -> str:
+    return f"{stream_path}.{run_id}-{attempt}.pending"
+
+
+def _retry_consumption_marker_path(
+    artifacts_dir: str,
+    identity_digest: str,
+) -> str:
+    if not _SHA256.fullmatch(identity_digest):
+        raise ReviewRecordError("format retry consumption identity 非法")
+    return os.path.join(artifacts_dir, f"{identity_digest}.consumed.json")
+
+
+def _retry_consumption_marker_bytes(event: dict) -> bytes:
+    return (
+        json.dumps(
+            {
+                "schema_version": 1,
+                "retry_identity_digest": event["retry_identity_digest"],
+                "run_id": event["run_id"],
+                "artifact_digest": event["artifact_digest"],
+                "attempt": 1,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _ensure_retry_consumption_marker(event: dict, artifacts_dir: str) -> None:
+    if event["attempt"] != 1:
+        return
+    marker_path = _retry_consumption_marker_path(
+        artifacts_dir,
+        event["retry_identity_digest"],
+    )
+    encoded = _retry_consumption_marker_bytes(event)
+    pending_path = marker_path + ".pending"
+    _atomic_write_retry_pending(
+        pending_path,
+        encoded,
+        "format retry consumption marker",
+    )
+    if os.path.lexists(marker_path):
+        if os.path.islink(marker_path) or not os.path.isfile(marker_path):
+            raise ReviewRecordError("format retry consumption marker is unsafe")
+        if _read_retry_bytes(marker_path, "format retry consumption marker") != encoded:
+            raise ReviewRecordError("RetryIdentity 已消费 serialization retry")
+        try:
+            os.unlink(pending_path)
+            _fsync_retry_directory(artifacts_dir, "format retry consumption marker")
+        except OSError as exc:
+            raise ReviewRecordError(
+                f"cannot clean format retry consumption pending marker:{exc}"
+            ) from exc
+        return
+    try:
+        os.link(pending_path, marker_path, follow_symlinks=False)
+        _fsync_retry_directory(artifacts_dir, "format retry consumption marker")
+        os.unlink(pending_path)
+        _fsync_retry_directory(artifacts_dir, "format retry consumption marker")
+    except OSError as exc:
+        raise ReviewRecordError(
+            f"cannot publish format retry consumption marker:{exc}"
+        ) from exc
+
+
+def _validate_retry_consumption_markers(
+    events: list[dict],
+    artifacts_dir: str,
+) -> None:
+    if not os.path.isdir(artifacts_dir):
+        return
+    expected = {
+        event["retry_identity_digest"]: _retry_consumption_marker_bytes(event)
+        for event in events
+        if event["attempt"] == 1
+    }
+    actual = {}
+    try:
+        names = os.listdir(artifacts_dir)
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot list retry consumption markers:{exc}") from exc
+    for name in names:
+        if not name.endswith(".consumed.json"):
+            continue
+        identity_digest = name[: -len(".consumed.json")]
+        marker_path = _retry_consumption_marker_path(
+            artifacts_dir,
+            identity_digest,
+        )
+        if os.path.islink(marker_path) or not os.path.isfile(marker_path):
+            raise ReviewRecordError("format retry consumption marker is unsafe")
+        actual[identity_digest] = _read_retry_bytes(
+            marker_path,
+            "format retry consumption marker",
+        )
+    if actual != expected:
+        raise ReviewRecordError("format retry consumption marker history mismatch")
+
+
+def _append_retry_event_bytes(stream_path: str, encoded: bytes) -> None:
+    flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(stream_path, flags, 0o600)
+        try:
+            opened = os.fstat(fd)
+            linked = os.lstat(stream_path)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or not stat.S_ISREG(linked.st_mode)
+                or not os.path.samestat(opened, linked)
+                or opened.st_nlink != 1
+            ):
+                raise ReviewRecordError("format retry event stream is unsafe")
+            offset = 0
+            while offset < len(encoded):
+                written = os.write(fd, encoded[offset:])
+                if written <= 0:
+                    raise ReviewRecordError("format retry event append incomplete")
+                offset += written
+            _fsync_retry_file(fd, "format retry event stream")
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot append format retry event:{exc}") from exc
+
+
+def _recover_pending_retry_event(
+    task_root: str,
+    stream_path: str,
+    artifacts_dir: str,
+) -> None:
+    records_dir = os.path.dirname(stream_path)
+    if not os.path.isdir(records_dir):
+        return
+    prefix = os.path.basename(stream_path) + "."
+    try:
+        pending_names = sorted(
+            name
+            for name in os.listdir(records_dir)
+            if name.startswith(prefix) and name.endswith(".pending")
+        )
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot list pending retry events:{exc}") from exc
+    if len(pending_names) > 1:
+        raise ReviewRecordError("multiple pending format retry events")
+    if not pending_names:
+        return
+    pending_path = os.path.join(records_dir, pending_names[0])
+    encoded = _read_retry_bytes(pending_path, "pending retry event")
+    if not encoded.endswith(b"\n") or len(encoded.splitlines()) != 1:
+        raise ReviewRecordError("pending retry event is malformed")
+    try:
+        event = json.loads(encoded.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ReviewRecordError("pending retry event is malformed") from exc
+    event = _validate_format_retry_event(
+        event,
+        task_root,
+        artifacts_dir,
+        verify_artifact=False,
+    )
+    _ensure_retry_consumption_marker(event, artifacts_dir)
+    stream_bytes = (
+        _read_retry_bytes(stream_path, "format retry event stream")
+        if os.path.exists(stream_path)
+        else b""
+    )
+    if stream_bytes.endswith(encoded):
+        remainder = b""
+    else:
+        tail = stream_bytes[stream_bytes.rfind(b"\n") + 1 :]
+        if tail:
+            if not encoded.startswith(tail):
+                raise ReviewRecordError("pending retry event tail mismatch")
+            remainder = encoded[len(tail) :]
+        else:
+            remainder = encoded
+    if remainder:
+        _append_retry_event_bytes(stream_path, remainder)
+    committed = _read_retry_bytes(stream_path, "format retry event stream")
+    if not committed.endswith(encoded):
+        raise ReviewRecordError("pending retry event commit mismatch")
+    try:
+        os.unlink(pending_path)
+        _fsync_retry_directory(records_dir, "format retry event stream")
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot clean pending retry event:{exc}") from exc
+
+
+def _recover_pending_retry_artifact(
+    event: dict,
+    task_root: str,
+    artifacts_dir: str,
+) -> None:
+    artifact_path, _ = _format_retry_artifact_path(
+        task_root,
+        artifacts_dir,
+        event["run_id"],
+        event["attempt"],
+    )
+    if os.path.isfile(artifact_path) and not os.path.islink(artifact_path):
+        return
+    pending_path = _pending_retry_artifact_path(artifact_path)
+    if os.path.islink(pending_path) or not os.path.isfile(pending_path):
+        raise ReviewRecordError("format retry committed event has no recoverable artifact")
+    pending_digest = hashlib.sha256(
+        _read_retry_bytes(pending_path, "pending retry artifact")
+    ).hexdigest()
+    if pending_digest != event["artifact_digest"]:
+        raise ReviewRecordError("pending retry artifact digest mismatch")
+    try:
+        os.link(pending_path, artifact_path, follow_symlinks=False)
+        _fsync_retry_directory(artifacts_dir, "format retry artifact")
+        os.unlink(pending_path)
+        _fsync_retry_directory(artifacts_dir, "format retry artifact")
+    except OSError as exc:
+        raise ReviewRecordError(f"cannot recover pending retry artifact:{exc}") from exc
+
+
+class _FormatRetryAppendLock(DeterministicEvidenceLock):
+    """Serialize replay plus append with a process-owned advisory lock."""
+
+    def __init__(self, task_dir: str):
+        super().__init__(
+            task_dir,
+            hashlib.sha256(b"guru-format-retry-append-lock-v1").hexdigest(),
+        )
+        self.path = os.path.join(
+            task_dir,
+            "review-records",
+            ".implementation-review-format-retries.lock",
+        )
+        self.reclaim_path = self.path + ".reclaim"
+
+    def __enter__(self) -> "_FormatRetryAppendLock":
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        if os.path.islink(self.path):
+            raise ReviewRecordError("format retry append lock must not be a symlink")
+        flags = os.O_RDWR | os.O_CREAT
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            fd = os.open(self.path, flags, 0o600)
+            opened = os.fstat(fd)
+            linked = os.lstat(self.path)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or not stat.S_ISREG(linked.st_mode)
+                or not os.path.samestat(opened, linked)
+                or opened.st_nlink != 1
+            ):
+                raise ReviewRecordError("format retry append lock is unsafe")
+        except (OSError, ReviewRecordError) as exc:
+            if "fd" in locals():
+                os.close(fd)
+            if isinstance(exc, ReviewRecordError):
+                raise
+            raise ReviewRecordError(f"cannot open format retry append lock:{exc}") from exc
+        deadline = time.monotonic() + self.timeout_seconds
+        acquired = False
+        try:
+            while True:
+                if self._try_lock_file(fd):
+                    acquired = True
+                    break
+                if time.monotonic() >= deadline:
+                    raise ReviewRecordError("format retry append lock wait timed out")
+                time.sleep(self.poll_seconds)
+            os.ftruncate(fd, 0)
+            os.lseek(fd, 0, os.SEEK_SET)
+            offset = 0
+            while offset < len(self.owner_bytes):
+                written = os.write(fd, self.owner_bytes[offset:])
+                if written <= 0:
+                    raise ReviewRecordError("format retry append lock write incomplete")
+                offset += written
+            os.fsync(fd)
+        except Exception as exc:
+            try:
+                if acquired:
+                    self._unlock_file(fd)
+            finally:
+                os.close(fd)
+            if isinstance(exc, OSError):
+                raise ReviewRecordError(
+                    f"cannot acquire format retry append lock:{exc}"
+                ) from exc
+            raise
+        self._fd = fd
+        return self
+
+
+def append_format_retry_evidence(
+    task_dir,
+    run_metadata,
+    retry_identity,
+    attempt,
+    raw_output,
+    status,
+) -> dict:
+    """Atomically create one raw artifact and append one validated audit event."""
+    if not isinstance(run_metadata, dict):
+        raise ReviewRecordError("format retry run_metadata 必须是对象")
+    run_id = run_metadata.get("run_id")
+    review_target = run_metadata.get("review_target")
+    provider = run_metadata.get("provider")
+    timestamp = run_metadata.get("timestamp")
+    if timestamp is None:
+        timestamp = datetime.now(timezone.utc).isoformat()
+    identity = _validated_retry_identity(retry_identity)
+    task_root, stream_path, artifacts_dir = _format_retry_locations(
+        task_dir,
+        create=True,
+    )
+    with _FormatRetryAppendLock(task_root):
+        current_events = load_format_retry_evidence(task_dir)
+        artifact_path, artifact_rel = _format_retry_artifact_path(
+            task_root,
+            artifacts_dir,
+            run_id,
+            attempt,
+        )
+        if not isinstance(raw_output, str):
+            raise ReviewRecordError("format retry raw_output 必须是字符串")
+        artifact_digest = hashlib.sha256(raw_output.encode("utf-8")).hexdigest()
+        event = {
+            "schema_version": FORMAT_RETRY_EVIDENCE_SCHEMA_VERSION,
+            "event_kind": _FORMAT_RETRY_EVENT_KINDS.get(attempt),
+            "run_id": run_id,
+            "review_target": review_target,
+            "provider": provider,
+            "retry_identity": identity,
+            "retry_identity_digest": _retry_identity_digest(identity),
+            "artifact_path": artifact_rel,
+            "artifact_digest": artifact_digest,
+            "attempt": attempt,
+            "status": status,
+            "timestamp": timestamp,
+        }
+        event = _validate_format_retry_event(
+            event,
+            task_root,
+            artifacts_dir,
+            verify_artifact=False,
+        )
+        for current_event in current_events:
+            if (
+                current_event["run_id"] == run_id
+                and current_event["attempt"] == attempt
+            ):
+                comparable = dict(event)
+                comparable["timestamp"] = current_event["timestamp"]
+                if comparable != current_event:
+                    raise ReviewRecordError(
+                        "format retry run/attempt already records different evidence"
+                    )
+                return current_event
+        _validate_format_retry_sequence([*current_events, event])
+        if os.path.lexists(artifact_path):
+            raise ReviewRecordError(
+                "format retry final artifact exists without a matching event"
+            )
+        pending_artifact_path = _pending_retry_artifact_path(artifact_path)
+        _atomic_write_retry_pending(
+            pending_artifact_path,
+            raw_output.encode("utf-8"),
+            "format retry artifact",
+        )
+        encoded = (
+            json.dumps(
+                event,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+        pending_stream_path = _pending_retry_stream_path(
+            stream_path,
+            run_id,
+            attempt,
+        )
+        _atomic_write_retry_pending(
+            pending_stream_path,
+            encoded,
+            "format retry event",
+        )
+        _ensure_retry_consumption_marker(event, artifacts_dir)
+        _recover_pending_retry_event(
+            task_root,
+            stream_path,
+            artifacts_dir,
+        )
+        _recover_pending_retry_artifact(
+            event,
+            task_root,
+            artifacts_dir,
+        )
+    return event
+
+
+def normalize_retry_verdict(
+    raw_output,
+    review_context,
+    retry_identity,
+    proof_bundle_digest,
+) -> dict:
+    """Normalize retry output through the existing official review schema."""
+    identity = _validated_retry_identity(retry_identity)
+    if (
+        not isinstance(proof_bundle_digest, str)
+        or not _SHA256.fullmatch(proof_bundle_digest)
+        or proof_bundle_digest != identity["proof_bundle_digest"]
+    ):
+        raise ReviewRecordError("format retry proof_bundle_digest mismatch")
+    if not isinstance(review_context, dict):
+        raise ReviewRecordError("format retry review_context 必须是对象")
+    context = dict(review_context)
+    context_identity = review_context.get("retry_identity")
+    if context_identity is not None and _validated_retry_identity(context_identity) != identity:
+        raise ReviewRecordError("format retry review_context identity drift")
+    evidence_components = review_context.get("evidence_components")
+    if evidence_components is not None:
+        if not isinstance(evidence_components, dict):
+            raise ReviewRecordError("format retry evidence_components 必须是对象")
+        for field in RETRY_IDENTITY_FIELDS[:-1]:
+            if evidence_components.get(field) != identity[field]:
+                raise ReviewRecordError(
+                    f"format retry evidence_components {field} drift"
+                )
+    for field in RETRY_IDENTITY_FIELDS[:-1]:
+        context_value = review_context.get(field)
+        if context_value is not None and context_value != identity[field]:
+            raise ReviewRecordError(f"format retry review_context {field} drift")
+    packet = context.get("packet")
+    expected_invariants = (
+        packet.get("invariants")
+        if isinstance(packet, dict)
+        else context.get("expected_invariants")
+    )
+    if packet is None:
+        context["packet"] = {
+            REVIEW_EVIDENCE_SCHEMA_FIELD: REVIEW_EVIDENCE_SCHEMA_VERSION,
+            "risk": "high",
+            "invariants": expected_invariants,
+        }
+        context[REVIEW_EVIDENCE_SCHEMA_FIELD] = REVIEW_EVIDENCE_SCHEMA_VERSION
+    policy = context.get("implementation_review_policy")
+    if policy is not None:
+        if not isinstance(policy, dict):
+            raise ReviewRecordError(
+                "format retry implementation_review_policy 必须是对象"
+            )
+        for field in (
+            "provider_override_source",
+            "same_provider_user_quote",
+            "high_risk_review_provider_policy",
+            "review_target_kind",
+            "implement_provider",
+            "check_provider",
+        ):
+            context.setdefault(field, policy.get(field))
+    context.setdefault("mode", "supervisor")
+    if context.get("timestamp") is None:
+        context["timestamp"] = datetime.now(timezone.utc).isoformat()
+    context.setdefault(
+        "supervisor_deterministic_status",
+        context.get("deterministic_checks"),
+    )
+    context.setdefault("supervisor_successful_commands", [])
+    if context.get("evidence_key"):
+        context.setdefault(
+            "deterministic_evidence_key",
+            context["evidence_key"],
+        )
+    classification = classify_retryable_format_failure(
+        raw_output,
+        expected_invariants,
+        identity,
+    )
+    fields = (
+        parse_verdict_block(raw_output)
+        if classification == "valid"
+        else {}
+    )
+    record, _ = normalize_review_record(fields, context)
+    return record
 
 
 # ============================================================================

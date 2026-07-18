@@ -24,6 +24,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +41,8 @@ from guru_gate import (  # noqa: E402
     GateArtifactError as _GateArtifactError,
     cmd_check_implementation as _guru_gate_check_implementation,
     _is_task_artifact_path as _guru_gate_is_task_artifact_path,
+    _receipt_history_by_slice as _guru_gate_receipt_history_by_slice,
+    _validate_slice_receipt as _guru_gate_validate_slice_receipt,
 )
 import guru_contract  # noqa: E402  commit contract reader for staged implementation-review targets
 import guru_risk  # noqa: E402  共享风险 helper（③ 独立 check 触发判定）
@@ -72,6 +75,11 @@ DEFAULT_HIGH_RISK_REVIEW_PROVIDER_POLICY = "current"
 DETERMINISTIC_REVIEW_BRIEF_MAX_CHARS = 16000
 FOCUSED_REQUIREMENTS_CONTEXT_MAX_CHARS = 32000
 FOCUSED_REQUIREMENT_ITEM_MAX_CHARS = 12000
+INTEGRATION_PROOF_MAX_BYTES = 98304
+INTEGRATION_PROOF_MAX_ESTIMATED_TOKENS = 25000
+INTEGRATION_FULL_REGRESSION_COMMAND = (
+    "python3 guru-template/overlay/verify/tests/test_slice_commit_lifecycle.py"
+)
 ADVERSARIAL_MODEL_ACTIONS = {"requirements", "overview", "detail"}
 GATES_KEY = "guru_gates"
 ADVERSARIAL_SKIPS_KEY = "adversarial_skips"
@@ -1999,6 +2007,7 @@ def _active_review_brief(
         "review_provider 必须写实际 worker provider（codex 或 claude），不要写 opposite/manual/ocr_optional。\n"
         "置顶逐行输出且不得漏写这 7 字段：review_result、route_class、review_target、review_provider、"
         "deterministic_checks、dirty_scope、invariant_coverage；不要用 target_paths/required_satisfied 替代。\n"
+        "clean verdict 必须逐字输出 invariant_coverage=all_passed；不要写 complete。\n"
         f"{_review_invariant_brief(invariants)}"
         "随后输出逐条 invariant_status.<id>=pass|fail|not_applicable"
         "（pass 必随 invariant_evidence.<id>；not_applicable 必随 invariant_reason.<id>）。\n"
@@ -3030,6 +3039,688 @@ def _focused_review_context_payload(
     }
 
 
+def _proof_digest(domain: str, value) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256()
+    digest.update(domain.encode("ascii"))
+    digest.update(b"\0")
+    digest.update(encoded)
+    return digest.hexdigest()
+
+
+def _integration_proof_eligible(task_dir: Path, target: ReviewTarget) -> bool:
+    marker = target.packet.get("integration_slice")
+    if marker is None or marker is False:
+        return False
+    if marker is not True:
+        raise GuruSupervisionError(
+            "PACKET_INVALID:integration_slice must be boolean"
+        )
+    evidence_schema = target.packet.get(
+        guru_review_record.REVIEW_EVIDENCE_SCHEMA_FIELD
+    )
+    if evidence_schema in (None, 1):
+        return False
+    if evidence_schema != guru_review_record.REVIEW_EVIDENCE_SCHEMA_VERSION:
+        raise GuruSupervisionError(
+            "PACKET_INVALID:Integration proof requires review evidence schema v2"
+        )
+    contract, contract_error = guru_contract.load_contract(str(task_dir))
+    if contract_error or not isinstance(contract, dict):
+        raise GuruSupervisionError(
+            "SCOPE_INVALID:Integration proof requires a valid Full/high contract:"
+            + (contract_error or "gate-contract.json missing")
+        )
+    if (
+        guru_contract.contract_route(contract) != guru_contract.ROUTE_FULL_CHAIN
+        or guru_contract.contract_risk(contract) != guru_contract.RISK_HIGH
+        or target.packet.get("risk") != guru_contract.RISK_HIGH
+    ):
+        return False
+    if (
+        not target.review_target.startswith("slice:")
+        or target.digest_source != "index"
+        or target.reviewed_target_digest is None
+    ):
+        raise GuruSupervisionError(
+            "SCOPE_INVALID:Integration proof requires the current staged slice snapshot"
+        )
+    return True
+
+
+def _git_index_path_bytes(root: Path, path: str) -> bytes:
+    try:
+        result = subprocess.run(
+            ["git", "show", f":{path}"],
+            cwd=root,
+            capture_output=True,
+            text=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise GuruSupervisionError(
+            f"cannot read staged Integration path {path}:{exc}"
+        ) from exc
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or b"").decode(
+            "utf-8", errors="replace"
+        ).strip()
+        raise GuruSupervisionError(
+            f"staged Integration path is missing or deleted:{path}:{message}"
+        )
+    return result.stdout
+
+
+def _managed_peer_path(source: str) -> str | None:
+    overlay = "guru-template/overlay/"
+    specs = "guru-template/specs/"
+    workflows = "guru-template/workflows/"
+    if source.startswith(overlay):
+        return "packages/cli/src/templates/guru/overlay/" + source[len(overlay):]
+    if source.startswith(specs):
+        return "packages/cli/src/templates/guru/specs/" + source[len(specs):]
+    if source.startswith(workflows) and source.endswith("-workflow.md"):
+        name = source[len(workflows):-len("-workflow.md")]
+        if name:
+            return f"packages/cli/src/templates/guru/workflows/{name}.md"
+    return None
+
+
+def _dependency_receipt_proofs(
+    task_dir: Path,
+    root: Path,
+    packet: dict,
+) -> tuple[list[dict], list[str]]:
+    dependencies = packet.get("depends_on") or []
+    if not isinstance(dependencies, list) or not dependencies:
+        raise GuruSupervisionError(
+            "Integration proof requires ordinary dependency receipts"
+        )
+    history = _guru_gate_receipt_history_by_slice(str(task_dir))
+    proofs = []
+    ordinary_targets: set[str] = set()
+    for dependency in dependencies:
+        receipts = history.get(dependency, [])
+        if not receipts:
+            raise GuruSupervisionError(
+                f"Integration dependency receipt missing:{dependency}"
+            )
+        receipt = receipts[-1]
+        problem = _guru_gate_validate_slice_receipt(
+            str(task_dir),
+            str(root),
+            receipt,
+            receipt_history=history,
+        )
+        if problem:
+            raise GuruSupervisionError(
+                f"Integration dependency receipt stale:{dependency}:{problem}"
+            )
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", receipt["commit_sha"], "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        if ancestor.returncode != 0:
+            raise GuruSupervisionError(
+                f"Integration dependency receipt is not an ancestor:{dependency}"
+            )
+        dependency_packet = guru_review_record.load_packet(
+            str(task_dir), dependency
+        )
+        ordinary_targets.update(dependency_packet.get("target_paths", []))
+        fields = (
+            "slice_id",
+            "commit_sha",
+            "receipt_id",
+            "review_run_id",
+            "reviewed_target_digest",
+            "invariant_verdicts_digest",
+            "target_paths_digest",
+            "requirements_design_digest",
+            "deterministic_commands_digest",
+            "deterministic_results_digest",
+            "review_policy_digest",
+        )
+        proof = {field: receipt.get(field) for field in fields}
+        proof["state"] = "current"
+        proofs.append(proof)
+    return proofs, sorted(ordinary_targets)
+
+
+def _generated_peer_proofs(
+    root: Path,
+    target_paths: list[str],
+) -> tuple[list[dict], set[str]]:
+    target_set = set(target_paths)
+    canonical_by_peer = {
+        peer: source
+        for source in target_paths
+        if (peer := _managed_peer_path(source)) is not None
+    }
+    managed_peer_roots = (
+        "packages/cli/src/templates/guru/overlay/",
+        "packages/cli/src/templates/guru/specs/",
+        "packages/cli/src/templates/guru/workflows/",
+    )
+    for path in target_paths:
+        if path.startswith(managed_peer_roots) and path not in canonical_by_peer:
+            raise GuruSupervisionError(
+                f"generated peer has no canonical Integration source:{path}"
+            )
+    proofs = []
+    peer_paths: set[str] = set()
+    for peer, source in sorted(canonical_by_peer.items()):
+        if peer not in target_set:
+            raise GuruSupervisionError(
+                f"canonical Integration source has no generated peer:{source}"
+            )
+        source_bytes = _git_index_path_bytes(root, source)
+        peer_bytes = _git_index_path_bytes(root, peer)
+        if source_bytes != peer_bytes:
+            raise GuruSupervisionError(
+                f"generated Integration peer differs:{source} != {peer}"
+            )
+        digest = hashlib.sha256(source_bytes).hexdigest()
+        proofs.append(
+            {
+                "source": source,
+                "peer": peer,
+                "source_digest": digest,
+                "peer_digest": digest,
+                "equal": True,
+            }
+        )
+        peer_paths.add(peer)
+    return proofs, peer_paths
+
+
+def _proof_requirements_design_context(
+    task_dir: Path,
+    manifest: list,
+) -> list[dict]:
+    guru_review_record.requirements_design_digest(str(task_dir), manifest)
+    task_root = task_dir.resolve()
+    proofs = []
+    for entry in manifest:
+        if not isinstance(entry, dict):
+            raise GuruSupervisionError(
+                "Integration requirements/design selector must be an object"
+            )
+        heading = entry.get("heading")
+        if not isinstance(heading, str) or not heading.strip():
+            raise GuruSupervisionError(
+                "Integration proof rejects whole-file requirements/design selectors"
+            )
+        rel = guru_review_record._clean_target_paths([entry.get("path")])[0]
+        path = (task_root / rel).resolve()
+        if path != task_root and task_root not in path.parents:
+            raise GuruSupervisionError(
+                f"Integration requirements/design path escapes task root:{rel}"
+            )
+        content = guru_review_record._markdown_section_bytes(
+            str(path), heading.strip()
+        )
+        try:
+            selected = content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise GuruSupervisionError(
+                f"Integration requirements/design input is not UTF-8:{rel}:{exc}"
+            ) from exc
+        proofs.append(
+            {
+                "path": rel,
+                "selector": f"heading:{heading.strip()}",
+                "selected_content_bytes": len(content),
+                "selected_content_digest": hashlib.sha256(content).hexdigest(),
+                "selected_content": selected,
+            }
+        )
+    return proofs
+
+
+def _integration_owned_staged_diff(
+    root: Path,
+    target_paths: list[str],
+    ordinary_targets: set[str],
+    peer_paths: set[str],
+) -> tuple[list[str], str]:
+    staged_paths, staged_error = _staged_paths(str(root))
+    if staged_error:
+        raise GuruSupervisionError(f"cannot resolve Integration staged paths:{staged_error}")
+    target_set = set(target_paths)
+    outside = sorted(set(staged_paths) - target_set)
+    if outside:
+        raise GuruSupervisionError(
+            "Integration staged scope escapes packet:" + ", ".join(outside[:5])
+        )
+    overlap = sorted(set(staged_paths).intersection(ordinary_targets))
+    if overlap:
+        raise GuruSupervisionError(
+            "Integration rewrites ordinary canonical targets:" + ", ".join(overlap[:5])
+        )
+    integration_owned = sorted(set(staged_paths) - ordinary_targets)
+    semantic_diff_paths = [
+        path for path in integration_owned if path not in peer_paths
+    ]
+    return integration_owned, (
+        _focused_staged_diff(root, semantic_diff_paths)
+        if semantic_diff_paths
+        else ""
+    )
+
+
+def _proof_retry_identity(component_digests: dict, proof_bundle_digest: str) -> dict:
+    identity_components = {
+        "reviewed_target_digest": component_digests.get("reviewed_target_digest"),
+        "target_paths_digest": component_digests.get("target_paths_digest"),
+        "invariant_set_digest": component_digests.get("invariant_set_digest"),
+        "requirements_design_digest": component_digests.get("requirements_design_digest"),
+        "deterministic_commands_digest": component_digests.get("deterministic_commands_digest"),
+        "deterministic_results_digest": component_digests.get("deterministic_results_digest"),
+        "review_policy_digest": component_digests.get("review_policy_digest"),
+        "supervisor_source_digest": component_digests.get("supervisor_source_digest"),
+        "proof_bundle_digest": proof_bundle_digest,
+    }
+    return guru_review_record.build_retry_identity(identity_components)
+
+
+def _proof_prompt_metrics(prompt: str) -> dict[str, int]:
+    payload_bytes = len(prompt.encode("utf-8"))
+    return {
+        "payload_bytes": payload_bytes,
+        "estimated_tokens": (payload_bytes + 2) // 3,
+    }
+
+
+def _enforce_proof_prompt_budget(prompt: str) -> dict[str, int]:
+    metrics = _proof_prompt_metrics(prompt)
+    failures = []
+    if metrics["payload_bytes"] > INTEGRATION_PROOF_MAX_BYTES:
+        failures.append(
+            f"payload_bytes>{INTEGRATION_PROOF_MAX_BYTES}"
+        )
+    if (
+        metrics["estimated_tokens"]
+        > INTEGRATION_PROOF_MAX_ESTIMATED_TOKENS
+    ):
+        failures.append(
+            "estimated_tokens>"
+            f"{INTEGRATION_PROOF_MAX_ESTIMATED_TOKENS}"
+        )
+    if failures:
+        raise GuruSupervisionError(
+            "Integration proof prompt budget exceeded:"
+            + ",".join(failures)
+            + f":metrics={metrics}"
+        )
+    return metrics
+
+
+def _integration_verdict_contract(
+    expected_ids: list[str],
+    invocation_contract: dict,
+) -> dict:
+    return {
+        "required_headers": {
+            "review_result": sorted(guru_review_record.REVIEW_RESULT),
+            "route_class": sorted(guru_review_record.ROUTE_CLASS),
+            "review_target": [invocation_contract["review_target"]],
+            "review_provider": [invocation_contract["review_provider"]],
+            "deterministic_checks": ["passed"],
+            "dirty_scope": sorted(guru_review_record.DIRTY_SCOPE),
+            "invariant_coverage": sorted(
+                guru_review_record.INVARIANT_COVERAGE
+            ),
+        },
+        "clean_header_values": {
+            "review_result": "clean",
+            "route_class": "none",
+            "review_target": invocation_contract["review_target"],
+            "review_provider": invocation_contract["review_provider"],
+            "deterministic_checks": "passed",
+            "dirty_scope": "clean|isolated",
+            "invariant_coverage": "all_passed",
+        },
+        "expected_invariant_ids": expected_ids,
+        "per_invariant_lines": {
+            "status": "invariant_status.<id>=pass|fail|not_applicable",
+            "pass_evidence": "invariant_evidence.<id>=<non-empty evidence>",
+            "not_applicable_reason": (
+                "invariant_reason.<id>=<non-empty reason>"
+            ),
+        },
+        "clean_invariant_rule": (
+            "Every expected id appears exactly once with status=pass and "
+            "non-empty evidence; no extra invariant id is allowed."
+        ),
+        "source_probes_allowed_for_clean": False,
+        "files": [],
+        "jsonls": [],
+    }
+
+
+def _serialize_integration_proof_prompt(
+    bundle: dict,
+    invocation_contract: dict,
+    component_digests: dict,
+) -> tuple[str, dict, dict]:
+    expected_ids = [
+        invariant["invariant_id"] for invariant in bundle["invariants"]
+    ]
+    working = dict(bundle)
+    working["payload_metrics"] = {"payload_bytes": 0, "estimated_tokens": 0}
+    for _ in range(8):
+        digest_payload = dict(working)
+        digest_payload.pop("proof_bundle_digest", None)
+        proof_digest = _proof_digest(
+            "guru-integration-proof-bundle-v1", digest_payload
+        )
+        working["proof_bundle_digest"] = proof_digest
+        retry_identity = _proof_retry_identity(
+            component_digests, proof_digest
+        )
+        payload = {
+            "schema_version": 1,
+            "invocation_contract": invocation_contract,
+            "integration_proof_bundle": working,
+            "retry_identity": retry_identity,
+            "acceptance_metrics": {
+                **working.get("acceptance_metrics", {}),
+                **working["payload_metrics"],
+                "budget_verdict": "passed",
+                "budget_limits": {
+                    "payload_bytes": INTEGRATION_PROOF_MAX_BYTES,
+                    "estimated_tokens": (
+                        INTEGRATION_PROOF_MAX_ESTIMATED_TOKENS
+                    ),
+                },
+                "formatting_retry_identity": retry_identity,
+            },
+            "expected_invariant_ids": expected_ids,
+            "verdict_contract": _integration_verdict_contract(
+                expected_ids,
+                invocation_contract,
+            ),
+        }
+        prompt = (
+            "Review only this serialized Full/high Integration proof. "
+            "Do not read repository files, task JSONLs, or run source probes. "
+            "Use exactly the supplied invariant IDs and emit one structured "
+            "implementation-review verdict.\n"
+            + json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        metrics = _proof_prompt_metrics(prompt)
+        if working["payload_metrics"] == metrics:
+            _enforce_proof_prompt_budget(prompt)
+            return prompt, working, retry_identity
+        working["payload_metrics"] = metrics
+    raise GuruSupervisionError(
+        "Integration proof prompt metrics did not stabilize"
+    )
+
+
+def _without_injected_context(
+    plan: RunPlan,
+    brief: str,
+    isolated_cwd: Path | None = None,
+) -> RunPlan:
+    spawn_cmd = []
+    skip_value = False
+    for argument in plan.spawn_cmd:
+        if skip_value:
+            skip_value = False
+            continue
+        if argument in {"--agent", "--file", "--jsonl", "--cwd"}:
+            skip_value = True
+            continue
+        spawn_cmd.append(argument)
+    if isolated_cwd is not None:
+        spawn_cmd.extend(["--cwd", str(isolated_cwd)])
+    return replace(
+        plan,
+        spawn_cmd=spawn_cmd,
+        brief=brief,
+        files=[],
+        jsonls=[],
+    )
+
+
+_PROOF_TOOL_EVENT_KINDS = {
+    "mcp",
+    "dynamic_tool",
+    "web_search",
+    "file_change",
+    "image_view",
+}
+
+
+def _proof_worker_tool_trace(
+    config: SupervisionConfig,
+    plan: RunPlan,
+) -> dict:
+    """Read the complete official channel trace and count reviewer tool starts."""
+    result = subprocess.run(
+        _trellis_cmd(
+            config,
+            ["channel", "messages", plan.channel, "--raw"],
+        ),
+        cwd=config.root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        raise GuruSupervisionError(
+            "cannot load Integration proof reviewer tool trace:"
+            + (result.stderr or result.stdout).strip()
+        )
+    tool_events = []
+    worker_event_seen = False
+    terminal_event_seen = False
+    for line in result.stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("by") != plan.worker:
+            continue
+        worker_event_seen = True
+        if event.get("kind") in {"done", "turn_finished"}:
+            terminal_event_seen = True
+        detail = event.get("detail")
+        if not isinstance(detail, dict):
+            continue
+        tool = detail.get("tool")
+        kind = detail.get("kind")
+        if isinstance(tool, str) and tool.strip():
+            event_kind = tool.strip()
+        elif kind in _PROOF_TOOL_EVENT_KINDS:
+            event_kind = kind
+        else:
+            continue
+        tool_events.append(
+            {
+                "event_kind": event_kind,
+                "seq": event.get("seq"),
+            }
+        )
+    if not worker_event_seen or not terminal_event_seen:
+        raise GuruSupervisionError(
+            "Integration proof reviewer tool trace is incomplete"
+        )
+    return {
+        "status": "complete",
+        "duplicate_read_probe_count": len(tool_events),
+        "tool_events": tool_events,
+    }
+
+
+def _proof_trace_message(tool_trace: dict | None) -> str | None:
+    if not tool_trace:
+        return None
+    return "integration_proof_tool_trace=" + json.dumps(
+        tool_trace,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _attach_proof_trace(record: dict, tool_trace: dict | None) -> None:
+    trace_message = _proof_trace_message(tool_trace)
+    if trace_message is None:
+        return
+    existing = record.get("message")
+    record["message"] = (
+        f"{existing}\n{trace_message}" if existing else trace_message
+    )
+
+
+def _integration_proof_bundle(
+    task_dir: Path,
+    root: Path,
+    target: ReviewTarget,
+    evidence_components: dict,
+    deterministic_results: list,
+) -> dict:
+    target_paths = guru_review_record._clean_target_paths(
+        target.packet.get("target_paths", [])
+    )
+    receipt_proofs, ordinary_targets_list = _dependency_receipt_proofs(
+        task_dir, root, target.packet
+    )
+    ordinary_targets = set(ordinary_targets_list)
+    missing_union = sorted(ordinary_targets - set(target_paths))
+    if missing_union:
+        raise GuruSupervisionError(
+            "Integration target omits ordinary receipt union:"
+            + ", ".join(missing_union[:5])
+        )
+    peer_proofs, peer_paths = _generated_peer_proofs(root, target_paths)
+    integration_owned, integration_diff = _integration_owned_staged_diff(
+        root,
+        target_paths,
+        ordinary_targets,
+        peer_paths,
+    )
+    deterministic_proofs = []
+    for result in deterministic_results:
+        if not isinstance(result, dict):
+            raise GuruSupervisionError(
+                "Integration deterministic result must be an object"
+            )
+        if result.get("exit_code") != 0 or result.get("timed_out") is not False:
+            raise GuruSupervisionError(
+                "Integration deterministic evidence is not passed/current"
+            )
+        deterministic_proofs.append(
+            {
+                "command": result.get("command"),
+                "exit_code": result.get("exit_code"),
+                "timed_out": result.get("timed_out"),
+                "duration_ms": result.get("duration_ms"),
+                "result_digest": _proof_digest(
+                    "guru-integration-deterministic-result-v1", result
+                ),
+            }
+        )
+    requirements_design_proofs = _proof_requirements_design_context(
+        task_dir,
+        target.packet.get("requirements_design_inputs", []),
+    )
+    acceptance_metrics = _integration_acceptance_metrics(
+        receipt_proofs=receipt_proofs,
+        ordinary_targets=ordinary_targets_list,
+        peer_proofs=peer_proofs,
+        integration_owned=integration_owned,
+        peer_paths=peer_paths,
+        requirements_design_proofs=requirements_design_proofs,
+        deterministic_results=deterministic_results,
+    )
+    return {
+        "schema_version": 1,
+        "review_target": target.review_target,
+        "reviewed_target_digest": target.reviewed_target_digest,
+        "component_digests": dict(evidence_components),
+        "ordinary_target_union_digest": _proof_digest(
+            "guru-integration-ordinary-target-union-v1",
+            ordinary_targets_list,
+        ),
+        "ordinary_receipt_proofs": receipt_proofs,
+        "generated_peer_proofs": peer_proofs,
+        "integration_owned_paths": integration_owned,
+        "integration_owned_diff": integration_diff,
+        "invariants": target.packet.get("invariants", []),
+        "requirements_design_proofs": requirements_design_proofs,
+        "deterministic_result_proofs": deterministic_proofs,
+        "acceptance_metrics": acceptance_metrics,
+        "payload_metrics": {},
+        "proof_bundle_digest": "",
+    }
+
+
+def _integration_acceptance_metrics(
+    *,
+    receipt_proofs: list[dict],
+    ordinary_targets: list[str],
+    peer_proofs: list[dict],
+    integration_owned: list[str],
+    peer_paths: set[str],
+    requirements_design_proofs: list[dict],
+    deterministic_results: list[dict],
+) -> dict:
+    full_regression_count = sum(
+        result.get("command") == INTEGRATION_FULL_REGRESSION_COMMAND
+        for result in deterministic_results
+        if isinstance(result, dict)
+    )
+    if full_regression_count != 1:
+        raise GuruSupervisionError(
+            "Integration proof requires exactly one full lifecycle regression:"
+            f"count={full_regression_count}"
+        )
+    invalidated_receipts = sorted(
+        proof.get("slice_id", "")
+        for proof in receipt_proofs
+        if proof.get("state") != "current"
+    )
+    return {
+        "semantic_reviewer_count": 1,
+        "duplicate_read_probe_count": 0,
+        "integration_full_regression_count": full_regression_count,
+        "projection_counts": {
+            "ordinary_receipts": len(receipt_proofs),
+            "ordinary_target_union": len(ordinary_targets),
+            "generated_peers": len(peer_proofs),
+            "integration_owned_paths": len(integration_owned),
+            "integration_owned_diff_paths": len(
+                set(integration_owned) - peer_paths
+            ),
+            "requirements_design_proofs": len(requirements_design_proofs),
+            "deterministic_results": len(deterministic_results),
+        },
+        "formatting_retry_count": 0,
+        "receipt_invalidation_set": invalidated_receipts,
+        "provider_input_tokens": {
+            "available": False,
+            "value": None,
+        },
+    }
+
+
 def _review_read_only_snapshot(root: Path) -> str:
     """Bind HEAD, index, tracked edits, and untracked bytes around the reviewer."""
     h = hashlib.sha256()
@@ -3512,6 +4203,482 @@ def run_implement_check(args: argparse.Namespace) -> int:
     return 1
 
 
+def _append_proof_normalized_record(
+    task_dir: Path,
+    raw_output: str,
+    review_context: dict,
+    retry_identity: dict,
+    proof_bundle_digest: str,
+    tool_trace: dict | None = None,
+) -> tuple[dict, str | None]:
+    try:
+        record = guru_review_record.normalize_retry_verdict(
+            raw_output,
+            review_context,
+            retry_identity,
+            proof_bundle_digest,
+        )
+        if not isinstance(record, dict):
+            raise guru_review_record.ReviewRecordError(
+                "normalize_retry_verdict must return a review record"
+            )
+        if (
+            record.get("review_result") == "clean"
+            and re.search(
+                r"(?im)^\s*reviewer_probe_command\.[^=:\s]+\s*[:=]",
+                raw_output,
+            )
+        ):
+            raise guru_review_record.ReviewRecordError(
+                "clean Integration proof verdict may not declare source probes"
+            )
+        _attach_proof_trace(record, tool_trace)
+        guru_review_record.append_record(str(task_dir), record)
+    except (AttributeError, guru_review_record.ReviewRecordError) as exc:
+        raise GuruSupervisionError(
+            f"Integration proof verdict normalization failed:{exc}"
+        ) from exc
+    return record, None
+
+
+def _append_proof_retry_event(
+    task_dir: Path,
+    run_metadata: dict,
+    retry_identity: dict,
+    attempt: int,
+    raw_output: str,
+    status: str,
+) -> dict:
+    try:
+        evidence_ref = guru_review_record.append_format_retry_evidence(
+            str(task_dir),
+            run_metadata,
+            retry_identity,
+            attempt,
+            raw_output,
+            status,
+        )
+    except (AttributeError, guru_review_record.ReviewRecordError) as exc:
+        raise GuruSupervisionError(
+            f"Integration formatting retry evidence failed:{exc}"
+        ) from exc
+    if not isinstance(evidence_ref, dict):
+        raise GuruSupervisionError(
+            "Integration formatting retry evidence must return a mapping"
+        )
+    return evidence_ref
+
+
+def _proof_classification(
+    raw_output: str,
+    expected_invariants: list[str],
+    retry_identity: dict,
+) -> str:
+    try:
+        classification = guru_review_record.classify_retryable_format_failure(
+            raw_output,
+            expected_invariants,
+            retry_identity,
+        )
+    except (AttributeError, guru_review_record.ReviewRecordError) as exc:
+        raise GuruSupervisionError(
+            f"Integration proof classification failed:{exc}"
+        ) from exc
+    if classification not in {
+        "valid",
+        "retryable_format",
+        "semantic_finding",
+        "non_retryable",
+    }:
+        raise GuruSupervisionError(
+            f"Integration proof classification is invalid:{classification!r}"
+        )
+    return classification
+
+
+def _record_final_proof_blocked(
+    task_dir: Path,
+    target: ReviewTarget,
+    run_id: str,
+    review_context: dict,
+    tool_trace: dict | None = None,
+) -> None:
+    record, failure = guru_review_record.normalize_review_record(
+        {},
+        {
+            "mode": "supervisor",
+            "packet": target.packet,
+            "implement_provider": review_context.get("implement_provider"),
+            "supervisor_deterministic_status": review_context.get(
+                "deterministic_checks"
+            ),
+            "deterministic_results": review_context.get(
+                "deterministic_results", []
+            ),
+            "run_id": run_id,
+            "slice_id": target.unit_id,
+            "review_target": target.review_target,
+            "target_paths": target.packet.get("target_paths", []),
+            "channel": review_context.get("channel"),
+            "worker": review_context.get("worker"),
+            "check_provider": review_context.get("review_provider"),
+            "reviewed_target_digest": target.reviewed_target_digest,
+        },
+    )
+    if failure != "MALFORMED_REVIEW_OUTPUT":
+        raise GuruSupervisionError(
+            "failed to normalize final Integration blocked row:"
+            f"{failure}"
+        )
+    _attach_proof_trace(record, tool_trace)
+    guru_review_record.append_record(
+        str(task_dir),
+        record,
+    )
+
+
+def _run_integration_proof_review(
+    *,
+    task_dir: Path,
+    root: Path,
+    target: ReviewTarget,
+    config: SupervisionConfig,
+    resolution: ReviewProviderResolution,
+    review_run_id: str,
+    evidence_key: str,
+    evidence_components: dict,
+    det_status: str,
+    det_results: list,
+    deterministic_reused: bool,
+    args: argparse.Namespace,
+) -> int:
+    if det_status != "passed":
+        raise GuruSupervisionError(
+            "Integration proof requires passed deterministic evidence"
+        )
+    bundle = _integration_proof_bundle(
+        task_dir,
+        root,
+        target,
+        evidence_components,
+        det_results,
+    )
+    base_plan = build_run_plan(
+        "implementation-review",
+        task_dir,
+        resolution.check_config,
+        review_run_id,
+        focused_review_context={},
+    )
+    invocation_contract = {
+        "schema_version": 1,
+        "action": "implementation-review",
+        "review_mode": "integration_proof",
+        "run_id": review_run_id,
+        "channel": base_plan.channel,
+        "worker": base_plan.worker,
+        "slice_id": target.unit_id,
+        "review_target": target.review_target,
+        "digest_source": target.digest_source,
+        "reviewed_target_digest": target.reviewed_target_digest,
+        "deterministic_status": det_status,
+        "deterministic_evidence_key": evidence_key,
+        "deterministic_evidence_reused": deterministic_reused,
+        "implement_provider": config.provider,
+        "review_provider": resolution.check_config.provider,
+        "implement_provider": config.provider,
+        "check_provider": resolution.check_config.provider,
+        "provider_override_source": resolution.provider_override_source,
+        "same_provider_user_quote": resolution.same_provider_user_quote,
+        "staged": True,
+        "files": [],
+        "jsonls": [],
+    }
+    retry_components = {
+        **evidence_components,
+        "reviewed_target_digest": target.reviewed_target_digest,
+        "deterministic_results_digest": (
+            guru_review_record.deterministic_results_digest(det_results)
+        ),
+    }
+    prompt, bundle, retry_identity = _serialize_integration_proof_prompt(
+        bundle,
+        invocation_contract,
+        retry_components,
+    )
+    dry_run_cwd = Path(tempfile.gettempdir()) / "guru-integration-proof-isolated"
+    semantic_plan = _without_injected_context(
+        base_plan,
+        prompt,
+        dry_run_cwd,
+    )
+    expected_invariants = [
+        invariant["invariant_id"] for invariant in bundle["invariants"]
+    ]
+    review_context = {
+        "run_id": review_run_id,
+        "slice_id": target.unit_id,
+        "review_target": target.review_target,
+        "target_paths": target.packet.get("target_paths", []),
+        "review_provider": resolution.check_config.provider,
+        "channel": semantic_plan.channel,
+        "worker": semantic_plan.worker,
+        "deterministic_checks": det_status,
+        "deterministic_results": det_results,
+        "reviewed_target_digest": target.reviewed_target_digest,
+        "expected_invariants": target.packet.get("invariants", []),
+        "evidence_components": retry_components,
+        "evidence_key": evidence_key,
+        "implementation_review_policy": _implementation_review_policy_record(
+            config, resolution
+        ),
+    }
+    if args.dry_run:
+        print("IMPLEMENTATION-REVIEW INTEGRATION PROOF")
+        print("run: admission -> budget -> one semantic reviewer -> optional one formatting retry")
+        print("files=[] jsonls=[] source_probes=trace-gated isolated_cwd=true")
+        print("")
+        _print_dry_run(semantic_plan)
+        return 0
+
+    with tempfile.TemporaryDirectory(
+        prefix="guru-integration-proof-semantic-"
+    ) as isolated_cwd:
+        semantic_plan = _without_injected_context(
+            base_plan,
+            prompt,
+            Path(isolated_cwd),
+        )
+        read_only_before = _review_read_only_snapshot(root)
+        rc, _terminal, semantic_output = _execute_plan(
+            semantic_plan, resolution.check_config
+        )
+        try:
+            semantic_tool_trace = _proof_worker_tool_trace(
+                resolution.check_config,
+                semantic_plan,
+            )
+        except GuruSupervisionError as exc:
+            semantic_tool_trace = {
+                "status": "unavailable",
+                "duplicate_read_probe_count": None,
+                "error": str(exc),
+            }
+    read_only_after = _review_read_only_snapshot(root)
+    proof_tool_trace = {"semantic": semantic_tool_trace}
+    if read_only_after != read_only_before:
+        _record_final_proof_blocked(
+            task_dir,
+            target,
+            review_run_id,
+            review_context,
+            proof_tool_trace,
+        )
+        return 2
+    if (
+        rc != 0
+        or semantic_tool_trace.get("status") != "complete"
+        or semantic_tool_trace.get("duplicate_read_probe_count") != 0
+    ):
+        _record_final_proof_blocked(
+            task_dir,
+            target,
+            review_run_id,
+            review_context,
+            proof_tool_trace,
+        )
+        return rc if rc != 0 else 2
+    classification = _proof_classification(
+        semantic_output,
+        expected_invariants,
+        retry_identity,
+    )
+    if classification == "valid":
+        record, failure = _append_proof_normalized_record(
+            task_dir,
+            semantic_output,
+            review_context,
+            retry_identity,
+            bundle["proof_bundle_digest"],
+            proof_tool_trace,
+        )
+    elif classification == "retryable_format":
+        run_metadata = {
+            "run_id": review_run_id,
+            "review_target": target.review_target,
+            "provider": resolution.check_config.provider,
+            "proof_bundle_digest": bundle["proof_bundle_digest"],
+        }
+        semantic_evidence = _append_proof_retry_event(
+            task_dir,
+            run_metadata,
+            retry_identity,
+            0,
+            semantic_output,
+            "retryable_format",
+        )
+        _require_current_slice_evidence(
+            task_dir=task_dir,
+            root=root,
+            target=target,
+            evidence_key=evidence_key,
+            evidence_components=evidence_components,
+            deterministic_results=det_results,
+            platform=args.platform,
+            provider=args.provider,
+            trellis_bin=args.trellis_bin,
+            same_provider_user_quote=(
+                resolution.same_provider_user_quote or None
+            ),
+        )
+        retry_run_id = f"{review_run_id}-serialization-1"
+        retry_payload = {
+            "schema_version": 1,
+            "mode": "serialization_only",
+            "semantic_raw_output": semantic_output,
+            "semantic_evidence_ref": semantic_evidence,
+            "invocation_contract": invocation_contract,
+            "retry_identity": retry_identity,
+            "proof_bundle_digest": bundle["proof_bundle_digest"],
+            "expected_invariant_ids": expected_invariants,
+            "verdict_contract": _integration_verdict_contract(
+                expected_invariants,
+                invocation_contract,
+            ),
+            "files": [],
+            "jsonls": [],
+            "source_tools_allowed": False,
+        }
+        retry_brief = (
+            "Serialize the supplied semantic output into the required verdict "
+            "envelope. Do not add or remove semantic findings, read files, use "
+            "repository tools, or run probes.\n"
+            + json.dumps(
+                retry_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        _enforce_proof_prompt_budget(retry_brief)
+        retry_base_plan = build_run_plan(
+            "implementation-review",
+            task_dir,
+            resolution.check_config,
+            retry_run_id,
+            focused_review_context={},
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="guru-integration-proof-serialization-"
+        ) as isolated_cwd:
+            retry_plan = _without_injected_context(
+                retry_base_plan,
+                retry_brief,
+                Path(isolated_cwd),
+            )
+            retry_before = _review_read_only_snapshot(root)
+            retry_rc, _retry_terminal, retry_output = _execute_plan(
+                retry_plan, resolution.check_config
+            )
+            try:
+                retry_tool_trace = _proof_worker_tool_trace(
+                    resolution.check_config,
+                    retry_plan,
+                )
+            except GuruSupervisionError as exc:
+                retry_tool_trace = {
+                    "status": "unavailable",
+                    "duplicate_read_probe_count": None,
+                    "error": str(exc),
+                }
+        retry_after = _review_read_only_snapshot(root)
+        proof_tool_trace["serialization"] = retry_tool_trace
+        retry_classification = (
+            _proof_classification(
+                retry_output,
+                expected_invariants,
+                retry_identity,
+            )
+            if (
+                retry_rc == 0
+                and retry_after == retry_before
+                and retry_tool_trace.get("status") == "complete"
+                and retry_tool_trace.get("duplicate_read_probe_count") == 0
+            )
+            else "non_retryable"
+        )
+        _append_proof_retry_event(
+            task_dir,
+            {**run_metadata, "run_id": retry_run_id},
+            retry_identity,
+            1,
+            retry_output,
+            retry_classification,
+        )
+        if retry_classification != "valid":
+            _record_final_proof_blocked(
+                task_dir,
+                target,
+                retry_run_id,
+                {
+                    **review_context,
+                    "channel": retry_plan.channel,
+                    "worker": retry_plan.worker,
+                },
+                proof_tool_trace,
+            )
+            return 2
+        retry_context = {
+            **review_context,
+            "run_id": retry_run_id,
+            "channel": retry_plan.channel,
+            "worker": retry_plan.worker,
+        }
+        record, failure = _append_proof_normalized_record(
+            task_dir,
+            retry_output,
+            retry_context,
+            retry_identity,
+            bundle["proof_bundle_digest"],
+            proof_tool_trace,
+        )
+    else:
+        record, failure = _append_supervisor_review_record(
+            task_dir=task_dir,
+            root=root,
+            target=target,
+            run_id=review_run_id,
+            config=config,
+            resolution=resolution,
+            check_plan=semantic_plan,
+            messages=semantic_output,
+            det_status=det_status,
+            det_results=det_results,
+            deterministic_evidence_key=evidence_key,
+            expected_evidence_components=evidence_components,
+            platform=args.platform,
+            provider=args.provider,
+            trellis_bin=args.trellis_bin,
+            same_provider_user_quote=(
+                resolution.same_provider_user_quote or None
+            ),
+        )
+    if failure:
+        sys.stderr.write(
+            f"[guru-supervise] Integration proof verdict {failure}; hard stop\n"
+        )
+        return 2
+    if record.get("review_result") == "clean":
+        print(
+            "[guru-supervise] Integration proof review clean; "
+            "semantic_reviewers=1 formatting_retries="
+            + ("1" if classification == "retryable_format" else "0")
+            + " duplicate_read_probe_count=0"
+        )
+        return 0
+    return 2
+
+
 def run_implementation_review(args: argparse.Namespace) -> int:
     task_dir = Path(args.task_dir).expanduser().resolve()
     root = _resolve_root(args.root, task_dir)
@@ -3634,6 +4801,25 @@ def run_implementation_review(args: argparse.Namespace) -> int:
         guru_review_record.append_record(str(task_dir), guru_review_record.preflight_failure_record(
             kind, f"{base_run_id}-review-1", unit_id=record_unit_id))
         sys.stderr.write(f"[guru-supervise] implementation-review preflight failed({kind}):{exc}\n")
+        return 2
+
+    try:
+        integration_proof_eligible = _integration_proof_eligible(
+            task_dir, target
+        )
+    except GuruSupervisionError as exc:
+        guru_review_record.append_record(
+            str(task_dir),
+            guru_review_record.preflight_failure_record(
+                "SCOPE_INVALID",
+                f"{base_run_id}-review-1",
+                unit_id=target.unit_id,
+            ),
+        )
+        sys.stderr.write(
+            "[guru-supervise] Integration proof eligibility failed closed:"
+            f"{exc}\n"
+        )
         return 2
 
     try:
@@ -3794,6 +4980,45 @@ def run_implementation_review(args: argparse.Namespace) -> int:
                 "deterministic_runs=0 reviewers_spawned=0"
             )
             return 0
+
+
+    if integration_proof_eligible:
+        if args.dry_run:
+            proof_plan = _without_injected_context(
+                build_run_plan(
+                    "implementation-review",
+                    task_dir,
+                    check_config,
+                    review_run_id,
+                    focused_review_context={},
+                ),
+                "Integration proof admission, projection, and complete-prompt "
+                "budgeting run after deterministic evidence is current. "
+                "files=[] jsonls=[] source_probes=forbidden",
+            )
+            print("IMPLEMENTATION-REVIEW INTEGRATION PROOF DRY RUN")
+            print("run: deterministic checks -> admission -> budget -> semantic review")
+            print("")
+            _print_dry_run(proof_plan)
+            return 0
+        try:
+            return _run_integration_proof_review(
+                task_dir=task_dir,
+                root=root,
+                target=target,
+                config=config,
+                resolution=resolution,
+                review_run_id=review_run_id,
+                evidence_key=evidence_key,
+                evidence_components=evidence_components,
+                det_status=det_status,
+                det_results=det_results,
+                deterministic_reused=deterministic_reused,
+                args=args,
+            )
+        except (GuruSupervisionError, guru_review_record.ReviewRecordError) as exc:
+            sys.stderr.write(f"[guru-supervise] Integration proof blocked:{exc}\n")
+            return 2
 
     run_slug = _sanitize(review_run_id, limit=40)
     expected_channel = f"guru-{_sanitize(task_dir.name, limit=70)}-check-{run_slug}"
