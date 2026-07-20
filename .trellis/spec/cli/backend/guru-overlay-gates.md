@@ -316,6 +316,9 @@ Apply this contract when changing any of these Custom-first surfaces:
 - `guru-template/overlay/hooks/guru_after_create.py`
 - `guru-template/overlay/hooks/guru_task.py`
 - `guru-template/overlay/apply.sh`
+- `guru-template/overlay/reinstall-official-067.sh`
+- `guru-template/overlay/tests/reinstall_official_067_test.sh`
+- `guru-template/overlay/agents-skills/*`
 - matching workflows, execution skills, README, and focused regressions
 
 The goal is to make low-risk work enter value quickly, expose high risk before
@@ -344,6 +347,7 @@ apply.sh --status <target> <rollback-bundle>
 apply.sh --verify <target> <rollback-bundle>
 apply.sh --upgrade <target> [flutter|go|ios|h5] --rollback-bundle <new-external-empty-dir>
 apply.sh --unapply <target> <rollback-bundle>
+reinstall-official-067.sh [--dry-run] [--platform flutter|go|ios|h5] [--backup-dir <external-empty-dir>] [--keep-backup] <target>
 ```
 
 Official Template inputs remain `guru-template/index.json` entries with
@@ -394,6 +398,33 @@ Lifecycle contracts:
   unapply restores the immediate pre-upgrade state.
 - Managed unapply restores only owned, post-state-matching assets, preserves
   unrelated user content and `.git`, and fails before mutation on conflict.
+- A newly claimed Guru-managed Skill name must not silently overwrite an
+  unknown same-name project Skill. Direct apply may refresh the current
+  template or an exact, provenance-verified historical managed version only.
+  The accepted historical registry is Skill-specific and closed by default;
+  adding a digest requires the real historical bytes plus a direct-apply
+  regression. A rejected, intermediate, target-private, or digest-only fixture
+  must not enter the registry.
+- For `guru-bug-fast-path`, the accepted historical single-file SHA-256 values
+  are `a05f456ee66ea001ae408f74692d1ee96dc0006524eabbfd990ef0930c1b3212`
+  and `d7df7d1d0f53e5b529c530ffa3e82340b0e7543cac4b7abbd2278ee9912b3242`.
+  Any other differing same-name tree fails before normal target writes.
+- Official `0.6.7` reinstall provenance is content-derived whenever the
+  adjacent template tree cannot be proven equal to clean `HEAD`. A proven
+  clean checkout records `source_provenance.kind=git_commit`; dirty, untracked,
+  detached-package, or otherwise unprovable inputs record
+  `source_provenance.kind=template_tree_sha256` and the actual template-tree
+  digest. `source_commit` is null for content-derived provenance.
+- Reinstall index preservation uses
+  `git-effective-index-logical-record-v3`: the raw Git-reported index path and
+  existence state, stage/assume-unchanged, skip-worktree, resolve-undo, and
+  both ITA views are digest-bound. All Git probes use
+  `GIT_OPTIONAL_LOCKS=0`; regression coverage additionally proves the raw
+  index bytes remain unchanged across dry-run, rollback, conflict, and success.
+- Official reinstall exit codes are semantic: `0` means verified installation
+  with no reconcile items, `3` means a usable candidate with retained
+  Spec/Skill reconcile reports, `1` means failure with verified rollback when
+  mutation started, and `70` means rollback verification itself failed.
 
 ### 4. Validation & Error Matrix
 
@@ -413,6 +444,13 @@ Lifecycle contracts:
 | Prepared/manual-required receipt | Status `drifted`; verify nonzero; zero mutation |
 | Upgrade without a fresh bundle | Exit 2 before target mutation |
 | Upgrade then unapply | Exact immediate pre-upgrade target restored |
+| Current or approved historical managed Skill | Refresh from the current template and verify both installed roots |
+| Unknown differing same-name project Skill | Fail before normal target writes; preserve the project Skill |
+| Clean template checkout exactly matches `HEAD` | Record `git_commit` provenance |
+| Dirty, untracked, or detached template input | Record `template_tree_sha256`; do not claim commit provenance |
+| Effective target index logical record changes | Fail or roll back; never report `git_index_unchanged=true` |
+| Reinstall completes with Spec/Skill reconcile items | Return 3, retain backup and reports, report `candidate usable with manual reconciliation` |
+| Reinstall rollback verification fails | Return 70; do not report the target as restored |
 
 ### 5. Good/Base/Bad Cases
 
@@ -424,10 +462,21 @@ Lifecycle contracts:
   the risk packet is absent.
 - Base: a successful apply has a current schema-v2 managed-assets receipt;
   status and verify are read-only and report `installed-current`.
+- Good: direct apply receives one of the two byte-verified historical
+  `guru-bug-fast-path` files, upgrades both Skill roots to the current template,
+  and leaves an unrelated project Skill untouched.
+- Good: a dirty source checkout records the exact template-tree digest, while
+  a clean matching checkout records its commit; both leave the source and
+  target index bytes unchanged.
 - Bad: treating `state=prepared` as `not-applied`; failed recovery can leave
   partial target writes and must be reported as `drifted`.
 - Bad: using a first-install bundle for upgrade rollback; every upgrade needs a
   fresh bundle so rollback semantics are the immediate pre-upgrade state.
+- Bad: accepting every previous-looking same-name Skill, accepting a digest
+  without the historical bytes, or adding a target-private digest to make one
+  repository pass.
+- Bad: returning 0 when reconcile reports contain conflicts, or calling exit 3
+  a rollback failure.
 
 ### 6. Tests Required
 
@@ -448,6 +497,14 @@ Lifecycle contracts:
   consistency, and Codex-only event rejection.
 - Official `0.6.7` HTTPS Git E2E installs every spec/workflow pair from the typed
   registry and rejects raw blank-template fallback even when the CLI exits zero.
+- Direct-apply regression extracts the real bytes for every accepted historical
+  managed Skill, verifies each expected digest, executes the upgrade, and proves
+  an unknown same-name tree exits before normal target writes without mutation.
+- Source and package-layout `reinstall_official_067_test.sh` runs must both cover
+  clean and dirty source provenance, detached package layout, linked worktrees,
+  non-UTF-8 and redundant-separator index paths, stage flags, resolve-undo,
+  visible/invisible ITA, raw index byte stability, forced rollback, success,
+  Spec conflict, and Skill conflict.
 
 ### 7. Wrong vs Correct
 
@@ -457,6 +514,9 @@ Lifecycle contracts:
 lite_task -> requirements -> Overview x2 -> Detail x2 -> confirmation -> code
 prepared rollback receipt -> status=not-applied
 upgrade -> reuse the first-install rollback receipt
+dirty source checkout -> source_provenance.kind=git_commit
+unknown same-name Skill -> add its digest to the managed registry
+reconcile conflicts -> exit 0
 ```
 
 #### Correct
@@ -466,6 +526,10 @@ lite_task -> official task -> repo evidence -> conditional Brainstorm -> compact
 full/high -> current requirements+risk+design -> one confirmation batch -> guarded start -> code/check
 prepared rollback receipt -> status=drifted, verify nonzero, zero mutation
 upgrade -> fresh external bundle -> unapply restores immediate pre-upgrade state
+dirty source checkout -> source_provenance.kind=template_tree_sha256
+approved historical Skill bytes -> exact registry match -> current managed template
+unknown same-name Skill -> fail closed before normal target writes
+reconcile conflicts -> exit 3 with retained structured reports
 ```
 
 ---

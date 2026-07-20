@@ -844,8 +844,8 @@ GURU_SKILLS="$(ls -d "$HERE"/agents-skills/*/ 2>/dev/null | xargs -n1 basename |
 # 阶段 C 收尾：旧 4 名 grill wrapper 已从模板删除，不再属于 GURU_SKILLS。
 # 仅对这个显式 legacy 列表做存量清理；删除前先备份，避免误伤用户自建同名 skill 后不可恢复。
 LEGACY_GRILL_SKILLS="client-grill go-design-grill h5-design-grill ios-design-grill"
-# 平台无关 shared skill（每平台都装、不剪）：需求三件套被所有 workflow 的 Phase1(需求) 硬前置依赖。
-SHARED_SKILLS="requirement-doc-standard requirement-writing requirement-review design-grill"
+# 平台无关 shared skill（每平台都装、不剪）。
+SHARED_SKILLS="requirement-doc-standard requirement-writing requirement-review design-grill guru-bug-fast-path"
 for s in $SHARED_SKILLS; do
   [ -d "$HERE/agents-skills/$s" ] || { echo "ERROR: shared skill 目录缺失: agents-skills/$s"; exit 1; }
 done
@@ -865,6 +865,77 @@ install_skill_dir() {  # $1=源目录（内容到末尾）  $2=目标目录
   rm -rf "$2"; mkdir -p "$2"
   cp -R "$1/." "$2/"
   find "$2" \( -name .DS_Store -o -name __pycache__ \) -exec rm -rf {} + 2>/dev/null || true
+}
+
+# `guru-bug-fast-path` is a newly claimed managed name. Preserve an unknown
+# same-name project Skill instead of silently adopting it.
+preflight_bug_fast_path_ownership() {
+  python3 - "$TARGET" "$HERE/agents-skills/guru-bug-fast-path" <<'PYEOF'
+import hashlib
+import os
+from pathlib import Path
+import stat
+import sys
+
+target = Path(sys.argv[1])
+source = Path(sys.argv[2])
+known_managed_digests = {
+    "a05f456ee66ea001ae408f74692d1ee96dc0006524eabbfd990ef0930c1b3212",
+    "d7df7d1d0f53e5b529c530ffa3e82340b0e7543cac4b7abbd2278ee9912b3242",
+}
+
+
+def tree_rows(root: Path):
+    rows = []
+    if not os.path.lexists(root):
+        return rows
+    if root.is_symlink() or not root.is_dir():
+        return [(".", "other")]
+    for directory, dir_names, file_names in os.walk(root, topdown=True, followlinks=False):
+        dir_names[:] = sorted(name for name in dir_names if name != "__pycache__")
+        file_names = sorted(name for name in file_names if name != ".DS_Store")
+        directory_path = Path(directory)
+        for name in dir_names:
+            child = directory_path / name
+            relative = child.relative_to(root).as_posix()
+            if child.is_symlink():
+                rows.append((relative, "symlink", os.readlink(child)))
+            else:
+                rows.append((relative, "directory"))
+        for name in file_names:
+            child = directory_path / name
+            relative = child.relative_to(root).as_posix()
+            info = child.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                rows.append((relative, "symlink", os.readlink(child)))
+            elif stat.S_ISREG(info.st_mode):
+                rows.append((relative, "file", hashlib.sha256(child.read_bytes()).hexdigest()))
+            else:
+                rows.append((relative, "other"))
+    return sorted(rows)
+
+
+source_rows = tree_rows(source)
+for root_name in (".agents", ".claude"):
+    installed = target / root_name / "skills/guru-bug-fast-path"
+    if not os.path.lexists(installed):
+        continue
+    installed_rows = tree_rows(installed)
+    if installed_rows == source_rows:
+        continue
+    if (
+        len(installed_rows) == 1
+        and installed_rows[0][0:2] == ("SKILL.md", "file")
+        and installed_rows[0][2] in known_managed_digests
+    ):
+        continue
+    print(
+        "ERROR: refusing to overwrite unknown same-name project Skill: "
+        f"{installed}; rename or reconcile it before Guru apply",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PYEOF
 }
 
 ensure_local_runtime_gitignore() {
@@ -997,6 +1068,8 @@ cleanup_legacy_grill_skills() {
   fi
 }
 
+preflight_bug_fast_path_ownership
+
 # 平台-项目类型一致性兜底：漏传/传错第二位置参数会静默装错平台（默认 flutter）。
 # 检测明显的项目标志文件，与 PLATFORM 矛盾时警告（不硬失败：monorepo/特殊布局可能合法）。
 detect_hint=""
@@ -1035,7 +1108,7 @@ else
 fi
 ensure_local_runtime_gitignore
 
-# 1) skills → .agents/skills/（装本平台集合 + shared 需求三件套，剪枝他平台 guru skill）
+# 1) skills → .agents/skills/（装本平台集合 + shared skills，剪枝他平台 guru skill）
 mkdir -p "$TARGET/.agents/skills"
 agent_skill_n=0
 # 单遍历 guru-managed 全集：属本平台或 shared → rm-then-cp 刷新装；否则剪枝（不碰用户自有/官方 trellis-*）
@@ -1047,7 +1120,7 @@ for gs in $GURU_SKILLS; do
     rm -rf "$TARGET/.agents/skills/$gs"
   fi
 done
-echo "  skills ×${agent_skill_n} → .agents/skills/（${PLATFORM} 平台 + shared 需求三件套）"
+echo "  skills ×${agent_skill_n} → .agents/skills/（${PLATFORM} 平台 + shared）"
 
 # 2) delivery policy + guarded lifecycle + gates → project-local Custom runtime
 mkdir -p "$TARGET/.trellis/scripts/guru" "$TARGET/.trellis/policy"
@@ -1121,10 +1194,19 @@ MIRROR_SCRIPT="$TARGET/scripts/sync_platform_skills.py"
 USED_PROJECT_MIRROR=0
 if [ -f "$MIRROR_SCRIPT" ]; then
   # 项目自带镜像系统（如 himora）是该项目平台镜像的权威，交给它统一处理。
-  # 契约：脚本的 --sync/--check 必须覆盖 SHARED_SKILLS（尤其 design-grill）在 .agents/.claude 两面存在。
-  # 本脚本 §8 会显式校验 design-grill 两面存在，防止镜像脚本假绿。
+  # 契约：脚本的 --sync/--check 必须覆盖 SHARED_SKILLS 在 .agents/.claude 两面存在。
   python3 "$MIRROR_SCRIPT" --sync --root "$TARGET"
   USED_PROJECT_MIRROR=1
+  # 兼容尚未认识新 shared skill 的旧项目镜像脚本：Guru apply 仍须保证本次新增 Skill 可用。
+  if [ ! -d "$TARGET/.claude/skills/guru-bug-fast-path" ] \
+      || ! diff -rq -x .DS_Store -x __pycache__ \
+        "$TARGET/.agents/skills/guru-bug-fast-path" \
+        "$TARGET/.claude/skills/guru-bug-fast-path" >/dev/null 2>&1; then
+    install_skill_dir \
+      "$HERE/agents-skills/guru-bug-fast-path" \
+      "$TARGET/.claude/skills/guru-bug-fast-path"
+    echo "  platform mirror: 补齐 shared guru-bug-fast-path（兼容旧项目镜像脚本）"
+  fi
   echo "  platform mirror: 项目镜像脚本 --sync 完成"
 else
   # 单遍历 guru-managed 全集：属本平台或 shared → 镜像刷新；否则剪枝
@@ -1764,11 +1846,17 @@ if [ "$USED_PROJECT_MIRROR" = 1 ]; then
   else
     echo "  ✗ 平台 skill 镜像漂移（python3 scripts/sync_platform_skills.py --check）"; FAIL=1
   fi
-  if [ -d "$TARGET/.agents/skills/design-grill" ] && [ -d "$TARGET/.claude/skills/design-grill" ]; then
-    echo "  ✓ design-grill 两面存在（项目镜像模式）"
-  else
-    echo "  ✗ design-grill 两面缺失（项目镜像脚本必须同步 shared skill 到 .agents/.claude）"; FAIL=1
-  fi
+  for required_skill in design-grill guru-bug-fast-path; do
+    if [ -d "$TARGET/.agents/skills/$required_skill" ] \
+        && [ -d "$TARGET/.claude/skills/$required_skill" ] \
+        && diff -rq -x .DS_Store -x __pycache__ \
+          "$TARGET/.agents/skills/$required_skill" \
+          "$TARGET/.claude/skills/$required_skill" >/dev/null 2>&1; then
+      echo "  ✓ $required_skill 两面一致（项目镜像模式）"
+    else
+      echo "  ✗ $required_skill 两面缺失或内容漂移（项目镜像脚本必须同步 shared skill 到 .agents/.claude）"; FAIL=1
+    fi
+  done
 else
   # §4.5 双面对齐的不变量：.agents/skills 与 .claude/skills 必须内容一致（名字+内容，排除脏文件）。
   # 平台 configurator / trellis update 会向单面写 skill（如 Codex 的 trellis-start 只进 .agents），

@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -468,6 +469,12 @@ describe("bundled guru overlay", () => {
       expect(listing).toContain("package/dist/cli/index.js");
       expect(listing).toContain("package/dist/templates/guru/overlay/apply.sh");
       expect(listing).toContain(
+        "package/dist/templates/guru/overlay/reinstall-official-067.sh",
+      );
+      expect(listing).toContain(
+        "package/dist/templates/guru/overlay/tests/reinstall_official_067_test.sh",
+      );
+      expect(listing).toContain(
         "package/dist/templates/guru/overlay/verify/guru_gate.py",
       );
       expect(listing).toContain(
@@ -475,6 +482,9 @@ describe("bundled guru overlay", () => {
       );
       expect(listing).toContain(
         "package/dist/templates/guru/overlay/agents-skills/h5-design-overview-review/SKILL.md",
+      );
+      expect(listing).toContain(
+        "package/dist/templates/guru/overlay/agents-skills/guru-bug-fast-path/SKILL.md",
       );
 
       const packedPackageJson = execFileSync(
@@ -587,6 +597,271 @@ describe("bundled guru overlay", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it("installs the shared bug fast path for every platform and retains it across reapplies", () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "guru-shared-skill-e2e-"),
+    );
+    const expected = readOverlayFile(
+      "agents-skills",
+      "guru-bug-fast-path",
+      "SKILL.md",
+    );
+    const installedSkill = (root: ".agents" | ".claude"): string =>
+      path.join(root, "skills", "guru-bug-fast-path", "SKILL.md");
+    const assertInstalled = (): void => {
+      for (const root of [".agents", ".claude"] as const) {
+        expect(
+          fs.readFileSync(path.join(tmpDir, installedSkill(root)), "utf8"),
+        ).toBe(expected);
+      }
+    };
+
+    try {
+      fs.mkdirSync(path.join(tmpDir, ".trellis"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "package.json"),
+        '{"scripts":{"test":"echo ok"}}\n',
+        "utf8",
+      );
+
+      for (const platform of ["flutter", "go", "h5", "ios"]) {
+        execFileSync("bash", [overlayPath("apply.sh"), tmpDir, platform], {
+          cwd: tmpDir,
+          encoding: "utf8",
+          env: PYTHON_NO_BYTECODE_ENV,
+        });
+        assertInstalled();
+      }
+
+      execFileSync("bash", [overlayPath("apply.sh"), tmpDir, "ios"], {
+        cwd: tmpDir,
+        encoding: "utf8",
+        env: PYTHON_NO_BYTECODE_ENV,
+      });
+      assertInstalled();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("backfills the shared bug fast path when a project mirror script predates it", () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "guru-legacy-mirror-e2e-"),
+    );
+    const expected = readOverlayFile(
+      "agents-skills",
+      "guru-bug-fast-path",
+      "SKILL.md",
+    );
+
+    try {
+      fs.mkdirSync(path.join(tmpDir, ".trellis"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "scripts"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "package.json"),
+        '{"scripts":{"test":"echo ok"}}\n',
+        "utf8",
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "scripts", "sync_platform_skills.py"),
+        `import os
+import shutil
+import sys
+
+root = sys.argv[sys.argv.index("--root") + 1]
+src = os.path.join(root, ".agents", "skills", "design-grill")
+dst = os.path.join(root, ".claude", "skills", "design-grill")
+if "--sync" in sys.argv and os.path.isdir(src):
+    shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(src, dst)
+    open(os.path.join(root, "LEGACY_MIRROR_USED"), "w").write("yes")
+if "--check" in sys.argv and not (os.path.isdir(src) and os.path.isdir(dst)):
+    sys.exit(1)
+`,
+        "utf8",
+      );
+
+      execFileSync("bash", [overlayPath("apply.sh"), tmpDir, "flutter"], {
+        cwd: tmpDir,
+        encoding: "utf8",
+        env: PYTHON_NO_BYTECODE_ENV,
+      });
+
+      expect(fs.existsSync(path.join(tmpDir, "LEGACY_MIRROR_USED"))).toBe(true);
+      for (const root of [".agents", ".claude"]) {
+        expect(
+          fs.readFileSync(
+            path.join(
+              tmpDir,
+              root,
+              "skills",
+              "guru-bug-fast-path",
+              "SKILL.md",
+            ),
+            "utf8",
+          ),
+        ).toBe(expected);
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("keeps the direct apply ownership migration registry exact and mirrored", () => {
+    const approvedDigests = [
+      "a05f456ee66ea001ae408f74692d1ee96dc0006524eabbfd990ef0930c1b3212",
+      "d7df7d1d0f53e5b529c530ffa3e82340b0e7543cac4b7abbd2278ee9912b3242",
+    ];
+    const packagedApply = readOverlayFile("apply.sh");
+    const sourceApply = fs.readFileSync(
+      path.join(GURU_SOURCE_OVERLAY_ROOT, "apply.sh"),
+      "utf8",
+    );
+    const registryBlock = packagedApply.match(
+      /known_managed_digests = \{([\s\S]*?)\n\}/,
+    )?.[1];
+
+    expect(packagedApply).toBe(sourceApply);
+    expect(registryBlock?.match(/[0-9a-f]{64}/g)?.sort()).toEqual(
+      approvedDigests.sort(),
+    );
+    expect(packagedApply).toContain(
+      "refusing to overwrite unknown same-name project Skill",
+    );
+  });
+
+  it("migrates each approved historical bug fast path through direct apply", () => {
+    const historicalSkills = [
+      {
+        digest:
+          "a05f456ee66ea001ae408f74692d1ee96dc0006524eabbfd990ef0930c1b3212",
+        gzipBase64:
+          "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",
+      },
+      {
+        digest:
+          "d7df7d1d0f53e5b529c530ffa3e82340b0e7543cac4b7abbd2278ee9912b3242",
+        gzipBase64:
+          "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",
+      },
+    ];
+    const expected = Buffer.from(
+      readOverlayFile("agents-skills", "guru-bug-fast-path", "SKILL.md"),
+      "utf8",
+    );
+
+    for (const historicalSkill of historicalSkills) {
+      const historical = gunzipSync(
+        Buffer.from(historicalSkill.gzipBase64, "base64"),
+      );
+      expect(createHash("sha256").update(historical).digest("hex")).toBe(
+        historicalSkill.digest,
+      );
+
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "guru-managed-skill-migration-e2e-"),
+      );
+      try {
+        fs.mkdirSync(path.join(tmpDir, ".trellis"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmpDir, "package.json"),
+          '{"scripts":{"test":"echo ok"}}\n',
+          "utf8",
+        );
+        for (const root of [".agents", ".claude"]) {
+          const skillDir = path.join(
+            tmpDir,
+            root,
+            "skills",
+            "guru-bug-fast-path",
+          );
+          fs.mkdirSync(skillDir, { recursive: true });
+          fs.writeFileSync(path.join(skillDir, "SKILL.md"), historical);
+        }
+
+        const result = spawnSync(
+          "bash",
+          [overlayPath("apply.sh"), tmpDir, "h5"],
+          {
+            cwd: tmpDir,
+            encoding: "utf8",
+            env: PYTHON_NO_BYTECODE_ENV,
+          },
+        );
+
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+        for (const root of [".agents", ".claude"]) {
+          expect(
+            fs.readFileSync(
+              path.join(
+                tmpDir,
+                root,
+                "skills",
+                "guru-bug-fast-path",
+                "SKILL.md",
+              ),
+            ),
+          ).toEqual(expected);
+        }
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    }
+  }, 60_000);
+
+  it("refuses to overwrite an unknown same-name bug fast path Skill", () => {
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "guru-skill-ownership-e2e-"),
+    );
+    const customSkill = "# Project-owned bug fast path\n\nKeep this content.\n";
+
+    try {
+      fs.mkdirSync(path.join(tmpDir, ".trellis"), { recursive: true });
+      for (const root of [".agents", ".claude"]) {
+        const skillDir = path.join(
+          tmpDir,
+          root,
+          "skills",
+          "guru-bug-fast-path",
+        );
+        fs.mkdirSync(skillDir, { recursive: true });
+        fs.writeFileSync(path.join(skillDir, "SKILL.md"), customSkill, "utf8");
+      }
+
+      const result = spawnSync(
+        "bash",
+        [overlayPath("apply.sh"), tmpDir, "flutter"],
+        {
+          cwd: tmpDir,
+          encoding: "utf8",
+          env: PYTHON_NO_BYTECODE_ENV,
+        },
+      );
+
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        "refusing to overwrite unknown same-name project Skill",
+      );
+      for (const root of [".agents", ".claude"]) {
+        expect(
+          fs.readFileSync(
+            path.join(
+              tmpDir,
+              root,
+              "skills",
+              "guru-bug-fast-path",
+              "SKILL.md",
+            ),
+            "utf8",
+          ),
+        ).toBe(customSkill);
+      }
+      expect(fs.existsSync(path.join(tmpDir, ".gitignore"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 
   it("passes --with-gitnexus from the dist CLI into the overlay installer", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "guru-gitnexus-e2e-"));
@@ -711,6 +986,159 @@ fi
   });
 
   it("ships the overlay skill and gate files needed by Guru installs", () => {
+    const bugFastPath = readOverlayFile(
+      "agents-skills",
+      "guru-bug-fast-path",
+      "SKILL.md",
+    );
+    expect(bugFastPath).toBe(
+      fs.readFileSync(
+        path.join(
+          GURU_SOURCE_OVERLAY_ROOT,
+          "agents-skills",
+          "guru-bug-fast-path",
+          "SKILL.md",
+        ),
+        "utf8",
+      ),
+    );
+    expect(bugFastPath).toContain("including a mandatory Gate Review blocker");
+    expect(bugFastPath).toContain(
+      "never skips, caps, or charges it to `additional_review_cycles`",
+    );
+    expect(bugFastPath).toContain(
+      "Scope expansion never creates a new goal or Review budget",
+    );
+    expect(bugFastPath).not.toContain(
+      "allowed write scope, or `complete`, ends the count",
+    );
+    expect(bugFastPath).toContain(
+      "blocker_fingerprint=<violated invariant|root-cause family|affected surface>",
+    );
+    expect(bugFastPath).toContain("blocker_generation=1/2");
+    expect(bugFastPath).toContain("repair_attempts_for_blocker=0/1");
+    const fastPathState = bugFastPath
+      .split("[FAST-PATH-STATE]\n", 2)[1]
+      ?.split("\n```", 1)[0];
+    expect(fastPathState).toBeDefined();
+    expect(fastPathState).not.toContain("code_repair_attempts=0/1");
+    expect(bugFastPath).toContain(
+      "A changed line number, severity wording, snapshot, symptom restatement, Review phrasing, or expanded `allowed_paths` does not create a new identity.",
+    );
+    expect(bugFastPath).toContain(
+      "Findings with the same violated invariant and root-cause family are the same blocker even when they move or propagate to another affected surface.",
+    );
+    expect(bugFastPath).toContain(
+      "Advance from generation 1 to 2 only when current evidence proves the previous blocker resolved",
+    );
+    expect(bugFastPath).toContain(
+      "proves a materially different violated invariant or materially different root-cause family",
+    );
+    expect(bugFastPath).toContain(
+      "affected-surface difference alone is never sufficient for a new generation",
+    );
+    expect(bugFastPath).not.toContain(
+      "materially different violated invariant, root-cause family, or affected surface",
+    );
+    expect(bugFastPath).toContain(
+      "If the same blocker persists after its bounded repair, end as `repair_blocked`",
+    );
+    expect(bugFastPath).toContain(
+      "blocker_generation_limit_exhausted: two independent blockers already consumed for unchanged goal/scope",
+    );
+    expect(bugFastPath).toContain(
+      "Map legacy `code_repair_attempts=0/1` to `repair_attempts_for_blocker=0/1`",
+    );
+    expect(bugFastPath).toContain(
+      "map `code_repair_attempts=1/1` to `repair_attempts_for_blocker=1/1`, leaving no base repair for that blocker and never inferring resolution",
+    );
+    expect(bugFastPath).toContain(
+      "Preserve an already-consumed `user_extra_attempts=1/1` and its `user_extra_kind` exactly",
+    );
+    expect(bugFastPath).toContain(
+      "`repair_slices` describes independently owned execution slices already proved by the active plan.",
+    );
+    expect(bugFastPath).toContain(
+      "open a normal new generation, or raise the two-generation cap",
+    );
+    expect(bugFastPath).toContain(
+      "pending_blockers=<ordered non-active implementation blockers with fingerprint, severity, Gate order, reviewed snapshot, and evidence>",
+    );
+    expect(bugFastPath).toContain(
+      "After requirement and authority routing has completed, normalize every implementation blocking finding from one Review to a fingerprint and merge same-identity findings into one row while preserving all evidence.",
+    );
+    expect(bugFastPath).toContain(
+      "Select one active blocker deterministically by descending severity, then live Gate order, then strongest current evidence, then stable Review order.",
+    );
+    expect(bugFastPath).toContain(
+      "Store every other implementation blocker in ordered `pending_blockers`; never place a blocking finding in `follow_ups`.",
+    );
+    expect(bugFastPath).toContain(
+      "A queued row may be promoted, classified as independent, or counted against the generation budget only when its semantic evidence is current",
+    );
+    expect(bugFastPath).toContain(
+      "its row-level reviewed snapshot must match `reviewed_snapshot`, and that Review must cover the current `snapshot` and live Gate requirements",
+    );
+    expect(bugFastPath).toContain(
+      "`blocking_issue=pending_blocker_current_semantic_evidence_required`",
+    );
+    expect(bugFastPath).toContain(
+      "Preserve the row and consume no implementation generation, diagnosis, or repair budget.",
+    );
+    expect(bugFastPath).toContain(
+      "merge the evidence into the resolved record and remove the queue row without consuming a generation",
+    );
+    expect(bugFastPath).toContain(
+      "`blocking_issue=same_blocker_persists_or_reopened`; never open generation 2",
+    );
+    expect(bugFastPath).toContain(
+      "Never silently discard a queued row or its evidence.",
+    );
+    expect(bugFastPath).toContain(
+      "pending independent blockers exceed remaining generation budget",
+    );
+    expect(bugFastPath).toContain(
+      "Generation 2 may make its one bounded repair only when `repair_attempts_for_blocker=0/1`; success appends its resolution exactly once and may complete only with an empty queue, while failure ends as `repair_blocked`.",
+    );
+    expect(bugFastPath).toContain(
+      "Any blocker remaining or appearing after generation 2 resolves is a third blocker",
+    );
+    expect(bugFastPath).toContain(
+      "Route every mixed Review before implementation fingerprinting, severity ordering, or generation-budget checks.",
+    );
+    expect(bugFastPath).toContain(
+      "Requirement and authority findings never enter implementation `pending_blockers` and never consume implementation blocker generations",
+    );
+    expect(bugFastPath).toContain(
+      "keep all implementation findings untouched in `deferred_implementation_findings`",
+    );
+    expect(bugFastPath).toContain(
+      "After the controlling route resolves, require their semantic evidence to be current for the resulting snapshot and live Gate requirements",
+    );
+    expect(bugFastPath).toContain(
+      "Remove a deferred finding only when its complete evidence is transferred into the normalized active or pending implementation blocker state.",
+    );
+    expect(bugFastPath).toContain(
+      "`blocking_issue` is empty, `pending_blockers` is empty, and `deferred_implementation_findings` is empty",
+    );
+
+    const reinstall067 = readOverlayFile("reinstall-official-067.sh");
+    expect(reinstall067).toBe(
+      fs.readFileSync(
+        path.join(GURU_SOURCE_OVERLAY_ROOT, "reinstall-official-067.sh"),
+        "utf8",
+      ),
+    );
+    expect(reinstall067).toContain(
+      "a05f456ee66ea001ae408f74692d1ee96dc0006524eabbfd990ef0930c1b3212",
+    );
+    expect(reinstall067).toContain(
+      "d7df7d1d0f53e5b529c530ffa3e82340b0e7543cac4b7abbd2278ee9912b3242",
+    );
+    expect(readOverlayFile("apply.sh")).toContain(
+      'SHARED_SKILLS="requirement-doc-standard requirement-writing requirement-review design-grill guru-bug-fast-path"',
+    );
+
     const designGrill = readOverlayFile(
       "agents-skills",
       "design-grill",

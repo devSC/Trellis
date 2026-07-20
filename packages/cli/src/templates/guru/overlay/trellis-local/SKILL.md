@@ -12,7 +12,7 @@ description: "本仓库的 Trellis 团队定制登记（guru-template）。记�
 
 - **Specs**: 1 个库（guru-flutter-client）→ `.trellis/spec/`：`harness/`（五阶段 SSOT：概要归属判定/详细合同八问+L2×3/实现 trace/萃取九段）、`guides/golden-path.md`（通用方法）、`conventions/`（项目约定槽位 + 本项目取值 `project-conventions.md`）
 - **Workflow**: 替换为 guru-client 五阶段（需求→概要→详细→实现→审核映射进 planning/in_progress；Phase 1 含需求确认、概要/详细 review Gate 与详细确认）
-- **Skills**: 8 个 `client-*`（`.agents/skills/`）+ shared legacy `design-grill`：design-overview/detail 的 writing+review、flutter-implementation 的 writing+review、small-iteration-dev（入口分流）；Domain Grill 已前移到需求发现，`design-grill` 仅作旧项目兼容 wrapper。
+- **Skills**: 8 个 `client-*`（`.agents/skills/`）+ shared `design-grill` / `guru-bug-fast-path`：design-overview/detail 的 writing+review、flutter-implementation 的 writing+review、small-iteration-dev（入口分流）；Domain Grill 已前移到需求发现，`design-grill` 仅作旧项目兼容 wrapper，`guru-bug-fast-path` 为跨平台 Bug 修复防循环护栏。
 - **Hooks**: `after_create` → `guru_after_create.py`（jsonl 自动注入项目约定/golden-path/harness 基线条目）；平台 PreToolUse（l10n 同步拦截 / 老目录拦截 / 制裁 TLD / `task.py start` 前确认拦截 / 未进入实现期或未 clean review 的 `git commit` 拦截）；Codex 专属 hook 由 Guru overlay apply 在目标存在 `.codex/` 时写入 `.codex/hooks.json`
 - **Verify**: `guru_gate.py auto` 进 `worktree.yaml verify`（phase 感知当前 artifact 渐进验证；exit 0 不代表五阶段全部完成）
 - **Agents**: 0 新增（复用官方 channel/sub-agent 机制，经 `guru_supervise.py overview/detail/implement-check` 指明 guru 口径 skill）
@@ -34,3 +34,4 @@ description: "本仓库的 Trellis 团队定制登记（guru-template）。记�
 | 2026-06-12 | legacy design-grill 兼容提示接入；新流程的 Domain Grill 已前移到需求发现，不再作为概要/详细 Gate | — |
 | 2026-06-19 | 详细设计 Gate 增加 L1 骨架假绿回归拦截；detail clean review 必须记录 deletion audit；四端 detail writing/review skills 增加删除审计与破坏性压缩保护 | devSC/Trellis#6 |
 | 2026-06-30 | 生命周期 Gate 拆分为 check-start / check-implementation / check-commit；新增 Claude/Codex git commit hook，防止 START_READY 被误当实现或提交许可 | 019f171a 根因修复 |
+| 2026-07-18 | 新增 shared `guru-bug-fast-path`，四端 apply 均安装到 `.agents/skills/` 与 `.claude/skills/` | — |
