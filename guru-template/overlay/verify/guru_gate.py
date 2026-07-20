@@ -1946,6 +1946,11 @@ def requirements_confirmation_digest(task_dir: str, repo_root: str = None) -> st
         "route": route,
         "risk": guru_contract.contract_risk(contract),
         "scope_fingerprint": scope_fingerprint,
+        "selection_generation": (
+            execution_policy.get("selection_generation")
+            if isinstance(execution_policy, dict)
+            else None
+        ),
     }
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -2574,12 +2579,37 @@ def _full_confirmation_batch_inputs(task_dir: str) -> tuple[dict | None, str]:
     if not risk_entries:
         return None, "Full confirmation batch requires at least one current risk packet"
     try:
+        contract, contract_error = guru_contract.load_contract(task_dir)
+        if contract_error or not isinstance(contract, dict):
+            return None, contract_error or "Full confirmation batch gate contract missing"
+        execution_policy = contract.get("execution_policy")
+        execution_policy = execution_policy if isinstance(execution_policy, dict) else {}
+        route_selection = contract.get("route_selection")
+        route_selection = route_selection if isinstance(route_selection, dict) else {}
+        scope = contract.get("scope")
+        scope = scope if isinstance(scope, dict) else {}
+        scope_fingerprint = (
+            execution_policy.get("scope_fingerprint")
+            or route_selection.get("scope_fingerprint")
+            or hashlib.sha256(
+                json.dumps(scope, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+        )
+        selection_generation = (
+            execution_policy.get("selection_generation")
+            or route_selection.get("selection_generation")
+            or 1
+        )
         payload = {
             "requirements_digest": requirements_digest(task_dir),
             "detail_artifact_digest": _gate_digest(task_dir, "detail"),
             "risk_packet_set_digest": hashlib.sha256(
                 json.dumps(risk_entries, sort_keys=True, separators=(",", ":")).encode("utf-8")
             ).hexdigest(),
+            "route": guru_contract.contract_route(contract),
+            "risk": guru_contract.contract_risk(contract),
+            "scope_fingerprint": scope_fingerprint,
+            "selection_generation": selection_generation,
         }
     except (GateArtifactError, RequirementManifestError, OSError, ValueError) as exc:
         return None, f"Full confirmation batch inputs unavailable: {exc}"
@@ -2589,8 +2619,8 @@ def _full_confirmation_batch_inputs(task_dir: str) -> tuple[dict | None, str]:
     return payload, ""
 
 
-FULL_CONFIRMATION_PROJECTION_SCHEMA_VERSION = 2
-FULL_CONFIRMATION_PROJECTION_DOMAIN = b"guru-full-confirmation-projection-v2\0"
+FULL_CONFIRMATION_PROJECTION_SCHEMA_VERSION = 3
+FULL_CONFIRMATION_PROJECTION_DOMAIN = b"guru-full-confirmation-projection-v3\0"
 FULL_CONFIRMATION_SCOPE = "full_requirements_risk_irreversible_design_batch"
 FULL_CONFIRMATION_ALLOWED_ACTION = "task_start_and_autonomous_close"
 FULL_CONFIRMATION_PROMPT = (
@@ -2608,6 +2638,10 @@ FULL_CONFIRMATION_PROJECTION_FIELDS = (
     "requirements_digest",
     "detail_artifact_digest",
     "risk_packet_set_digest",
+    "route",
+    "risk",
+    "scope_fingerprint",
+    "selection_generation",
 )
 FULL_CONFIRMATION_OPTIONAL_FIELDS = ("mode", "via", "turn_ref", "user_quote")
 FULL_CONFIRMATION_RECORD_FIELDS = frozenset(
@@ -2657,6 +2691,10 @@ def _record_full_confirmation_batch(task_dir: str, via: str, user_quote=None) ->
         "requirements_digest": inputs["requirements_digest"],
         "detail_artifact_digest": inputs["detail_artifact_digest"],
         "risk_packet_set_digest": inputs["risk_packet_set_digest"],
+        "route": inputs["route"],
+        "risk": inputs["risk"],
+        "scope_fingerprint": inputs["scope_fingerprint"],
+        "selection_generation": inputs["selection_generation"],
     }
     turn_ref = _turn_ref()
     if turn_ref:
@@ -2716,6 +2754,10 @@ def _full_confirmation_record_problem(record: dict, inputs: dict, artifact_diges
         "requirements_digest",
         "detail_artifact_digest",
         "risk_packet_set_digest",
+        "route",
+        "risk",
+        "scope_fingerprint",
+        "selection_generation",
     ):
         if record.get(field) != inputs[field]:
             return f"Full confirmation batch stale: {field} changed"
@@ -3411,8 +3453,6 @@ def _lite_standard_task_problems(task_dir: str) -> list:
         problems.extend(f"Lite gate contract invalid: {problem}" for problem in contract_problems)
     if guru_contract.contract_route(contract) != guru_contract.ROUTE_LITE_TASK:
         problems.append("Lite standard task requires gate-contract.json route=lite_task")
-    if guru_contract.contract_risk(contract) not in {guru_contract.RISK_LOW, guru_contract.RISK_MEDIUM}:
-        problems.append("Lite standard task risk must be low or medium")
     execution_policy = contract.get("execution_policy")
     scope_fingerprint = (
         execution_policy.get("scope_fingerprint")
@@ -3772,14 +3812,6 @@ def _micro_commit_contract_problem(contract: dict, staged_paths: list, task_dir:
     problem = _contract_validation_problem(contract, staged_paths, task_dir, root)
     if problem:
         return problem
-    high_path_signals, _cross_layer_or_storage, _code_paths = _micro_commit_high_path_signals(
-        contract,
-        staged_paths,
-        task_dir,
-        root,
-    )
-    if high_path_signals:
-        return "micro_task staged paths contain high-risk signals: " + ", ".join(high_path_signals[:5])
     return ""
 
 
@@ -4050,6 +4082,7 @@ def _new_commit_plan(staged_paths: list) -> dict:
         "can_commit_now": False,
         "split_required": False,
         "blocking_reasons": [],
+        "warnings": [],
         "required_commands": [],
         "optional_commands": [],
         "required_user_confirmations": [],
@@ -4083,6 +4116,7 @@ def _finish_commit_plan(plan: dict) -> dict:
     plan["allowed_stage_paths"] = _dedupe_strings(plan.get("allowed_stage_paths", []))
     plan["forbidden_stage_paths"] = _dedupe_strings(plan.get("forbidden_stage_paths", []))
     plan["blocking_reasons"] = _dedupe_strings(plan.get("blocking_reasons", []))
+    plan["warnings"] = _dedupe_strings(plan.get("warnings", []))
     plan["required_commands"] = _dedupe_strings(plan.get("required_commands", []))
     plan["optional_commands"] = _dedupe_strings(plan.get("optional_commands", []))
     plan["required_user_confirmations"] = _dedupe_strings(plan.get("required_user_confirmations", []))
@@ -4146,6 +4180,9 @@ def _contract_for_intake(
     *,
     created_by: str = "intake",
     selection: guru_delivery_policy.DeliverySelection | None = None,
+    user_override_quote: str = "",
+    risk_acknowledged: bool = False,
+    selected_by: str = "",
 ) -> tuple[dict | None, list]:
     route = guru_contract.normalize_route(assessment.get("route"))
     risk = guru_contract.normalize_risk(assessment.get("risk"))
@@ -4167,9 +4204,12 @@ def _contract_for_intake(
         "selected_route": route,
         "source": selection.selection_source if selection is not None else "recommended",
         "recommended_route": contract["assessment"]["recommended_route"],
-        "risk_acknowledged": False,
-        "user_quote": "",
-        "selected_by": "user" if selection is not None and selection.selection_source == "user_override" else "system",
+        "risk_acknowledged": risk_acknowledged,
+        "user_quote": user_override_quote.strip(),
+        "selected_by": (
+            selected_by.strip()
+            or ("user" if selection is not None and selection.selection_source == "user_override" else "system")
+        ),
         "selected_at": _now_iso(),
     }
     if selection is not None:
@@ -4434,6 +4474,9 @@ def cmd_intake(task_dir_arg, options: dict) -> int:
         paths,
         created_by="intake",
         selection=selection,
+        user_override_quote=str(options.get("user_override_quote") or ""),
+        risk_acknowledged=_contract_bool(options.get("risk_acknowledged")),
+        selected_by=str(options.get("selected_by") or ""),
     )
     if problems or not isinstance(contract, dict):
         payload["blocking_reasons"] = problems or ["cannot build intake contract"]
@@ -4549,17 +4592,13 @@ def cmd_init_contract(task_dir_arg, options: dict) -> int:
         }
         try:
             selection = guru_delivery_policy.resolve_delivery_selection(
-                guru_delivery_policy.IntakeRequest(**request_kwargs),
+                guru_delivery_policy.IntakeRequest(
+                    **request_kwargs,
+                    preferred_route=selected_route,
+                ),
+                evidence={"risk": guru_contract.normalize_risk(risk)},
                 capability_report=guru_delivery_policy.managed_capability_report(),
             )
-            if selection.selected_route != selected_route:
-                selection = guru_delivery_policy.resolve_delivery_selection(
-                    guru_delivery_policy.IntakeRequest(
-                        **request_kwargs,
-                        preferred_route=selected_route,
-                    ),
-                    capability_report=guru_delivery_policy.managed_capability_report(),
-                )
             contract.update(guru_delivery_policy.selection_to_contract_patch(selection))
             execution_policy = contract["execution_policy"]
             execution_policy["recommended_route"] = recommended_route
@@ -5048,12 +5087,6 @@ def _contract_commit_stage_paths(contract: dict, staged_paths: list, task_dir: s
             forbidden.append(path)
     if isinstance(max_files, int) and max_files > 0 and len(staged_paths) > max_files:
         forbidden.extend(staged_paths[max_files:])
-    route = guru_contract.contract_route(contract)
-    if route and route != guru_contract.ROUTE_FULL_CHAIN:
-        high_risk_paths = set(guru_contract.high_risk_path_signals(code_paths))
-        if guru_risk.has_cross_layer_or_storage(code_paths):
-            high_risk_paths.update(code_paths)
-        forbidden.extend(path for path in code_paths if path in high_risk_paths)
     forbidden = _dedupe_strings(forbidden)
     allowed = [path for path in code_paths if path not in forbidden]
     return allowed, forbidden
@@ -7049,6 +7082,15 @@ def _commit_plan_payload(task_dir_arg) -> dict:
         allowed, forbidden = _contract_commit_stage_paths(contract, staged_paths, task_dir, root)
         plan["allowed_stage_paths"] = allowed
         plan["forbidden_stage_paths"] = forbidden
+        if route != guru_contract.ROUTE_FULL_CHAIN:
+            high_path_signals = set(guru_contract.high_risk_path_signals(split_code_paths))
+            if guru_risk.has_cross_layer_or_storage(split_code_paths):
+                high_path_signals.add("cross-layer/storage path signal")
+            if high_path_signals:
+                plan["warnings"].append(
+                    f"{route} selected with high-risk path signals inside confirmed scope: "
+                    + ", ".join(sorted(high_path_signals)[:5])
+                )
     else:
         contract_problems = []
         direct_recovery_problem = _direct_low_risk_commit_problem(staged_paths, root)
@@ -7596,6 +7638,8 @@ def cmd_check_commit(task_dir_arg) -> int:
         for command in plan.get("required_commands") or []:
             sys.stderr.write(f"下一步：{command}\n")
         return BLOCK
+    for warning in plan.get("warnings") or []:
+        sys.stderr.write(f"[guru-gate:check-commit] warning: {warning}\n")
     route = plan.get("route")
     task_dir = plan.get("task_dir") or task_dir_arg or ""
     if route == "direct_small_inline":
@@ -7766,6 +7810,9 @@ def main() -> int:
         "verification_scope": _pop_value_option(argv, "--verification-scope"),
         "prior_route": _pop_value_option(argv, "--prior-route"),
         "prior_selection_generation": _pop_value_option(argv, "--prior-selection-generation"),
+        "user_override_quote": init_contract_options["user_override_quote"],
+        "risk_acknowledged": init_contract_options["risk_acknowledged"],
+        "selected_by": init_contract_options["selected_by"],
     }
     degradation_options = {
         "gate": _pop_value_option(argv, "--gate"),

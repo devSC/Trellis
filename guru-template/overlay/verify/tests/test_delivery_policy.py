@@ -319,7 +319,7 @@ class DeliveryPolicyTests(unittest.TestCase):
         self.assertEqual(unchanged.selected_route, guru_contract.ROUTE_LITE_TASK)
         self.assertEqual(unchanged.selection_generation, 3)
 
-        with self.assertRaisesRegex(policy.DeliveryPolicyError, "RouteDowngradeUnproven"):
+        with self.assertRaisesRegex(policy.DeliveryPolicyError, "ScopeUnbounded"):
             self.select(
                 description="change local button behavior",
                 requirements_clear=False,
@@ -401,18 +401,21 @@ None.
                 self.assertEqual(guru_gate.auto(str(task_dir)), guru_gate.PASS)
             implementation_check.assert_not_called()
             packet_preflight.assert_not_called()
-        with self.assertRaisesRegex(policy.DeliveryPolicyError, "RouteDowngradeAfterWrite"):
-            self.select(
-                description="change local button behavior",
-                affected_paths=(PurePosixPath("lib/ui/button.dart"),),
-                requirements_clear=True,
-                coupling="local",
-                reversible=True,
-                verification_scope="focused",
-                prior_route="lite_task",
-                prior_selection_generation=3,
-                first_write_started=True,
-            )
+        switched_after_write = self.select(
+            description="change local button behavior",
+            affected_paths=(PurePosixPath("lib/ui/button.dart"),),
+            requirements_clear=True,
+            coupling="local",
+            reversible=True,
+            verification_scope="focused",
+            preferred_route="micro_task",
+            prior_route="lite_task",
+            prior_selection_generation=3,
+            first_write_started=True,
+        )
+        self.assertEqual(switched_after_write.selected_route, guru_contract.ROUTE_MICRO_TASK)
+        self.assertEqual(switched_after_write.selection_source, "user_override")
+        self.assertEqual(switched_after_write.selection_generation, 4)
 
     def test_intake_exposes_recommended_selected_and_user_override_routes(self):
         output = io.StringIO()
@@ -453,9 +456,10 @@ None.
             (task_dir / "task.json").write_text(json.dumps(task_data), encoding="utf-8")
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                self.assertEqual(guru_gate.cmd_intake(str(task_dir), options), guru_gate.BLOCK)
+                self.assertEqual(guru_gate.cmd_intake(str(task_dir), options), guru_gate.PASS)
             payload = json.loads(output.getvalue())
-            self.assertIn("RouteDowngradeAfterWrite", " ".join(payload["blocking_reasons"]))
+            self.assertEqual(payload["selected_route"], guru_contract.ROUTE_MICRO_TASK)
+            self.assertEqual(payload["selection_generation"], 2)
 
             stale = {**options, "prior_route": "micro_task"}
             output = io.StringIO()
@@ -682,7 +686,7 @@ None.
                 requirements["confirmation_projection_digest"],
                 detail["confirmation_projection_digest"],
             )
-            self.assertEqual(requirements["schema_version"], 2)
+            self.assertEqual(requirements["schema_version"], 3)
             self.assertEqual(requirements["mode"], "soft")
             self.assertEqual(requirements["via"], "agent")
             self.assertEqual(requirements["turn_ref"], "turn-1")
@@ -759,6 +763,10 @@ None.
                 "requirements_digest",
                 "detail_artifact_digest",
                 "risk_packet_set_digest",
+                "route",
+                "risk",
+                "scope_fingerprint",
+                "selection_generation",
                 "mode",
                 "via",
                 "turn_ref",
@@ -873,7 +881,7 @@ None.
             self.assertRegex(execution["scope_fingerprint"], r"^[0-9a-f]{64}$")
             self.assertFalse(contract["commit_policy"]["require_clean_implementation_review"])
 
-    def test_high_risk_preference_cannot_downgrade(self):
+    def test_high_risk_preference_selects_user_route_and_keeps_full_recommendation(self):
         selection = self.select(
             description="change workflow hook gate runtime",
             preferred_route="lite_task",
@@ -881,9 +889,11 @@ None.
             commit_requested=True,
         )
         self.assertEqual(selection.risk, guru_contract.RISK_HIGH)
-        self.assertEqual(selection.execution_route, guru_contract.ROUTE_FULL_CHAIN)
-        self.assertIn("high_or_unknown_high_signal_requires_full_chain", selection.promotion_reasons)
-        self.assertIn("risk_packet", selection.required_gate_ids)
+        self.assertEqual(selection.recommended_route, guru_contract.ROUTE_FULL_CHAIN)
+        self.assertEqual(selection.execution_route, guru_contract.ROUTE_LITE_TASK)
+        self.assertEqual(selection.selection_source, "user_override")
+        self.assertIn("high_or_unknown_high_signal_recommends_full_chain", selection.promotion_reasons)
+        self.assertNotIn("risk_packet", selection.required_gate_ids)
 
     def test_unknown_high_signal_promotes_full_even_if_risk_not_high(self):
         selection = policy.resolve_delivery_selection(
@@ -897,8 +907,10 @@ None.
             evidence={"risk": "medium", "high_signals": ["unknown-high-signal"]},
             capability_report=policy.managed_capability_report(parallel=False),
         )
-        self.assertEqual(selection.execution_route, guru_contract.ROUTE_FULL_CHAIN)
-        self.assertEqual(selection.topology, "managed_single")
+        self.assertEqual(selection.recommended_route, guru_contract.ROUTE_FULL_CHAIN)
+        self.assertEqual(selection.execution_route, guru_contract.ROUTE_MICRO_TASK)
+        self.assertEqual(selection.selection_source, "user_override")
+        self.assertEqual(selection.topology, "host_inline")
 
     def test_review_intent_is_read_only_and_budget_capped(self):
         selection = self.select(

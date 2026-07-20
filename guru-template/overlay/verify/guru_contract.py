@@ -617,8 +617,6 @@ def validate_contract(contract: dict | None) -> list:
     selection = contract.get("route_selection")
     if selection is not None and not isinstance(selection, dict):
         problems.append("route_selection must be object")
-    if risk == RISK_HIGH and route and route != ROUTE_FULL_CHAIN:
-        problems.append("high-risk gate contracts must use route=full_chain")
     if route and _route_override_required(contract):
         problems.extend(user_route_override_problems(contract))
     scope = contract.get("scope", {})
@@ -813,11 +811,4 @@ def validate_commit_contract(contract: dict, staged_paths: list, task_dir: str, 
             forbidden.append(path)
     if forbidden:
         problems.append("staged paths match forbidden contract patterns: " + ", ".join(forbidden[:5]))
-    route = contract_route(contract)
-    if route and route != ROUTE_FULL_CHAIN:
-        risky_paths = high_risk_path_signals(code_paths)
-        if risky_paths:
-            problems.append(
-                f"{route} staged paths contain high-risk signals: " + ", ".join(risky_paths[:5])
-            )
     return problems

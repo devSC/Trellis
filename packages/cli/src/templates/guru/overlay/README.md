@@ -20,14 +20,15 @@
 ## 四级交付路由
 
 `delivery-policy.json` 与 `guru_delivery_policy.py` 是执行真源。Agent 根据需求清晰度、风险、
-耦合、可逆性和验证成本自动推荐最低合法 Route；commit intent 只是交付动作，不决定任务难度。
-用户可显式选择或切换 Route：更重 Route 直接允许，更轻 Route 必须满足目标 eligibility；
-High-risk/unknown-high 不得降级。选择绑定 `selection_generation` 与 `scope_fingerprint`，首次仓库
-写入前可依据证据降级，首次写入后只允许升级。
+耦合、可逆性和验证成本自动推荐 Route；commit intent 只是交付动作，不决定任务难度。
+High-risk/unknown-high 默认推荐 `full_chain`，但用户可显式选择或切换任一受支持 Route。
+低于推荐的选择必须记录用户原话与风险确认；`gate-contract.json.route` 是执行权威。每次切换
+都递增 `selection_generation` 并使绑定旧 generation / `scope_fingerprint` 的确认与证据失效，
+无论首次仓库写入是否已经发生。
 
 - `small_inline`：机械、明确、低风险且不改变行为合同；默认无完整 task、确认 0、Worker 0。
 - `micro_task`：明确、低风险、路径有界的局部行为改变；最小 task contract、确认 0、focused check。
-- `lite_task`：用官方 `task.py create` 创建标准 Trellis task；先查 repo evidence，只对未解决的
+- `lite_task`：默认用于无 High-risk 的局部行为，也可由用户在完整 override audit 后选择。用官方 `task.py create` 创建标准 Trellis task；先查 repo evidence，只对未解决的
   产品/范围/失败路径/验收歧义运行 bounded Brainstorm。compact requirements 与 Brainstorm
   evidence 保存在 task-local `prd.md`；当前 digest 确认一次后自动 start、host-inline、focused
   check、mutable evidence、Spec 同步与可逆 commit-ready。Worker 0，不运行 Overview/Detail
@@ -35,7 +36,7 @@ High-risk/unknown-high 不得降级。选择绑定 `selection_generation` 与 `s
   绑定当前 `selection_generation`、`scope_fingerprint`、精确 staged `target_paths` / `target_digest`，
   且 `docs_code_test_consistency=passed`、`spec_sync=passed|not_required`；缺失或 stale 只要求重跑
   focused check，不增加用户确认或 Worker。
-- `full_chain`：任何 High-risk/unknown-high 均使用 Full；实现 Worker 前先暴露 current requirements、
+- `full_chain`：High-risk/unknown-high 的默认推荐路线；selected route 为 Full 时，实现 Worker 前先暴露 current requirements、
   critical/high risk 与关键不可逆设计决定，并合并为一批用户确认，再 guarded activation。
 
 Lite `check-commit` 成功后会把 exact target digest、Custom docs/code/test contract digest 与

@@ -2,5 +2,5 @@
 {"file": ".trellis/spec/cli/backend/script-conventions.md", "reason": "Python overlay script conventions and cross-platform constraints"}
 {"file": ".trellis/spec/cli/backend/quality-guidelines.md", "reason": "CLI/backend quality constraints and regression-test expectations"}
 {"file": ".trellis/spec/cli/unit-test/conventions.md", "reason": "Required regression test conventions for logic and bug-fix changes"}
-{"file": ".trellis/tasks/07-01-risk-based-gate-contract-routing/prd.md", "reason": "Previous route-hardening requirements that this task intentionally amends"}
-{"file": ".trellis/tasks/07-01-risk-based-gate-contract-routing/design.md", "reason": "Existing route contract architecture and affected units"}
+{"file": ".trellis/tasks/archive/2026-07/07-01-risk-based-gate-contract-routing/prd.md", "reason": "Previous route-hardening requirements that this task intentionally amends"}
+{"file": ".trellis/tasks/archive/2026-07/07-01-risk-based-gate-contract-routing/design.md", "reason": "Existing route contract architecture and affected units"}

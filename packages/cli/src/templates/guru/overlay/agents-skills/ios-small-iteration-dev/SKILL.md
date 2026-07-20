@@ -1,6 +1,6 @@
 ---
 name: ios-small-iteration-dev
-description: iOS 小需求端到端闭环编排：按需求清晰度、风险、耦合、可逆性和验证成本选择 small_inline / micro_task / lite_task / full_chain；Lite 使用标准 Trellis task 和一次需求确认，高风险必须 Full。本 Skill 只编排流程，规范以项目 golden-path 和平台标准包为准。
+description: iOS 小需求端到端闭环编排：按需求清晰度、风险、耦合、可逆性和验证成本推荐 small_inline / micro_task / lite_task / full_chain；Lite 使用标准 Trellis task 和一次需求确认，高风险默认推荐 Full，用户可显式选择其他受支持 route。本 Skill 只编排流程，规范以项目 golden-path 和平台标准包为准。
 ---
 
 # iOS 小迭代闭环
@@ -15,14 +15,15 @@ description: iOS 小需求端到端闭环编排：按需求清晰度、风险、
 
 - `small_inline`：机械、明确、低风险且不改变行为合同；默认无完整 task、确认 0、Worker 0。初始要求 commit 时只补最小提交合同。
 - `micro_task`：明确、低风险、路径有界的局部行为改变；最小 task contract、确认 0、focused check。
-- `lite_task`：无 High-risk 的局部功能，但 repo evidence 后仍可能有产品/范围/验收歧义；官方 `task.py create` 标准任务、task-local compact `prd.md`、必要时 bounded Brainstorm、确认一次、Worker 0、无 Overview/Detail planning review。
+- `lite_task`：默认用于无 High-risk 的局部功能；High-risk 也可由用户在完整 override audit 后选择。repo evidence 后仍有产品/范围/验收歧义时，使用官方 `task.py create` 标准任务、task-local compact `prd.md`、必要时 bounded Brainstorm、确认一次、Worker 0、无 Overview/Detail planning review。
 - `full_chain`：跨层、持久化、权限/隐私、支付、迁移、公共契约、workflow/hook/gate/runtime 或发布风险；实现前完成 current risk/decision evidence 与一批用户确认，使用 guarded activation。
 
 ## Route 选择与切换
 
-- 自动选择满足硬边界的最低成本 Route；`gate-contract.json` 记录 selected/recommended Route、`selection_source`、`selection_generation` 与 `scope_fingerprint`。
-- 用户选择更重 Route 直接允许；选择更轻 Route 必须满足目标 eligibility；High-risk/unknown-high 不得降级。
-- 首次写入前可基于新证据合法降级；首次写入后只允许升级。Lite 发现 scope expansion 或 High-risk 时，在下一次写入前升级 Full。
+- 自动推荐 Route；`gate-contract.json` 记录 selected/recommended Route、`selection_source`、`selection_generation` 与 `scope_fingerprint`。
+- High-risk/unknown-high 默认推荐 `full_chain`；这不覆盖用户的 route 选择权。
+- 用户可选择任一受支持 route；低于推荐 route 时必须记录风险确认与用户 quote。
+- 首次写入前后均可切换 route；每次切换递增 `selection_generation` 并失效旧确认/证据。Lite 发现 scope expansion 或 High-risk 时重新 intake 并默认推荐 Full，用户可用新的 override audit 保留或选择其他受支持 route。
 
 ## Lite 自动闭环
 

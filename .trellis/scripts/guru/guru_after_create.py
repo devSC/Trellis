@@ -140,9 +140,9 @@ def main() -> int:
                 data.get("risk_level", "unknown"),
                 created_by="guru_after_create",
             )
-            contract["assessment"]["reasons"] = ["fail-safe default: new Guru tasks start as full_chain"]
+            contract["assessment"]["reasons"] = ["conservative recommendation: new Guru tasks start as full_chain until the user selects a route"]
             guru_contract.write_contract(task_dir, contract)
-            contract_note = "；gate-contract 默认 full_chain（改 micro/lite 需 intake 分流）"
+            contract_note = "；gate-contract 默认推荐 full_chain（用户可通过 intake/init-contract 选择 micro/lite/full）"
     except (ValueError, OSError) as e:
         # ValueError 覆盖 json.JSONDecodeError（其子类）与非对象根节点；保持 best-effort 不阻塞主流程
         sys.stderr.write(f"[guru-after-create] 警告：guru_chain 写入失败（{e}）\n")

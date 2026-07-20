@@ -3246,14 +3246,6 @@ def _micro_commit_contract_problem(contract: dict, staged_paths: list, task_dir:
     problem = _contract_validation_problem(contract, staged_paths, task_dir, root)
     if problem:
         return problem
-    high_path_signals, _cross_layer_or_storage, _code_paths = _micro_commit_high_path_signals(
-        contract,
-        staged_paths,
-        task_dir,
-        root,
-    )
-    if high_path_signals:
-        return "micro_task staged paths contain high-risk signals: " + ", ".join(high_path_signals[:5])
     return ""
 
 
@@ -3524,6 +3516,7 @@ def _new_commit_plan(staged_paths: list) -> dict:
         "can_commit_now": False,
         "split_required": False,
         "blocking_reasons": [],
+        "warnings": [],
         "required_commands": [],
         "optional_commands": [],
         "required_user_confirmations": [],
@@ -3557,6 +3550,7 @@ def _finish_commit_plan(plan: dict) -> dict:
     plan["allowed_stage_paths"] = _dedupe_strings(plan.get("allowed_stage_paths", []))
     plan["forbidden_stage_paths"] = _dedupe_strings(plan.get("forbidden_stage_paths", []))
     plan["blocking_reasons"] = _dedupe_strings(plan.get("blocking_reasons", []))
+    plan["warnings"] = _dedupe_strings(plan.get("warnings", []))
     plan["required_commands"] = _dedupe_strings(plan.get("required_commands", []))
     plan["optional_commands"] = _dedupe_strings(plan.get("optional_commands", []))
     plan["required_user_confirmations"] = _dedupe_strings(plan.get("required_user_confirmations", []))
@@ -4319,12 +4313,6 @@ def _contract_commit_stage_paths(contract: dict, staged_paths: list, task_dir: s
             forbidden.append(path)
     if isinstance(max_files, int) and max_files > 0 and len(staged_paths) > max_files:
         forbidden.extend(staged_paths[max_files:])
-    route = guru_contract.contract_route(contract)
-    if route and route != guru_contract.ROUTE_FULL_CHAIN:
-        high_risk_paths = set(guru_contract.high_risk_path_signals(code_paths))
-        if guru_risk.has_cross_layer_or_storage(code_paths):
-            high_risk_paths.update(code_paths)
-        forbidden.extend(path for path in code_paths if path in high_risk_paths)
     forbidden = _dedupe_strings(forbidden)
     allowed = [path for path in code_paths if path not in forbidden]
     return allowed, forbidden
@@ -4611,6 +4599,15 @@ def _commit_plan_payload(task_dir_arg) -> dict:
         allowed, forbidden = _contract_commit_stage_paths(contract, staged_paths, task_dir, root)
         plan["allowed_stage_paths"] = allowed
         plan["forbidden_stage_paths"] = forbidden
+        if route != guru_contract.ROUTE_FULL_CHAIN:
+            high_path_signals = set(guru_contract.high_risk_path_signals(split_code_paths))
+            if guru_risk.has_cross_layer_or_storage(split_code_paths):
+                high_path_signals.add("cross-layer/storage path signal")
+            if high_path_signals:
+                plan["warnings"].append(
+                    f"{route} selected with high-risk path signals inside confirmed scope: "
+                    + ", ".join(sorted(high_path_signals)[:5])
+                )
     else:
         contract_problems = []
         direct_recovery_problem = _direct_low_risk_commit_problem(staged_paths, root)
@@ -4757,6 +4754,8 @@ def cmd_check_commit(task_dir_arg) -> int:
         for command in plan.get("required_commands") or []:
             sys.stderr.write(f"下一步：{command}\n")
         return BLOCK
+    for warning in plan.get("warnings") or []:
+        sys.stderr.write(f"[guru-gate:check-commit] warning: {warning}\n")
     route = plan.get("route")
     task_dir = plan.get("task_dir") or task_dir_arg or ""
     if route == "direct_small_inline":

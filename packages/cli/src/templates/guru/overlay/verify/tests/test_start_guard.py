@@ -70,7 +70,17 @@ class StartGuardTests(unittest.TestCase):
         (root / ".trellis" / "scripts" / "guru" / "guru_gate.py").write_text("# fake\n", encoding="utf-8")
         common_dir = root / ".trellis" / "scripts" / "common"
         common_dir.mkdir(parents=True)
-        shutil.copyfile(Path(__file__).resolve().parents[4] / ".trellis/scripts/common/active_task.py", common_dir / "active_task.py")
+        active_task_sources = (
+            parent / relative
+            for parent in Path(__file__).resolve().parents
+            for relative in (
+                Path("trellis/scripts/common/active_task.py"),
+                Path(".trellis/scripts/common/active_task.py"),
+            )
+        )
+        active_task_source = next((path for path in active_task_sources if path.is_file()), None)
+        self.assertIsNotNone(active_task_source, "active_task.py fixture source not found")
+        shutil.copyfile(active_task_source, common_dir / "active_task.py")
         for name in ("slice-packets", "risk-packets", "execution-envelopes", "confirmation-attestations"):
             (task_dir / name).mkdir(parents=True, exist_ok=True)
         design_package = task_dir / "design-package"

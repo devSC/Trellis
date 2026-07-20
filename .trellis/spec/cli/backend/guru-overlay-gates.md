@@ -89,7 +89,7 @@ This is an executable gate surface. Changes must be fail-closed by default, mirr
 - Route-aware review policy:
   - `small_inline`: mechanical, explicit, low-risk work with no behavior-contract
     change; no full task, confirmation, or Worker is required by default.
-  - `micro_task`: requirements adversarial review and overview/detail adversarial reviewer evidence are not required; commit remains bounded by explicit scope, file limits, and contract evidence. It is never valid for high-risk work.
+  - `micro_task`: requirements adversarial review and overview/detail adversarial reviewer evidence are not required; commit remains bounded by explicit scope, file limits, contract evidence, and complete user-override audit when selected below the recommendation.
   - `lite_task`: official `task.py create` standard task, task-local compact
     `prd.md`, repo evidence first, bounded Brainstorm only for unresolved product,
     scope, failure-path, or acceptance ambiguity, one digest-bound requirements
@@ -99,9 +99,9 @@ This is an executable gate surface. Changes must be fail-closed by default, mirr
     `selection_generation`, `scope_fingerprint`, exact `target_paths` and staged
     `target_digest` are current; `docs_code_test_consistency` must be `passed` and
     `spec_sync` must be `passed` or `not_required`.
-  - `full_chain`, `risk=unknown-high`, or missing/invalid contract: strict default
-    policy. Current requirements, critical/high risks, and key irreversible design
-    decisions are exposed before any implement Worker and confirmed in one batch.
+  - selected `full_chain`, or missing/invalid contract: strict default policy.
+    Current requirements, critical/high risks, and key irreversible design decisions
+    are exposed before any implement Worker and confirmed in one batch.
 
 ### 3. Contracts
 
@@ -114,24 +114,21 @@ This is an executable gate surface. Changes must be fail-closed by default, mirr
 - `route_selection`: selection audit block containing `selected_route`, `source`, `recommended_route`, `risk_acknowledged`, `user_quote`, `selected_by`, and `selected_at`.
 - `route_selection.selection_generation`: positive monotonic generation for route changes.
 - `route_selection.scope_fingerprint`: exact fingerprint of the selected scope.
-- `route_selection.first_repository_write_at`: absent before the first repository
-  write; once present, all subsequent route transitions are upgrade-only.
+- `route_selection.first_repository_write_at`: optional audit timestamp for the
+  first repository write; it does not remove the user's ability to switch routes.
 - `scope.allowed_paths`: explicit non-empty paths for `micro_task`; repo root is not allowed for `micro_task`.
 - `scope.max_files`: positive integer for `micro_task`.
 - `allowed_degradations`: rows with `gate` and non-empty `fallback_checks`.
 - `commit_policy.allow_task_artifacts_only`: defaults false.
 
-High-risk contracts must select `route=full_chain`. A `route_selection` user
-override audit is evidence of the user's preference, not permission to run
-high-risk work through `lite_task`, `micro_task`, or `small_inline`.
-
-When non-high-risk work selects a `route` less strict than the recommended
-route, the contract must include a valid user override audit:
+When work selects a `route` less strict than the recommended route, including
+high-risk work recommended `full_chain`, the contract must include a valid user
+override audit:
 `route_selection.source=user_override`, `route_selection.selected_by=user`,
 `route_selection.risk_acknowledged=true`, a non-empty
 `route_selection.user_quote`, a non-empty `route_selection.selected_at`, and a
 valid stricter `route_selection.recommended_route`. Missing or invalid audit
-blocks. The audit cannot override the high-risk `full_chain` requirement.
+blocks. Once complete, the selected route is authoritative for route-aware Gates.
 
 `gate-degradations.jsonl` is append-only evidence, not permission and not route
 selection. Permission comes from global policy plus the current contract. Each
@@ -163,12 +160,12 @@ For `lite_task`, low/P3 follow-ups and wording nits should be tracked as
 follow-ups without forcing a PRD digest refresh and requirements re-review,
 unless they change behavior, scope, acceptance criteria, or a high-risk decision.
 
-Lite scope expansion must be re-intaken before another repository write. High-risk
-expansion promotes to `full_chain`, requires a current risk packet and guarded
-start, and consumes at most the one Full confirmation batch for unresolved
-critical/high decisions. Non-high-risk scope drift invalidates only the stale
-scope/digest evidence. It must not silently rewrite `evidence_ready` or
-assumptions as `user_confirmed`.
+Lite scope expansion must be re-intaken before another repository write. A new
+high-risk signal updates the recommendation to `full_chain`; the user may accept
+that recommendation or explicitly retain/select another supported route with a
+fresh override audit. Any route or scope change increments `selection_generation`
+and invalidates stale confirmation/deterministic evidence. It must not silently
+rewrite `evidence_ready` or assumptions as `user_confirmed`.
 
 ### 4. Validation & Error Matrix
 
@@ -181,14 +178,14 @@ assumptions as `user_confirmed`.
 | `micro_task` without explicit allowed paths | Block |
 | `micro_task` with repo-root scope | Block |
 | `micro_task` without positive `max_files` | Block |
-| High-risk work with non-`full_chain` selected route and no valid `route_selection` user override audit | Block; high-risk requires `full_chain` |
-| High-risk work with non-`full_chain` selected route and valid user override audit | Block; the audit cannot override the high-risk `full_chain` requirement |
+| High-risk work with non-`full_chain` selected route and no valid `route_selection` user override audit | Block; require quote and explicit risk acknowledgement |
+| High-risk work with non-`full_chain` selected route and valid user override audit | Allow; execute the selected route while retaining `recommended_route=full_chain` |
 | Unauthorized degradation row | Block |
 | Empty `fallback_checks` | Block |
 | Missing passed compensating checks | Block |
 | Staged task/workspace artifact paths | Block for implementation commit contracts |
-| Non-full staged path with gate/workflow/storage/privacy/payment signal and no valid user override audit | Block and recommend `full_chain` |
-| Non-full staged path with gate/workflow/storage/privacy/payment signal inside confirmed scope and valid user override audit | Block when the contract risk is high; otherwise stop for user confirmation or promote to `full_chain` |
+| Non-full staged path with gate/workflow/storage/privacy/payment signal outside confirmed scope | Block as scope violation |
+| Non-full staged path with gate/workflow/storage/privacy/payment signal inside confirmed scope | Allow with warning/reason evidence; do not add it to forbidden paths solely due risk |
 | `adversarial_enabled=false` with current blocked requirements review | Block |
 | `adversarial_enabled=false` with missing adversarial reviewer only | Allow if other current clean-review/digest gates pass |
 | `micro_task` with no requirements adversarial review | Allow; continue enforcing structure/confirmation only when that command is explicitly used |
@@ -200,11 +197,11 @@ assumptions as `user_confirmed`.
 | `lite_task` with current requirements `blocked` or clean `max_severity=medium+` | Block |
 | `lite_task` review discovers high-risk or expanded scope | Stop for user confirmation; do not silently promote evidence-ready scope to user-confirmed |
 | `risk=unknown` or invalid `gate-contract.json` | Strict default policy; do not apply route-aware adversarial relaxation |
-| `init-contract --risk high --route lite_task|micro_task` without user override quote and `--risk-acknowledged true` | Block; high-risk requires `full_chain` |
-| `init-contract --risk high --route lite_task|micro_task` with valid user override audit and valid selected-route scope | Block; high-risk requires `full_chain` |
+| `init-contract --risk high --route lite_task|micro_task` without user override quote and `--risk-acknowledged true` | Block; override audit is incomplete |
+| `init-contract --risk high --route lite_task|micro_task` with valid user override audit and valid selected-route scope | Write the selected-route contract and preserve the Full recommendation |
 | `init-contract` sees unreadable existing contract | Block; do not overwrite ambiguous state |
 | high-risk selected `full_chain` implementation without slice packet | Block before worker launch with `PACKET_REQUIRED_BEFORE_IMPLEMENT` |
-| high-risk selected `lite_task` with valid user override audit | Treat the contract as invalid and require `full_chain` before implementation |
+| high-risk selected `lite_task` with valid user override audit | Use Lite confirmation/start/check/commit policy; no Full slice packet required |
 | high-risk selected `full_chain` with one valid slice packet | Allow implementation preflight and expose recommended `--slice <id>` command |
 | high-risk selected `full_chain` with multiple packets and no selected slice | Report `PACKET_AMBIGUOUS_WITHOUT_SLICE` in `slice-plan` |
 | `status --json` sees only terminal workers | Return `blocking=false`, `cleanup_available=true` |
@@ -213,12 +210,12 @@ assumptions as `user_confirmed`.
 
 - Good: a low-risk mechanical UI/text change remains intrinsically Small when
   commit is requested; the delivery action adds only the minimal commit contract.
-- Good: a high-risk request is recommended `full_chain`, and `gate-contract.json` records `route=full_chain` even if the user asked for a lower route.
-- Good: a high-risk `micro_task` or `lite_task` user override is rejected before commit, check-implementation, or slice-plan can treat it as selected-route authority.
+- Good: a high-risk request is recommended `full_chain`; without an explicit user choice the selected route remains `full_chain`.
+- Good: a high-risk `micro_task` or `lite_task` user override with quote and risk acknowledgement is recorded and becomes selected-route authority.
 - Good: a high-risk full-chain runtime task writes a slice packet before implementation, runs `slice-plan`, then launches one explicit slice.
 - Base: a task without `gate-contract.json` follows the existing full-chain `check-implementation` plus implementation-review digest and staged-scope checks.
 - Bad: a task-local degradation row claims a required semantic review or commit gate can be skipped. Required gates are globally non-degradable and must fail closed.
-- Bad: a high-risk task selects `lite_task` or `micro_task`, with or without user quote or explicit risk acknowledgement.
+- Bad: a high-risk task selects `lite_task` or `micro_task` without complete override audit, or violates the selected route's scope/evidence contract.
 - Bad: a high-risk full-chain task starts an implementation worker before any slice packet exists.
 
 ### 6. Tests Required
@@ -235,16 +232,16 @@ Guru overlay verify tests must cover:
 - high-risk `intake --write-contract <task_dir>` writes `full_chain` with no allowed degradations.
 - `record-degradation` appends only when the contract allows the gate and all required compensating checks are passed; invalid proposed rows leave the JSONL unchanged.
 - Contract validation rejects empty micro scope, repo-root micro scope, risk typos, empty fallback checks, unauthorized degradations, and malformed roots.
-- `check-commit` blocks staged task artifacts, out-of-scope staged paths, non-full high-risk paths, high-risk non-full contracts even with valid override audit, and missing compensating evidence.
-- `check-commit` rejects high-risk path signals inside confirmed non-full scope when the contract itself is high-risk, even if valid user override audit is present.
+- `check-commit` blocks staged task artifacts, out-of-scope staged paths, forbidden patterns, malformed or missing high-risk non-full override audit, and missing compensating evidence.
+- `check-commit` allows high-risk path signals inside confirmed non-full scope when valid user override audit is present, while reporting route-aware warnings.
 - `adversarial_enabled=false` allows double ordinary clean reviews to proceed, but does not bypass current blocked or medium+ review evidence.
 - Route-aware execution policy: `micro_task` uses a bounded micro contract;
   `lite_task` uses an official task, task-local compact requirements, conditional
   Brainstorm, one confirmation, zero Workers, and no Overview/Detail planning
   review; `full_chain` exposes risk before Workers and uses one confirmation batch.
-- `init-contract` generates valid micro/lite/full contracts and blocks high-risk non-full selected routes even with valid user override audit.
+- `init-contract` generates valid micro/lite/full contracts and allows high-risk non-full selected routes only with an exact user quote and explicit risk acknowledgement while retaining `recommended_route=full_chain`.
 - `check-implementation` and `guru_supervise.py implement-check` block high-risk selected full-chain tasks with no slice packet before worker launch.
-- `check-implementation` treats high-risk selected lite/micro contracts as invalid and requires full-chain routing before implementation.
+- `check-implementation` treats valid high-risk selected Lite/Micro contracts according to the selected route and does not require a Full slice packet.
 - `slice-plan` covers zero, one, and multiple packet fixtures, including dirty out-of-scope reporting.
 - `commit-plan --write` writes `commit-plan.json` identical to stdout JSON.
 - `guru_supervise.py status --json` distinguishes live and terminal workers and exposes one cleanup command.
@@ -360,24 +357,23 @@ Route contracts:
 
 - `small_inline`: mechanical, explicit, low-risk work with no behavior-contract
   change; no full task, zero confirmations, zero Workers, and focused evidence.
-- `micro_task`: explicit low-risk local behavior change with bounded paths/max
+- `micro_task`: explicit local behavior change with bounded paths/max
   files, a minimal task contract, zero confirmations, zero Workers by default,
   and a focused deterministic final.
 - `lite_task`: official `task.py create` standard task, repo evidence first,
   conditional bounded Brainstorm, task-local compact `prd.md`, one confirmation
   binding the current requirements digest/route/risk/scope fingerprint, zero
   Workers, no Overview/Detail planning review, and host-inline deterministic final.
-- `full_chain`: high/unknown-high work with current requirements/risk/design
+- `full_chain`: selected Full work with current requirements/risk/design
   evidence before every implement Worker, one confirmation batch, guarded
   activation, managed implementation, and deterministic final.
 
 Route difficulty is determined by requirements clarity, risk, coupling,
 reversibility, and verification cost. Commit intent is orthogonal. The Agent
-recommends the lowest legal route; users may select a heavier route freely or a
-lighter route only when target eligibility passes. High/unknown-high can never
-downgrade from Full. Route changes bind monotonic `selection_generation` and
-`scope_fingerprint`; before the first repository write evidence may justify a
-downgrade, while after the first write transitions are upgrade-only.
+recommends a route; users may explicitly select any supported route. Selecting
+below the recommendation requires quote-backed risk acknowledgement. Route
+changes bind monotonic `selection_generation` and `scope_fingerprint` before or
+after the first repository write, invalidating prior confirmation/evidence.
 
 Evidence reuse requires the same policy version, intent/route, scope fingerprint,
 target digest, docs-code-test digest, and a passed prior outcome. An exact hit

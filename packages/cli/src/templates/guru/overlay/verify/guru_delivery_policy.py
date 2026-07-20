@@ -399,24 +399,18 @@ def _resolve_route_transition(
 
     reasons: list[str] = []
     source = "recommended"
-    if force_full:
-        selected = guru_contract.ROUTE_FULL_CHAIN
-        source = "risk_promotion"
-        reasons.append("high_or_unknown_high_signal_requires_full_chain")
-    elif preferred:
-        if _route_rank(preferred) < _route_rank(recommended) and not _route_eligible(preferred, request, assessment):
-            raise DeliveryPolicyError(
-                f"RouteDowngradeUnproven: {preferred} eligibility was not proven from clarity, coupling, reversibility and verification scope"
-            )
+    if preferred:
         selected = preferred
         source = "user_override"
+        if force_full:
+            reasons.append("high_or_unknown_high_signal_recommends_full_chain")
+    elif force_full:
+        selected = guru_contract.ROUTE_FULL_CHAIN
+        source = "risk_promotion"
+        reasons.append("high_or_unknown_high_signal_recommends_full_chain")
     else:
         selected = recommended
 
-    if prior and request.first_write_started and _route_rank(selected) < _route_rank(prior):
-        raise DeliveryPolicyError(
-            f"RouteDowngradeAfterWrite: cannot change {prior} to {selected} after the first repository write"
-        )
     if prior and selected != prior:
         generation = int(prior_generation) + 1
         if _route_rank(selected) > _route_rank(prior):
@@ -535,6 +529,8 @@ def resolve_delivery_selection(
     high_signals = set(assessment.get("risk_flags") or [])
     high_signals.update(str(flag) for flag in evidence.get("high_signals", []) if flag)
     unknown_high_signal = "unknown-high-signal" in high_signals or "unknown_high_signal" in high_signals
+    if risk == guru_contract.RISK_HIGH or unknown_high_signal:
+        recommended = guru_contract.ROUTE_FULL_CHAIN
     route, selection_source, selection_generation, promotion_reasons = _resolve_route_transition(
         request,
         assessment,
@@ -547,8 +543,6 @@ def resolve_delivery_selection(
         write_capability = policy["intent_profiles"][intent]["write_capability"]
     if intent in READ_ONLY_INTENTS and write_capability != "none":
         raise DeliveryPolicyError("RouteIllegalForIntent: read-only intent cannot write")
-    if risk == guru_contract.RISK_HIGH and route != guru_contract.ROUTE_FULL_CHAIN:
-        raise DeliveryPolicyError("RouteIllegalForRisk: high risk must use full_chain")
     scope_max_files: int | None = None
     if route == guru_contract.ROUTE_MICRO_TASK:
         if not paths:
