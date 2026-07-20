@@ -305,3 +305,36 @@ Delivered four current-receipt slices, isolated serialized Integration proof rev
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Harden Guru fast-path installation
+
+**Date**: 2026-07-20
+**Task**: Harden Guru fast-path installation
+**Branch**: `codex/preserve-guru-target-wip-75887690`
+
+### Summary
+
+Installed and reviewed guru-bug-fast-path, hardened approved historical direct-apply migration and dirty-checkout provenance, validated source/package E2E, and reinstalled Himora plus safe_land_web without altering their Git indexes.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cdeb6e61` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
