@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "risk": "medium",
+  "route": "micro_task",
+  "assessment": {
+    "confidence": null,
+    "reasons": [
+      "Fast-forward guru-v0.6.7.1 into the current branch, restore remaining Guru source/template parity, rebuild, and reinstall sibling targets"
+    ],
+    "risk_flags": [
+      "User selected micro_task below the medium-risk lite_task recommendation"
+    ],
+    "recommended_route": "lite_task"
+  },
+  "route_selection": {
+    "selected_route": "micro_task",
+    "source": "user_override",
+    "recommended_route": "lite_task",
+    "risk_acknowledged": true,
+    "user_quote": "继续",
+    "selected_by": "user",
+    "selected_at": "2026-07-18T22:41:29+08:00"
+  },
+  "scope": {
+    "allowed_paths": [
+      "guru-template/overlay/agents-skills/guru-bug-fast-path",
+      "packages/cli/src/templates/guru/overlay/agents-skills/guru-bug-fast-path",
+      "guru-template/overlay/apply.sh",
+      "packages/cli/src/templates/guru/overlay/apply.sh",
+      "guru-template/overlay/trellis-local/SKILL.md",
+      "packages/cli/src/templates/guru/overlay/trellis-local/SKILL.md",
+      "packages/cli/test/guru/guru-bundled.test.ts",
+      "guru-template/overlay/reinstall-official-067.sh",
+      "guru-template/overlay/tests/reinstall_official_067_test.sh",
+      "packages/cli/src/templates/guru/overlay/README.md",
+      "packages/cli/src/templates/guru/overlay/reinstall-official-067.sh",
+      "packages/cli/src/templates/guru/overlay/tests/reinstall_official_067_test.sh",
+      ".trellis/spec/cli/backend/guru-overlay-gates.md"
+    ],
+    "forbidden_path_patterns": [],
+    "max_files": 13
+  },
+  "required_gates": [],
+  "optional_gates": [],
+  "allowed_degradations": [],
+  "commit_policy": {
+    "require_in_progress": false,
+    "require_clean_implementation_review": false,
+    "allow_task_artifacts_only": false
+  },
+  "created_by": "codex",
+  "created_at": "2026-07-18T14:41:29Z",
+  "policy_version": "guru-risk-contract-v1"
+}
