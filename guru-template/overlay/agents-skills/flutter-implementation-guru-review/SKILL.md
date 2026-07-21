@@ -17,6 +17,7 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
    `review_evidence_schema_version`、`requirements_design_inputs`、`invariants[]`（**唯一机器 SSOT**）、
    `target_paths`、`deterministic_checks`、`semantic_review_provider` 与 `integration_slice`。packet/matrix 缺失而 brief
    标记 high-risk → 输出 `DETAIL_DEFECT`/`PROCESS_DEFECT`，不得 clean。
+6. 对 `runtime_acceptance_required=true`，以及任何涉及用户可见终态、外部 API/schema、持久化/缓存、异步状态或跨层转换的验收目标，装载对应 Acceptance Closure Matrix 行、authority fingerprint、known-bad fixture、Integration evidence 与 current runtime evidence。required row 缺失按 `DETAIL_DEFECT` 阻断。
 
 ## Full/high snapshot 与 evidence Gate
 
@@ -27,16 +28,18 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
 - 普通 slice 只审 packet、planning audit、目标 diff、选定 requirements/design 与 focused evidence，只消费或执行 ordinary focused checks；不得运行 full regression。Integration 才审最终 union snapshot、ordinary current receipts、cross-slice invariants 与 final deterministic summaries，且 full regression 只属于 Integration deterministic checks。
 - 最终语义/静态证据必须检查 workflow 实际派发的 Implementation writer Skill 及其引用的 implementation standards；仅 Planner、Detail 或 reviewer parity 一致不足以满足 Integration。若任一 active Full/high ordinary consumer 仍要求 project/global build、analyze、lint 或 full regression command，或仍按 UNIT、layer、`doc_type`、ViewModel、UseCase 或 component 机械重切片，按 `IMPLEMENT_DEFECT` 阻断。
 - Integration packet `target_paths` 是 review coverage，不是写授权。实际改动路径必须是 planning audit 中 exact `integration_owned_paths` 的子集；即使路径位于 packet coverage 内，只要不在 `integration_owned_paths` 也按 `PROCESS_DEFECT` 阻断。reviewer 只读，不派 implement worker、不改 planning artifact、不直接写 receipt，也不重复执行 supervisor 已运行的同一 deterministic command。
+- 对每个声明的 `acceptance_id`，review boundary 是该 matrix 行的完整 source-to-sink path，而不是 changed-layer count。可读取未改但决定终态的相邻合同与 current evidence；额外检查必须绑定该 row、单命令且有界，不得扩张为全仓开放式审计。
+- ordinary clean receipt 只证明当前 slice 的局部 snapshot；Integration 必须在 final union snapshot 闭合最终终态。即使 Integration deterministic green，runtime-required row 未获 current `runtime_acceptance_pass` 时也只能报告 `implementation_verified` / `runtime_acceptance_pending`，不得报告 `accepted`。
 
 ## 执行流程
 
-1. **D1 合同一致性**（G1）：diff 与详细设计单元逐一对照——合同外新增结构、未实现的承接行为，列差集；`implementation-evidence.jsonl` 是否记录偏差与处置。**有 slice packet 时（P1）：diff 须与 packet `invariants[]` 逐条对照**，每条给 `invariant_status.<id>=pass|fail|not_applicable`（pass 附 evidence、N/A 附 reason，见输出节）；invariant 违反按其 `route_if_missing`/`IMPLEMENT_DEFECT` 路由。**SSOT 否决闸**：注入的正式 requirement/design 包与 packet invariants 是**行级权威基线**；任何 reviewer 建议（含自身判断或外部审查器如 OCR）与 SSOT 行级约束冲突时**一律否决、不得采纳**——以 SSOT 为准，不让外部建议把违反需求/设计的改动放行。
+1. **D1 合同一致性与 semantic authority**（G1）：diff 与详细设计单元逐一对照——合同外新增结构、未实现的承接行为，列差集；`implementation-evidence.jsonl` 是否记录偏差与处置。**有 slice packet 时（P1）：diff 须与 packet `invariants[]` 逐条对照**，每条给 `invariant_status.<id>=pass|fail|not_applicable`（pass 附 evidence、N/A 附 reason，见输出节）；invariant 违反按其 `route_if_missing`/`IMPLEMENT_DEFECT` 路由。注入的正式 requirement/design 包与 packet invariants 是产品语义和规划的行级权威；reviewer/OCR 的主观建议不得覆盖它们。但 current target-environment runtime evidence 是对实际结果的有效反证：不得以“SSOT 已确认”或“packet 未声明”为由否决 failure，也不得据此由 reviewer 直接改写 SSOT。应从 runtime row/fingerprint 依次核对 Requirement、Overview、Detail/packet、implementation、process，返回唯一 earliest-owner route：行为/边界缺失或 material change=`REQ_BLOCKER`，owner/架构错误=`OVERVIEW_DEFECT`，可执行合同/packet/check 错误=`DETAIL_DEFECT`，mutable evidence/执行错误=`PROCESS_DEFECT`，规划正确而代码/测试偏离=`IMPLEMENT_DEFECT`。environment/fixture-only failure 留在 current verification step，不作为第六个产品 defect class。
 2. **D2 分层与 canonical**：对照 golden-path §2/§10 逐项检查改动代码——import 方向（data→usecase、controller→repository/API）、接口分离、DI 形态（binding `new`、`build()` 里 `Get.put`、`permanent` 滥用）、datasource 必经、异常不吞、硬编码尺寸、序列化方案与目录槽位（SLOT-01/02/11/12）。
 3. **D3 存量豁免判定**（G4，逐违例必做）：每个发现的违例对照 SLOT-15——
    - 命中清单且未扩大违例面 → **tech-debt 注记，不阻塞**；
    - 清单外或扩大违例面 → **新增违例，P1 阻塞**；
    - 改动修复了清单条目 → 标注"可从清单移除"。
-4. **D4 证据核查**（G2）：`implement.md` 计划合同与 mutable evidence 齐全性；analyze/测试命令与结果在 `verification-evidence.jsonl` 中真实可复现；代码生成执行记录在 `implementation-evidence.jsonl`。Full/high ordinary slice 只要求并消费 packet 声明的 focused commands；仅当 current packet 或 planning audit focused checks 明确声明测试时，才核对测试名、正/负路径与新增测试映射，不得为通用 D4 自行运行 undeclared tests。全项目 `flutter analyze`、完整测试或其他 full regression 只由 Integration 承担；Integration 或 non-Full/v1 保留原测试覆盖合同。消费 supervisor 已记录的 deterministic 结果，不重复执行同一命令；需要额外语义抽查时只选未重复的 focused check。每条 high-risk invariant 必须有 packet 允许的测试、命令或代码路径作为 `invariant_evidence`；不得把测试当作唯一证据形态。
+4. **D4 证据核查**（G2）：`implement.md` 计划合同与 mutable evidence 齐全性；analyze/测试命令与结果在 `verification-evidence.jsonl` 中真实可复现；代码生成执行记录在 `implementation-evidence.jsonl`。Full/high ordinary slice 只要求并消费 packet 声明的 focused commands；仅当 current packet 或 planning audit focused checks 明确声明测试时，才核对测试名、正/负路径与新增测试映射，不得为通用 D4 自行运行 undeclared tests。若声明的 acceptance row 缺少必要的可证伪检查，或 current runtime failure 证明现有检查 false green，不得用“undeclared”忽略：输出 `DETAIL_DEFECT`/`PROCESS_DEFECT` 和绑定该 row 的最小检查要求，由 planning owner 修复合同；reviewer 仍不得自行启动全仓测试。全项目 `flutter analyze`、完整测试或其他 full regression 只由 Integration 承担；Integration 或 non-Full/v1 保留原测试覆盖合同。消费 supervisor 已记录的 deterministic 结果，不重复执行同一命令；需要额外语义抽查时只选未重复、与具体 acceptance row 直接关联的 focused check。每条 high-risk invariant 必须有 packet 允许的测试、命令或代码路径作为 `invariant_evidence`；不得把测试当作唯一证据形态。
 5. **D5 注释/日志/文档追溯核查**（维护性证据）：检查实现是否能让后续维护者从代码回到设计决策。
    - 新增核心类、public API、Controller/UseCase/Repository/DataSource、跨层 DTO/状态定义，必须有 Dart doc comment 或等价注释说明职责、承接的 `UNIT-<slug>` / `BHV-NNN`；必要时附设计文档相对路径（`docs/design/.../chapters/<slug>.md` 或任务内 `design.md` 锚点）。缺失通常为 P2；高风险链路或新增核心 owner 完全无追溯为 P1。
    - 非显然业务分支、错误/降级/恢复、缓存、异步竞态、生命周期处置、外部依赖边界必须解释"为什么这样做"，不能只靠代码形状猜意图。缺失按 P2 处理。
@@ -51,6 +54,7 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
    - **merge 集合成员**：本地/远端合并时，**"本地保留集"与"当前可见集"是否被正确区分**——远端权威未返回的项不得被本地补回可见集（Himora 类负向/排除规则）。
    - **断言可证伪性**：相关测试断言是否真能对上述错误 `fail`——正向 enrichment 测试**不算**覆盖排除/遗漏类 bug。
    命中以上语义缺陷按 `IMPLEMENT_DEFECT`；若该语义本应由详细设计写成不变量却缺失，按 `DETAIL_DEFECT` 回退（机制详见 P1 的负向不变量 / REQ-UC×BHV 扩展）。
+8. **D8 Acceptance Closure Matrix 审核**（G1/G2）：逐个 acceptance row 从 trigger/source 到用户可见 sink 核对 authority fingerprint、每一步字段/状态输入输出、owner、缺字段/null/错误/超时/降级分支、允许终态、focused/Integration/runtime evidence。即使 diff 只改一层也不得在该层停止。focused regression 必须有 known-bad/修复前失败证据；只证明 post-fix helper happy path 按 `DETAIL_DEFECT` 或 `IMPLEMENT_DEFECT` 阻断。ordinary receipt 不得代替 final Integration，Integration deterministic evidence 不得代替 runtime pass。
 
 ## 输出（互斥分支）
 
@@ -77,14 +81,15 @@ description: 按通用 golden-path 与实现标准包审核 Flutter 代码改动
    - 每条 finding 必须附 `route_class`；同一轮多类缺陷按 `REQ_BLOCKER > OVERVIEW_DEFECT > DETAIL_DEFECT > PROCESS_DEFECT > IMPLEMENT_DEFECT` 给最高优先级路由。
 2. 存量豁免清单：本次触碰的 SLOT-15 条目 + 分类结果 + 可移除项。
 3. 注释/日志/文档追溯摘要：覆盖的新增核心定义、日志点、设计文档路径引用，以及缺口。
-4. **结论（三选一）**：可进入 PR / 修复 P2 后可进入 / 不可进入（列阻塞 P1）。
+4. **结论（三选一）**：可进入 PR / 修复 P2 后可进入 / 不可进入（列阻塞 P1）。该结论只覆盖当前 review target；ordinary clean 不代表 Integration 或 runtime accepted。runtime-required work 在 runtime pass 前必须同时声明 `implementation_verified` / `runtime_acceptance_pending`。
 5. 反哺建议（可选）：本次暴露的新模式/新坑 → 建议更新 golden-path、L2 或槽位定义的条目。
 
 ## 边界约束
 
-- 只审改动面 + 其直接依赖；不对存量代码做全量审计。
+- 只审改动面 + 声明的 Acceptance Closure Matrix 行所需 source-to-sink path/current evidence；不对存量代码做全量审计。
 - 审核不代写代码；每条 finding 给最小修订方案。
 - 测试失败/证据缺失时如实输出，不降级结论。
+- 一个 current snapshot 恰好只有一个满足 packet provider policy 的 semantic reviewer；不得为同一 binding 启动第二 reviewer、重新 aggregate 或用 supplemental reviewer 覆盖 required provider 结论。snapshot 变化后才生成新的 current review，且 binding 未逐项相等的旧 receipt 不得复用。
 - **不得要求 OCR 作为默认完成条件**；OCR 仅 optional bounded provider（用户显式触发 / 高风险抽检），记 `channel=ocr_optional`、第一版不满足 required。
 - **manual provider 审查留痕**（非 channel spawn，第一版 supplemental 补充审计、不满足 required provider）经验证型 append：
   ```bash

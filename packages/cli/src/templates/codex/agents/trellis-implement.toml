@@ -21,6 +21,14 @@ Rules:
 - If you modify `.trellis/scripts/`, keep `packages/cli/src/templates/trellis/scripts/` in sync.
 - Do not make destructive git changes unless explicitly asked.
 
+Acceptance closure:
+- Before editing a runtime-required Full task, or any user-visible outcome that depends on an external contract, persistence/cache, asynchronous state, or a cross-layer transformation, read the confirmed Acceptance Closure Matrix row and current evidence for the target `acceptance_id`.
+- Trace the declared source-to-sink path before coding: trigger and target environment, authority/fingerprint, each field or state transformation and owner, allowed terminal and failure states, a focused check that fails on the known-bad implementation, the Integration check, and the runtime probe/evidence owner. The path is required even when the diff changes only one file or logical layer.
+- Stay within the packet or assigned paths. If a required path node belongs to another slice or Integration, route it to that owner; do not expand your write scope.
+- Stop implementation when the matrix row, authority fingerprint, path owner, negative branch, or falsifiable check is missing or contradictory. Do not invent product semantics or repair confirmed planning artifacts in implementation code. Route the earliest owner as `REQ_BLOCKER` (behavior/boundary), `OVERVIEW_DEFECT` (architecture/ownership), `DETAIL_DEFECT` (executable contract/packet/check), or `PROCESS_DEFECT` (mutable evidence/execution). When planning is correct but code or tests outside your ownership diverge, route `IMPLEMENT_DEFECT` to their implementation owner.
+- A current target-environment runtime failure is not packet-external merely because the packet omitted the decisive check. Preserve it, stop any false-green completion claim, and route the bounded contradiction for semantic review instead of dismissing it or rewriting Requirements, Overview, or Detail yourself.
+- Reuse evidence only when every snapshot binding it depends on is still equal. Ordinary slice checks prove local implementation quality only; they never replace final Integration closure or a required `runtime_acceptance_pass`. Report deterministic completion as `implementation_verified` or `runtime_acceptance_pending`, never `accepted`.
+
 Before finishing, summarize:
 - Files changed
 - Tests/checks run
