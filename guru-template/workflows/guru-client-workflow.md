@@ -14,6 +14,7 @@
 3. **Persist everything** — 研究、决策、trace 全部落文件
 4. **Gate 不过不进下一阶段** — 缺陷只能回上游阶段修，禁止下游补造
 5. **Capture learnings** — 任务完成按萃取九段结构回写 spec
+6. **Runtime acceptance is separate** — Full 任务声明 `runtime_acceptance_required=true` 时，技术验证绿只到 `implementation_verified`；所有 required Acceptance Closure Matrix 行获得 current runtime pass 前保持 active，不得报告 `accepted` 或进入 archive
 
 ---
 
@@ -118,20 +119,24 @@ Lite=官方标准 task→repo evidence→必要 bounded Brainstorm→task-local 
 
 [workflow-state:in_progress]
 route=`gate-contract.json.route`. lite_task: current confirmation digest -> host-inline -> focused check -> mutable evidence -> Spec sync -> reversible commit-ready; Worker 0, no Overview/Detail planning review. full_chain: guru_supervise.py implement-slices <task-dir> --dry-run --backend auto; dispatch only selected_backend.
+Runtime-required Full: technical green -> `implementation_verified` -> exact runtime probe handoff; latest current pass 不完整时任务保持 active，禁止 archive/`accepted`。
 [/workflow-state:in_progress]
 
 [workflow-state:in_progress-channel]
 Lite 不进入 channel/Worker 路径；以下 channel 行为仅适用于 Full。
 实现→质检→spec回写→commit→finish。channel：主会话运行 guru_supervise.py implement-check（官方 trellis channel；必要时拆分 implement/check），注入存在的 jsonl/任务产物/Guru skill，等待 done/error/killed，失败先读 messages --raw 和 log；worker 不 commit/push/merge。
+Runtime-required Full 技术绿后只报 `implementation_verified` 并移交 exact probe；未全部 current pass 时保持 active，不运行 archive。
 [/workflow-state:in_progress-channel]
 
 [workflow-state:in_progress-sub-agent]
 Lite 不派 sub-agent；以下仅适用于 Full。
 实现→质检→spec回写→commit→finish。dispatch trellis-implement/check，prompt 首行 `Active task: <path>`；trace 记执行/证据/偏差。Full/high ordinary 仅要求 packet `deterministic_checks` + focused evidence；Integration 才要求 project-wide build/analyze/lint/full regression；设计缺陷回 Phase1。
+Runtime-required Full 技术绿后只报 `implementation_verified` 并移交 exact probe；未全部 current pass 时保持 active，不运行 archive。
 [/workflow-state:in_progress-sub-agent]
 
 [workflow-state:in_progress-inline]
 实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 spec，编辑后 trellis-check。Full/high ordinary 仅记录 packet `deterministic_checks` + focused evidence；Integration 才记录 project-wide build/analyze/lint/full regression；其他 route 保持原验证合同。缺证据不得 commit；设计缺陷回 Phase1。
+Runtime-required Full 技术绿后只报 `implementation_verified` 并移交 exact probe；未全部 current pass 时保持 active，不运行 archive。
 [/workflow-state:in_progress-inline]
 
 ### Phase 3: Finish（审核与收尾）
@@ -262,6 +267,54 @@ Lite 在一次当前 requirements digest 确认后自动 host-inline 实现并�
 
 Full 与 Trellis 原版同构（dispatch 协议、guarded commit 与 finish-work 收尾不变），但 unchanged scope 不得再拆分 requirements/detail/commit 用户确认：
 
+### Runtime-required Full 验收合同
+
+`runtime_acceptance_required=true` 只允许作为 `prd.md`、Detail 或 `implement.md` 中的 planning marker；它不是 `task.json`、`gate-contract.json` 或任何 script schema 的新字段。声明该 marker 的 Full 任务复用 task-local `verification-evidence.jsonl` 记录 append-only evidence，并保持现有 task lifecycle status。每行至少绑定 `acceptance_id`、current baseline、environment、steps/command、expected、actual、evidence refs、recorded time 和 executor；证据只保留脱敏摘要与 artifact reference，不保存 secret、token、PII、完整响应体或用户内容。
+
+五个对外证据/报告状态固定为：
+
+| 状态 | 语义 |
+| --- | --- |
+| `implementation_verified` | static/test/implementation review 已通过，但 runtime 尚未闭合；不是用户验收完成 |
+| `runtime_acceptance_pending` | exact target-environment probe 已移交给明确 owner，等待实际结果 |
+| `runtime_acceptance_failure` | current 目标环境的实际结果不满足 frozen acceptance row，进入 repair continuation |
+| `runtime_acceptance_pass` | 单个 acceptance row 的环境、步骤、预期、实际与证据齐全且绑定 current baseline |
+| `accepted` | 所有 required rows 的 newest current-baseline append 经校验都是 pass；不得跳过任何更新 append；这是任务级报告结论，不是 lifecycle status |
+
+技术验证完成后的 handoff 顺序：
+
+1. 从 frozen Acceptance Closure Matrix 枚举全部 `required=true` 的 `acceptance_id` 和各自行内 runtime probe；不得从 ledger 已存在的行反推 required set。marker 存在但 matrix 缺失或 required set 为空时路由 `DETAIL_DEFECT`，停止完成流程。
+2. 记录/报告 `implementation_verified`，对尚未实际执行的 required row 只有在 environment、exact probe、预期、evidence owner 和所需 evidence 均明确后才追加/保留 `runtime_acceptance_pending`。owner 缺失或 probe 不可证伪时 handoff 阻断，不得写一条可冒充有效移交的 pending row。
+3. 把 exact probe 交给 agent、QA、开发者或用户中的已声明 owner；task 保持 active/`in_progress`。不为等待 runtime 先 archive 再 reopen。
+4. 实际 executor 追加 `runtime_acceptance_pass` 或 `runtime_acceptance_failure`，不覆盖历史、不回写 digest-bearing matrix。新 evidence 到达后必须重新计算，不缓存旧 allow/deny 决定。
+
+每次 finish/archive 前按以下方式消费 evidence：
+
+1. 读取 current requirements/Overview/Detail/implementation baseline 和 frozen required ID set，再按 append order 读取完整 ledger。任一 append 无法解析到 `acceptance_id` 或 baseline binding 时，立即作为 `PROCESS_DEFECT` 阻断 archive；不得跳过坏行并回退使用旧 evidence。
+2. 对每个 required `acceptance_id`，先只按 append position 找出绑定 current baseline 的 newest append，再校验该 exact row 的 status 和字段。不得先过滤“valid row”再选择。selected pass 必须具有完整 environment、steps/command、expected、actual、evidence refs、executor 和 timestamp；selected row malformed、incomplete 或 status 不支持时，要求 append corrected evidence 并阻断，绝不向前搜索旧 pass。没有 current-baseline append 时，历史 pass 归 stale，否则归 missing。
+3. newest row 合法但为 current non-pass（包括 `implementation_verified`、`runtime_acceptance_pending` 或 `runtime_acceptance_failure`）时，它压过所有更早 pass。ledger unreadable 或 newest row 非法属于 evidence precondition failure，先报告 exact line/row 并停止；不得把它降级成普通 runtime blocker。
+4. evidence structure 可完整求值后，任一 row missing、pending、failure 或 stale 时保存完整 blocking list，但只报告一个下一动作，优先级为 `failure > stale > missing > pending`。输出 exact `acceptance_id`、原因、matrix-owned probe、owner 和 evidence requirement。
+5. failure 的唯一下一步是先保存 failure 并完成 same-goal/root-cause classification，原 probe 是 repair 后的 resume condition；stale/missing 重跑原 probe；pending 继续由已声明 owner 执行。
+6. 只有 required ID set 与 current-pass set 完全相等，且每个 required ID 的 exact newest current-baseline append 都校验为 `runtime_acceptance_pass`，才能报告 `accepted` 并解除 runtime guard。解除只允许继续既有 finish/archive Gate，不自动授权 commit、push、merge 或 archive。
+
+技术绿、clean review、ordinary slice pass、`COMMIT_READY`、`implementation_verified`、单行 pass 或旧 baseline pass 都不得表述为 `accepted`。未闭合时 `/trellis:finish-work` 必须停在 archive 前，报告 `implementation_verified`、`runtime_acceptance_pending` 或 `runtime_acceptance_failure`，并保持任务 active。
+
+current runtime failure 必须先 append `runtime_acceptance_failure`，再核对 original `acceptance_id`/BHV/用户结果及权限、数据、外部合同、material scope 是否变化。同一 active task 且 goal/boundary 未变时沿原任务继续，不创建第二套 Requirements/Overview/Detail：
+
+| 最早 defect owner | 最大回退 | 必须刷新 |
+| --- | --- | --- |
+| `IMPLEMENT_DEFECT` | Phase 2 implementation/check | 受影响代码/测试、slice/Integration review、runtime receipt |
+| `PROCESS_DEFECT` | current evidence/process；仅 packet 或 digest-bearing plan 需改时回 Detail | 受影响 evidence；plan 改变时刷新 Detail downstream |
+| `DETAIL_DEFECT` | Phase 1 Detail | affected Detail/packet、slice/Integration/runtime evidence |
+| `OVERVIEW_DEFECT` | Phase 1 Overview + affected Detail | Overview 与 affected Detail/downstream evidence |
+| `REQ_BLOCKER` / material change | Phase 1 Requirements affected chain | 完整 affected Full chain |
+
+Environment/fixture-only 是 verification disposition，不是第六个 defect class。confirmed packet、digest-bearing plan、fixture contract 或 declared check 本身错误/不完整时分类为 `PROCESS_DEFECT`，且只有实际修改 packet/plan 时才回 Detail；packet/plan 与 implementation 都正确、仅 target environment 配置或 runtime fixture instance 错误时，留在 current verification step，只刷新 environment/fixture evidence 与 affected probe，不改产品 planning 或 implementation。
+
+未变化且 binding 仍 current 的 planning 与 sibling receipts 保持可复用；任何被现有 digest/snapshot Gate 判 stale 的 evidence 必须真实刷新。对 archived 历史 Full task，当前无脚本能力只支持在获得相应任务创建授权后建立引用原 `acceptance_id`、artifact digest、receipt 和新 failure evidence 的 linked repair child/new task，并如实执行当前 Gate；不得声称 in-place reopen、机器级 baseline inheritance 或零 Full replanning。
+
+**执行边界**：以上是 agent/Skill/workflow 行为合同。所有 Trellis/Guru/CLI lifecycle、Gate、verify、hook、apply、Python、shell 和 TypeScript scripts 均保持不变，因此 direct `task.py archive` 等绕过 agent 的调用不会被机器 fail-closed 阻断。不得把本合同包装成 script-level guard、自动 parser 或新 lifecycle capability；如需该能力必须另行授权。
+
 **Full/high minimum-stable slice lifecycle（Agent planning SSOT）**：
 
 - `Design UNIT` 只负责需求、行为和 invariant 追溯；`Implementation Slice` 才是独占修改、focused validation、review、commit 与 rollback 单元。多个 Design UNIT 可合并进一个 Implementation Slice，但 packet 继续只保留一个真实 `owner_unit`，其余写入 `implement.md.covered_units`；禁止按 UNIT、设计章节、doc_type 或技术层机械生成 slice。
@@ -287,6 +340,8 @@ check 可作为 `implement-check` 的拆分子命令运行：`python3 .trellis/s
 
 按 route/slice role 复跑验证：Full/high ordinary 只运行 packet 声明的 `deterministic_checks` 与 focused evidence；唯一 Integration 运行 project-wide build/analyze/lint/full regression；Small/Micro/Lite/non-Full/v1 运行各自原 route 的验证。确认 `verification-evidence.jsonl`（或等价 task-local mutable evidence）已记录命令、结果与说明。若必须修改 `implement.md`，视为主动返回 detail Gate。当前角色验证失败回 2.1/2.2；必需证据缺失不得进入 3.3。
 
+对于 runtime-required Full，以上验证与 review 全绿只产生 `implementation_verified`。按本节 Runtime 验收合同完成 active-task handoff；target runtime 尚未返回 current pass 时可继续既有 spec/commit Gate，但不得进入 archive 或把技术完成改称 `accepted`。
+
 #### 3.2 Debug 复盘 `[on demand]`
 
 同类 bug 或修复失败反复出现时，加载 `trellis-break-loop` 分析根因、失败原因与预防机制；有可沉淀结论才继续 3.3。
@@ -303,7 +358,7 @@ check 可作为 `implement-check` 的拆分子命令运行：`python3 .trellis/s
 
 #### 3.5 收尾提醒
 
-运行 `/trellis:finish-work` 或等价收尾流程；确认任务状态、journal、归档/后续动作与未提交变更均已说明。
+运行 `/trellis:finish-work` 或等价收尾流程。对 runtime-required Full，先按 frozen matrix/current baseline 找到每个 required row 的 newest append，再校验该 exact row；禁止过滤无效更新后回退旧 pass。ledger/newest row unreadable、malformed 或 incomplete，或 missing/stale/pending/failure 任一存在时保持任务 active，输出唯一 evidence repair 或 next probe/owner 并停在 archive 前。全部 exact newest current rows 校验为 pass 时只解除 runtime guard，再按既有授权确认任务状态、journal、归档/后续动作与未提交变更均已说明。
 
 ---
 
