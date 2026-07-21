@@ -49,6 +49,74 @@ For each boundary:
 - What is the exact output format?
 - What errors can occur?
 
+### Step 4: Freeze The Acceptance Path
+
+Cross-layer verification is triggered by the accepted user outcome, not by the
+number of layers changed in the current diff. Trace the complete
+source-to-sink path whenever an acceptance goal depends on a user-visible
+terminal state, an external API or schema, persistence or cache state,
+asynchronous state, or a cross-layer field transformation. A one-file DTO or
+parser change can still decide the final behavior.
+
+For a Full task with `runtime_acceptance_required=true`, and for every goal
+with one of the triggers above, freeze an Acceptance Closure Matrix in Detail
+or `implement.md`. Each independently decidable row records:
+
+- `acceptance_id`, its `required` flag, and its BHV, AC, or invariant references
+- the user outcome and allowed terminal states
+- the entry point and target environment
+- the external or local authority plus a minimal contract fingerprint
+- every source-to-sink layer and key field or state transformation
+- positive and negative paths, including missing/null, error, timeout, and
+  degradation behavior when applicable
+- a deterministic check that fails on the known-bad implementation
+- the runtime probe, execution owner, required evidence, and owning ordinary
+  and Integration slices
+
+The matrix is a digest-bearing planning contract. Runtime results do not edit
+it; append sanitized results and artifact references to task-local
+`verification-evidence.jsonl` instead.
+
+### Step 5: Resolve Runtime Evidence
+
+Runtime acceptance uses these evidence/reporting values:
+
+- `implementation_verified`: deterministic checks and review passed, but the
+  target-runtime outcome is not yet proven
+- `runtime_acceptance_pending`: the declared probe awaits target-environment
+  execution
+- `runtime_acceptance_failure`: the actual outcome does not satisfy the row
+- `runtime_acceptance_pass`: environment, steps, expected result, actual
+  result, evidence, and current baseline binding are complete
+- `accepted`: task-level conclusion only after every required row has a latest
+  current `runtime_acceptance_pass`
+
+The first four values are evidence row statuses. `accepted` is a task-level
+reporting conclusion, not an evidence row status, and none of these values adds
+a task lifecycle state. For each required row, use the latest valid evidence
+bound to the current applicable baseline. A stale pass is historical only, and
+any newer current non-pass row, including `implementation_verified`, pending,
+or failure, supersedes an earlier pass. Missing, non-pass, stale, or superseded
+rows must not be reported as `accepted`.
+
+### Step 6: Close Post-Implementation Failures
+
+For every user- or QA-reported runtime failure, bind the repair retrospective
+to the same `acceptance_id` and record:
+
+- the evidenced direct cause
+- the earliest Requirement, Design, Implementation, Test, Review, or Process
+  Gate that should have caught it
+- why existing tests and review produced a false green
+- a regression check or runtime probe that fails on the old behavior
+- exactly one complete `prevention_disposition`: `writeback_required` with an
+  allowed Skill/workflow/spec owner and validation, or
+  `no_writeback_required` with an explicit reason and evidence references
+
+Do not close the repair when a field is missing, the disposition is a TODO,
+both or neither disposition branches are present, or a writeback is invented
+despite sufficient existing prevention evidence.
+
 ---
 
 ## Common Cross-Layer Mistakes
@@ -110,6 +178,12 @@ Before implementation:
 - [ ] Identified all layer boundaries
 - [ ] Defined format at each boundary
 - [ ] Decided where validation happens
+- [ ] Identified acceptance-path triggers even when the planned diff changes
+      only one layer
+- [ ] Frozen one complete Acceptance Closure Matrix row for each required
+      independently decidable user outcome
+- [ ] Recorded an authority fingerprint and a check that fails on the known-bad
+      implementation
 
 After implementation:
 
@@ -120,6 +194,11 @@ After implementation:
       casting payload fields locally
 - [ ] Checked that derived state points back to the source event identifier
       (`seq`, `id`, `version`) instead of inventing a second cursor
+- [ ] Verified the Integration check closes the final source-to-sink outcome;
+      an ordinary or local layer check is supporting evidence only
+- [ ] Kept mutable runtime evidence append-only and separate from the frozen
+      matrix
+- [ ] Resolved every required row from its latest current baseline binding
 
 ---
 
@@ -293,6 +372,9 @@ When a CLI auto-detects a mode by probing a remote resource (e.g., checking if `
 Create detailed flow docs when:
 
 - Feature spans 3+ layers
+- A user-visible outcome crosses boundaries even if the diff touches one layer
+- An external API/schema, persistence/cache, async terminal state, or field
+  transformation determines acceptance
 - Multiple teams are involved
 - Data format is complex
 - Feature has caused bugs before
