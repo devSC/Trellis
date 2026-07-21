@@ -1,125 +1,171 @@
-# Break the Loop - Deep Bug Analysis
+# Break the Loop - Post-Implementation Failure Retrospective
 
-When debug is complete, use this for deep analysis to break the "fix bug -> forget -> repeat" cycle.
+Use this Skill after a user- or QA-reported post-implementation failure to explain the false green, prove the repair, and prevent recurrence. It is a retrospective helper inside the active Trellis/Guru repair continuation; it does not create a second lifecycle, own task state, classify product behavior without evidence, or authorize writes.
 
----
+## Ownership And Preconditions
 
-## Analysis Framework
+- `guru-bug-fast-path` or the active workflow owns repair-continuation state. The live Review/workflow contract owns the final defect route. This Skill drafts and validates retrospective evidence only.
+- Before analysis, diagnosis, source edits, or test edits, the current task must preserve an append-only `runtime_acceptance_failure` row bound to the original `acceptance_id`, active task, baseline, target environment, steps, expected result, actual result, and privacy-safe evidence references.
+- If that row is missing, return `PROCESS_DEFECT: runtime_failure_row_missing` with the single next action to record it. Do not reconstruct it after the repair.
+- Direct root cause must be confirmed by a minimal reproduction, trace, log, or failing check before the retrospective can call the repair proven. A plausible hypothesis is not a root cause.
+- Read the confirmed Requirements, Overview, Detail/packet, current implementation, prior tests/Review, and runtime evidence. Runtime evidence that contradicts an internally green packet cannot be dismissed as packet-external.
 
-Analyze the bug you just fixed from these 5 dimensions:
+## Same-Goal Affinity
 
-### 1. Root Cause Category
+Reuse the same affinity decision as `guru-bug-fast-path`:
 
-Which category does this bug belong to?
+- `same_goal=true` only when the failure maps to the same BHV/AC or accepted user outcome and all four indicators are false: `new_product_behavior`, `permission_or_data_expansion`, `external_contract_change`, and `material_scope_change`.
+- File changes, snapshot changes, a moved symptom, different error wording, or a new implementation approach do not create a new acceptance goal.
+- An unbound task, baseline, or `acceptance_id` is authority-blocked until live evidence resolves it.
+- If the BHV/AC differs or any change indicator is true, route `REQ_BLOCKER` or material requirement change to the affected Requirements chain. Do not relabel new product behavior as a same-goal repair.
 
-| Category | Characteristics | Example |
-|----------|-----------------|---------|
-| **A. Missing Spec** | No documentation on how to do it | New feature without checklist |
-| **B. Cross-Layer Contract** | Interface between layers unclear | API returns different format than expected |
-| **C. Change Propagation Failure** | Changed one place, missed others | Changed function signature, missed call sites |
-| **D. Test Coverage Gap** | Unit test passes, integration fails | Works alone, breaks when combined |
-| **E. Implicit Assumption** | Code relies on undocumented assumption | Timestamp seconds vs milliseconds |
+## Five-Class Maximum Rollback
 
-### 2. Why Fixes Failed (if applicable)
+Use evidence to identify the earliest owning defect. Do not choose a class merely to obtain a shorter route.
 
-If you tried multiple fixes before succeeding, analyze each failure:
+| Defect class | Maximum rollback | Required refresh | Preserved by default |
+| --- | --- | --- | --- |
+| `IMPLEMENT_DEFECT` | Phase 2 implementation/check | Affected source/tests, Slice Review, Integration, and runtime receipt | Current Requirements, Overview, Detail, and independently bound sibling receipts |
+| `PROCESS_DEFECT` | Current evidence/process; Phase 1 Detail only when a packet or digest-bearing plan must change | Affected mutable evidence/fixture/execution step; changed Detail and its downstream only when the plan changes | Unchanged planning and independently bound receipts |
+| `DETAIL_DEFECT` | Phase 1 Detail | Affected Detail, packet/plan, Detail Review/confirmation, affected Slices, Integration, and runtime receipt | Requirements and Overview |
+| `OVERVIEW_DEFECT` | Phase 1 Overview plus affected Detail | Overview Review and affected Detail/downstream evidence in order | Requirements |
+| `REQ_BLOCKER` or material requirement change | Phase 1 Requirements affected Full chain | Affected Requirements through Overview, Detail, implementation, Integration, and runtime acceptance | Only evidence proven independent by current bindings |
 
-- **Surface Fix**: Fixed symptom, not root cause
-- **Incomplete Scope**: Found root cause, didn't cover all cases
-- **Tool Limitation**: grep missed it, type check wasn't strict
-- **Mental Model**: Kept looking in same layer, didn't think cross-layer
+An implementation defect never restarts Requirements, Overview, or Detail. An upstream planning defect must be repaired by its owner before downstream code is changed to conform. When findings exist in more than one class, select the earliest upstream owner and list dependent downstream refresh.
 
-### 3. Prevention Mechanisms
+### Environment/Fixture Discriminator
 
-What mechanisms would prevent this from happening again?
+Environment/fixture-only is a verification disposition, not a sixth defect class.
 
-| Type | Description | Example |
-|------|-------------|---------|
-| **Documentation** | Write it down so people know | Update thinking guide |
-| **Architecture** | Make the error impossible structurally | Type-safe wrappers |
-| **Compile-time** | Strict type checking, no escape hatches | Signature change causes compile error |
-| **Runtime** | Monitoring, alerts, scans | Detect orphan entities |
-| **Test Coverage** | E2E tests, integration tests | Verify full flow |
-| **Code Review** | Checklist, PR template | "Did you check X?" |
+- A wrong or incomplete confirmed packet, digest-bearing plan, fixture contract, or declared check is `PROCESS_DEFECT`. Return to Detail only if that packet or plan must actually change.
+- When packet/plan and implementation are correct and only target-environment configuration, test data, execution setup, or the runtime fixture instance is wrong, remain at the current verification step. Refresh only environment/fixture evidence and the affected runtime probe.
+- Do not change product Requirements, Overview, Detail, or implementation to hide an environment-only failure. If the discriminator is unproven, request the missing evidence instead of choosing the environment route.
 
-### 4. Systematic Expansion
+## Selective Evidence Refresh
 
-What broader problems does this bug reveal?
+Draft an exact evidence plan from the actual binding changes:
 
-- **Similar Issues**: Where else might this problem exist?
-- **Design Flaw**: Is there a fundamental architecture issue?
-- **Process Flaw**: Is there a development process improvement?
-- **Knowledge Gap**: Is the team missing some understanding?
+1. Compare target bytes, invariants, Requirements/Detail inputs, declared checks, policy/provider, and supervisor digest for every affected receipt.
+2. Invalidate and reverify receipts with any changed binding. Refresh affected union-snapshot Integration evidence and the runtime receipt after implementation or planning bytes change.
+3. Preserve a sibling receipt only when all binding components remain equal and it is independent of the affected acceptance path.
+4. Treat v1 receipts, missing binding data, or unproven independence as affected. Honor any current digest/snapshot Gate that marks evidence stale; never describe stale evidence as current.
 
-### 5. Knowledge Capture
+## Required Five-Field Retrospective
 
-Solidify insights into the system:
+Every field must bind to the same `acceptance_id`, preserved failure row, and repaired baseline.
 
-- [ ] Update `.trellis/spec/guides/` thinking guides
-- [ ] Update relevant `.trellis/spec/` docs
-- [ ] Create issue record (if applicable)
-- [ ] Create feature ticket for root fix
-- [ ] Update check guidelines if needed
+### 1. Direct Cause
 
----
+Record the concrete control point that produced the failure and the evidence proving it. Categories can help organize the explanation, but a category is not the cause:
 
-## Output Format
+| Category | Typical signal |
+| --- | --- |
+| **A. Missing Spec** | Required behavior or boundary was never documented |
+| **B. Cross-Layer Contract** | Data or state was lost or changed between source and user-visible sink |
+| **C. Change Propagation Failure** | One owner changed while a dependent consumer remained stale |
+| **D. Test Coverage Gap** | Local checks passed without exercising the failing acceptance path |
+| **E. Implicit Assumption** | Behavior depended on an undocumented format, state, timing, or authority assumption |
 
-Please output analysis in this format:
+For repeated attempts, record why each failed: symptom-only repair, incomplete scope, tool limitation, stale evidence, or incorrect mental model.
+
+### 2. Earliest Missed Gate
+
+Name the earliest Requirement, Overview, Detail, Implementation, Test, Review, or Process Gate that should have rejected the known-wrong behavior. Cite the exact missing contract, check, or evidence decision. Do not name only the final Gate that happened to report the symptom.
+
+### 3. False-Green Reason
+
+Explain why the previous tests and Review stayed green. Trace the gap from their actual inputs and assertions to the user-visible failure. A generic statement such as "coverage was incomplete" is insufficient.
+
+### 4. Falsifiable Regression
+
+Record a deterministic check or runtime probe that exercises the accepted source-to-sink path. Include evidence that it fails on the old wrong implementation and passes on the repair. A helper-only positive assertion, a test that never reaches the old failure, or a probe that stays green on the known-wrong behavior is incomplete and routes `DETAIL_DEFECT` so the falsifiability contract and affected downstream evidence are repaired.
+
+### 5. Prevention Disposition - Exact XOR
+
+Choose exactly one complete branch. Never include both and never omit both.
+
+`writeback_required` requires:
+
+- one allowed canonical Skill/workflow/spec source owner;
+- the exact recurrence path the writeback prevents;
+- required source/consumer parity, if any;
+- focused validation evidence; and
+- confirmation that the writeback does not require a forbidden script/runtime edit.
+
+`no_writeback_required` requires:
+
+- an explicit reason that a new source-contract change is unnecessary;
+- evidence references showing which current contract already owns the rule; and
+- evidence that the new falsifiable regression or probe closes the previously uncovered path.
+
+A TODO, an empty "no writeback needed" assertion, both branches, neither branch, or an invented unnecessary writeback returns `PROCESS_DEFECT: prevention_disposition_incomplete` and keeps the retrospective incomplete. A required writeback outside current allowed paths is a scope blocker, not write authority.
+
+## Output Contract
+
+Produce one evidence-backed record in this shape:
 
 ```markdown
-## Bug Analysis: [Short Description]
+## Bug Analysis: [short description]
 
-### 1. Root Cause Category
-- **Category**: [A/B/C/D/E] - [Category Name]
-- **Specific Cause**: [Detailed description]
+- **Acceptance ID**: [original BHV/AC/invariant]
+- **Failure Row**: [append-only runtime_acceptance_failure reference]
+- **Task Affinity**: same_goal | material_change | unproven
+- **Defect Class**: IMPLEMENT_DEFECT | PROCESS_DEFECT | DETAIL_DEFECT | OVERVIEW_DEFECT | REQ_BLOCKER
+- **Maximum Rollback**: [exact phase/owner]
 
-### 2. Why Fixes Failed (if applicable)
-1. [First attempt]: [Why it failed]
-2. [Second attempt]: [Why it failed]
-...
+### 1. Direct Cause
+- **Category**: [A/B/C/D/E]
+- **Confirmed Cause**: [control point and causal chain]
+- **Evidence**: [reproduction, trace, log, or failing check references]
 
-### 3. Prevention Mechanisms
-| Priority | Mechanism | Specific Action | Status |
-|----------|-----------|-----------------|--------|
-| P0 | ... | ... | TODO/DONE |
+### 2. Earliest Missed Gate
+- **Gate**: [Requirement/Overview/Detail/Implementation/Test/Review/Process]
+- **Missed Contract**: [exact contract or check]
+- **Evidence**: [references]
 
-### 4. Systematic Expansion
-- **Similar Issues**: [List places with similar problems]
-- **Design Improvement**: [Architecture-level suggestions]
-- **Process Improvement**: [Development process suggestions]
+### 3. False-Green Reason
+- **Prior Inputs/Assertions**: [what was actually checked]
+- **Why They Missed The Failure**: [source-to-sink gap]
+- **Evidence**: [prior test/Review references]
 
-### 5. Knowledge Capture
-- [ ] [Documents to update / tickets to create]
+### 4. Falsifiable Regression
+- **Check Or Probe**: [exact command/test/runtime steps]
+- **Known-Wrong Result**: FAIL [evidence]
+- **Repaired Result**: PASS [evidence]
+
+### 5. Prevention Disposition
+- **Branch**: writeback_required | no_writeback_required
+- **Owner Or Existing Contract**: [allowed owner/path]
+- **Action Or No-Writeback Reason**: [exact prevention or evidence-backed reason]
+- **Evidence And Validation**: [references]
+
+### Evidence Refresh
+- **Invalidate/Reverify**: [exact receipt ids and reasons]
+- **Preserve**: [exact sibling receipt ids and equal bindings]
+- **Integration**: [refresh requirement/result]
+- **Runtime Reprobe**: [original probe and current result]
+
+### Closure
+- **Retrospective**: complete | incomplete
+- **Repair Completion Eligible**: yes | no
+- **Blocking Gap**: [none or one exact gap]
 ```
 
----
+The selected prevention branch must contain its complete fields even though the compact output uses one shared shape. Do not add the unselected branch.
 
-## Core Philosophy
+## Completion Boundary
 
-> **The value of debugging is not in fixing the bug, but in making this class of bugs never happen again.**
+- Retrospective completion requires all five fields and exactly one valid prevention branch.
+- Repair completion additionally requires current affected implementation/Slice/Integration evidence and a current `runtime_acceptance_pass` from the original target-environment probe on the repaired baseline. A focused test, clean Review, `implementation_verified`, or an older runtime pass is not enough.
+- Keep broader similar issues as non-blocking follow-ups unless evidence shows they affect the current acceptance path. Do not turn the retrospective into an open-ended repository audit.
 
-Three levels of insight:
-1. **Tactical**: How to fix THIS bug
-2. **Strategic**: How to prevent THIS CLASS of bugs
-3. **Philosophical**: How to expand thinking patterns
+## Archived Task And No-Script Boundary
 
-30 minutes of analysis saves 30 hours of future debugging.
+- For an archived original task, do not claim in-place reopen or machine baseline inheritance. With lifecycle authorization, use a linked repair task/child that references the original `acceptance_id`, artifact digests, receipts, and new failure evidence. Follow current Gates honestly, including any Full planning they still require.
+- Creating a task/child, changing task authority, updating a spec, syncing a template, committing, pushing, merging, archiving, or running finish-work requires its own current workflow authority. This retrospective does not grant it.
+- Do not modify `.trellis/scripts/**`, `task.py`, `guru_gate.py`, Guru verify/hooks/apply, packaged script mirrors, Python/shell files, or CLI TypeScript runtime to implement this contract. If prevention requires such a change, stop and request a separately scoped task and explicit authorization.
+- This Markdown behavior cannot provide executable reopen, automatic receipt inheritance, digest-graph invalidation, or script-level archive enforcement. State those limitations rather than promising them.
 
----
+## Core Principle
 
-## After Analysis: Immediate Actions
-
-**IMPORTANT**: After completing the analysis above, you MUST immediately:
-
-1. **Update spec/guides** - Don't just list TODOs, actually update the relevant files:
-   - If it's a cross-platform issue → update `cross-platform-thinking-guide.md`
-   - If it's a cross-layer issue → update `cross-layer-thinking-guide.md`
-   - If it's a code reuse issue → update `code-reuse-thinking-guide.md`
-   - If it's domain-specific → update `backend/*.md` or `frontend/*.md`
-
-2. **Sync templates** - After updating `.trellis/spec/`, sync to `src/templates/markdown/spec/`
-
-3. **Commit the spec updates** - This is the primary output, not just the analysis text
-
-> **The analysis is worthless if it stays in chat. The value is in the updated specs.**
+The value of a repair is not only that the symptom disappears. The same accepted path must fail on the old behavior, pass on the repaired baseline, explain the prior false green, and leave one evidence-backed prevention disposition without inventing unauthorized work.
