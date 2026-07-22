@@ -23,9 +23,59 @@ Stop repair-review-retry loops without weakening the active workflow.
 ## Failure-First Continuation Intake
 1. Before diagnosis, source edits, test edits, or repair Review, append the reported result as `runtime_acceptance_failure` through the current task's authorized append-only `verification-evidence.jsonl` path. Bind it to the original `acceptance_id`, active task, current baseline, target environment, steps, expected result, actual result, and privacy-safe evidence references. Preserve earlier pending, pass, and failure rows; never summarize the failure only after the repair.
 2. If the failure row cannot be written through an authorized current workflow, set `status=evidence_required`, `phase=blocked`, `code_writes_allowed=false`, `blocking_issue=runtime_failure_row_missing`, and one `next_action` that records it. Do not diagnose or repair first.
-3. Freeze the original BHV/AC and user-visible outcome. `task_affinity=same_goal` only when `same_bhv_or_ac=true` and all four indicators are false: `new_product_behavior`, `permission_or_data_expansion`, `external_contract_change`, and `material_scope_change`. A changed file, code snapshot, symptom location, error text, or implementation approach does not change goal affinity.
-4. If the task, baseline, or `acceptance_id` cannot be bound to live evidence, use the existing `authority_blocked` route. If affinity fails or any change indicator is true, classify the boundary as `REQ_BLOCKER` or material requirement change and return to the affected Requirements chain; do not disguise it as repair continuation.
-5. Continue in place only for an active same-goal task. For an archived task, use the linked-repair boundary below rather than representing the historical task as active.
+3. That append invalidates every earlier resolution. Ask `ClosureSpec` for a fresh post-append `AcceptanceResolution` over the complete ledger and reconciliation snapshots. Do not check affinity, classify the defect, or allow production repair until the exact failure is selected by that current result and both blocker sets are empty.
+4. Freeze the original BHV/AC and user-visible outcome. `task_affinity=same_goal` only when `same_bhv_or_ac=true` and all four indicators are false: `new_product_behavior`, `permission_or_data_expansion`, `external_contract_change`, and `material_scope_change`. A changed file, code snapshot, symptom location, error text, or implementation approach does not change goal affinity.
+5. If the task, baseline, or `acceptance_id` cannot be bound to live evidence, use the existing `authority_blocked` route. If affinity fails or any change indicator is true, classify the boundary as `REQ_BLOCKER` or material requirement change and return to the affected Requirements chain; do not disguise it as repair continuation.
+6. Continue in place only for an active same-goal task. For an archived task, use the linked-repair boundary below rather than representing the historical task as active.
+
+## Canonical Acceptance Resolution
+
+`ClosureSpec` is the sole currentness and selection owner. Every implement, Review, repair, Workflow, and Finish decision consumes the same complete object:
+
+```text
+AcceptanceResolution {
+  baseline_binding,
+  ledger_snapshot_ref,
+  reconciliation_snapshot_ref,
+  open_correction_debts,
+  open_retrospective_reconciliations,
+  row_results,
+  selected_evidence_refs,
+  blocking_evidence_refs,
+  task_result,
+  blocking_acceptance_ids,
+  next_probe
+}
+```
+
+- The object is indivisible. A consumer must not discard either snapshot reference, either blocker set, row results, selected/blocking references, the task result, blocking IDs, or the probe. Any ledger append, reconciliation-journal event, or baseline change makes the entire object stale.
+- `ClosureSpec-only readAllInAppendOrder`: only `ClosureSpec` invokes `EvidenceLedger.readAllInAppendOrder()` and replays the complete raw append sequence before filtering by ID or status. This Skill consumes the resulting object and its selected failure; it does not inspect evidence or reconciliation storage, choose a row, or create a private currentness projection.
+- After the failure append, a missing/stale/field-losing resolution, non-empty `open_correction_debts`, non-empty `open_retrospective_reconciliations`, or a failure reference absent from `selected_evidence_refs`/`blocking_evidence_refs` is a `PROCESS_DEFECT`. Set `code_writes_allowed=false`, keep `next_probe=null`, and perform only the exact evidence/process correction returned by CH-01.
+- Only after the post-append result is current and selects the failure may affinity, minimum reproduction, earliest-owner classification, and bounded production repair proceed. Review consumes that identical object and must not reselect evidence.
+
+## Durable Retrospective Append Reconciliation
+
+These are contract names, not new executable schemas/parsers: `FailureRetrospectiveRecord`, `LedgerAppendRef`, `RetrospectiveAppendAttempt`, `ReconciliationJournalEvent`, `RetrospectiveReconciliationSnapshot`, and `RetrospectiveAppendReconciliation`. The record requires `acceptance_id`, `direct_cause`, `earliest_missed_gate`, `false_green_reason`, `falsifiable_regression`, XOR `prevention_disposition`, `affected_evidence`, `retrospective_artifact_ref`, complete `pending_evidence_row`, and proven `accepted_append_ref`.
+
+### Journal Contract
+
+1. From current/linked-active `TaskRef`, `ClosureSpec` locates exact `<task_dir>/retrospective-reconciliation.jsonl`; archived-origin uses the linked active repair task. Snapshot `artifact_ref` validates identity, never discovers the path.
+2. Setup creates the empty journal and acknowledges a full reread. A normal/fresh resolver never initializes missing as empty. Missing/non-file/unreadable/unlocatable is `reconciliation_register_unavailable`; partial line, gap/duplicate, digest/transition/snapshot mismatch is `reconciliation_register_corrupt`. Both block as `PROCESS_DEFECT` with `next_probe=null`.
+3. `journal-root-v1` uses contiguous `event_position` and `previous_event_digest`: `position=1` has `previous_event_digest=null`; each later value is lowercase SHA-256 of the prior complete newline-terminated UTF-8 event bytes.
+4. `RetrospectiveReconciliationSnapshot` binds `artifact_ref`, `event_count`, `last_event_position`, `last_event_digest`, `content_digest`. Empty is count 0 and null last fields. Non-empty fields must equal full replay; last digest hashes the complete final line including newline, content digest the complete file bytes.
+5. Events contain sanitized IDs/digests/refs/state/actor/time only, never secrets, PII, user content, full responses, or evidence bytes. Append one complete newline event, strict-full-replay it, and acknowledge only a unique legal last event before any next side effect.
+
+### Attempt State Machine
+
+1. Before the pending row, `ClosureSpec` persists and acknowledges ordinal-0 `RetrospectiveAppendAttempt` with `attempt_id`, `acceptance_id`, `baseline_binding`, `retrospective_artifact_ref`, `exact_row_digest`, `pre_append_ledger_snapshot_ref`, and `retry_ordinal`. Only a proven absent outcome permits ordinal 1 with `retry_of`; no concurrent ordinal 0.
+2. `VerificationEvidenceRow acceptance_id baseline_binding runtime_acceptance_pending retrospective_artifact_ref` is the legal row. `LedgerAppendResult` is accepted, `retrospective_append_rejected`, or `retrospective_append_outcome_unknown`. `LedgerAppendResult accepted before FailureRetrospectiveRecord`; `retrospective append rejected` means no FailureRetrospectiveRecord, closure, or probe.
+3. Accepted acknowledgment names only a candidate position. A complete ledger reread independently derives `LedgerAppendRef` and must match acknowledgment, ID, baseline, and row digest before exposing `accepted_append_ref`. The Skill builds record + `record_ref`; `ClosureSpec` appends `record-bound` with both refs and exact `closes_attempt_ids`: ordinal 0 alone, or ordinal 0+1 after retry. Missing ancestor, extra ID, or cross ID/baseline/digest/chain stays open/corrupt. A crash requires fresh TaskRef replay, correlation, record rebuild, and acknowledged binding.
+4. Every derived entry with `record_ref=null`, regardless of state, remains in `open_retrospective_reconciliations`. Accepted/committed alone never closes; only full-replay-acknowledged `record-bound` closes the exact chain.
+5. Unknown ordinal-0 acknowledgment first proves current ledger prefix equals `pre_append_ledger_snapshot_ref` byte-for-byte, then searches only the suffix. `deriveLedgerAppendRef(full_snapshot, exact_position)` derives `LedgerAppendRef { artifact_ref, append_position, append_digest }` solely from full ledger, exact position, and complete newline row bytes; journal ref is forbidden input and position distinguishes identical rows.
+6. `RetrospectiveAppendReconciliation pre_append_ledger_snapshot_ref committed accepted_append_ref absent one retry ordinal-1 ambiguous PROCESS_DEFECT`: unique exact ordinal-0 suffix = committed/ref; zero = absent and one prepared+acknowledged ordinal-1 retry; drift, history-only, unreadable/non-unique, cross-position/ref mismatch, or missing ordinal-1 acknowledgment = ambiguous. No third retry, record, semantic decision, probe, or Finish bypass.
+7. `retrospective-ledger-journal-correlation` requires each evidence position carrying `retrospective_artifact_ref` to match one surviving chain by ID, baseline, row digest, and independently derived ref. Older-valid/empty journal rollback, reused chain, cross-position ref, or repeated bytes without unique position is corrupt despite later pass.
+
+`Repair-probe-routing-forbidden`: retrospective append acknowledgment is not probe authority; Workflow must request a fresh CH-01 AcceptanceResolution and report only its canonical next_probe. It is `next_probe=null` until acknowledged `record-bound` closes the exact chain.
 
 ## State
 Carry this block across turns and compactions:
@@ -36,6 +86,11 @@ acceptance_id=<original BHV/AC/invariant id>
 original_user_outcome=<frozen accepted result>
 task_affinity=same_goal|material_change|unproven
 runtime_failure_ref=<append-only evidence row ref or missing>
+acceptance_resolution=<exact current CH-01 object or missing/stale>
+ledger_snapshot_ref=<current ref or missing>
+reconciliation_snapshot_ref=<current ref or missing>
+open_correction_debts=<ordered exact-position debts>
+open_retrospective_reconciliations=<ordered durable attempt blockers>
 status=active|requirements_blocked|root_cause_blocked|evidence_required|repair_blocked|review_output_blocked|external_blocked|authority_blocked|complete
 phase=freeze|diagnose|requirements_repair|repair|review|blocked|complete
 route_class=requirement|root_cause|implementation|malformed_review|external|authority
@@ -80,25 +135,22 @@ follow_ups=<non-blocking findings only>
 next_action=<one bounded action>
 ```
 ## Blocker Identity And Generations
-1. Seed `blocker_generation=1/2` when the first current blocker is identified. Derive `blocker_id` from a normalized `blocker_fingerprint` containing the violated invariant, root-cause family, and affected surface; record the evidence used for each component.
-2. Default to the same blocker. Findings with the same violated invariant and root-cause family are the same blocker even when they move or propagate to another affected surface. A changed line number, severity wording, snapshot, symptom restatement, Review phrasing, or expanded `allowed_paths` does not create a new identity. Missing or ambiguous identity evidence also stays on the current generation.
-3. Advance from generation 1 to 2 only when current evidence proves the previous blocker resolved, proves a materially different violated invariant or materially different root-cause family for the new blocker within the unchanged goal and scope, and proves the new finding is not propagation or restatement of the prior blocker. Record affected surface in `blocker_fingerprint`, but affected-surface difference alone is never sufficient for a new generation. Append the prior id, fingerprint, resolved snapshot, and resolution evidence to `resolved_blockers`; never erase its diagnosis, repair, or Review history.
-4. On that one allowed transition, reset only blocker-local fields: `root_cause_status`, `root_cause`, `root_cause_evidence`, `evidence_epoch=1/2`, `diagnostic_actions=0/2`, and `repair_attempts_for_blocker=0/1`. Preserve `same_goal_failures`, `repair_slices`, all mandatory/additional/malformed Review evidence and counters, `provider_attempts`, `requirement_confirmation_rounds`, `full_regression_runs`, `user_extra_attempts`, `user_extra_kind`, `scope_expansions`, prior snapshots, and all valid evidence.
-5. If the same blocker persists after its bounded repair, end as `repair_blocked`; never relabel it as a new generation or stack another patch. If two independent blockers are already recorded and a third appears, fail closed as `repair_blocked` with `blocking_issue=blocker_generation_limit_exhausted: two independent blockers already consumed for unchanged goal/scope`.
-6. `repair_slices` describes independently owned execution slices already proved by the active plan. It neither grants repair attempts nor counts blocker generations; changing it never resets or advances blocker state.
-7. Migrate legacy state conservatively. When `blocker_id`, `blocker_fingerprint`, or `blocker_generation` is absent, seed generation 1 from the unchanged goal/scope plus the legacy `root_cause` and `blocking_issue`, and retain the original state as migration evidence. Map legacy `code_repair_attempts=0/1` to `repair_attempts_for_blocker=0/1`; map `code_repair_attempts=1/1` to `repair_attempts_for_blocker=1/1`, leaving no base repair for that blocker and never inferring resolution. Preserve an already-consumed `user_extra_attempts=1/1` and its `user_extra_kind` exactly; migration and generation transition never reset them. Ambiguity means the same generation, `resolved_blockers` stays empty unless current evidence proves resolution, and `pending_blockers` is populated only from visible blocking evidence.
-8. After requirement and authority routing has completed, normalize every implementation blocking finding from one Review to a fingerprint and merge same-identity findings into one row while preserving all evidence. Select one active blocker deterministically by descending severity, then live Gate order, then strongest current evidence, then stable Review order. Store every other implementation blocker in ordered `pending_blockers`; never place a blocking finding in `follow_ups`.
-9. A queued row may be promoted, classified as independent, or counted against the generation budget only when its semantic evidence is current: its row-level reviewed snapshot must match `reviewed_snapshot`, and that Review must cover the current `snapshot` and live Gate requirements. Stale, unreviewed, or Gate-inapplicable queue evidence cannot advance state; set `status=evidence_required`, `phase=blocked`, `code_writes_allowed=false`, `blocking_issue=pending_blocker_current_semantic_evidence_required`, and one `next_action` that obtains current semantic evidence for that row. Preserve the row and consume no implementation generation, diagnosis, or repair budget.
-10. Only after every queued implementation identity has current semantic evidence, compare the independent identities in `pending_blockers` with the remaining generation budget. If the queue exceeds the remaining budget, fail closed as `repair_blocked` with `blocking_issue=blocker_generation_limit_exhausted: pending independent blockers exceed remaining generation budget`, and preserve the complete ordered queue and its evidence.
-11. After the active blocker resolves, re-normalize the first current pending row against the just-resolved active identity before any promotion. If it is the same identity and its current evidence is already covered by the resolution snapshot and does not contradict that resolution, merge the evidence into the resolved record and remove the queue row without consuming a generation. Newer current evidence that affirmatively confirms resolution follows the same merge path. If current or newer evidence contradicts the resolution, merge that evidence back into the active blocker, remove only the duplicate queue row after the evidence transfer, and end as `repair_blocked` with `blocking_issue=same_blocker_persists_or_reopened`; never open generation 2. Newer evidence that neither confirms nor contradicts resolution remains `evidence_required`. Never silently discard a queued row or its evidence.
-12. Promote a current, materially independent pending row only through the identity and generation rules above, and remove it from `pending_blockers` only when it becomes active. Generation 2 may make its one bounded repair only when `repair_attempts_for_blocker=0/1`; success appends its resolution exactly once and may complete only with an empty queue, while failure ends as `repair_blocked`. Any blocker remaining or appearing after generation 2 resolves is a third blocker: preserve it in `pending_blockers` and fail closed with the generation-limit reason instead of opening generation 3.
+1. Seed `blocker_generation=1/2`; derive `blocker_id` from evidence-backed `blocker_fingerprint=<violated invariant|root-cause family|affected surface>`. Same invariant+cause stays the same blocker despite movement/propagation, line/severity/snapshot/symptom/Review wording, or scope expansion; ambiguity also stays current.
+2. Generation 2 requires current proof that generation 1 resolved, the new invariant or cause is materially independent under unchanged goal/scope, and it is not propagation/restatement. Surface alone is insufficient. Append prior id/fingerprint/resolved snapshot/evidence to `resolved_blockers`; preserve its full history.
+3. That transition resets only `root_cause_status/root_cause/root_cause_evidence`, `evidence_epoch=1/2`, `diagnostic_actions=0/2`, and `repair_attempts_for_blocker=0/1`. Preserve failure/slice, Review, provider, confirmation, regression, user-extra, scope, snapshot, and evidence state. `repair_slices` records plan ownership only; it grants no attempt/generation.
+4. Same-blocker persistence after its bounded repair is `repair_blocked`, never a new generation/patch. A third independent blocker is preserved and blocked with `blocker_generation_limit_exhausted`.
+5. Legacy migration is conservative: missing identity seeds generation 1 from unchanged goal/scope plus legacy cause/issue and retains legacy evidence. Map `code_repair_attempts` exactly to `repair_attempts_for_blocker`; consumed user-extra remains consumed. Never infer resolution; ambiguity stays generation 1 and `resolved_blockers` stays empty absent proof.
+6. After requirement/authority routing, normalize implementation findings, merge identical fingerprints with all evidence, and select active by severity, live Gate order, evidence strength, then stable Review order. Put every other blocker in ordered `pending_blockers`, never `follow_ups`; mixed-route implementation findings remain deferred until their controlling route resolves.
+7. A pending row counts or promotes only when its reviewed snapshot matches `reviewed_snapshot` and current `snapshot`/Gate coverage. Otherwise preserve it and set `evidence_required`, writes false, `pending_blocker_current_semantic_evidence_required`, and one evidence action without consuming generation/diagnosis/repair. After all are current, if independent rows exceed remaining budget, preserve the queue and block with `blocker_generation_limit_exhausted`.
+8. After active resolution, re-normalize the first current pending row against it. Same-identity confirming evidence merges into the resolved record and removes the row without generation use; contradictory evidence merges back and ends `same_blocker_persists_or_reopened`; indeterminate evidence stays required. Never drop evidence.
+9. Promote only a current materially independent row and remove it only on promotion. Generation 2 receives one repair when its local counter is zero: success records resolution once and completes only with empty queue; failure blocks. Anything remaining/new afterward is preserved as the third-blocker limit, never generation 3.
 ## Freeze And Route
-1. Freeze the goal, snapshot, blocker identity, paths, counters, and still-valid evidence. Keep `repair_slices=1/2` by default; set 2/2 only when the active plan already proves independent ownership.
-2. Read-only verify worktree, active task, task status, staged target, digest, and current Gate requirements. On disagreement, set `authority_blocked`; only explicit user confirmation may select or rebind the correct task and resume.
-3. Select one primary `route_class` and one bounded `next_action`; ask at most one highest-value user question at a time. Adjacent findings never replace the primary route.
-4. Increment the relevant bounded counter before every diagnostic action, repair write, additional Review dispatch, regression, confirmation, or provider attempt. Unknown, timed-out, or interrupted outcomes still consume it. Record mandatory Review runs from current Gate evidence without treating them as a bounded counter. Never decrement a counter; reset only the blocker-local fields on the evidence-proven generation transition defined above.
-5. When `allowed_paths` expands for the same acceptance target, increment `scope_expansions`, preserve the blocker identity, generation, all failure/diagnostic/repair/Review counters, and the current fast-path status, refresh `snapshot`, and route the added scope through the applicable requirement, diagnosis, or authority check before another write. Scope expansion never creates a new goal or Review budget, and it never creates a new blocker.
-6. For any terminal non-complete status, set `phase=blocked`, `code_writes_allowed=false`, `blocking_issue`, and one `next_action`, except `requirements_blocked`, which stays in `requirements_repair` with product-code writes locked.
+1. Freeze goal, snapshot, blocker identity, paths, counters, and valid evidence. `repair_slices=1/2` unless the plan proves two independent owners.
+2. Read-only verify worktree/task/status/staged target/digest/live Gates. Disagreement is `authority_blocked`; only explicit user confirmation rebinds.
+3. Choose one primary route and bounded action; ask at most one highest-value question. Adjacent findings never replace it.
+4. Increment the applicable counter before diagnostics, repair write, additional Review, regression, confirmation, or provider attempt; unknown/timeout/interruption consumes it. Mandatory Reviews are recorded, not budgeted. Never decrement; only the proven generation transition resets its listed local fields.
+5. Same-goal scope expansion increments `scope_expansions`, preserves all identity/state/counters, refreshes snapshot, and routes added scope before writing; it creates no goal, blocker, or Review budget.
+6. Any terminal non-complete result locks writes with one issue/action; `requirements_blocked` instead stays in requirements repair with product writes locked.
 ## Diagnose Before Repair
 - While root cause is unknown or hypothetical, set `phase=diagnose` and `code_writes_allowed=diagnostics_only`; production repair is forbidden. Confirmation requires evidence explaining the symptom, failing path, and why the repair point controls the failure.
 - Allow at most two diagnostic actions in an evidence epoch: first obtain missing evidence, then confirm or refute one hypothesis.
@@ -108,7 +160,7 @@ next_action=<one bounded action>
 - If epoch 2 exhausts its actions without confirmation, end as `root_cause_blocked`; never make a plausible-looking repair. Only explicit `user_extra_attempts=1/1` with `user_extra_kind=diagnostic` may add one final action for the current blocker.
 
 ## Five-Class Maximum Rollback
-After the failure is preserved and a minimal reproduction confirms the controlling point, compare the current Requirements, Overview, Detail/packet, implementation, and process evidence. Select the earliest owning defect from exactly these five product/process classes. The route is evidence-derived; never infer a cause from the desired rollback.
+After the failure is preserved, the exact post-append `AcceptanceResolution` is current with both blocker sets empty and the selected failure is bound, and a minimal reproduction confirms the controlling point, compare the current Requirements, Overview, Detail/packet, implementation, and process evidence. Select the earliest owning defect from exactly these five product/process classes. The route is evidence-derived; never infer a cause from the desired rollback.
 
 | Defect class | Maximum rollback | Required refresh | Preserved by default |
 | --- | --- | --- | --- |
@@ -150,15 +202,13 @@ Environment/fixture-only is a verification disposition, not a sixth defect class
 - A temporary mitigation requires explicit approval and must be labeled `mitigation`, never `fixed`.
 - If the active route defines an Integration owner, run `full_regression_runs=1/1` there. Otherwise follow the existing Gate that owns regression; this Skill never removes or duplicates a required check.
 ## Review And Failure Routing
-- Mandatory Gate Review runs exactly when the live Gate requires it. Record each semantic Review digest in `reviewed_snapshot`. This Skill never skips, caps, or charges it to `additional_review_cycles`; every blocking semantic outcome still increments `same_goal_failures`.
-- Route every mixed Review before implementation fingerprinting, severity ordering, or generation-budget checks. Partition requirement, authority, and implementation findings first. Requirement and authority findings never enter implementation `pending_blockers` and never consume implementation blocker generations; route them through their existing requirement or authority rules, preserve their Review evidence, and keep all implementation findings untouched in `deferred_implementation_findings`.
-- While a requirement or authority finding controls the route, do not fingerprint, rank, repair, or charge the deferred implementation findings. After the controlling route resolves, require their semantic evidence to be current for the resulting snapshot and live Gate requirements, then resume implementation normalization; stale evidence follows `pending_blocker_current_semantic_evidence_required` without consuming implementation budget. Remove a deferred finding only when its complete evidence is transferred into the normalized active or pending implementation blocker state.
-- After mixed-Review routing is clear, a Review with multiple implementation blockers must populate the active blocker plus `pending_blockers` under the deterministic selection rule. Do not collapse simultaneous blockers into `blocking_issue`, discard them, or relabel them as non-blocking follow-ups.
-- Base budget permits one `additional_review_cycles=1/1` cycle for a changed snapshot only when the explicit user request includes that additional Review. Record that digest in `reviewed_snapshot`. `activation_reason=redundant_review` blocks the additional reviewer without dispatch. Other optional or unchanged-snapshot reviewers are blocked; only the persisted user-extra `repair_cycle` or `review` may add one additional cycle. Reclassify requirement or authority findings; route another implementation blocker through the blocker identity and generation rules instead of treating Review wording as a new blocker.
-- `MALFORMED_REVIEW_OUTPUT`: inspect immutable raw output against the live Guru schema. If every required semantic field is complete, mechanically normalize only through the unique official writer identified from the live Guru help or workflow. Never change result, route, severity, findings, or invariants.
-- If no unambiguous official writer exists, end as `review_output_blocked`; never hand-format. If raw semantics are incomplete, allow one new Review via `malformed_review_retries`; a second incomplete result ends as `review_output_blocked`.
-- Provider, handshake, channel, capacity, or delivery failure: inspect raw errors, run one minimal preflight, then retry once. Attempt 2 failure for the digest ends as `external_blocked`; never switch provider or redo implementation. Reset `provider_attempts` only after an allowed route action creates a legitimate new digest. Verified recovery on the same digest uses the one explicit `user_extra_kind=provider`.
-- Only a genuinely non-blocking adjacent or Owner/PUA finding belongs in `follow_ups`, with evidence, impact, priority, and suggested route. Normalize any blocking finding into the active/pending blocker state instead. Never implement an adjacent finding or auto-create a Task, Issue, or Spec; expand only with approval when required for current acceptance or immediate security, privacy, or data-integrity safety.
+- Mandatory Gate Reviews run whenever required, are never skipped/capped/charged to `additional_review_cycles`, and record each digest in `reviewed_snapshot`; each semantic blocker still increments `same_goal_failures`.
+- Route mixed Reviews before implementation identity/budget: partition requirement, authority, implementation. Route the first two by their owners, preserve all evidence, and keep implementation findings untouched in `deferred_implementation_findings` without fingerprint/rank/repair/charge. After the controlling route, require current snapshot/Gate semantics, then transfer each complete finding to active/pending state; stale rows use `pending_blocker_current_semantic_evidence_required`.
+- Multiple current implementation blockers populate one deterministic active blocker plus ordered `pending_blockers`; never collapse, discard, or downgrade them to follow-ups.
+- One `additional_review_cycles=1/1` on a changed snapshot requires the user's explicit additional-Review request. `redundant_review` blocks dispatch; other optional/unchanged reviewers are blocked except the persisted user-extra repair/review. Requirement/authority findings reroute; Review wording never creates a blocker identity.
+- `MALFORMED_REVIEW_OUTPUT`: compare immutable raw output to live schema. Complete semantics may be mechanically normalized only by the unique official writer from live help/workflow, without changing result/route/severity/findings/invariants. No unique writer blocks; incomplete semantics permit one `malformed_review_retries`, then block.
+- Provider/handshake/channel/capacity/delivery failure: inspect raw error, run one minimal preflight, retry once, then `external_blocked` for that digest; never switch provider or redo implementation. Reset attempts only after a legitimate new digest; same-digest recovery needs explicit user-extra provider authority.
+- `follow_ups` contains only evidence-backed non-blocking adjacent/Owner/PUA items. Every blocker enters active/pending state. Never implement adjacent work or auto-create Task/Issue/Spec; expand only with approval for current acceptance or immediate security/privacy/data-integrity safety.
 
 ## Required Repair Retrospective
 Every user- or QA-reported post-implementation runtime failure requires a current `trellis-break-loop`-equivalent retrospective before this continuation can close. `trellis-break-loop` may draft the analysis, but this Skill owns the continuation state and must verify all five fields against the same `acceptance_id` and failure row:
@@ -173,16 +223,18 @@ Every user- or QA-reported post-implementation runtime failure requires a curren
 
 A regression that stays green on the known-wrong implementation makes `retrospective_state=incomplete`, routes `DETAIL_DEFECT`, and blocks completion until the Detail falsifiability contract and affected downstream evidence are repaired. Both prevention branches, neither branch, an empty no-writeback claim, or an invented unnecessary writeback makes `retrospective_state=incomplete`, routes `PROCESS_DEFECT`, and blocks completion. A required writeback that exceeds current allowed paths remains blocked pending explicit scope authority; it is not permission to edit.
 
-After the retrospective is complete, rerun the original runtime probe in the target environment. A focused test, clean Review, `implementation_verified`, or an older pass cannot replace a current `runtime_acceptance_pass` for the repaired baseline.
+Retrospective field completeness is not durable append completion. Construct the legal pending evidence row, use the acknowledged `RetrospectiveAppendAttempt` flow above, and do not mark `retrospective_state=complete` until `LedgerAppendResult accepted` or uniquely reconciled committed supplies `accepted_append_ref`, the canonical record supplies `record_ref`, and an acknowledged `record-bound` event closes the exact attempt chain. Explicit rejection or ambiguous reconciliation leaves the retrospective open.
+
+After durable closure, this Skill stops at the handoff. Workflow obtains a fresh complete CH-01 result after the journal event and reports only that object's `next_probe`; this Skill cannot select, permit, or reissue the original runtime probe. A focused test, clean Review, `implementation_verified`, or an older pass cannot replace a current `runtime_acceptance_pass` for the repaired baseline.
 
 ## Archived Task And No-Script Boundary
-- If the original Full task is archived, do not change its status or claim in-place reopen or machine-verified baseline inheritance. With lifecycle authorization, create a linked repair task/child that references the original `acceptance_id`, artifact digests, receipt references, and new failure evidence; otherwise report that single authorization step. Obey all current Gates and state honestly when they still require Full planning.
-- This Skill cannot promise zero replanning for an archived task, automatic receipt inheritance, an executable reopen command, automatic digest invalidation, or script-level archive enforcement.
-- Do not modify `.trellis/scripts/**`, `task.py`, `guru_gate.py`, Guru verify/hooks/apply, packaged script mirrors, Python/shell files, or CLI TypeScript runtime to implement this continuation. If repair requires any such change, stop with `blocking_issue=forbidden_script_scope` and request a separately scoped task and explicit authorization.
-- These are behavioral Markdown contracts. They do not prevent direct script invocation outside the Skill, create a new lifecycle state, or make manual evidence current. Never describe them as a fail-closed runtime Gate.
+- `ArchivedFailureInput { original_acceptance_id, archived_task_ref, artifact_digests, receipt_refs, new_failure_artifact_ref, requested_capability }` is caller-supplied immutable history, not current evidence.
+- Never reactivate/inherit an archived task. With lifecycle authority create a linked task carrying all refs; otherwise request that one action. Check metadata-only affinity and disclose current Gates. A later linked-task failure append requires fresh CH-01 before affinity/classification/repair.
+- Promise no zero replanning, automatic inheritance/digest invalidation, reopen, or script-level archive enforcement. Do not edit Trellis/Guru scripts, verify/hooks/apply, packaged script mirrors, Python/shell, or CLI TS; stop as `forbidden_script_scope` for separate authority.
+- Markdown changes no lifecycle, blocks no direct script invocation, and makes no evidence current; never call it a fail-closed runtime Gate.
 
 ## Exit Contract
-Set `status=complete` and `phase=complete` only when the selected route's required action is resolved, its current evidence and digest agree, focused verification passes where applicable, all mandatory Reviews and existing Gates remain satisfied, `blocking_issue` is empty, `pending_blockers` is empty, and `deferred_implementation_findings` is empty. A post-implementation runtime-failure route also requires `retrospective_state=complete`, exactly one valid `prevention_disposition` branch, refreshed affected Integration evidence, and a current `runtime_acceptance_pass` for the original probe and repaired baseline. Append the final current blocker and its resolution evidence to `resolved_blockers` exactly once before completion. Code repair routes additionally require confirmed root cause evidence; requirement and mechanical-normalization routes do not require an invented code change.
+Complete only with route action resolved, current evidence/digest, focused verification, mandatory Reviews/Gates, no issue/pending/deferred finding, and final blocker resolution recorded once. Runtime-failure routes also require confirmed cause for code repair, `retrospective_state=complete`, one prevention branch, empty canonical retrospective blockers, refreshed Integration, and fresh-resolution-selected current repaired-baseline `runtime_acceptance_pass`. Requirement/mechanical routes need no invented code change.
 Otherwise stop with the exact non-complete `status` and report:
 ```text
 goal=<acceptance target>
@@ -191,17 +243,17 @@ runtime_failure_ref=<preserved row>
 status=<exact blocked status>
 defect_class=<five-class route or unclassified>
 maximum_rollback=<bounded phase>
-blocker=<id, fingerprint, generation, and reviewed snapshot>
+blocker=<id/fingerprint/generation/reviewed snapshot>
 root_cause_status=<status>
 blocking_issue=<one blocker>
 evidence=<current evidence>
-evidence_refresh_plan=<invalidate, preserve, reverify, Integration, and runtime ids>
-retrospective=<state plus direct cause, missed Gate, false-green reason, falsifiable regression, and XOR prevention disposition>
-attempts=<failure, Slice, blocker generation, evidence epoch, diagnostic, blocker-local repair, requirement-confirmation, mandatory-Review evidence, additional-Review, malformed, provider, regression, scope-expansion, and user-extra counts>
-resolved_blockers=<ordered preserved history>
-pending_blockers=<ordered preserved blocking queue>
-deferred_implementation_findings=<ordered preserved mixed-Review implementation evidence>
-preserved_state=<preserved code and valid evidence>
-required_next=<one action that can remove the blocker>
+evidence_refresh_plan=<invalidate/preserve/reverify/Integration/runtime ids>
+retrospective=<state/five fields/XOR disposition>
+attempts=<all failure/slice/generation/evidence/repair/Review/provider/regression/scope/user-extra counters>
+resolved_blockers=<ordered history>
+pending_blockers=<ordered queue>
+deferred_implementation_findings=<ordered mixed-Review evidence>
+preserved_state=<code/valid evidence>
+required_next=<one unblocking action>
 follow_ups=<non-blocking findings>
 ```

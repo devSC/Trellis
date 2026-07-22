@@ -4,24 +4,22 @@ Use this Skill after a user- or QA-reported post-implementation failure to expla
 
 ## Ownership And Preconditions
 
-- `guru-bug-fast-path` or the active workflow owns repair-continuation state. The live Review/workflow contract owns the final defect route. This Skill drafts and validates retrospective evidence only.
-- Before analysis, diagnosis, source edits, or test edits, the current task must preserve an append-only `runtime_acceptance_failure` row bound to the original `acceptance_id`, active task, baseline, target environment, steps, expected result, actual result, and privacy-safe evidence references.
-- If that row is missing, return `PROCESS_DEFECT: runtime_failure_row_missing` with the single next action to record it. Do not reconstruct it after the repair.
-- Direct root cause must be confirmed by a minimal reproduction, trace, log, or failing check before the retrospective can call the repair proven. A plausible hypothesis is not a root cause.
-- Read the confirmed Requirements, Overview, Detail/packet, current implementation, prior tests/Review, and runtime evidence. Runtime evidence that contradicts an internally green packet cannot be dismissed as packet-external.
+- `guru-bug-fast-path`/workflow owns continuation, Review/workflow owns final routing, `ClosureSpec` owns currentness and durable reconciliation. This helper drafts/validates retrospective evidence only.
+- Before any analysis or edit, preserve `runtime_acceptance_failure` with original `acceptance_id`, active task/current baseline, environment, steps, expected/actual, and privacy-safe refs. If missing, return `PROCESS_DEFECT: runtime_failure_row_missing` and only its recording action.
+- The append stales prior resolution. Before affinity/classification/repair, require fresh CH-01 `AcceptanceResolution` selecting that failure with both open lists empty; missing/stale/projected/blocked means process correction only.
+- Confirm root cause by reproduction/trace/log/failing check, not hypothesis. Compare current Requirements, Overview, Detail/packet, implementation, prior tests/Review, and runtime evidence; packet-local green cannot dismiss runtime contradiction.
+
+## Canonical Evidence Input And Ownership
+
+Consume the same complete CH-01 object used by Review/Workflow/Finish/repair: `baseline_binding`, ledger+reconciliation snapshot refs, both open lists, row results, selected+blocking refs, task result, blocking IDs, and `next_probe`. Never project it, select a row, reconcile/mutate storage, or authorize a probe. `ClosureSpec` owns full replay/currentness/transitions/correlation/probe; this helper returns only `FailureRetrospectiveDraft`, while `guru-bug-fast-path` owns the validated, durably bound final record.
 
 ## Same-Goal Affinity
 
-Reuse the same affinity decision as `guru-bug-fast-path`:
-
-- `same_goal=true` only when the failure maps to the same BHV/AC or accepted user outcome and all four indicators are false: `new_product_behavior`, `permission_or_data_expansion`, `external_contract_change`, and `material_scope_change`.
-- File changes, snapshot changes, a moved symptom, different error wording, or a new implementation approach do not create a new acceptance goal.
-- An unbound task, baseline, or `acceptance_id` is authority-blocked until live evidence resolves it.
-- If the BHV/AC differs or any change indicator is true, route `REQ_BLOCKER` or material requirement change to the affected Requirements chain. Do not relabel new product behavior as a same-goal repair.
+Reuse fast-path affinity: `same_goal=true` only for the same BHV/AC/outcome with `new_product_behavior`, `permission_or_data_expansion`, `external_contract_change`, and `material_scope_change` all false. File/snapshot/symptom/wording/approach changes do not change the goal. Unbound task/baseline/ID is authority-blocked; different behavior or any true indicator routes `REQ_BLOCKER`/material change to Requirements.
 
 ## Five-Class Maximum Rollback
 
-Use evidence to identify the earliest owning defect. Do not choose a class merely to obtain a shorter route.
+Choose the earliest evidence-proven owner, never the shortest desired route.
 
 | Defect class | Maximum rollback | Required refresh | Preserved by default |
 | --- | --- | --- | --- |
@@ -31,15 +29,11 @@ Use evidence to identify the earliest owning defect. Do not choose a class merel
 | `OVERVIEW_DEFECT` | Phase 1 Overview plus affected Detail | Overview Review and affected Detail/downstream evidence in order | Requirements |
 | `REQ_BLOCKER` or material requirement change | Phase 1 Requirements affected Full chain | Affected Requirements through Overview, Detail, implementation, Integration, and runtime acceptance | Only evidence proven independent by current bindings |
 
-An implementation defect never restarts Requirements, Overview, or Detail. An upstream planning defect must be repaired by its owner before downstream code is changed to conform. When findings exist in more than one class, select the earliest upstream owner and list dependent downstream refresh.
+Implementation defects never restart planning; upstream defects are repaired by their owner first. Multiple classes use the earliest owner plus dependent refresh.
 
 ### Environment/Fixture Discriminator
 
-Environment/fixture-only is a verification disposition, not a sixth defect class.
-
-- A wrong or incomplete confirmed packet, digest-bearing plan, fixture contract, or declared check is `PROCESS_DEFECT`. Return to Detail only if that packet or plan must actually change.
-- When packet/plan and implementation are correct and only target-environment configuration, test data, execution setup, or the runtime fixture instance is wrong, remain at the current verification step. Refresh only environment/fixture evidence and the affected runtime probe.
-- Do not change product Requirements, Overview, Detail, or implementation to hide an environment-only failure. If the discriminator is unproven, request the missing evidence instead of choosing the environment route.
+Environment/fixture-only is not a sixth class. Wrong packet/plan/fixture contract/check is `PROCESS_DEFECT`, returning to Detail only if that artifact changes. If plan+implementation are correct and only target setup/data/fixture instance is wrong, stay at verification and refresh that evidence/probe without product changes. Unproven means request evidence.
 
 ## Selective Evidence Refresh
 
@@ -54,117 +48,53 @@ Draft an exact evidence plan from the actual binding changes:
 
 Every field must bind to the same `acceptance_id`, preserved failure row, and repaired baseline.
 
-### 1. Direct Cause
+The canonical field names are `direct_cause`, `earliest_missed_gate`, `false_green_reason`, `falsifiable_regression`, and `prevention_disposition`. The disposition is an exact XOR of `writeback_required` and `no_writeback_required`.
 
-Record the concrete control point that produced the failure and the evidence proving it. Categories can help organize the explanation, but a category is not the cause:
-
-| Category | Typical signal |
+| Field | Required evidence |
 | --- | --- |
-| **A. Missing Spec** | Required behavior or boundary was never documented |
-| **B. Cross-Layer Contract** | Data or state was lost or changed between source and user-visible sink |
-| **C. Change Propagation Failure** | One owner changed while a dependent consumer remained stale |
-| **D. Test Coverage Gap** | Local checks passed without exercising the failing acceptance path |
-| **E. Implicit Assumption** | Behavior depended on an undocumented format, state, timing, or authority assumption |
+| `direct_cause` | Confirmed causal control point and proof, not symptom/category. Optional categories: missing spec, cross-layer loss, stale propagation, coverage gap, implicit assumption. For repeats, explain each failed attempt. |
+| `earliest_missed_gate` | Earliest Requirement/Overview/Detail/Implementation/Test/Review/Process Gate plus exact missing contract/check/decision, not merely the reporting Gate. |
+| `false_green_reason` | Trace actual prior inputs/assertions through the source-to-sink gap; “coverage incomplete” alone fails. |
+| `falsifiable_regression` | Accepted-path deterministic check/probe with old-wrong FAIL and repaired PASS evidence. Helper-only or old-wrong green routes `DETAIL_DEFECT`. |
+| `prevention_disposition` | Exactly one complete branch below. |
 
-For repeated attempts, record why each failed: symptom-only repair, incomplete scope, tool limitation, stale evidence, or incorrect mental model.
-
-### 2. Earliest Missed Gate
-
-Name the earliest Requirement, Overview, Detail, Implementation, Test, Review, or Process Gate that should have rejected the known-wrong behavior. Cite the exact missing contract, check, or evidence decision. Do not name only the final Gate that happened to report the symptom.
-
-### 3. False-Green Reason
-
-Explain why the previous tests and Review stayed green. Trace the gap from their actual inputs and assertions to the user-visible failure. A generic statement such as "coverage was incomplete" is insufficient.
-
-### 4. Falsifiable Regression
-
-Record a deterministic check or runtime probe that exercises the accepted source-to-sink path. Include evidence that it fails on the old wrong implementation and passes on the repair. A helper-only positive assertion, a test that never reaches the old failure, or a probe that stays green on the known-wrong behavior is incomplete and routes `DETAIL_DEFECT` so the falsifiability contract and affected downstream evidence are repaired.
-
-### 5. Prevention Disposition - Exact XOR
-
-Choose exactly one complete branch. Never include both and never omit both.
-
-`writeback_required` requires:
-
-- one allowed canonical Skill/workflow/spec source owner;
-- the exact recurrence path the writeback prevents;
-- required source/consumer parity, if any;
-- focused validation evidence; and
-- confirmation that the writeback does not require a forbidden script/runtime edit.
-
-`no_writeback_required` requires:
-
-- an explicit reason that a new source-contract change is unnecessary;
-- evidence references showing which current contract already owns the rule; and
-- evidence that the new falsifiable regression or probe closes the previously uncovered path.
-
-A TODO, an empty "no writeback needed" assertion, both branches, neither branch, or an invented unnecessary writeback returns `PROCESS_DEFECT: prevention_disposition_incomplete` and keeps the retrospective incomplete. A required writeback outside current allowed paths is a scope blocker, not write authority.
+- `writeback_required`: allowed canonical Skill/workflow/spec owner, exact prevented recurrence, required consumer parity, focused validation, and proof no forbidden runtime/script edit is needed.
+- `no_writeback_required`: explicit no-change reason, current owning-contract refs, and proof the new regression/probe closes the uncovered path.
+- TODO/empty claim, both/neither branch, or invented writeback returns `PROCESS_DEFECT: prevention_disposition_incomplete`. Out-of-scope writeback is a scope blocker, never authority.
 
 ## Output Contract
 
-Produce one evidence-backed record in this shape:
+Produce one evidence-backed draft, never a `FailureRetrospectiveRecord`, append acknowledgment, or probe authorization:
 
 ```markdown
 ## Bug Analysis: [short description]
-
-- **Acceptance ID**: [original BHV/AC/invariant]
-- **Failure Row**: [append-only runtime_acceptance_failure reference]
-- **Task Affinity**: same_goal | material_change | unproven
-- **Defect Class**: IMPLEMENT_DEFECT | PROCESS_DEFECT | DETAIL_DEFECT | OVERVIEW_DEFECT | REQ_BLOCKER
-- **Maximum Rollback**: [exact phase/owner]
-
-### 1. Direct Cause
-- **Category**: [A/B/C/D/E]
-- **Confirmed Cause**: [control point and causal chain]
-- **Evidence**: [reproduction, trace, log, or failing check references]
-
-### 2. Earliest Missed Gate
-- **Gate**: [Requirement/Overview/Detail/Implementation/Test/Review/Process]
-- **Missed Contract**: [exact contract or check]
-- **Evidence**: [references]
-
-### 3. False-Green Reason
-- **Prior Inputs/Assertions**: [what was actually checked]
-- **Why They Missed The Failure**: [source-to-sink gap]
-- **Evidence**: [prior test/Review references]
-
-### 4. Falsifiable Regression
-- **Check Or Probe**: [exact command/test/runtime steps]
-- **Known-Wrong Result**: FAIL [evidence]
-- **Repaired Result**: PASS [evidence]
-
-### 5. Prevention Disposition
-- **Branch**: writeback_required | no_writeback_required
-- **Owner Or Existing Contract**: [allowed owner/path]
-- **Action Or No-Writeback Reason**: [exact prevention or evidence-backed reason]
-- **Evidence And Validation**: [references]
-
-### Evidence Refresh
-- **Invalidate/Reverify**: [exact receipt ids and reasons]
-- **Preserve**: [exact sibling receipt ids and equal bindings]
-- **Integration**: [refresh requirement/result]
-- **Runtime Reprobe**: [original probe and current result]
-
-### Closure
-- **Retrospective**: complete | incomplete
-- **Repair Completion Eligible**: yes | no
-- **Blocking Gap**: [none or one exact gap]
+acceptance_id: <original BHV/AC/invariant>
+failure_row: <runtime_acceptance_failure ref>
+affinity: same_goal | material_change | unproven
+defect_class: IMPLEMENT_DEFECT | PROCESS_DEFECT | DETAIL_DEFECT | OVERVIEW_DEFECT | REQ_BLOCKER
+maximum_rollback: <phase/owner>
+direct_cause: <cause + proof>
+earliest_missed_gate: <Gate + missed contract + refs>
+false_green_reason: <prior checks + source-to-sink gap + refs>
+falsifiable_regression: <check; old FAIL ref; repaired PASS ref>
+prevention_disposition: <one complete branch>
+evidence_refresh: <invalidate/reverify, preserve, Integration, runtime>
+Draft: complete | incomplete
+blocking_gap: <none or one exact gap>
 ```
 
-The selected prevention branch must contain its complete fields even though the compact output uses one shared shape. Do not add the unselected branch.
+The selected prevention branch must be complete; omit the other. `Draft: complete` means field validation only and never `retrospective_state=complete`.
 
 ## Completion Boundary
 
-- Retrospective completion requires all five fields and exactly one valid prevention branch.
-- Repair completion additionally requires current affected implementation/Slice/Integration evidence and a current `runtime_acceptance_pass` from the original target-environment probe on the repaired baseline. A focused test, clean Review, `implementation_verified`, or an older runtime pass is not enough.
+- Draft completeness is five fields plus one prevention branch; it closes no attempt. Final completion requires legal current-baseline pending row, prepared-event acknowledgment before evidence append, accepted/uniquely reconciled append ref, canonical record/ref, and full-replay acknowledgment of exact `record-bound` chain. Accepted alone, open, rejected, or ambiguous stays blocked.
+- Repair completion also requires fresh complete CH-01 with empty blockers, current affected Slice/Integration evidence, and current repaired-baseline `runtime_acceptance_pass`. Workflow alone reports canonical `next_probe`; this helper never chooses/reissues it. Focused test, Review, `implementation_verified`, or old pass is insufficient.
 - Keep broader similar issues as non-blocking follow-ups unless evidence shows they affect the current acceptance path. Do not turn the retrospective into an open-ended repository audit.
 
 ## Archived Task And No-Script Boundary
 
-- For an archived original task, do not claim in-place reopen or machine baseline inheritance. With lifecycle authorization, use a linked repair task/child that references the original `acceptance_id`, artifact digests, receipts, and new failure evidence. Follow current Gates honestly, including any Full planning they still require.
-- Creating a task/child, changing task authority, updating a spec, syncing a template, committing, pushing, merging, archiving, or running finish-work requires its own current workflow authority. This retrospective does not grant it.
-- Do not modify `.trellis/scripts/**`, `task.py`, `guru_gate.py`, Guru verify/hooks/apply, packaged script mirrors, Python/shell files, or CLI TypeScript runtime to implement this contract. If prevention requires such a change, stop and request a separately scoped task and explicit authorization.
-- This Markdown behavior cannot provide executable reopen, automatic receipt inheritance, digest-graph invalidation, or script-level archive enforcement. State those limitations rather than promising them.
+- Archived work uses an authorized linked repair task carrying original `acceptance_id`, digests, receipts, and new-failure ref; never claim in-place reopen/inheritance, and obey current Gates.
+- Task/authority/spec/sync/Git/archive/finish actions require their own authority. Do not edit Trellis/Guru scripts, verify/hooks/apply, packaged script mirrors, Python/shell, or CLI TS; request separate scope. Markdown cannot provide executable reopen, automatic inheritance/digest invalidation, or script-level archive enforcement.
 
 ## Core Principle
 
