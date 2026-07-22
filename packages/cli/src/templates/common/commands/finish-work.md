@@ -18,39 +18,24 @@ If `--mode record` surfaces other completed tasks not tied to the current sessio
 
 ## Step 2: Check runtime acceptance before archive
 
-This is an agent-owned admission check for the archive branch. It does not add a lifecycle state or change the archive script.
+This is an agent-owned admission check for the archive branch. It does not add a lifecycle state or change the archive script. `FinishSkill` owns only the final allow/block decision; `ClosureSpec` is the ClosureSpec-only owner of evidence currentness, reconciliation, row selection, blocker ordering, and probe selection.
 
 For the current active task:
 
-1. Inspect `prd.md`, the current Detail package, and `implement.md` for the planning marker `runtime_acceptance_required=true`.
-2. If this is not a runtime-required Full task, continue to Step 3.
-3. If the marker is present, read the frozen Acceptance Closure Matrix and identify every row where `required=true`. A marker without a matrix or without at least one required row is a `DETAIL_DEFECT`: stop this command and return to the Detail owner. Do not infer a required set from whatever evidence happens to exist.
-4. Resolve the current baseline from the task's current requirements, Overview, Detail, and implementation snapshot bindings. Then read the complete ledger in append order from task-local `verification-evidence.jsonl` (or the task's explicitly declared equivalent). If any append is unreadable or malformed such that its `acceptance_id` or baseline binding cannot be resolved, block archive as a `PROCESS_DEFECT`; never skip that append and fall back to older evidence.
-5. For each required `acceptance_id`, first identify the newest append whose baseline binding matches the current baseline, using append position alone. Only after selecting that exact newest row may you validate its status and required fields. A selected pass is valid only when its target environment, steps/command, expected, actual, evidence references, recorder, and timestamp are complete. If the selected row is malformed, incomplete, or has an unsupported status, block and require a corrected append; do not search backward for an older pass. If there is no current-baseline append, classify any historical pass as stale or the row as missing. A valid selected `implementation_verified`, `runtime_acceptance_pending`, or `runtime_acceptance_failure` is a current non-pass and supersedes every earlier pass.
+1. Read `prd.md`, current Detail, and `implement.md`. If `runtime_acceptance_required=true` is absent, continue to Step 3. If present, the frozen Acceptance Closure Matrix must contain at least one `required=true` row; otherwise stop with `DETAIL_DEFECT`. Never infer the required set from evidence.
+2. Pass the current/linked-active `TaskRef`, matrix, and requirements/Overview/Detail/implementation baseline to `ClosureSpec`. Finish must not open, filter, replay, or select from `verification-evidence.jsonl` or `<task_dir>/retrospective-reconciliation.jsonl`; an `append acknowledgment` only triggers fresh resolution.
+3. Consume only ClosureSpec-only fresh, exact `AcceptanceResolution`, preserving `baseline_binding`, `ledger_snapshot_ref`, `reconciliation_snapshot_ref`, `open_correction_debts`, `open_retrospective_reconciliations`, `row_results`, `selected_evidence_refs`, `blocking_evidence_refs`, `task_result`, `blocking_acceptance_ids`, and `next_probe`. A missing field or private projection is `DETAIL_DEFECT`.
+4. `ClosureSpec` obtains the complete `LedgerReadSnapshot` through `EvidenceLedger.readAllInAppendOrder()`, strictly replays the exact reconciliation journal, and produces the resolution. Its currentness proof requires non-empty `LedgerSnapshotRef` to bind `artifact_ref`, `append_count`, `last_append_position`, and full-ledger-byte lowercase SHA-256 `content_digest`; non-empty `RetrospectiveReconciliationSnapshot` binds `artifact_ref`, `event_count`, `last_event_position`, final newline-event SHA-256 `last_event_digest`, and full-file SHA-256 `content_digest`. Any append/event/baseline change stales the resolution.
+5. The exact journal uses `journal-root-v1`: first event `position=1`, `previous_event_digest=null`; later `previous_event_digest` is the prior complete newline-event SHA-256. `deriveLedgerAppendRef(full_snapshot, exact_position)` independently derives each `LedgerAppendRef` from ledger `artifact_ref`, position, and complete newline-append SHA-256, never a journal ref. `retrospective-ledger-journal-correlation` rejects older-valid/empty rollback, cross-position refs, and non-unique repeated rows. Missing/partial/gapped/duplicate/digest-, transition-, or snapshot-invalid journal is `reconciliation_register_unavailable` or `reconciliation_register_corrupt`; Finish never initializes, guesses, truncates, or falls back to a prefix.
+6. Every null `record_ref` stays in `open_retrospective_reconciliations`, even with `accepted_append_ref`; accepted/committed proves only append identity. Only a strict-full-replay-acknowledged `record-bound` event with `accepted_append_ref`, `record_ref`, and exact `closes_attempt_ids` closes ordinal-0 or the full ordinal-0+1 chain. Missing/extra/cross-chain IDs, ambiguity, or a second missing acknowledgment stays open, permits no third retry/record/decision/probe, and forces `next_probe=null`.
 
-Use these evidence/reporting values without writing them into `task.json.status`:
+Evidence/reporting values never become `task.json.status`: `implementation_verified` means technical-only green; `runtime_acceptance_pending` awaits its named owner; `runtime_acceptance_failure` routes repair; `runtime_acceptance_pass` closes one current row; `accepted` is task-level and requires the canonical all-pass result.
 
-| Status | Meaning | Archive decision |
-| --- | --- | --- |
-| `implementation_verified` | Static checks, tests, and implementation review are current, but runtime acceptance is incomplete | Block |
-| `runtime_acceptance_pending` | A named owner has received the exact target-environment probe and has not returned a result | Block and keep the task active |
-| `runtime_acceptance_failure` | Current target-environment evidence does not satisfy the row | Block and enter repair continuation |
-| `runtime_acceptance_pass` | One row has complete current environment, steps, expected/actual, and evidence | Continue evaluating the other required rows |
-| `accepted` | Every required row's newest current-baseline append validates as a pass; no newer append is skipped or ignored | The runtime guard is clear; continue the existing finish flow |
+For any stale resolution, register error, open debt/reconciliation, non-pass row, or other blocker, preserve the whole object and its order. Report `blocking_acceptance_ids`, `blocking_evidence_refs`, both open sets, and canonical `next_probe` unchanged; do not downgrade, search backward, reorder, select, or rebuild. Hand a non-null probe to its owner; for `next_probe=null`, report only canonical evidence/reconciliation repair; hand a selected failure's exact resolution to Guru workflow for repair routing. Keep the task active/`in_progress` and **stop before Step 3**.
 
-An unreadable ledger append or a malformed/incomplete newest current-baseline row is an evidence precondition failure, not a lower-priority runtime result. Report the exact line/row when possible, keep the ledger append-only, require a corrected append, and stop before applying the runtime-row priority below.
+Continue only when fresh `task_result=accepted`, both open sets and all blocking IDs/refs are empty, and `selected_evidence_refs` contains complete current pass refs. Tests/review/`COMMIT_READY`/`implementation_verified`/one or old pass never qualify. Runtime clearance grants no commit, push, merge, archive, or other authorization.
 
-If any row is blocked, preserve the complete blocking list but report one next action using this priority: current failure, stale pass, missing evidence, then pending handoff. Include the exact `acceptance_id`, blocking reason, matrix-owned runtime probe, evidence owner, and required evidence:
-
-- For a failure, the next action is same-goal repair classification; retain the original probe as the post-repair resume condition.
-- For a stale pass or missing row, the next action is to rerun the row's original probe against the current baseline.
-- For a pending row, the next action remains with its named runtime owner. If no owner is named, the handoff is invalid and must be repaired before recording pending evidence.
-
-Report `implementation_verified`, `runtime_acceptance_pending`, or `runtime_acceptance_failure` as applicable, keep the task active/`in_progress`, and **stop this command here**. Do not run the archive command or any later lifecycle step. Tests green, a clean implementation review, `COMMIT_READY`, `implementation_verified`, one row's pass, or an older pass must never be reported as `accepted`.
-
-Only when the required ID set has no difference from the current pass set and every required ID's exact newest current-baseline append validates as `runtime_acceptance_pass` may you report `accepted` and continue. Clearing this guard does not authorize commit, push, merge, archive, or any other action that the existing workflow still gates.
-
-**Enforcement boundary:** this step constrains the agent following `{{CMD_REF:finish-work}}`. The unchanged lifecycle scripts do not parse the matrix or evidence ledger, and a user or tool that invokes `task.py archive` directly is not fail-closed by this contract. State that limitation if relevant; never claim script-level enforcement or fabricate a manual/user/QA receipt.
+**Enforcement boundary:** this agent contract cannot make unchanged lifecycle scripts fail closed; direct `task.py archive` can bypass it. Never claim script-level enforcement or fabricate a manual/user/QA receipt.
 
 ## Step 3: Sanity check — classify dirty paths
 

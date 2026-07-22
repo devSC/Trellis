@@ -271,31 +271,22 @@ Full 与 Trellis 原版同构（dispatch 协议、guarded commit 与 finish-work
 
 `runtime_acceptance_required=true` 只允许作为 `prd.md`、Detail 或 `implement.md` 中的 planning marker；它不是 `task.json`、`gate-contract.json` 或任何 script schema 的新字段。声明该 marker 的 Full 任务复用 task-local `verification-evidence.jsonl` 记录 append-only evidence，并保持现有 task lifecycle status。每行至少绑定 `acceptance_id`、current baseline、environment、steps/command、expected、actual、evidence refs、recorded time 和 executor；证据只保留脱敏摘要与 artifact reference，不保存 secret、token、PII、完整响应体或用户内容。
 
-五个对外证据/报告状态固定为：
-
-| 状态 | 语义 |
-| --- | --- |
-| `implementation_verified` | static/test/implementation review 已通过，但 runtime 尚未闭合；不是用户验收完成 |
-| `runtime_acceptance_pending` | exact target-environment probe 已移交给明确 owner，等待实际结果 |
-| `runtime_acceptance_failure` | current 目标环境的实际结果不满足 frozen acceptance row，进入 repair continuation |
-| `runtime_acceptance_pass` | 单个 acceptance row 的环境、步骤、预期、实际与证据齐全且绑定 current baseline |
-| `accepted` | 所有 required rows 的 newest current-baseline append 经校验都是 pass；不得跳过任何更新 append；这是任务级报告结论，不是 lifecycle status |
+固定状态含义：`implementation_verified` 仅技术绿；`runtime_acceptance_pending` 等待明确 owner；`runtime_acceptance_failure` 进入 repair；`runtime_acceptance_pass` 闭合一个 current row；`accepted` 仅为 canonical all-pass 的任务级结论。它们都不是新 lifecycle status。
 
 技术验证完成后的 handoff 顺序：
 
-1. 从 frozen Acceptance Closure Matrix 枚举全部 `required=true` 的 `acceptance_id` 和各自行内 runtime probe；不得从 ledger 已存在的行反推 required set。marker 存在但 matrix 缺失或 required set 为空时路由 `DETAIL_DEFECT`，停止完成流程。
-2. 记录/报告 `implementation_verified`，对尚未实际执行的 required row 只有在 environment、exact probe、预期、evidence owner 和所需 evidence 均明确后才追加/保留 `runtime_acceptance_pending`。owner 缺失或 probe 不可证伪时 handoff 阻断，不得写一条可冒充有效移交的 pending row。
-3. 把 exact probe 交给 agent、QA、开发者或用户中的已声明 owner；task 保持 active/`in_progress`。不为等待 runtime 先 archive 再 reopen。
-4. 实际 executor 追加 `runtime_acceptance_pass` 或 `runtime_acceptance_failure`，不覆盖历史、不回写 digest-bearing matrix。新 evidence 到达后必须重新计算，不缓存旧 allow/deny 决定。
+1. Frozen Matrix 枚举 `required=true` IDs/probes；不得从 ledger 反推。marker 无 matrix/required row 是 `DETAIL_DEFECT`。仅 environment、probe、expected、owner、evidence 完整时记录 `implementation_verified`/pending，否则阻断 handoff。
+2. Append 只返回 `append acknowledgment` 和新 snapshot identity。Workflow 把 current/linked-active `TaskRef`、matrix、baseline 交给 ClosureSpec-only owner；`ClosureSpec` 通过 `EvidenceLedger.readAllInAppendOrder()` 取得 complete `LedgerReadSnapshot`，strict replay exact `<task_dir>/retrospective-reconciliation.jsonl`，再生成 resolution。
+3. Workflow 完整保留 `AcceptanceResolution`：`baseline_binding`、`ledger_snapshot_ref`、`reconciliation_snapshot_ref`、`open_correction_debts`、`open_retrospective_reconciliations`、`row_results`、`selected_evidence_refs`、`blocking_evidence_refs`、`task_result`、`blocking_acceptance_ids`、`next_probe`；不得私有投影、选 row、排序 blocker 或重建 probe。
+4. 非空 `LedgerSnapshotRef` 以 `artifact_ref`、`append_count`、`last_append_position`、full-ledger 小写 SHA-256 `content_digest` 绑定完整 bytes；非空 `RetrospectiveReconciliationSnapshot` 以 `artifact_ref`、`event_count`、`last_event_position`、末条含换行 event 小写 SHA-256 `last_event_digest`、full-file 小写 SHA-256 `content_digest` 绑定 strict replay。append/event/baseline change 使旧 resolution stale。
+5. `journal-root-v1` 首 event 是 `position=1`/`previous_event_digest=null`，后续 `previous_event_digest` 是前一含换行 event 的小写 SHA-256。`deriveLedgerAppendRef(full_snapshot, exact_position)` 从 ledger `artifact_ref`、position、含换行 append 小写 SHA-256 独立得到 `LedgerAppendRef`；journal ref不得参与。`retrospective-ledger-journal-correlation` 拒绝 older-valid/empty rollback、cross-position 和不唯一 repeated rows；missing/partial/gap/duplicate/digest/transition/snapshot error 是 `reconciliation_register_unavailable`/`reconciliation_register_corrupt`，不得初始化、猜路径、跳过、截断或回退 prefix。
+6. 任一 `record_ref=null` 保持 open，即使有 `accepted_append_ref`；accepted/committed 只证明 append ref。只有 strict-replay acknowledged `record-bound` 同时含 `accepted_append_ref`、`record_ref`、exact `closes_attempt_ids` 才关闭 ordinal-0 或完整 0+1 chain。漏/多/cross-chain IDs、ambiguity、第二次 missing ack 均阻塞，禁止第三次 retry/record/decision/probe，`next_probe=null`。
+7. `GuruWorkflow` 原样路由 canonical `next_probe` 或 selected failure 到 repair；Finish 只对同一 object 做 allow/block。probe 交给声明 owner，task 保持 active/`in_progress`；executor append pass/failure 后只触发 fresh resolution，不覆盖历史或 matrix。
 
 每次 finish/archive 前按以下方式消费 evidence：
 
-1. 读取 current requirements/Overview/Detail/implementation baseline 和 frozen required ID set，再按 append order 读取完整 ledger。任一 append 无法解析到 `acceptance_id` 或 baseline binding 时，立即作为 `PROCESS_DEFECT` 阻断 archive；不得跳过坏行并回退使用旧 evidence。
-2. 对每个 required `acceptance_id`，先只按 append position 找出绑定 current baseline 的 newest append，再校验该 exact row 的 status 和字段。不得先过滤“valid row”再选择。selected pass 必须具有完整 environment、steps/command、expected、actual、evidence refs、executor 和 timestamp；selected row malformed、incomplete 或 status 不支持时，要求 append corrected evidence 并阻断，绝不向前搜索旧 pass。没有 current-baseline append 时，历史 pass 归 stale，否则归 missing。
-3. newest row 合法但为 current non-pass（包括 `implementation_verified`、`runtime_acceptance_pending` 或 `runtime_acceptance_failure`）时，它压过所有更早 pass。ledger unreadable 或 newest row 非法属于 evidence precondition failure，先报告 exact line/row 并停止；不得把它降级成普通 runtime blocker。
-4. evidence structure 可完整求值后，任一 row missing、pending、failure 或 stale 时保存完整 blocking list，但只报告一个下一动作，优先级为 `failure > stale > missing > pending`。输出 exact `acceptance_id`、原因、matrix-owned probe、owner 和 evidence requirement。
-5. failure 的唯一下一步是先保存 failure 并完成 same-goal/root-cause classification，原 probe 是 repair 后的 resume condition；stale/missing 重跑原 probe；pending 继续由已声明 owner 执行。
-6. 只有 required ID set 与 current-pass set 完全相等，且每个 required ID 的 exact newest current-baseline append 都校验为 `runtime_acceptance_pass`，才能报告 `accepted` 并解除 runtime guard。解除只允许继续既有 finish/archive Gate，不自动授权 commit、push、merge 或 archive。
+1. Finish 只请求/消费 fresh exact object，不读/过滤/replay/select。缺字段、stale、register error、任一 open blocker/null record/non-accepted/blocking ID/ref 都 block；原样展示 canonical blockers/`next_probe`，null 时只做 evidence/reconciliation repair。
+2. 仅 `task_result=accepted`、两类 open sets 与 blocking IDs/refs 全空、`selected_evidence_refs` 为完整 current pass refs时解除 runtime guard；仍不授权 commit/push/merge/archive/install。
 
 技术绿、clean review、ordinary slice pass、`COMMIT_READY`、`implementation_verified`、单行 pass 或旧 baseline pass 都不得表述为 `accepted`。未闭合时 `/trellis:finish-work` 必须停在 archive 前，报告 `implementation_verified`、`runtime_acceptance_pending` 或 `runtime_acceptance_failure`，并保持任务 active。
 
@@ -358,7 +349,7 @@ check 可作为 `implement-check` 的拆分子命令运行：`python3 .trellis/s
 
 #### 3.5 收尾提醒
 
-运行 `/trellis:finish-work` 或等价收尾流程。对 runtime-required Full，先按 frozen matrix/current baseline 找到每个 required row 的 newest append，再校验该 exact row；禁止过滤无效更新后回退旧 pass。ledger/newest row unreadable、malformed 或 incomplete，或 missing/stale/pending/failure 任一存在时保持任务 active，输出唯一 evidence repair 或 next probe/owner 并停在 archive 前。全部 exact newest current rows 校验为 pass 时只解除 runtime guard，再按既有授权确认任务状态、journal、归档/后续动作与未提交变更均已说明。
+运行 `/trellis:finish-work` 或等价收尾流程。对 runtime-required Full，把 current TaskRef、frozen matrix 与 baseline 交给 `ClosureSpec`，只消费其 fresh exact `AcceptanceResolution`。任何 stale snapshot、缺字段、open correction/retrospective blocker、register unavailable/corrupt 或 non-accepted result 都保持任务 active，原样输出 canonical blockers 与 `next_probe` 并停在 archive 前；只有 accepted 且两类 blocker、blocking IDs/refs 均空时才解除 runtime guard，再按既有授权确认任务状态、journal、归档/后续动作与未提交变更均已说明。
 
 ---
 
