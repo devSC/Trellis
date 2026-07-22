@@ -12,7 +12,7 @@ description: 按详细设计合同执行 Flutter 编码与自测。编码规则�
 3. 读取**`.trellis/spec/conventions/project-conventions.md`**（校验 C1~C5；重点消费 SLOT-01/02/03/05/08/11/12/15，并确认项目 logger / logging helper / 日志门面）。
 4. 定位已通过 Gate 的详细设计文档；缺失 → 终止并提示回退设计阶段（探索性 spike 除外，须显式声明并隔离）。
 5. Full/high 必须读取当前 packet 与 `implement.md` 中已确认的 minimum commit-stable planning audit；packet 缺失、audit 不匹配或未确认即停止，不在 active worker 内补造。
-6. 对 `runtime_acceptance_required=true`，以及任何涉及用户可见终态、外部 API/schema、持久化/缓存、异步状态或跨层转换的验收目标，读取 Detail/`implement.md` 中对应的 Acceptance Closure Matrix 行、authority fingerprint、known failure 与 current mutable evidence；缺 row 时按 `DETAIL_DEFECT` 停止。
+6. 对 `runtime_acceptance_required=true`，以及任何涉及用户可见终态、外部 API/schema、持久化/缓存、异步状态或跨层转换的验收目标，读取 Detail/`implement.md` 中对应的 Acceptance Closure Matrix 行、authority fingerprint、known failure 与 current CH-01 result；缺 row 时按 `DETAIL_DEFECT` 停止。
 
 ## Active packet 消费边界
 
@@ -23,6 +23,8 @@ description: 按详细设计合同执行 Flutter 编码与自测。编码规则�
 
 ## Acceptance path 与 false-green 阻断
 
+- `AcceptanceResolution` 必须原样消费 CH-01 exact object，不得摘要或私有投影；完整字段固定为 `baseline_binding`、`ledger_snapshot_ref`、`reconciliation_snapshot_ref`、`open_correction_debts`、`open_retrospective_reconciliations`、`row_results`、`selected_evidence_refs`、`blocking_evidence_refs`、`task_result`、`blocking_acceptance_ids`、`next_probe`。
+- `ClosureSpec-only` 是 currentness 边界：只有 `ClosureSpec` 可调用 `readAllInAppendOrder`、发现/完整 replay reconciliation journal、调和 entry 和选出 effective evidence。writer 不得打开、过滤、扫描、调和或挑选 ledger/register entry。result 缺失、stale、字段不全、双 snapshot 不匹配、生成后 ledger/register/baseline 变化或任一 blocker set 非空时，必须按 `PROCESS_DEFECT` 停止 ready/写入/receipt，不得回退旧 pass 或自建 ref。
 - 编码前按 `acceptance_id` 把 frozen matrix 行展开为具体 source-to-sink 计划：触发入口/目标环境、外部或本地权威及 fingerprint、每个真实组件 owner、输入/输出字段或状态、正向与缺字段/null/错误/超时/降级分支、允许终态、focused check、Integration check、runtime probe 与 evidence owner。即使本次只改 DTO 或单一逻辑层，也必须追到用户可见 sink。
 - focused regression 必须有证据证明它在 known-bad/修复前实现上失败，不能只证明修复后 helper 正向返回成功。外部合同 fixture 必须保留最小脱敏字段路径与 presence/null 语义。
 - required path 节点超出 packet `target_paths` 时不得扩写 scope；记录 gap 并路由对应 ordinary slice 或 Integration owner。ordinary worker 的局部通过不能替代 Integration union snapshot closure。
@@ -30,6 +32,7 @@ description: 按详细设计合同执行 Flutter 编码与自测。编码规则�
 - 发现 packet、Detail、fixture 或 deterministic check 无法证伪目标时，先停止 product code writes 并提交唯一的 earliest-owner route；不得在代码中补造 Requirement、owner、invariant 或 check 语义，也不得为了继续实现而改 `implement.md`。
 - current target-environment runtime failure 可以反证 internally green 的 packet/Detail/implementation。不得因 packet 未声明关键检查而把 failure 视为 packet 外；保留 failure，交 semantic reviewer 按最早 owner 分类，不自行改写 Requirements、Overview 或 Detail。
 - 只复用所有 snapshot binding 均未变化的 sibling evidence。ordinary deterministic green 只可报告本 slice 局部完成；Integration green 但 required runtime 尚未 current pass 时只报告 `implementation_verified` / `runtime_acceptance_pending`，不得报告 `accepted`。
+- writer 只拥有 bounded `ImplementationClosurePlan`、packet 内实现/测试 bytes 与 implementation evidence；遇到 planning/process 缺陷只提交 owning-route signal 并停止，不生成 semantic finding/classification，不选择 runtime contradiction evidence，不写 clean/Integration/runtime receipt。designated reviewer 拥有 finding/classification，Integration 拥有 final union closure。
 
 ## 边界约束
 
@@ -39,14 +42,14 @@ description: 按详细设计合同执行 Flutter 编码与自测。编码规则�
 - 测试先于或伴随实现（高风险切片先写失败测试再实现）。
 - 注释与日志是实现证据的一部分：新增核心类/公开定义/跨层入口必须能从代码追溯到设计文档；非显然业务分支、错误/降级/并发/缓存/生命周期边界必须有简洁但足够具体的注释或日志。禁止堆砌"赋值/调用"类空注释。
 - 日志必须复用项目已有 logger、logging helper 或日志门面；不得使用裸 `print`/`debugPrint` 替代项目日志，不得记录 secret、token、PII、完整请求体或用户生成内容原文。
-- detail 确认后，`implement.md` 是 digest-bearing planning contract，不再作为执行证据默认写入点。实现/验证/packet 证据写入 task-local mutable evidence（如 `implementation-evidence.jsonl`、`verification-evidence.jsonl`、`review-records/implementation-reviews.jsonl`）；若必须修改 `implement.md`，明确回退 detail Gate 并重新 review/confirm。
+- detail 确认后，`implement.md` 是 digest-bearing planning contract，不再作为执行证据默认写入点。writer 只把实现/packet 执行记录写入 task-local `implementation-evidence.jsonl`，并把验证命令与最小脱敏结果提交给 active task coordinator/evidence executor；后者独占 `verification-evidence.jsonl` append。当前 semantic review record 只由 supervisor 在 designated reviewer 输出 verdict 后追加，writer 不写 `review-records/implementation-reviews.jsonl`。若必须修改 `implement.md`，明确回退 detail Gate 并重新 review/confirm。
 
 ## 执行流程
 
 1. **WX-1 消费已确认计划**：Full/high 只校验 current packet 与 `implement.md` planning audit 的 `owner_unit` / `covered_units` / `owned_paths` / `depends_on` / `parallel_wave` / focused checks 一致；ordinary worker 不创建、拆分或重排 slices。packet 缺失即停回 planning。Small、Micro、Lite、non-Full 与 v1 继续按既有 trace 计划行为执行。
 2. **WX-2 逐片实现**：按入口决策树组合迷你路径（golden-path §1，§3~§7）；每片完成即追加 `implementation-evidence.jsonl` 执行记录。
 3. **WX-3 代码生成**：按 `[SLOT-08]` 顺序执行（仅在触发条件满足时）；记录于 `implementation-evidence.jsonl`。
-4. **WX-4 当前 packet 验证**：Full/high ordinary 只运行 packet `deterministic_checks` 与 planning audit focused checks，不运行 project-wide `flutter analyze` 或 full regression；Integration 运行 project-wide analyze/lint/full regression。每个 acceptance-bound focused check 还必须核对 known-bad failure evidence；若 packet 未声明这个必要检查，停止并路由 planning owner，不自行运行 undeclared test 形成第二份合同。Small、Micro、Lite、non-Full 与 v1 保留 `flutter analyze` + 相关测试 + `guru_lints`（建成后）的既有行为。结果追加到 `verification-evidence.jsonl`，失败即阻塞当前 packet。
+4. **WX-4 当前 packet 验证**：Full/high ordinary 只运行 packet `deterministic_checks` 与 planning audit focused checks，不运行 project-wide `flutter analyze` 或 full regression；Integration 运行 project-wide analyze/lint/full regression。每个 acceptance-bound focused check 还必须核对 known-bad failure evidence；若 packet 未声明这个必要检查，停止并路由 planning owner，不自行运行 undeclared test 形成第二份合同。Small、Micro、Lite、non-Full 与 v1 保留 `flutter analyze` + 相关测试 + `guru_lints`（建成后）的既有行为。writer 把命令、exit status 与最小脱敏结果提交给 evidence executor，由其追加到 `verification-evidence.jsonl`；writer 不直接写 raw ledger，失败仍阻塞当前 packet。
 5. **WX-5 注释/日志/文档追溯**：逐片完成前补齐维护性证据：
    - 新增核心类、public API、Controller/UseCase/Repository/DataSource、跨层 DTO/状态定义：优先用 Dart doc comment 写明职责、承接的 `UNIT-<slug>` / `BHV-NNN`，必要时附设计文档相对路径（如 `docs/design/.../chapters/<slug>.md` 或任务内 `design.md` 锚点）。
    - 复杂私有 helper、状态机分支、错误转换、缓存/恢复/降级、异步竞态、生命周期处置：用局部注释解释"为什么这样做"和对应设计约束。
@@ -58,7 +61,7 @@ description: 按详细设计合同执行 Flutter 编码与自测。编码规则�
 ## 输出
 
 - 代码改动 + 新增/修订测试。
-- task-local mutable evidence 完整：`implementation-evidence.jsonl`、`verification-evidence.jsonl`、`review-records/implementation-reviews.jsonl` 可恢复执行与验证证据；`implement.md` 只作为已确认的 trace 计划合同读取。
+- task-local evidence handoff 完整：writer 发布非 ledger 的 `implementation-evidence.jsonl` 与验证结果提交；`verification-evidence.jsonl` 只由 evidence executor 追加，当前 `review-records/implementation-reviews.jsonl` 行只由 supervisor 在 designated reviewer verdict 后追加。后续 writer/reviewer 仅通过 fresh CH-01 exact `AcceptanceResolution` 及其脱敏 refs/summaries 消费验证 currentness，不打开 raw ledger；`implement.md` 只作为已确认的 trace 计划合同读取。
 - Gate G1~G4 自检摘要 + Acceptance Closure Matrix 逐行结果 + 注释/日志/文档路径追溯摘要 + runtime 移交清单。ordinary worker 不输出 Integration/runtime/`accepted` 结论。
 
 ## 与流程 Skill 的组合
