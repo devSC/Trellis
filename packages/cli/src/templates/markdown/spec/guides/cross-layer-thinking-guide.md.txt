@@ -77,7 +77,7 @@ The matrix is a digest-bearing planning contract. Runtime results do not edit
 it; append sanitized results and artifact references to task-local
 `verification-evidence.jsonl` instead.
 
-### Step 5: Resolve Runtime Evidence
+### Step 5: Resolve Runtime Evidence Through ClosureSpec Only
 
 Runtime acceptance uses these evidence/reporting values:
 
@@ -88,16 +88,137 @@ Runtime acceptance uses these evidence/reporting values:
 - `runtime_acceptance_failure`: the actual outcome does not satisfy the row
 - `runtime_acceptance_pass`: environment, steps, expected result, actual
   result, evidence, and current baseline binding are complete
-- `accepted`: task-level conclusion only after every required row has a latest
-  current `runtime_acceptance_pass`
+- `accepted`: task-level conclusion only after every required row is current
+  pass and every process blocker is closed
 
 The first four values are evidence row statuses. `accepted` is a task-level
 reporting conclusion, not an evidence row status, and none of these values adds
-a task lifecycle state. For each required row, use the latest valid evidence
-bound to the current applicable baseline. A stale pass is historical only, and
-any newer current non-pass row, including `implementation_verified`, pending,
-or failure, supersedes an earlier pass. Missing, non-pass, stale, or superseded
-rows must not be reported as `accepted`.
+a task lifecycle state.
+
+#### ClosureSpec-only currentness
+
+`ClosureSpec` is the only owner allowed to read and replay the raw ledger and
+retrospective reconciliation journal. It returns one exact
+`AcceptanceResolution` with all of these fields:
+
+- `baseline_binding`
+- `ledger_snapshot_ref`
+- `reconciliation_snapshot_ref`
+- `open_correction_debts`
+- `open_retrospective_reconciliations`
+- `row_results`
+- `selected_evidence_refs`
+- `blocking_evidence_refs`
+- `task_result`
+- `blocking_acceptance_ids`
+- `next_probe`
+
+This is a `ClosureSpec-only` result. Implement, review, repair, workflow, and
+finish consumers must preserve the complete object. They must not select rows,
+project away provenance or blocker fields, or privately recompute currentness.
+Any ledger append, reconciliation event, or baseline change makes the whole
+resolution stale and requires a complete recomputation.
+
+#### Complete ledger replay and corrections
+
+`EvidenceLedger.readAllInAppendOrder()` returns every physical append in a
+`LedgerReadSnapshot`; it must not return a filtered ID/status view or a prefix.
+Its `LedgerSnapshotRef` contains `artifact_ref`, `append_count`,
+`last_append_position`, and `content_digest`, all bound to the complete raw
+bytes. Each append retains its stable position, raw record, parse outcome, and
+every readable identity and baseline component.
+
+The empty-ledger identity is explicit: `append_count=0`,
+`last_append_position=null`, and `content_digest` is the lowercase `SHA-256` of
+the empty ledger file bytes. A non-empty digest always covers the complete
+ledger file bytes for the referenced snapshot. For a nonempty snapshot,
+`LedgerSnapshotRef.content_digest` equals the lowercase `SHA-256` of the exact complete ledger file bytes for that snapshot, never parsed, normalized,
+filtered, or prefix bytes.
+
+An unreadable append or a readable current-baseline append with an invalid
+status or incomplete evidence creates an exact-position correction debt before
+any acceptance-ID/status filtering. A correction must use
+`corrects_append_position`, point to the earlier bad append, preserve every
+parseable identity/baseline component, and supply a complete row. The newest
+correction naming that position is authoritative; when it is invalid the debt
+stays open. A normal later pass, wrong pointer, cross-ID row, baseline relabel,
+or older correction cannot clear the debt or expose an older pass.
+
+Only after every debt is closed may `ClosureSpec` select, by append position,
+the newest effective current-baseline row for each required `acceptance_id` and
+validate it. The canonical blocker order is: unavailable/corrupt reconciliation
+journal, open retrospective reconciliation, open correction debt,
+`runtime_acceptance_failure`, stale, missing, `runtime_acceptance_pending`, then
+`implementation_verified`. Only an all-current-pass result with both open lists
+empty can yield `task_result=accepted`.
+
+#### Interruption-safe retrospective reconciliation
+
+The journal is exactly `<task_dir>/retrospective-reconciliation.jsonl`, where
+`task_dir` is the current active task or the linked active repair task. Setup
+initializes the empty journal and rereads it completely. A fresh resolver only
+locates it from `TaskRef`; it never creates a missing journal or discovers it
+from a snapshot `artifact_ref`. Missing/unreadable and malformed journals are
+respectively `reconciliation_register_unavailable` and
+`reconciliation_register_corrupt`, both blocking `PROCESS_DEFECT` results with
+`next_probe=null`.
+
+The journal uses `journal-root-v1`. A complete newline-terminated
+`ReconciliationJournalEvent` is appended for each transition. The first event
+must have `event_position` `position=1` and
+`previous_event_digest=null`; every later `previous_event_digest` is the
+lowercase `SHA-256` of the previous event's complete UTF-8 bytes including its
+newline. `RetrospectiveReconciliationSnapshot` contains `artifact_ref`,
+`event_count`, `last_event_position`, `last_event_digest`, `content_digest`,
+and replayed entries. For a non-empty journal, `last_event_digest` is the
+lowercase `SHA-256` of the final complete newline-terminated event bytes and
+`content_digest` is the lowercase `SHA-256` of the complete journal file bytes.
+The empty-journal identity is `event_count=0`, `last_event_position=null`,
+`last_event_digest=null`, and `content_digest` equal to the lowercase `SHA-256`
+of the empty journal file bytes. All values must match a strict full replay.
+Partial lines, a non-root prefix, gaps, duplicates, digest mismatch, invalid
+transition, or snapshot mismatch are corrupt. A transition is acknowledged
+only after strict full replay proves it is the unique legal last event; no
+later side effect may run before that acknowledgment.
+
+Before appending retrospective evidence, persist a
+`RetrospectiveAppendAttempt` containing `attempt_id`, `acceptance_id`, the
+current baseline, `retrospective_artifact_ref`, exact row digest,
+`pre_append_ledger_snapshot_ref`, and `retry_ordinal` (0, or the single allowed
+retry 1 with `retry_of`). The prepared event must be acknowledged before the
+ledger append. `LedgerAppendResult` can be accepted, explicitly rejected, or
+have missing acknowledgment (`retrospective_append_outcome_unknown`).
+
+`LedgerAppendRef` is independently computed as
+`deriveLedgerAppendRef(full_snapshot, exact_position)`: `artifact_ref`, exact
+append position, and lowercase `SHA-256` of that position's complete raw append
+bytes including its newline. Journal data must never participate in this
+derivation. `RetrospectiveAppendReconciliation` first proves that the current
+ledger prefix exactly equals the attempt's pre-append snapshot, then inspects
+only the suffix. For ordinal 0, one exact suffix match is `committed`, zero is
+`absent` and permits exactly one ordinal-1 retry on a newly acknowledged
+boundary; boundary drift, a history-only/non-unique/unreadable match, or a
+missing ordinal-1 acknowledgment is `ambiguous`. There is no third retry,
+record, acceptance decision, runtime probe, or Finish bypass.
+
+An accepted or `committed` append only supplies `accepted_append_ref`; it does
+not close the attempt. Repair must build the canonical
+`FailureRetrospectiveRecord` and `record_ref`, then `ClosureSpec` appends an
+acknowledged `record-bound` event containing `accepted_append_ref`,
+`record_ref`, and exact `closes_attempt_ids`. Without a retry, the list is
+exactly ordinal 0; after a successful retry, it is exactly the ordinal-0 plus
+ordinal-1 chain. Missing ancestors, extra IDs, or cross-acceptance,
+cross-baseline, or cross-row chains remain open/corrupt. Every replayed entry
+whose `record_ref` is null remains in `open_retrospective_reconciliations`
+regardless of its state. Only full-replay acknowledgment of the valid
+`record-bound` event closes the complete chain.
+
+Finally run `retrospective-ledger-journal-correlation`: independently derived
+ledger refs, acceptance ID, baseline, and row digest must identify exactly one
+surviving journal chain for each retrospective ledger append. An older-valid
+journal prefix, empty rollback, cross-position ref, or repeated identical raw
+row that produces zero or multiple matches is corrupt and cannot be rescued by
+a later pass.
 
 ### Step 6: Close Post-Implementation Failures
 
@@ -113,9 +234,25 @@ to the same `acceptance_id` and record:
   allowed Skill/workflow/spec owner and validation, or
   `no_writeback_required` with an explicit reason and evidence references
 
-Do not close the repair when a field is missing, the disposition is a TODO,
-both or neither disposition branches are present, or a writeback is invented
-despite sufficient existing prevention evidence.
+Only the acknowledged record-bound chain above can close the repair. Do not
+close it when a field is missing, the disposition is a TODO, both or neither
+disposition branches are present, or a writeback is invented despite sufficient
+existing prevention evidence.
+
+`verification-evidence.jsonl` may store the complete canonical, minimally
+scoped and sanitized `VerificationEvidenceRow`: `acceptance_id`, `status`,
+`baseline_binding`, `environment`, `steps_or_command`, `expected`, `actual`,
+`evidence_refs`, `recorded_at`, `recorded_by`, and applicable correction or
+retrospective artifact/control references. The reconciliation journal may store
+the sanitized `ReconciliationJournalEvent` and attempt control metadata needed
+for replay: positions/digests, attempt/acceptance/baseline identity,
+`retrospective_artifact_ref`, exact row digest, pre/post snapshot refs,
+retry/state, `accepted_append_ref`, `record_ref`, `closes_attempt_ids`, reason,
+actor, and timestamp. These summary fields must not contain secrets, tokens,
+PII, complete request/response bodies, user content, or a raw retrospective
+payload/row. These contracts are Skill/spec/workflow policy only: they do not
+authorize a new parser, schema, lifecycle state, script-level gate, or any
+Trellis/Guru/CLI Python, shell, TypeScript, hook, verify, or apply change.
 
 ---
 
@@ -198,7 +335,9 @@ After implementation:
       an ordinary or local layer check is supporting evidence only
 - [ ] Kept mutable runtime evidence append-only and separate from the frozen
       matrix
-- [ ] Resolved every required row from its latest current baseline binding
+- [ ] Consumed one fresh, complete ClosureSpec-produced
+      `AcceptanceResolution` with both snapshot refs and both open blocker sets
+      intact; no consumer directly resolved or selected evidence rows
 
 ---
 
