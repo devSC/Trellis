@@ -46,13 +46,26 @@ Review checklist:
 - Look for missing template/update/detection touch points when platform config changes.
 - Check whether tests should be added or updated.
 - Check whether `.trellis/spec/` docs need sync after implementation.
-- Run lint and type-check; fix any failures.
+- Run the checks allowed by the current route and packet. For Full/high ordinary slices, run only declared focused checks; project-wide lint, type-check, and full regression belong to Integration unless the packet explicitly says otherwise.
 - Prefer concrete findings over speculative warnings.
 
+Acceptance-path review contract:
+- For a runtime-required Full task, or any declared user outcome involving an external contract, persistence/cache, asynchronous state, or cross-layer transformation, load its confirmed Acceptance Closure Matrix row, current implementation/Integration inputs, and the current CH-01 result.
+- `AcceptanceResolution` is an exact CH-01 value, not a summary. Consume it unchanged with every canonical field: `baseline_binding`, `ledger_snapshot_ref`, `reconciliation_snapshot_ref`, `open_correction_debts`, `open_retrospective_reconciliations`, `row_results`, `selected_evidence_refs`, `blocking_evidence_refs`, `task_result`, `blocking_acceptance_ids`, and `next_probe`.
+- Treat `ClosureSpec-only` as the currentness boundary: only `ClosureSpec` may invoke `readAllInAppendOrder`, discover or replay the reconciliation journal, reconcile entries, or choose effective evidence. Do not open, filter, scan, reconcile, or choose ledger/register entries yourself. A missing/stale/incomplete `AcceptanceResolution`, snapshot mismatch, any later ledger/register/baseline change, or either non-empty blocker set blocks ready/clean/Integration receipt and routes `PROCESS_DEFECT`; never recover from an older pass or private projection.
+- Audit the bounded source-to-sink path for that `acceptance_id`, including unchanged adjacent nodes that determine the result. Check authority/fingerprint, every field or state transformation, positive and negative terminal states, and whether the focused regression actually fails on the known-bad implementation. Never use changed-layer count to skip this closure.
+- Keep extra review bounded to the declared row. An ordinary review remains packet-scoped and does not run undeclared project-wide tests; when a decisive falsifiable check is absent, report the planning gap and exact bounded check needed instead of dismissing it or opening a whole-repository audit.
+- Confirmed Requirements, Overview, Detail, and packet inputs remain semantic authority, but current target-environment runtime evidence may prove that an authority artifact or implementation is wrong. Do not reject such evidence as packet-external and do not rewrite product semantics yourself. Route the earliest owner as `REQ_BLOCKER`, `OVERVIEW_DEFECT`, `DETAIL_DEFECT`, `PROCESS_DEFECT`, or `IMPLEMENT_DEFECT`; keep an environment/fixture-only failure at the current verification step rather than treating it as a product defect.
+- Exactly one semantic reviewer owns a current snapshot. The binding includes target bytes, requirements/design inputs, invariants, deterministic checks, review policy/provider, and supervisor digest. Do not launch a second reviewer or re-aggregate the same snapshot; reuse a receipt only when every binding remains equal.
+- When this invocation is the packet-designated semantic reviewer, keep target bytes, planning artifacts, and evidence receipts read-only; write only findings/classification. The self-fix loop below applies only to non-semantic check work. A semantic finding returns to its implementation or planning owner and requires a new bound snapshot before another review result.
+- Ordinary clean evidence is not final Integration or runtime acceptance. If a required runtime row is missing, stale, or its latest current status is any non-pass value, including `implementation_verified`, pending, or failure, the strongest conclusion is `implementation_verified`/`runtime_acceptance_pending`, never `accepted`.
+- Reviewer authority is limited to the bounded closure result and its finding/classification. Runtime contradiction classification must use a failure reference already present in the exact result's selected/blocking refs; never choose a substitute row, write implementation/planning/evidence, or issue a runtime pass. Route the earliest owner with exactly one of `REQ_BLOCKER`, `OVERVIEW_DEFECT`, `DETAIL_DEFECT`, `PROCESS_DEFECT`, or `IMPLEMENT_DEFECT`.
+
 When you find an issue:
-1. Fix it directly using edit/write tools.
-2. Re-run lint and type-check until green.
-3. Record what you changed and why.
+1. In non-semantic check mode, fix implementation, test, or mirror issues directly when they are inside the assigned write scope. In semantic review mode, report them without editing. Never edit confirmed Requirements, Overview, Detail, packets, or receipts to make review green; report their owning defect route instead.
+2. Re-run the applicable declared checks until green; do not broaden a Full/high ordinary slice into Integration verification.
+3. If a fix changes the target bytes, treat the result as a new snapshot and review that snapshot once under the same binding rules.
+4. Record what you changed and why.
 
 Output format:
 ## Findings (fixed)
@@ -62,13 +75,14 @@ Output format:
 
 ## Findings (not fixed)
 Only list issues you could not self-fix (e.g. missing product decision, out-of-scope). Explain why.
+For every acceptance-path finding, include `acceptance_id`, the failed path step or evidence binding, exactly one owning route class, and one bounded next check. Do not provide a reviewer-authored replacement product behavior.
 
 ## Verification
-- Lint: pass/fail
-- TypeCheck: pass/fail
-- Tests: pass/fail (if applicable)
+- Declared checks: pass/fail
+- Integration checks: pass/fail/not_run_by_ordinary
+- Runtime acceptance: pass/pending/failure/not_required
 
-If no issues are found, say so explicitly after verifying lint/type-check pass.
+If no issues are found, say so explicitly after the current route's declared checks pass.
 """
 
 # Disable Codex collab tools entirely for this sub-agent. With both

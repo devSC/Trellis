@@ -118,25 +118,23 @@ Lite=官方标准 task→repo evidence→必要 bounded Brainstorm→task-local 
 - 2.3 回退 `[on demand]`
 
 [workflow-state:in_progress]
-route=`gate-contract.json.route`. lite_task: current confirmation digest -> host-inline -> focused check -> mutable evidence -> Spec sync -> reversible commit-ready; Worker 0, no Overview/Detail planning review. full_chain: guru_supervise.py implement-slices <task-dir> --dry-run --backend auto; dispatch only selected_backend.
-Runtime-required Full: technical green -> `implementation_verified` -> exact runtime probe handoff; latest current pass 不完整时任务保持 active，禁止 archive/`accepted`。
+gate-contract.json.route:lite_task=host-inline,W0;full_chain=dispatch-mode aware;guru_supervise.py implement-slices <task-dir> --dry-run --backend auto;按 selected_backend 派发 dispatch_now/deferred_slices;channel 仅 selected_backend=channel
+Spec>3.4>finish;fresh>accepted+guard-clear;tech>implementation_verified+active+exact probe;else keep;null iff recon/register;fail>repair;same-goal>owner1
 [/workflow-state:in_progress]
 
 [workflow-state:in_progress-channel]
-Lite 不进入 channel/Worker 路径；以下 channel 行为仅适用于 Full。
-实现→质检→spec回写→commit→finish。channel：主会话运行 guru_supervise.py implement-check（官方 trellis channel；必要时拆分 implement/check），注入存在的 jsonl/任务产物/Guru skill，等待 done/error/killed，失败先读 messages --raw 和 log；worker 不 commit/push/merge。
-Runtime-required Full 技术绿后只报 `implementation_verified` 并移交 exact probe；未全部 current pass 时保持 active，不运行 archive。
+Full channel: guru_supervise.py implement-check; use official trellis channel, wait done/error/killed; worker no commit/push/merge. Lite host-inline.
+Spec-writeback>3.4 commit>finish-work;fresh AR:all-pass:accepted/guard-only;tech-green:implementation_verified+active+exact probe;else keep AR/probe;null iff recon/register;failure:repair;same-goal:earliest-owner.
 [/workflow-state:in_progress-channel]
 
 [workflow-state:in_progress-sub-agent]
-Lite 不派 sub-agent；以下仅适用于 Full。
-实现→质检→spec回写→commit→finish。dispatch trellis-implement/check，prompt 首行 `Active task: <path>`；trace 记执行/证据/偏差。Full/high ordinary 仅要求 packet `deterministic_checks` + focused evidence；Integration 才要求 project-wide build/analyze/lint/full regression；设计缺陷回 Phase1。
-Runtime-required Full 技术绿后只报 `implementation_verified` 并移交 exact probe；未全部 current pass 时保持 active，不运行 archive。
+Full sub-agent: dispatch trellis-implement/check; prompt starts Active task: <path>; ordinary runs packet focused checks, Integration owns full regression. Lite host-inline.
+Spec-writeback>3.4 commit>finish-work;fresh AR:all-pass:accepted/guard-only;tech-green:implementation_verified+active+exact probe;else keep AR/probe;null iff recon/register;failure:repair;same-goal:earliest-owner.
 [/workflow-state:in_progress-sub-agent]
 
 [workflow-state:in_progress-inline]
-实现→质检→spec回写→commit→finish。inline 不派 sub-agent：编辑前 trellis-before-dev 读 spec，编辑后 trellis-check。Full/high ordinary 仅记录 packet `deterministic_checks` + focused evidence；Integration 才记录 project-wide build/analyze/lint/full regression；其他 route 保持原验证合同。缺证据不得 commit；设计缺陷回 Phase1。
-Runtime-required Full 技术绿后只报 `implementation_verified` 并移交 exact probe；未全部 current pass 时保持 active，不运行 archive。
+Inline: no sub-agent; run trellis-before-dev, then trellis-check; ordinary runs packet focused checks, Integration owns full regression.
+Spec-writeback>3.4 commit>finish-work;fresh AR:all-pass:accepted/guard-only;tech-green:implementation_verified+active+exact probe;else keep AR/probe;null iff recon/register;failure:repair;same-goal:earliest-owner.
 [/workflow-state:in_progress-inline]
 
 ### Phase 3: Finish（审核与收尾）

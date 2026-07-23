@@ -3,128 +3,104 @@ name: trellis-break-loop
 description: "Deep bug analysis to break the fix-forget-repeat cycle. Analyzes root cause category, why fixes failed, prevention mechanisms, and captures knowledge into specs. Use after fixing a bug to prevent the same class of bugs."
 ---
 
-# Break the Loop - Deep Bug Analysis
+# Break the Loop - Post-Implementation Failure Retrospective
 
-When debug is complete, use this for deep analysis to break the "fix bug -> forget -> repeat" cycle.
+Use this Skill after a user- or QA-reported post-implementation failure to explain the false green, prove the repair, and prevent recurrence. It is a retrospective helper inside the active Trellis/Guru repair continuation; it does not create a second lifecycle, own task state, classify product behavior without evidence, or authorize writes.
 
----
+## Ownership And Preconditions
 
-## Analysis Framework
+- `guru-bug-fast-path`/workflow owns continuation, Review/workflow owns final routing, `ClosureSpec` owns currentness and durable reconciliation. This helper drafts/validates retrospective evidence only.
+- Before any analysis or edit, preserve `runtime_acceptance_failure` with original `acceptance_id`, active task/current baseline, environment, steps, expected/actual, and privacy-safe refs. If missing, return `PROCESS_DEFECT: runtime_failure_row_missing` and only its recording action.
+- The append stales prior resolution. Before affinity/classification/repair, require fresh CH-01 `AcceptanceResolution` selecting that failure with both open lists empty; missing/stale/projected/blocked means process correction only.
+- Confirm root cause by reproduction/trace/log/failing check, not hypothesis. Compare current Requirements, Overview, Detail/packet, implementation, prior tests/Review, and runtime evidence; packet-local green cannot dismiss runtime contradiction.
 
-Analyze the bug you just fixed from these 5 dimensions:
+## Canonical Evidence Input And Ownership
 
-### 1. Root Cause Category
+Consume the same complete CH-01 object used by Review/Workflow/Finish/repair: `baseline_binding`, ledger+reconciliation snapshot refs, both open lists, row results, selected+blocking refs, task result, blocking IDs, and `next_probe`. Never project it, select a row, reconcile/mutate storage, or authorize a probe. `ClosureSpec` owns full replay/currentness/transitions/correlation/probe; this helper returns only `FailureRetrospectiveDraft`, while `guru-bug-fast-path` owns the validated, durably bound final record.
 
-Which category does this bug belong to?
+## Same-Goal Affinity
 
-| Category | Characteristics | Example |
-|----------|-----------------|---------|
-| **A. Missing Spec** | No documentation on how to do it | New feature without checklist |
-| **B. Cross-Layer Contract** | Interface between layers unclear | API returns different format than expected |
-| **C. Change Propagation Failure** | Changed one place, missed others | Changed function signature, missed call sites |
-| **D. Test Coverage Gap** | Unit test passes, integration fails | Works alone, breaks when combined |
-| **E. Implicit Assumption** | Code relies on undocumented assumption | Timestamp seconds vs milliseconds |
+Reuse fast-path affinity: `same_goal=true` only for the same BHV/AC/outcome with `new_product_behavior`, `permission_or_data_expansion`, `external_contract_change`, and `material_scope_change` all false. File/snapshot/symptom/wording/approach changes do not change the goal. Unbound task/baseline/ID is authority-blocked; different behavior or any true indicator routes `REQ_BLOCKER`/material change to Requirements.
 
-### 2. Why Fixes Failed (if applicable)
+## Five-Class Maximum Rollback
 
-If you tried multiple fixes before succeeding, analyze each failure:
+Choose the earliest evidence-proven owner, never the shortest desired route.
 
-- **Surface Fix**: Fixed symptom, not root cause
-- **Incomplete Scope**: Found root cause, didn't cover all cases
-- **Tool Limitation**: grep missed it, type check wasn't strict
-- **Mental Model**: Kept looking in same layer, didn't think cross-layer
+| Defect class | Maximum rollback | Required refresh | Preserved by default |
+| --- | --- | --- | --- |
+| `IMPLEMENT_DEFECT` | Phase 2 implementation/check | Affected source/tests, Slice Review, Integration, and runtime receipt | Current Requirements, Overview, Detail, and independently bound sibling receipts |
+| `PROCESS_DEFECT` | Current evidence/process; Phase 1 Detail only when a packet or digest-bearing plan must change | Affected mutable evidence/fixture/execution step; changed Detail and its downstream only when the plan changes | Unchanged planning and independently bound receipts |
+| `DETAIL_DEFECT` | Phase 1 Detail | Affected Detail, packet/plan, Detail Review/confirmation, affected Slices, Integration, and runtime receipt | Requirements and Overview |
+| `OVERVIEW_DEFECT` | Phase 1 Overview plus affected Detail | Overview Review and affected Detail/downstream evidence in order | Requirements |
+| `REQ_BLOCKER` or material requirement change | Phase 1 Requirements affected Full chain | Affected Requirements through Overview, Detail, implementation, Integration, and runtime acceptance | Only evidence proven independent by current bindings |
 
-### 3. Prevention Mechanisms
+Implementation defects never restart planning; upstream defects are repaired by their owner first. Multiple classes use the earliest owner plus dependent refresh.
 
-What mechanisms would prevent this from happening again?
+### Environment/Fixture Discriminator
 
-| Type | Description | Example |
-|------|-------------|---------|
-| **Documentation** | Write it down so people know | Update thinking guide |
-| **Architecture** | Make the error impossible structurally | Type-safe wrappers |
-| **Compile-time** | Strict type checking, no escape hatches | Signature change causes compile error |
-| **Runtime** | Monitoring, alerts, scans | Detect orphan entities |
-| **Test Coverage** | E2E tests, integration tests | Verify full flow |
-| **Code Review** | Checklist, PR template | "Did you check X?" |
+Environment/fixture-only is not a sixth class. Wrong packet/plan/fixture contract/check is `PROCESS_DEFECT`, returning to Detail only if that artifact changes. If plan+implementation are correct and only target setup/data/fixture instance is wrong, stay at verification and refresh that evidence/probe without product changes. Unproven means request evidence.
 
-### 4. Systematic Expansion
+## Selective Evidence Refresh
 
-What broader problems does this bug reveal?
+Draft an exact evidence plan from the actual binding changes:
 
-- **Similar Issues**: Where else might this problem exist?
-- **Design Flaw**: Is there a fundamental architecture issue?
-- **Process Flaw**: Is there a development process improvement?
-- **Knowledge Gap**: Is the team missing some understanding?
+1. Compare target bytes, invariants, Requirements/Detail inputs, declared checks, policy/provider, and supervisor digest for every affected receipt.
+2. Invalidate and reverify receipts with any changed binding. Refresh affected union-snapshot Integration evidence and the runtime receipt after implementation or planning bytes change.
+3. Preserve a sibling receipt only when all binding components remain equal and it is independent of the affected acceptance path.
+4. Treat v1 receipts, missing binding data, or unproven independence as affected. Honor any current digest/snapshot Gate that marks evidence stale; never describe stale evidence as current.
 
-### 5. Knowledge Capture
+## Required Five-Field Retrospective
 
-Solidify insights into the system:
+Every field must bind to the same `acceptance_id`, preserved failure row, and repaired baseline.
 
-- [ ] Update `.trellis/spec/guides/` thinking guides
-- [ ] Update relevant `.trellis/spec/` docs
-- [ ] Create issue record (if applicable)
-- [ ] Create feature ticket for root fix
-- [ ] Update check guidelines if needed
+The canonical field names are `direct_cause`, `earliest_missed_gate`, `false_green_reason`, `falsifiable_regression`, and `prevention_disposition`. The disposition is an exact XOR of `writeback_required` and `no_writeback_required`.
 
----
+| Field | Required evidence |
+| --- | --- |
+| `direct_cause` | Confirmed causal control point and proof, not symptom/category. Optional categories: missing spec, cross-layer loss, stale propagation, coverage gap, implicit assumption. For repeats, explain each failed attempt. |
+| `earliest_missed_gate` | Earliest Requirement/Overview/Detail/Implementation/Test/Review/Process Gate plus exact missing contract/check/decision, not merely the reporting Gate. |
+| `false_green_reason` | Trace actual prior inputs/assertions through the source-to-sink gap; “coverage incomplete” alone fails. |
+| `falsifiable_regression` | Accepted-path deterministic check/probe with old-wrong FAIL and repaired PASS evidence. Helper-only or old-wrong green routes `DETAIL_DEFECT`. |
+| `prevention_disposition` | Exactly one complete branch below. |
 
-## Output Format
+- `writeback_required`: allowed canonical Skill/workflow/spec owner, exact prevented recurrence, required consumer parity, focused validation, and proof no forbidden runtime/script edit is needed.
+- `no_writeback_required`: explicit no-change reason, current owning-contract refs, and proof the new regression/probe closes the uncovered path.
+- TODO/empty claim, both/neither branch, or invented writeback returns `PROCESS_DEFECT: prevention_disposition_incomplete`. Out-of-scope writeback is a scope blocker, never authority.
 
-Please output analysis in this format:
+## Output Contract
+
+Produce one evidence-backed draft, never a `FailureRetrospectiveRecord`, append acknowledgment, or probe authorization:
 
 ```markdown
-## Bug Analysis: [Short Description]
-
-### 1. Root Cause Category
-- **Category**: [A/B/C/D/E] - [Category Name]
-- **Specific Cause**: [Detailed description]
-
-### 2. Why Fixes Failed (if applicable)
-1. [First attempt]: [Why it failed]
-2. [Second attempt]: [Why it failed]
-...
-
-### 3. Prevention Mechanisms
-| Priority | Mechanism | Specific Action | Status |
-|----------|-----------|-----------------|--------|
-| P0 | ... | ... | TODO/DONE |
-
-### 4. Systematic Expansion
-- **Similar Issues**: [List places with similar problems]
-- **Design Improvement**: [Architecture-level suggestions]
-- **Process Improvement**: [Development process suggestions]
-
-### 5. Knowledge Capture
-- [ ] [Documents to update / tickets to create]
+## Bug Analysis: [short description]
+acceptance_id: <original BHV/AC/invariant>
+failure_row: <runtime_acceptance_failure ref>
+affinity: same_goal | material_change | unproven
+defect_class: IMPLEMENT_DEFECT | PROCESS_DEFECT | DETAIL_DEFECT | OVERVIEW_DEFECT | REQ_BLOCKER
+maximum_rollback: <phase/owner>
+direct_cause: <cause + proof>
+earliest_missed_gate: <Gate + missed contract + refs>
+false_green_reason: <prior checks + source-to-sink gap + refs>
+falsifiable_regression: <check; old FAIL ref; repaired PASS ref>
+prevention_disposition: <one complete branch>
+evidence_refresh: <invalidate/reverify, preserve, Integration, runtime>
+Draft: complete | incomplete
+blocking_gap: <none or one exact gap>
 ```
 
----
+The selected prevention branch must be complete; omit the other. `Draft: complete` means field validation only and never `retrospective_state=complete`.
 
-## Core Philosophy
+## Completion Boundary
 
-> **The value of debugging is not in fixing the bug, but in making this class of bugs never happen again.**
+- Draft completeness is five fields plus one prevention branch; it closes no attempt. Final completion requires legal current-baseline pending row, prepared-event acknowledgment before evidence append, accepted/uniquely reconciled append ref, canonical record/ref, and full-replay acknowledgment of exact `record-bound` chain. Accepted alone, open, rejected, or ambiguous stays blocked.
+- Repair completion also requires fresh complete CH-01 with empty blockers, current affected Slice/Integration evidence, and current repaired-baseline `runtime_acceptance_pass`. Workflow alone reports canonical `next_probe`; this helper never chooses/reissues it. Focused test, Review, `implementation_verified`, or old pass is insufficient.
+- Keep broader similar issues as non-blocking follow-ups unless evidence shows they affect the current acceptance path. Do not turn the retrospective into an open-ended repository audit.
 
-Three levels of insight:
-1. **Tactical**: How to fix THIS bug
-2. **Strategic**: How to prevent THIS CLASS of bugs
-3. **Philosophical**: How to expand thinking patterns
+## Archived Task And No-Script Boundary
 
-30 minutes of analysis saves 30 hours of future debugging.
+- Archived work uses an authorized linked repair task carrying original `acceptance_id`, digests, receipts, and new-failure ref; never claim in-place reopen/inheritance, and obey current Gates.
+- Task/authority/spec/sync/Git/archive/finish actions require their own authority. Do not edit Trellis/Guru scripts, verify/hooks/apply, packaged script mirrors, Python/shell, or CLI TS; request separate scope. Markdown cannot provide executable reopen, automatic inheritance/digest invalidation, or script-level archive enforcement.
 
----
+## Core Principle
 
-## After Analysis: Immediate Actions
-
-**IMPORTANT**: After completing the analysis above, you MUST immediately:
-
-1. **Update spec/guides** - Don't just list TODOs, actually update the relevant files:
-   - If it's a cross-platform issue → update `cross-platform-thinking-guide.md`
-   - If it's a cross-layer issue → update `cross-layer-thinking-guide.md`
-   - If it's a code reuse issue → update `code-reuse-thinking-guide.md`
-   - If it's domain-specific → update `backend/*.md` or `frontend/*.md`
-
-2. **Sync templates** - After updating `.trellis/spec/`, sync to `src/templates/markdown/spec/`
-
-3. **Commit the spec updates** - This is the primary output, not just the analysis text
-
-> **The analysis is worthless if it stays in chat. The value is in the updated specs.**
+The value of a repair is not only that the symptom disappears. The same accepted path must fail on the old behavior, pass on the repaired baseline, explain the prior false green, and leave one evidence-backed prevention disposition without inventing unauthorized work.
