@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
-- **Last Active**: 2026-07-20
+- **Total Sessions**: 10
+- **Last Active**: 2026-07-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~340 | Active |
+| `journal-1.md` | ~377 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-07-23 | Guru runtime acceptance and bounded repair continuation | `8daa3d1b1c6c301edf3d3ddad19591485afc1ad4`, `705338dcf71f6a8c2f774f3129242b4eebccd3e0`, `bbc81387fe104877148fdb73b2acf898b4359ff6`, `c40011c086dbe9e43a294cca8eed1266c0309acc`, `970ef859f4196d4b905913c31f61dbe1950bd1ea` | `codex/guru-runtime-acceptance-repair-20260721` |
 | 9 | 2026-07-20 | Harden Guru fast-path installation | `cdeb6e61` | `codex/preserve-guru-target-wip-75887690` |
 | 8 | 2026-07-18 | Complete Guru Integration proof runtime optimization | `c6f86cd8`, `d899ba0b`, `08457498`, `51ea2c5b`, `655f6f74`, `d5b0bd0a` | `codex/guru-minimum-stable-parallel-slices-20260717` |
 | 7 | 2026-07-14 | Configure high-risk slice review provider | `f46cea60` | `codex/preserve-guru-target-wip-75887690` |

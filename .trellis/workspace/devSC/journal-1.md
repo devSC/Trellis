@@ -338,3 +338,40 @@ Installed and reviewed guru-bug-fast-path, hardened approved historical direct-a
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Guru runtime acceptance and bounded repair continuation
+
+**Date**: 2026-07-23
+**Task**: Guru runtime acceptance and bounded repair continuation
+**Branch**: `codex/guru-runtime-acceptance-repair-20260721`
+
+### Summary
+
+Closed Guru runtime acceptance with source-to-sink acceptance states, bounded same-goal repair continuation, defect-class rollback, mandatory failure retrospectives, runtime-required archive guards, exact source/package/installed-consumer parity, five serial receipts, clean schema-v2 Integration review, and local milestone tag guru-v0.6.7.2.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8daa3d1b1c6c301edf3d3ddad19591485afc1ad4` | (see git log) |
+| `705338dcf71f6a8c2f774f3129242b4eebccd3e0` | (see git log) |
+| `bbc81387fe104877148fdb73b2acf898b4359ff6` | (see git log) |
+| `c40011c086dbe9e43a294cca8eed1266c0309acc` | (see git log) |
+| `970ef859f4196d4b905913c31f61dbe1950bd1ea` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
