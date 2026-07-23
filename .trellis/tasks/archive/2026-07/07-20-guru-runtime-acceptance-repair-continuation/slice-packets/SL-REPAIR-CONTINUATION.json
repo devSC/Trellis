@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "review_evidence_schema_version": 2,
+  "slice_id": "SL-REPAIR-CONTINUATION",
+  "owner_unit": "UNIT-repair-continuation",
+  "target_kind": "implementation",
+  "integration_slice": false,
+  "target_paths": [
+    "guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md",
+    "packages/cli/src/templates/common/skills/break-loop.md"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "same_goal_affinity",
+    "maximum_rollback",
+    "failure_retrospective"
+  ],
+  "depends_on": [],
+  "requirements_design_inputs": [
+    {
+      "path": "prd.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/design-main.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/chapters/acceptance-closure-contract.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/chapters/repair-continuation.md",
+      "whole_file": true
+    },
+    {
+      "path": "research/framework-source-maintenance-detail-profile.md",
+      "whole_file": true
+    }
+  ],
+  "deterministic_checks": [
+    "for token in AcceptanceResolution baseline_binding ledger_snapshot_ref reconciliation_snapshot_ref open_correction_debts open_retrospective_reconciliations row_results selected_evidence_refs blocking_evidence_refs task_result blocking_acceptance_ids next_probe ClosureSpec ClosureSpec-only readAllInAppendOrder 'append acknowledgment' FailureRetrospectiveRecord LedgerAppendRef deriveLedgerAppendRef RetrospectiveAppendAttempt ReconciliationJournalEvent RetrospectiveReconciliationSnapshot RetrospectiveAppendReconciliation retrospective-reconciliation.jsonl event_position previous_event_digest event_count last_event_position last_event_digest pre_append_ledger_snapshot_ref retry_ordinal reconciliation_register_unavailable reconciliation_register_corrupt retrospective_artifact_ref exact_row_digest runtime_acceptance_pending accepted_append_ref record_ref record-bound closes_attempt_ids LedgerAppendResult retrospective_append_rejected retrospective_append_outcome_unknown Repair-probe-routing-forbidden journal-root-v1 retrospective-ledger-journal-correlation SHA-256 position=1 previous_event_digest=null; do rg -n -F \"$token\" guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md >/dev/null || exit 1; done",
+    "for token in ArchivedFailureInput original_acceptance_id artifact_digests receipt_refs new_failure_artifact_ref IMPLEMENT_DEFECT PROCESS_DEFECT DETAIL_DEFECT OVERVIEW_DEFECT REQ_BLOCKER; do rg -n -F \"$token\" guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md >/dev/null || exit 1; done",
+    "for token in direct_cause earliest_missed_gate false_green_reason falsifiable_regression prevention_disposition writeback_required no_writeback_required; do rg -n -F \"$token\" packages/cli/src/templates/common/skills/break-loop.md >/dev/null || exit 1; done",
+    "! rg -n \"Repair.*(read|读取).*(ledger|register|verification-evidence)|Repair.*(select|选择).*(ledger row|evidence row|attempt entry)\" guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md packages/cli/src/templates/common/skills/break-loop.md",
+    "rg -n \"retrospective append acknowledgment.*Workflow.*fresh CH-01 AcceptanceResolution.*canonical next_probe\" guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md >/dev/null",
+    "rg -n \"VerificationEvidenceRow.*acceptance_id.*baseline_binding.*runtime_acceptance_pending.*retrospective_artifact_ref\" guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md >/dev/null",
+    "rg -n \"LedgerAppendResult.*accepted.*before.*FailureRetrospectiveRecord\" guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md >/dev/null",
+    "rg -n \"retrospective append (rejected|failure).*no FailureRetrospectiveRecord\" guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md >/dev/null",
+    "rg -n \"RetrospectiveAppendReconciliation.*pre_append_ledger_snapshot_ref.*committed.*accepted_append_ref.*absent.*one retry.*ordinal-1.*ambiguous.*PROCESS_DEFECT\" guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md >/dev/null",
+    "! rg -n \"(append|Append).*(raw )?retrospective (record|reference|evidence reference)\" guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md",
+    "! rg -n \"(^|[-*] )(Reissue|Select|Permit).*(probe|runtime)|Repair(Skill)? (may|can|should|must) (select|permit|allow|reissue).*probe|Repair(Skill)?.*(允许重发|直接重发|选择).*(probe|runtime)|After the retrospective is complete,[[:space:]]+(directly[[:space:]]+)?(rerun|re-run|repeat) the original runtime probe\" guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md packages/cli/src/templates/common/skills/break-loop.md",
+    "git diff --check -- guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md packages/cli/src/templates/common/skills/break-loop.md"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "codex",
+    "ocr": "disabled"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "packages/cli/src/templates/markdown/spec/guides/cross-layer-thinking-guide.md.txt",
+      "packages/cli/src/templates/common/skills/check.md",
+      "guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md",
+      "packages/cli/src/templates/codex/agents/trellis-implement.toml",
+      "packages/cli/src/templates/codex/agents/trellis-check.toml",
+      "guru-template/overlay/agents-skills/flutter-implementation-guru-writing/SKILL.md",
+      "guru-template/overlay/agents-skills/flutter-implementation-guru-review/SKILL.md",
+      "packages/cli/src/templates/common/commands/finish-work.md",
+      "guru-template/workflows/guru-client-workflow.md"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-REP-001",
+      "rule": "Repair must not begin before the runtime acceptance failure is appended and bound to the original acceptance ID.",
+      "source": "design-package/chapters/repair-continuation.md",
+      "owner": "UNIT-repair-continuation",
+      "positive_case": "The failure row is preserved before diagnosis or source edits.",
+      "negative_case": "The code is patched first and the runtime failure is summarized later.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "focused contract search",
+        "Integration same-goal scenario"
+      ]
+    },
+    {
+      "invariant_id": "INV-REP-003",
+      "rule": "An implementation defect must not restart Requirements, Overview, or Detail.",
+      "source": "design-package/chapters/repair-continuation.md",
+      "owner": "UNIT-repair-continuation",
+      "positive_case": "The structured detail.userRole field-loss repair resumes Phase 2 only.",
+      "negative_case": "The same accepted user outcome is sent through the complete Full planning chain.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "focused contract search",
+        "Integration maximum-rollback scenario"
+      ]
+    },
+    {
+      "invariant_id": "INV-REP-010",
+      "rule": "Repair and Review must not perform affinity, classification, or production repair after failure append until CH-01 recomputes an exact current dual-snapshot AcceptanceResolution with both blocker sets empty and selects that failure; they must not read/select ledger or register entries.",
+      "source": "design-package/chapters/repair-continuation.md",
+      "owner": "UNIT-repair-continuation",
+      "positive_case": "The failure is appended first, the old resolution becomes stale, CH-01 returns a canonical open-debt-free resolution selecting the failure, and Repair plus Review consume that same object before maximum rollback classification.",
+      "negative_case": "Repair reuses the pre-append resolution, an acceptance-ID-filtered failure, or a private projection with lost provenance/debt and resumes Phase 2 before CH-01 re-resolution.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "focused resolution-selected repair contract search",
+        "post-append resolution blocker scenario",
+        "append-first then selected-failure maximum-rollback scenario"
+      ]
+    },
+    {
+      "invariant_id": "INV-REP-004",
+      "rule": "A real upstream planning defect must not be hidden by an implementation-only patch.",
+      "source": "design-package/chapters/repair-continuation.md",
+      "owner": "UNIT-repair-continuation",
+      "positive_case": "An incorrect Detail field contract returns to Detail and affected downstream evidence.",
+      "negative_case": "Code is changed to contradict the still-confirmed Detail.",
+      "route_if_missing": "DETAIL_DEFECT",
+      "test_evidence": [
+        "focused contract search",
+        "Integration five-class routing scenario"
+      ]
+    },
+    {
+      "invariant_id": "INV-REP-007",
+      "rule": "ClosureSpec TaskRef-locates journal and acknowledges prepared before Repair append. Append ref alone stays open. Repair builds record/ref; acknowledged record-bound includes both refs and exact closes_attempt_ids (ordinal-0 or 0+1), binding the whole chain. Missing/extra/cross-chain IDs or missing/corrupt blocks; one retry maximum.",
+      "source": "design-package/chapters/repair-continuation.md",
+      "owner": "UNIT-repair-continuation",
+      "positive_case": "Prepared ack precedes append; accepted or unique suffix match yields append ref, Repair builds record/ref, and acknowledged record-bound with both refs closes before Workflow resolves.",
+      "negative_case": "After accepted pending row, journal rolls to older valid prefix/empty or supplies cross-position/repeated-row ref; later pass must not bypass or loop retry.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "focused contract search",
+        "Integration retrospective scenario",
+        "pre-existing identical row and committed-unacknowledged Finish-bypass scenarios",
+        "bounded retry exhaustion scenario",
+        "fresh-session exact-path discovery and missing/corrupt journal scenario",
+        "append-ack before record-bound crash with later-pass scenario",
+        "ordinal-1 exact 0+1 retry-chain closure scenario",
+        "older-valid/empty rollback plus cross-position/repeated-row correlation fixture"
+      ]
+    },
+    {
+      "invariant_id": "INV-REP-008",
+      "rule": "The workflow must not claim in-place reopen or machine baseline inheritance for an archived task.",
+      "source": "design-package/chapters/repair-continuation.md",
+      "owner": "UNIT-repair-continuation",
+      "positive_case": "A linked repair task references historical artifacts and states current Gate limits.",
+      "negative_case": "The archived task is represented as active without script capability.",
+      "route_if_missing": "REQ_BLOCKER",
+      "test_evidence": [
+        "focused contract search",
+        "Integration archived-task scenario"
+      ]
+    },
+    {
+      "invariant_id": "INV-REP-009",
+      "rule": "The repair path must not require a Trellis, Guru, Python, shell, or CLI TypeScript script change.",
+      "source": "design-package/chapters/repair-continuation.md",
+      "owner": "UNIT-repair-continuation",
+      "positive_case": "Only approved Markdown and TOML source contracts change.",
+      "negative_case": "The proposed fix edits guru_gate.py, task.py, hooks, apply, or packages/cli/src TypeScript.",
+      "route_if_missing": "REQ_BLOCKER",
+      "test_evidence": [
+        "packet scope",
+        "Integration forbidden-path audit"
+      ]
+    }
+  ]
+}

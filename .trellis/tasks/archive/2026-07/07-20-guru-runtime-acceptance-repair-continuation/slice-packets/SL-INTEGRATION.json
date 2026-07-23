@@ -1,0 +1,309 @@
+{
+  "schema_version": 1,
+  "review_evidence_schema_version": 2,
+  "slice_id": "SL-INTEGRATION",
+  "owner_unit": "UNIT-template-parity",
+  "target_kind": "implementation",
+  "integration_slice": true,
+  "execution_mode": "coordinator_only_bounded_repair_and_consumer_reconciliation",
+  "supervisor_capability_limit": "The installed supervisor grants all packet target_paths during implementation dispatch, so it must not dispatch Integration implementation. It may only perform read-only semantic review after the exact user-authorized final scope is staged.",
+  "scope_amendment": {
+    "kind": "post_validation_integration_ownership_reconciliation",
+    "route_class": "PROCESS_DEFECT",
+    "user_quote": "好，授权",
+    "reason": "Fresh installed-consumer verification proved that two Guru guide mirrors were absent, while focused regression required two bounded Markdown source repairs before their consumers could be reconciled.",
+    "boundary": "Only the four added Markdown paths are newly Integration-owned; no Trellis/Guru scripts, Python, Shell, hooks, tests, CLI TypeScript runtime, marketplace gitlink, product requirement, or runtime lifecycle schema is authorized.",
+    "supersedes_for_this_integration_attempt": "The confirmed Detail remains the product and behavior SSOT. For this single post-validation attempt, the user-authorized process amendment replaces only its stale fixed 11-consumer/22-target/ordinary-source-empty containment cardinality with the exact sets below; runtime acceptance, exact probe, guard-only, fail-closed, rollback, and no-script semantics are unchanged.",
+    "replacement_review_limit": 4,
+    "additional_review_authorization": {
+      "user_quote": "授权",
+      "purpose": "One additional read-only replacement Integration review after repairing the reviewer-proven deterministic fixture defect."
+    },
+    "exact_verdict_review_authorization": {
+      "user_quote": "授权再次执行一次完整只读 Integration review",
+      "purpose": "One complete read-only Integration review after the prior semantically clean verdict was rejected solely for annotated enum values.",
+      "required_exact_headers": [
+        "review_result=clean",
+        "route_class=none",
+        "review_target=slice:SL-INTEGRATION",
+        "review_provider=codex",
+        "deterministic_checks=passed",
+        "dirty_scope=isolated",
+        "invariant_coverage=all_passed"
+      ],
+      "serialization_rule": "Each top-level value is an exact enum token with no suffix, parenthetical annotation, count, or prose. Put supporting detail only in invariant_evidence lines after the seven headers."
+    },
+    "receipt_compatible_review_authorization": {
+      "user_quote": "授权执行一次 receipt-compatible 只读 Integration review，并在 clean 后重试一次官方 receipt",
+      "purpose": "One receipt-compatible read-only Integration review using the source schema-v2 supervisor, followed only on a clean verdict by one official receipt retry.",
+      "preflight_disposition": "Three local preflights or proof builds stopped before external review or record creation; they do not consume the single semantic review authorization.",
+      "fixture_contract": "A disposable unreferenced HEAD carries the exact two authorized canonical repairs plus three large proof-budget consumer baselines over c40011c086dbe9e43a294cca8eed1266c0309acc, while the index stages the remaining 10 consumers. This satisfies the source lifecycle ordinary-target and prompt-budget guards without changing the final reviewed snapshot.",
+      "required_reviewed_target_digest": "5148c695d766dc0c7c787eb856e638bcacdaded741f0ef622c02f5a163f3cc8e",
+      "required_final_commit": "970ef859f4196d4b905913c31f61dbe1950bd1ea"
+    },
+    "previous_review": {
+      "run_id": "integration-final-20260722-scope-amended",
+      "result": "findings",
+      "route_class": "PROCESS_DEFECT",
+      "disposition": "The ownership/cardinality and dependency-fixture blockers are repaired by this amendment; no reviewer conclusion is rewritten."
+    },
+    "deterministic_fixture_repair": {
+      "review_run_id": "integration-final-authorized-20260723",
+      "route_class": "PROCESS_DEFECT",
+      "blocked_check": "pnpm --filter @devsc/trellis exec vitest run test/guru/guru-bundled.test.ts -t \"ships the overlay skill and gate files needed by Guru installs\"",
+      "repair": "Use Vitest --configLoader runner so configuration loads without writing .vite-temp through the read-only dependency symlink.",
+      "semantic_disposition": "No implementation or invariant changes: the reviewer found all six required invariants passing and independently proved the amended focused test green."
+    },
+    "integration_base_commit": "c40011c086dbe9e43a294cca8eed1266c0309acc",
+    "ordinary_receipt_disposition": "The four accepted ordinary commits and receipts remain the baseline. The exact two canonical-source paths below are bounded post-validation corrections discovered while proving the final installed contract; their current bytes and all mapped consumers are reviewed together once in the replacement Integration review.",
+    "authorized_canonical_source_repairs": [
+      "guru-template/workflows/guru-client-workflow.md",
+      "guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md"
+    ],
+    "newly_discovered_consumers": [
+      "guru-template/specs/guru-flutter-client/guides/cross-layer-thinking-guide.md",
+      "packages/cli/src/templates/guru/specs/guru-flutter-client/guides/cross-layer-thinking-guide.md"
+    ],
+    "original_consumer_count": 11,
+    "current_consumer_count": 13,
+    "final_commit_changed_path_count": 15,
+    "receipt_review_staged_path_count": 10,
+    "proof_budget_baseline_consumer_paths": [
+      "guru-template/specs/guru-flutter-client/guides/cross-layer-thinking-guide.md",
+      ".agents/skills/trellis-break-loop/SKILL.md",
+      ".trellis/spec/guides/cross-layer-thinking-guide.md"
+    ],
+    "mirror_map_amendment": {
+      "canonical_source": "packages/cli/src/templates/markdown/spec/guides/cross-layer-thinking-guide.md.txt",
+      "existing_consumer": ".trellis/spec/guides/cross-layer-thinking-guide.md",
+      "added_consumers": [
+        "guru-template/specs/guru-flutter-client/guides/cross-layer-thinking-guide.md",
+        "packages/cli/src/templates/guru/specs/guru-flutter-client/guides/cross-layer-thinking-guide.md"
+      ],
+      "parity_mode": "exact generated parity",
+      "required_semantics": "runtime acceptance, exact runtime probe, guard-only completion, fail-closed evidence and reconciliation"
+    },
+    "full_regression_evidence": {
+      "command": "pnpm --filter @devsc/trellis test",
+      "result": "baseline_failures_only_after_focused_repair",
+      "passed_files": 49,
+      "failed_files": 2,
+      "passed_tests": 1300,
+      "failed_tests": 22,
+      "task_induced_failure_disposition": "The bundled guru-bug-fast-path contract failure was repaired and its focused current-snapshot test is required below.",
+      "remaining_failure_surfaces": [
+        "unchanged non-client Guru platform workflows",
+        "unchanged requirements-adversarial expectations",
+        "unchanged Guru config and supervisor script tests",
+        "unrelated marketplace native workflow parity"
+      ],
+      "rerun_policy": "Do not rerun the full suite merely to update counts; validate the repaired current surface with the focused test and preserve every baseline failure in review evidence."
+    }
+  },
+  "integration_owned_paths": [
+    "packages/cli/src/templates/guru/specs/guru-flutter-client/guides/cross-layer-thinking-guide.md",
+    ".codex/agents/trellis-implement.toml",
+    ".codex/agents/trellis-check.toml",
+    ".agents/skills/trellis-check/SKILL.md",
+    ".agents/skills/trellis-finish-work/SKILL.md",
+    "packages/cli/src/templates/guru/workflows/guru-client.md",
+    "packages/cli/src/templates/guru/overlay/agents-skills/flutter-implementation-guru-writing/SKILL.md",
+    "packages/cli/src/templates/guru/overlay/agents-skills/flutter-implementation-guru-review/SKILL.md",
+    "packages/cli/src/templates/guru/overlay/agents-skills/guru-bug-fast-path/SKILL.md",
+    "packages/cli/src/templates/guru/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md"
+  ],
+  "target_paths": [
+    "packages/cli/src/templates/markdown/spec/guides/cross-layer-thinking-guide.md.txt",
+    "packages/cli/src/templates/common/skills/check.md",
+    "guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md",
+    "packages/cli/src/templates/codex/agents/trellis-implement.toml",
+    "packages/cli/src/templates/codex/agents/trellis-check.toml",
+    "guru-template/overlay/agents-skills/flutter-implementation-guru-writing/SKILL.md",
+    "guru-template/overlay/agents-skills/flutter-implementation-guru-review/SKILL.md",
+    "guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md",
+    "packages/cli/src/templates/common/skills/break-loop.md",
+    "packages/cli/src/templates/common/commands/finish-work.md",
+    "guru-template/workflows/guru-client-workflow.md",
+    "guru-template/specs/guru-flutter-client/guides/cross-layer-thinking-guide.md",
+    "packages/cli/src/templates/guru/specs/guru-flutter-client/guides/cross-layer-thinking-guide.md",
+    ".trellis/spec/guides/cross-layer-thinking-guide.md",
+    ".agents/skills/trellis-check/SKILL.md",
+    "packages/cli/src/templates/guru/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md",
+    ".codex/agents/trellis-implement.toml",
+    ".codex/agents/trellis-check.toml",
+    "packages/cli/src/templates/guru/overlay/agents-skills/flutter-implementation-guru-writing/SKILL.md",
+    "packages/cli/src/templates/guru/overlay/agents-skills/flutter-implementation-guru-review/SKILL.md",
+    "packages/cli/src/templates/guru/overlay/agents-skills/guru-bug-fast-path/SKILL.md",
+    ".agents/skills/trellis-break-loop/SKILL.md",
+    ".agents/skills/trellis-finish-work/SKILL.md",
+    "packages/cli/src/templates/guru/workflows/guru-client.md"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "cross_slice_contract",
+    "source_template_parity",
+    "installed_supervisor_no_consumer_only_dispatch",
+    "full_regression",
+    "target_install_acceptance"
+  ],
+  "depends_on": [
+    "SL-ACCEPTANCE-CLOSURE",
+    "SL-IMPLEMENT-REVIEW",
+    "SL-REPAIR-CONTINUATION",
+    "SL-RUNTIME-COMPLETION"
+  ],
+  "requirements_design_inputs": [
+    {
+      "path": "prd.md",
+      "heading": "BHV-001 Runtime-required Full completion"
+    },
+    {
+      "path": "prd.md",
+      "heading": "BHV-002 Same-goal implementation repair continuation"
+    },
+    {
+      "path": "prd.md",
+      "heading": "BHV-003 Maximum rollback by owning defect"
+    },
+    {
+      "path": "prd.md",
+      "heading": "BHV-004 Runtime evidence contradicts planning SSOT"
+    },
+    {
+      "path": "prd.md",
+      "heading": "BHV-005 Acceptance-path-driven cross-layer verification"
+    },
+    {
+      "path": "prd.md",
+      "heading": "BHV-006 Post-implementation failure retrospective"
+    },
+    {
+      "path": "prd.md",
+      "heading": "BHV-007 Archived-task and no-script boundary"
+    },
+    {
+      "path": "prd.md",
+      "heading": "BHV-008 Source and installed-template parity"
+    },
+    {
+      "path": "prd.md",
+      "heading": "Acceptance Criteria"
+    },
+    {
+      "path": "design-package/chapters/template-parity.md",
+      "heading": "9. 不变量矩阵"
+    },
+    {
+      "path": "research/framework-source-maintenance-detail-profile.md",
+      "heading": "6.4 `template-parity`"
+    },
+    {
+      "path": "implement.md",
+      "heading": "SL-INTEGRATION"
+    }
+  ],
+  "deterministic_checks": [
+    "python3 guru-template/overlay/verify/tests/test_slice_commit_lifecycle.py",
+    "pnpm --filter @devsc/trellis run sync:guru:check",
+    "pnpm --filter @devsc/trellis exec vitest run --configLoader runner test/guru/guru-bundled.test.ts -t \"ships the overlay skill and gate files needed by Guru installs\"",
+    "pnpm --filter @devsc/trellis run build",
+    "git diff --check",
+    "git diff --cached --check",
+    "git status --short --untracked-files=all -- .trellis/scripts guru-template/overlay/verify guru-template/overlay/hooks guru-template/overlay/apply.sh packages/cli/src/templates/trellis/scripts packages/cli/src/templates/guru/overlay/verify packages/cli/src/templates/guru/overlay/hooks packages/cli/scripts"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "codex",
+    "ocr": "disabled"
+  },
+  "dirty_state": {
+    "unrelated": []
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-PAR-001",
+      "rule": "An approved source contract change must not be delivered without every mapped tracked consumer template.",
+      "source": "design-package/chapters/template-parity.md plus the user-authorized scope_amendment mirror_map_amendment",
+      "owner": "UNIT-template-parity",
+      "positive_case": "All 13 current consumers, including the two added Guru guide mirrors, are current under their exact or semantic parity mode.",
+      "negative_case": "A source Skill contains the runtime guard while an installed template does not.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "sync:guru:check",
+        "semantic parity review"
+      ]
+    },
+    {
+      "invariant_id": "INV-PAR-003",
+      "rule": "Parity must not be inferred from keyword presence instead of complete behavior clauses.",
+      "source": "design-package/chapters/template-parity.md",
+      "owner": "UNIT-template-parity",
+      "positive_case": "Six matches stay separate; finish guard validates exact snapshot byte bindings and independently ledger-derived append refs, rejects rollback/cross-position/repeated-row reuse, and closes only exact record-bound chain; scope_clean is separate.",
+      "negative_case": "A consumer trusts journal ref, accepts old-valid/empty rollback or repeated-row/cross-position reuse, or closes before record-bound.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "semantic parity review",
+        "mapped source and consumer anchors",
+        "fresh-session exact-path discovery, ledger-journal correlation after valid-prefix/empty rollback, and missing/corrupt parity"
+      ]
+    },
+    {
+      "invariant_id": "INV-PAR-004",
+      "rule": "Tracked template or ignored dist parity must not be reported as installed target acceptance.",
+      "source": "design-package/chapters/template-parity.md",
+      "owner": "UNIT-template-parity",
+      "positive_case": "A fresh package build and authorized disposable target install produce bound installed evidence.",
+      "negative_case": "A pre-existing packages/cli/dist file is read and reported as runtime_acceptance_pass.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "fresh build",
+        "authorized installed-consumer probe"
+      ]
+    },
+    {
+      "invariant_id": "INV-PAR-005",
+      "rule": "No task delivery may contain a forbidden Trellis, Guru, Python, shell, or CLI TypeScript script path.",
+      "source": "design-package/chapters/template-parity.md",
+      "owner": "UNIT-template-parity",
+      "positive_case": "The complete task-owned changed path set contains only allowed Markdown and TOML files.",
+      "negative_case": "A generated or manual change touches guru_gate.py, hooks, apply.sh, or packages/cli/src TypeScript.",
+      "route_if_missing": "REQ_BLOCKER",
+      "test_evidence": [
+        "gate-contract scope audit",
+        "final changed-path scan"
+      ]
+    },
+    {
+      "invariant_id": "INV-PAR-006",
+      "rule": "This user-authorized post-validation Integration attempt may change only the exact two bounded canonical Markdown repairs plus all 13 current mapped consumers; it must not change any other ordinary source or path.",
+      "source": "scope_amendment, which supersedes only the stale fixed Integration cardinality in design-package/chapters/template-parity.md for this attempt",
+      "owner": "UNIT-template-parity",
+      "positive_case": "The final commit changes exactly the two authorized canonical repairs plus all 13 consumers, while the receipt-review fixture carries the two canonical bytes and three declared proof-budget consumer baselines in its disposable HEAD and stages exactly integration_owned_paths (10 remaining consumers). The complete index target snapshot, including generated-peer equality, is 5148c695d766dc0c7c787eb856e638bcacdaded741f0ef622c02f5a163f3cc8e and is independently rebound to commit 970ef859f4196d4b905913c31f61dbe1950bd1ea by the official receipt producer.",
+      "negative_case": "The final commit changes any third canonical source or omits a consumer; the receipt fixture baseline or staged set differs from the declared 3 plus 10 consumer partition; it stages an ordinary receipt target; the reviewed target digest differs from the final commit; or Integration is dispatched through the installed supervisor implementation surface.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "ordinary receipt and c40011c086dbe9e43a294cca8eed1266c0309acc base disposition",
+        "canonical source diff equals authorized_canonical_source_repairs",
+        "current consumer set contains the original 11 plus both newly_discovered_consumers",
+        "final commit changed path set equals two authorized canonical repairs plus three proof-budget baseline consumers plus the exact 10 integration_owned_paths",
+        "receipt-compatible source review stages exactly the 10 integration_owned_paths against the declared five-path disposable baseline",
+        "complete index target digest equals 5148c695d766dc0c7c787eb856e638bcacdaded741f0ef622c02f5a163f3cc8e",
+        "forbidden changed-path scan is empty",
+        "replacement final Integration review covers the complete final target snapshot once"
+      ]
+    },
+    {
+      "invariant_id": "INV-PAR-007",
+      "rule": "Installed target evidence must not be fabricated or collected without the applicable operator authorization.",
+      "source": "design-package/chapters/template-parity.md",
+      "owner": "UNIT-template-parity",
+      "positive_case": "The task remains runtime_acceptance_pending until the authorized fresh install probe runs.",
+      "negative_case": "The agent self-reports an installed pass without target files and build binding.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "runtime evidence ledger",
+        "installed-consumer probe"
+      ]
+    }
+  ]
+}

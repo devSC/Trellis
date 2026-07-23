@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "risk": "high",
+  "route": "full_chain",
+  "assessment": {
+    "confidence": 0.98,
+    "reasons": [
+      "The change alters Full-task completion and repair-continuation behavior across implementation, review, verification, and finish-work Skills.",
+      "The contract must remain consistent across installed Skill, workflow, spec, and packaged-template mirrors.",
+      "Incorrect behavior can either reintroduce expensive full-chain restarts or weaken runtime acceptance and allow false completion."
+    ],
+    "risk_flags": [
+      "workflow_behavior_change",
+      "completion_semantics",
+      "cross_template_contract",
+      "runtime_acceptance"
+    ],
+    "recommended_route": "full_chain"
+  },
+  "route_selection": {
+    "selected_route": "full_chain",
+    "source": "user_confirmed_recommended",
+    "recommended_route": "full_chain",
+    "risk_acknowledged": true,
+    "user_quote": "确认，记住本次调整不能修改任何 trellis 自己的脚本文件",
+    "selected_by": "user",
+    "selected_at": "2026-07-20T20:08:48+08:00"
+  },
+  "scope": {
+    "allowed_paths": [
+      ".trellis/tasks/07-20-guru-runtime-acceptance-repair-continuation",
+      "packages/cli/src/templates/common/skills/check.md",
+      "packages/cli/src/templates/common/skills/break-loop.md",
+      "packages/cli/src/templates/common/commands/finish-work.md",
+      "packages/cli/src/templates/codex/agents/trellis-implement.toml",
+      "packages/cli/src/templates/codex/agents/trellis-check.toml",
+      "packages/cli/src/templates/markdown/spec/guides/cross-layer-thinking-guide.md.txt",
+      "guru-template/specs/guru-flutter-client/guides/cross-layer-thinking-guide.md",
+      "packages/cli/src/templates/guru/specs/guru-flutter-client/guides/cross-layer-thinking-guide.md",
+      "guru-template/workflows/guru-client-workflow.md",
+      "guru-template/overlay/agents-skills/flutter-implementation-guru-writing/SKILL.md",
+      "guru-template/overlay/agents-skills/flutter-implementation-guru-review/SKILL.md",
+      "guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md",
+      "guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md",
+      ".agents/skills/trellis-check/SKILL.md",
+      ".agents/skills/trellis-break-loop/SKILL.md",
+      ".agents/skills/trellis-finish-work/SKILL.md",
+      ".codex/agents/trellis-implement.toml",
+      ".codex/agents/trellis-check.toml",
+      ".trellis/spec/guides/cross-layer-thinking-guide.md",
+      "packages/cli/src/templates/guru/workflows/guru-client.md",
+      "packages/cli/src/templates/guru/overlay/agents-skills/flutter-implementation-guru-writing/SKILL.md",
+      "packages/cli/src/templates/guru/overlay/agents-skills/flutter-implementation-guru-review/SKILL.md",
+      "packages/cli/src/templates/guru/overlay/agents-skills/guru-bug-fast-path/SKILL.md",
+      "packages/cli/src/templates/guru/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md"
+    ],
+    "forbidden_path_patterns": [
+      ".trellis/scripts/**",
+      "guru-template/overlay/verify/**",
+      "guru-template/overlay/hooks/**",
+      "guru-template/overlay/apply.sh",
+      "packages/cli/src/templates/guru/overlay/verify/**",
+      "packages/cli/src/templates/guru/overlay/hooks/**",
+      "packages/cli/src/templates/trellis/scripts/**",
+      "packages/cli/scripts/**",
+      "packages/cli/src/**/*.ts",
+      "**/*.py",
+      "**/*.sh"
+    ],
+    "max_files": null
+  },
+  "authorized_process_amendment": {
+    "kind": "post_validation_integration_ownership_reconciliation",
+    "route_class": "PROCESS_DEFECT",
+    "user_quote": "好，授权",
+    "authorization_scope": "Reconcile the exact two bounded canonical Markdown repairs, two newly discovered Guru guide consumers, original 11 consumers, exact 15-path final commit set, dependency-complete verification, and one replacement final Integration review.",
+    "supersedes_for_this_integration_attempt": "Only the stale fixed 11-consumer/22-target/ordinary-source-empty cardinality in the Integration process packet. Confirmed product requirements, runtime acceptance, exact probe, guard-only, fail-closed behavior, lifecycle semantics, and forbidden surfaces remain unchanged.",
+    "replacement_review_limit": 4,
+    "additional_review_authorization": {
+      "user_quote": "授权",
+      "purpose": "One additional read-only replacement Integration review after repairing the reviewer-proven deterministic fixture defect."
+    },
+    "exact_verdict_review_authorization": {
+      "user_quote": "授权再次执行一次完整只读 Integration review",
+      "purpose": "One complete read-only Integration review after the prior semantically clean verdict was rejected solely for annotated enum values."
+    },
+    "receipt_compatible_review_authorization": {
+      "user_quote": "授权执行一次 receipt-compatible 只读 Integration review，并在 clean 后重试一次官方 receipt",
+      "purpose": "One receipt-compatible read-only Integration review using the source schema-v2 supervisor, followed only on a clean verdict by one official receipt retry.",
+      "preflight_disposition": "Three source-supervisor invocations stopped locally before any external reviewer or review record was created: a symlink resolved the task outside the disposable root, the source lifecycle rejected staged overlap with ordinary receipt targets, and the complete proof exceeded the source prompt budget.",
+      "fixture_contract": "Use a disposable unreferenced review baseline whose parent is c40011c086dbe9e43a294cca8eed1266c0309acc and whose tree contains the exact two authorized canonical Markdown repairs plus three proof-budget baseline consumers; stage the remaining 10 consumer paths so the complete index snapshot equals commit 970ef859f4196d4b905913c31f61dbe1950bd1ea without staging an ordinary receipt target or exceeding the proof budget.",
+      "snapshot_binding": "The schema-v2 review must bind all packet target paths to reviewed_target_digest 5148c695d766dc0c7c787eb856e638bcacdaded741f0ef622c02f5a163f3cc8e; the official receipt must independently prove the same digest against commit 970ef859f4196d4b905913c31f61dbe1950bd1ea."
+    }
+  },
+  "required_gates": [],
+  "optional_gates": [],
+  "allowed_degradations": [],
+  "commit_policy": {
+    "require_in_progress": true,
+    "require_clean_implementation_review": true,
+    "allow_task_artifacts_only": false
+  },
+  "created_by": "init-contract",
+  "created_at": "2026-07-20T12:08:48Z",
+  "policy_version": "guru-risk-contract-v1"
+}

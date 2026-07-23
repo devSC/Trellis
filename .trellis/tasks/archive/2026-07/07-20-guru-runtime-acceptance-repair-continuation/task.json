@@ -1,0 +1,323 @@
+{
+  "id": "guru-runtime-acceptance-repair-continuation",
+  "name": "guru-runtime-acceptance-repair-continuation",
+  "guru_chain": "full",
+  "design_package": ".trellis/tasks/07-20-guru-runtime-acceptance-repair-continuation/design-package",
+  "title": "Harden Guru runtime acceptance and Full repair continuation",
+  "description": "Prevent Full tasks from restarting the entire planning chain after same-goal runtime acceptance failures, while preserving completion quality through acceptance closure and scoped repair continuation. Planning and any later implementation must not modify Trellis-owned script files.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "devSC",
+  "assignee": "devSC",
+  "createdAt": "2026-07-20",
+  "completedAt": "2026-07-23",
+  "branch": null,
+  "base_branch": "codex/preserve-guru-target-wip-75887690",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {},
+  "guru_gates": {
+    "requirements": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-20T20:58:16+08:00",
+      "confirmation_scope": "requirements_gate_only",
+      "allowed_next_action": "overview_design",
+      "prompt_summary": "Requirements confirmation allows overview/detail planning only",
+      "artifact_digest": "19002b6e5fef10bc2763d58897db218b9229f9aede771acfef17742d4a534e8d"
+    },
+    "review_runs": {
+      "overview": [
+        {
+          "run_id": "codex-overview-20260720-r1",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T20:51:57+08:00",
+          "artifact_digest": "51ac30e5c3414f6742d74d26d8c2f4cbfabc91c1be5fdf46d3f17431e7f8670d",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "Overview machine gate passed, but UC handoff index_refs do not exactly resolve to Section 7 chapter_target values, and sequence strategy values use unsupported English tokens instead of 独立/合并/豁免. G4/G6/G7 remain blocked; no-script and UI N/A boundaries are otherwise sound.",
+          "finding_class": "OVERVIEW_DEFECT"
+        },
+        {
+          "run_id": "codex-overview-20260720-r2",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T20:52:04+08:00",
+          "artifact_digest": "51ac30e5c3414f6742d74d26d8c2f4cbfabc91c1be5fdf46d3f17431e7f8670d",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "REQ-010 parity lacks BHV/UC closure; UC and technology-decision index references do not exactly match chapter targets; merged UC-003 sequence omits upstream owner repair and ClosureSpec verification; logical aliases need canonical artifact mapping.",
+          "finding_class": "REQ_BLOCKER"
+        },
+        {
+          "run_id": "codex-overview-20260720-current-r3",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T21:05:41+08:00",
+          "artifact_digest": "2c3a5c0dd50186909bb0cf9e8798fe35f9965b51ace4d39bdc99212491459a04",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Overview machine gate passed; 8 BHVs and 7 UCs close bidirectionally; REQ-010 -> BHV-008 -> UC-007 -> CH-05 parity is complete; every UC and TD chapter reference exactly matches CH-01..CH-05; three independent and four merged UC strategies have concrete sequences, including UC-003 five-class rollback routing; all logical owners map to canonical artifacts and G1-G8 plus the no-script boundary are closed."
+        },
+        {
+          "run_id": "codex-overview-20260720-current-r4",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T21:05:52+08:00",
+          "artifact_digest": "2c3a5c0dd50186909bb0cf9e8798fe35f9965b51ace4d39bdc99212491459a04",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Full workflow-contract Overview passed independent semantic review: all P0/P1 capabilities close through BHV-001..008, UC-001..007, mapped artifact owners, and CH-01..05; owner three-question rationale, UC-003 rollback/currentness, UC-007 source-template parity, sequence strategies, exact TD targets, G1-G8, UI N/A basis, and the no-Trellis-script boundary are complete with no P1/P2 findings."
+        },
+        {
+          "run_id": "ov-bootstrap-20260720-a",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T22:38:26+08:00",
+          "artifact_digest": "e4e22aa2f9d9310af8da67605ea69a0da07a7fa42a0305263ea46314d60ccdb7",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "Current digest e4e22aa2 passes structural Gate, but PROCESS_DEFECT routing omits the confirmed packet-or-planning-to-Detail branch (G1/G7), and TD-007 uses non-exact/non-index handoff targets (G8). Task-local taxonomy is bootstrap-only and machine Gate does not parse it.",
+          "finding_class": "OVERVIEW_DEFECT"
+        },
+        {
+          "run_id": "ov-bootstrap-20260720-b",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T22:38:34+08:00",
+          "artifact_digest": "e4e22aa2f9d9310af8da67605ea69a0da07a7fa42a0305263ea46314d60ccdb7",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "Current digest e4e22aa2 passes structural Gate but is not semantically clean: rollback coverage narrows REQ-007; archived repair omits required acceptance_id/digest/receipt/new-failure identity; parity flow omits declared source-owner edges; TD-007 targets are non-exact; ClosureSpec reads are missing in merged sequences. Bootstrap taxonomy limitation disclosed; no forbidden script/runtime changes.",
+          "finding_class": "OVERVIEW_DEFECT"
+        },
+        {
+          "run_id": "ov-repaired-20260720-a",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T23:14:12+08:00",
+          "artifact_digest": "74c0b60adb9675e9b8c6aee6181098610695903a8596af8e34f7620a4b8e4c2e",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Current digest 74c0b60a passes structural Gates and strict trace closure; REQ-007 routes, archived evidence identity, exact 11-source mirror map, ClosureSpec reads, exact UC/TD targets, ownership, compliance, no-script scope, and disclosed task-local machine-taxonomy limitation close G1-G8 with no P1/P2 findings."
+        },
+        {
+          "run_id": "ov-repaired-20260720-b",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T23:14:20+08:00",
+          "artifact_digest": "74c0b60adb9675e9b8c6aee6181098610695903a8596af8e34f7620a4b8e4c2e",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "Current digest 74c0b60a has one P1 in G7: the PROCESS_DEFECT sequence combines mutable-evidence and execution-process cases but only repairs EvidenceLedger, leaving the execution-process case without its GuruWorkflow/RepairSkill owner and terminal current-process route. All other reviewed closures pass; bootstrap taxonomy remains task-local and unparsed by machine Gate.",
+          "finding_class": "OVERVIEW_DEFECT"
+        },
+        {
+          "run_id": "ov-final-20260720-a",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T23:26:48+08:00",
+          "artifact_digest": "1bda99e3c9483c5ca77ad58892bb7cbb960e7189bfb259d724b0e2ceb31cd9a8",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "Current digest 1bda99e3 passes structural Gates but FinishSkill never reads ClosureSpec/frozen required-row set, so missing rows cannot block archive; G1/G2/G6/G7 remain open. All other rollback, archived identity, parity ownership, compliance, no-script, and bootstrap disclosure checks pass.",
+          "finding_class": "OVERVIEW_DEFECT"
+        },
+        {
+          "run_id": "ov-final-20260720-b",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T23:26:56+08:00",
+          "artifact_digest": "1bda99e3c9483c5ca77ad58892bb7cbb960e7189bfb259d724b0e2ceb31cd9a8",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "Current digest 1bda99e3 is not clean: FinishSkill lacks ClosureSpec required-row dependency; environment/fixture repair does not rerun and append the affected probe; parity map counts unused Copilot static prompts as installed consumers. G2/G6/G7/G8 blocked; no script/runtime changes found and task-local taxonomy limitation disclosed.",
+          "finding_class": "OVERVIEW_DEFECT"
+        },
+        {
+          "run_id": "ov-closure-20260720-a",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T23:45:37+08:00",
+          "artifact_digest": "31645effcf58b4faf2fc47e524889c254f5678fba8abe989af2690689b17c9ac",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "Current digest 31645eff passes structural and core semantic closure, but implement.md retains stale 16/27/16 Integration counts and five stale exact byte inventories; UC-003 also invokes undeclared RS. G4/G7/G8 blocked. Bootstrap limitation disclosed; no forbidden script/runtime changes.",
+          "finding_class": "OVERVIEW_DEFECT"
+        },
+        {
+          "run_id": "ov-closure-20260720-b",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T23:45:45+08:00",
+          "artifact_digest": "31645effcf58b4faf2fc47e524889c254f5678fba8abe989af2690689b17c9ac",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "Current digest 31645eff is clean except G4 handoff: Overview and CH-05 plus SL-INTEGRATION freeze 11 canonical + 14 consumer = 25 targets, but implement.md still declares 16/27/16, making rollback and review selection non-executable. No forbidden script/runtime changes; bootstrap taxonomy is task-local and unparsed by machine Gate.",
+          "finding_class": "DETAIL_DEFECT"
+        },
+        {
+          "run_id": "ov-exact-20260720-a",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T23:56:25+08:00",
+          "artifact_digest": "89a9f6f7dd68a5bacb6b60db5b20d3c8e42b492e265579bc6652bb3876a5ca3e",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Current Overview digest 89a9f6f7 passes structural Gate and semantic G1-G8: 10 REQs close through 8 BHVs/7 UCs; FinishSkill reads ClosureSpec before ledger; rollback/environment probe/archived identity close; exact 11-source + 14-consumer = 25 targets with 14 write owners; inventories 162332/170053/169842/180321/101518 are current; CH/TD, compliance and no-script scope pass. Task-local taxonomy is bootstrap-only and unparsed by machine Gate; no Flutter Detail SSOT claimed."
+        },
+        {
+          "run_id": "ov-exact-20260720-b",
+          "reviewer": "clean-context",
+          "recorded_at": "2026-07-20T23:56:34+08:00",
+          "artifact_digest": "89a9f6f7dd68a5bacb6b60db5b20d3c8e42b492e265579bc6652bb3876a5ca3e",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Current Overview digest 89a9f6f7 passes machine structure, strict trace and independent G1-G8: exact ownership/CH-TD/sequences, missing-row archive admission, complete repair and environment routes, archived four-part identity, 11 canonical sources/14 live consumers/25 Integration targets/14 consumer-only write paths, five exact current byte inventories, compliance and zero forbidden script/runtime changes. Task-local framework profile and machine-taxonomy limitation disclosed; no P1/P2."
+        },
+        {
+          "run_id": "overview-c29e31ee-no-writeback-r1",
+          "reviewer": "clean-context-codex",
+          "recorded_at": "2026-07-21T01:01:20+08:00",
+          "artifact_digest": "c29e31ee7dca6dbed305e8c51f642f5ee5dc2e267c161495e9ac65ea5fdebd4c",
+          "result": "findings",
+          "max_severity": "medium",
+          "evidence": "Current Overview digest c29e31ee passes structural Gate and strict trace, but PRD REQ-009 permits either prevention writeback or an explicit no-writeback reason while BHV-006 and affected Detail require a writeback owner, so a valid no-change retrospective cannot close without invented work. G1/G4 blocked at P2. Task-local bootstrap taxonomy is not parsed by guru_gate.py; zero forbidden script/runtime changes.",
+          "finding_class": "OVERVIEW_DEFECT"
+        },
+        {
+          "run_id": "overview-9cd8dd60-supervisor-containment-r1",
+          "reviewer": "clean-context-codex",
+          "recorded_at": "2026-07-21T01:12:14+08:00",
+          "artifact_digest": "9cd8dd60a7d53846dfc44c9a4b5dac1d20655d666e5408071bdcc22ac9873a16",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "Current Overview digest 9cd8dd60 passes requirements/overview/detail structure, strict trace, bytes and selector checks, but implement.md falsely claims the installed .trellis supervisor derives consumer-only Integration ownership; live supervisor grants all 22 packet targets, so the no-script plan lacks executable source-write containment. guru_gate.py implement also fails because implement.md lacks required trace plan/execution/blockers sections. G2/G4 blocked. Task-local taxonomy remains unparsed by machine Gate; forbidden script paths are unchanged.",
+          "finding_class": "OVERVIEW_DEFECT"
+        },
+        {
+          "run_id": "overview-8e8073de-exact-r3",
+          "reviewer": "clean-context-codex-exact",
+          "recorded_at": "2026-07-21T01:34:34+08:00",
+          "artifact_digest": "8e8073de80dd2bacabb5fdd996dd09035e0b74a7138ce69d16c49cd8534088eb",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Current Overview digest 8e8073de80dd2bacabb5fdd996dd09035e0b74a7138ce69d16c49cd8534088eb is semantically clean: G1-G8 pass; REQ-001..010 close through BHV-001..008 and seven UCs; five sequence diagrams have no undeclared or unused participants; all 16 canonical Integration selectors resolve to 44439 bytes and include prevention_disposition, writeback_required, no_writeback_required, exactly-one failure closure, and the actual Integration retrospective scenario; ordinary ownership is 3+4+2+2=11 canonical sources and Integration owns the disjoint 11-consumer suffix only. The installed supervisor is explicitly excluded from Integration implementation dispatch; coordinator-only reconciliation binds current receipts/base, an empty ordinary-source diff, exact staged-set equality, and abandon/recreate on failure. Inventories 177185/176127/180918/188585/114960 are exact and below cap; Overview, Detail, Implement, strict trace, task validation, mirror parity, diff and zero-forbidden-script audi"
+        },
+        {
+          "run_id": "overview-8e8073de-containment-r4",
+          "reviewer": "clean-context-codex-containment",
+          "recorded_at": "2026-07-21T01:34:45+08:00",
+          "artifact_digest": "8e8073de80dd2bacabb5fdd996dd09035e0b74a7138ce69d16c49cd8534088eb",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Independent current-disk review finds no P1/P2 at Overview digest 8e8073de80dd2bacabb5fdd996dd09035e0b74a7138ce69d16c49cd8534088eb. The installed supervisor 22-path capability mismatch is not hidden: it cannot dispatch Integration implementation. Four ordinary commits and receipts become the accepted base; a clean disposable worktree, coordinator-only exact 11-consumer reconciliation, empty ordinary-source diff, complete changed-path containment, staged-set equality, and abandon/recreate rule provide agent/process containment without claiming script-level fail-closed. Packet ownership is exact 11 source plus 11 consumer, all paths allowed and non-forbidden. The 16 exact selectors include the writeback_required/no_writeback_required retrospective branch and Scenario 9. G1-G8, sequence participants, CH/TD handoffs, inventories 177185/176127/180918/188585/114960, structural Gates, strict trace, sync parity and forbidden audits pass. TemplateMirror is the sole parity owner; the task-local "
+        },
+        {
+          "run_id": "overview-7355dbd1-resolution-owner-20260722-r1",
+          "reviewer": "clean-context-codex-resolution-owner",
+          "recorded_at": "2026-07-22T09:22:29+08:00",
+          "artifact_digest": "7355dbd1462a30667d02a1f12145f650be43d0ed910ef661921a402cb3d0fc9c",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Independent current-directory review binds Requirements 19002b6e5fef10bc2763d58897db218b9229f9aede771acfef17742d4a534e8d, Overview 7355dbd1462a30667d02a1f12145f650be43d0ed910ef661921a402cb3d0fc9c, and affected Detail 14545d65ffba33e8ab7c4205a9d02b7ae04203178095cc3f015a483bd3c4017a. G1-G8, strict trace, and ClosureSpec-only resolution ownership pass. EvidenceLedger returns append acknowledgment and snapshot change only; Repair cannot select, permit, or reissue a probe; Workflow obtains fresh CH-01 AcceptanceResolution and reports canonical next_probe. The repaired Slice C checks fail independently on b80af268 legacy ordering with F/F/F/P/F/F/P and permit the legal owner-explicit handoff. Exact inventories are 216447/244792/257250/259955/129686 bytes; no deletion or forbidden script/runtime change exists."
+        },
+        {
+          "run_id": "overview-7355dbd1-containment-20260722-r2",
+          "reviewer": "clean-context-codex-containment",
+          "recorded_at": "2026-07-22T09:22:42+08:00",
+          "artifact_digest": "7355dbd1462a30667d02a1f12145f650be43d0ed910ef661921a402cb3d0fc9c",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Independent directory-final containment and deletion review binds Requirements 19002b6e5fef10bc2763d58897db218b9229f9aede771acfef17742d4a534e8d, Overview 7355dbd1462a30667d02a1f12145f650be43d0ed910ef661921a402cb3d0fc9c, and affected Detail 14545d65ffba33e8ab7c4205a9d02b7ae04203178095cc3f015a483bd3c4017a. G1-G8 and strict trace pass; the positive check requires retrospective append acknowledgment then Workflow then fresh CH-01 AcceptanceResolution then canonical next_probe, while the negative check rejects exact b80af268 line 176 immediate rerun. Known-bad packet results are F/F/F/P, F/F/P/P, F/F/F/P/F/F/P, F/F/F/P. Exact inventories are 216447/244792/257250/259955/129686 bytes; 11 ordinary sources plus 11 exact Integration consumers are contained; deletion audit none and forbidden script/runtime status empty."
+        },
+        {
+          "run_id": "codex-overview-resolution-owner-20260722-e6985114",
+          "reviewer": "clean-context-codex-resolution-owner",
+          "recorded_at": "2026-07-22T12:17:26+08:00",
+          "artifact_digest": "e6985114ba4a3767fcc8f15594e9c21960e38f3ffd257f24dcac166a669a4337",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Independent read-only review bound to Requirements 19002b6e, Overview e6985114, Detail a74f675d: ClosureSpec-only TaskRef journal discovery/full replay, missing/corrupt fail-close, every record_ref-null entry blocks, record-bound both refs plus exact ordinal-0 or 0+1 closes_attempt_ids is sole closure, later pass/probe bypass forbidden; Gates, strict trace, budgets, selectors, ownership and no-script audit clean."
+        },
+        {
+          "run_id": "codex-overview-containment-20260722-e6985114",
+          "reviewer": "clean-context-codex-containment",
+          "recorded_at": "2026-07-22T12:17:41+08:00",
+          "artifact_digest": "e6985114ba4a3767fcc8f15594e9c21960e38f3ffd257f24dcac166a669a4337",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Independent read-only containment review bound to Requirements 19002b6e, Overview e6985114, Detail a74f675d: exact setup/resolver split and journal chain, record-bound crash window, no third retry, later-pass bypass prevention, coordinator-only exact 11-consumer Integration, 11+11=22 scope and zero forbidden script/runtime paths; no P1/P2 findings."
+        }
+      ],
+      "detail": [
+        {
+          "run_id": "detail-framework-20260720-a",
+          "reviewer": "clean-context-codex",
+          "recorded_at": "2026-07-21T00:11:17+08:00",
+          "artifact_digest": "c6379586a454dca838d83e507faae84f49e68d000a31243b1561b4a2f716b689",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "Detail c6379586 passes structure and exact byte audits but is not semantic clean: Overview/CH-05 reverse live CLI template ownership and admit non-live Codex skill consumers; CH-01..04 retain prohibited repository/datasource taxonomy and unowned AcceptanceEvidenceRepository; unique owners and Slice-C workflow instructions conflict. D3/D4/D6/D8 and G2/G6/G7 blocked; bootstrap taxonomy is machine-unparsed; no forbidden script/runtime changes.",
+          "finding_class": "OVERVIEW_DEFECT",
+          "deletion_audit": "none: no indexed chapter, UNIT, BHV, failure/test mapping, invariant, mirror boundary, rollback or no-script contract was deleted; repairs must preserve valid contracts"
+        },
+        {
+          "run_id": "detail-framework-20260720-b",
+          "reviewer": "clean-context-codex",
+          "recorded_at": "2026-07-21T00:11:27+08:00",
+          "artifact_digest": "c6379586a454dca838d83e507faae84f49e68d000a31243b1561b4a2f716b689",
+          "result": "findings",
+          "max_severity": "high",
+          "evidence": "Detail c6379586 fails task-local D2/D3/D4/D6/D8: Flutter repository taxonomy and unowned AcceptanceEvidenceRepository remain; RepairSkill/BreakLoopSkill write ownership conflicts; declared failure branches lack falsifiers; fixture/process route lacks a deterministic discriminator. Structural Gate cannot validate bootstrap taxonomy; no forbidden script/runtime changes.",
+          "finding_class": "DETAIL_DEFECT",
+          "deletion_audit": "none: all five chapters are additions; no BHV, acceptance outcome, invariant, failure route, owner boundary, mirror edge or no-script contract was deleted"
+        },
+        {
+          "run_id": "detail-22cf7bd4-falsifier-r1",
+          "reviewer": "clean-context-codex-falsifier-1",
+          "recorded_at": "2026-07-21T02:02:17+08:00",
+          "artifact_digest": "22cf7bd4707f664b45be5f47d360cd9a4057e60180abfa9a7902e3ab1995fafd",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Current Detail digest 22cf7bd4707f664b45be5f47d360cd9a4057e60180abfa9a7902e3ab1995fafd is clean against the task-local Framework Source-Maintenance Detail Profile and unchanged Requirements/Overview digests. CH-01..CH-05 pass D1-D9 and directory G1-G7. The five repaired known-bad branches are explicitly falsifiable: CH-02 owned-path overflow and insufficient fingerprint, CH-03 retrospective regression remaining green on legacy implementation, and CH-04 marker-without-matrix and missing runtime owner. Structural requirements/overview/detail/implement gates, strict trace, and task validation pass. Exact inventories are 177185/176644/181230/189065/114960 bytes. The live map is 11 canonical sources plus 11 disjoint consumers equals 22 Integration targets; 16 selectors resolve uniquely with canonical digest 5be03ea4d2a5bc70d96f0b645dfa87987c4edd576493cae984e847e92ba9d06a. Coordinator-only Integration containment excludes installed-supervisor implementation dispatch and requires exact consum",
+          "deletion_audit": "none: no indexed chapter, primary UNIT, BHV, acceptance outcome, failure mapping, known-bad falsifier, unique-owner boundary, invariant, mirror edge, maximum-rollback rule, compliance rule, coordinator-only Integration boundary, or no-script contract was deleted, compressed, or replaced without equivalent coverage; all five chapters remain present and complete."
+        },
+        {
+          "run_id": "detail-22cf7bd4-falsifier-r2",
+          "reviewer": "clean-context-codex-falsifier-2",
+          "recorded_at": "2026-07-21T02:03:27+08:00",
+          "artifact_digest": "22cf7bd4707f664b45be5f47d360cd9a4057e60180abfa9a7902e3ab1995fafd",
+          "result": "clean",
+          "max_severity": "low",
+          "evidence": "Second independent read-only directory_final review binds Requirements digest 19002b6e5fef10bc2763d58897db218b9229f9aede771acfef17742d4a534e8d, Overview digest 8e8073de80dd2bacabb5fdd996dd09035e0b74a7138ce69d16c49cd8534088eb, and Detail digest 22cf7bd4707f664b45be5f47d360cd9a4057e60180abfa9a7902e3ab1995fafd. CH-01..CH-05 pass D1-D9/G1-G7 under the task-local bootstrap-only framework profile. All five repaired failure branches have focused known-bad falsifiers. Inventories independently recompute to 177185/176644/181230/189065/114960 bytes. Four ordinary packets own disjoint 3+4+2+2=11 sources with empty dependencies; Integration depends on all four, covers 22 unique allowed paths, and writes exactly the 11-consumer suffix. Sixteen selectors resolve uniquely to 44444 bytes and digest 5be03ea4d2a5bc70d96f0b645dfa87987c4edd576493cae984e847e92ba9d06a. Coordinator-only containment requires current receipts/base, clean disposable worktree, empty ordinary-source diff, complete consumer-only c",
+          "deletion_audit": "none: no confirmed behavior, acceptance outcome, status meaning, failure route, known-bad falsifier, invariant, unique-owner boundary, dependency direction, source-to-consumer parity edge, Integration containment guard, rollback meaning, runtime probe, evidence-currentness rule, retrospective closure branch, archived-task limitation, or no-script contract was deleted or weakened; all five indexed chapters and confirmed PRD/Overview semantics remain present."
+        },
+        {
+          "run_id": "codex-detail-resolution-owner-20260722-eb4ada11",
+          "reviewer": "clean-context-codex-resolution-owner",
+          "recorded_at": "2026-07-22T13:57:37+08:00",
+          "artifact_digest": "eb4ada11e158cf232564b060ec53402169c11ef576aeed7509bc32a5aadd12c0",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Independent directory_final bound to Requirements 19002b6e, Overview e6985114, Detail eb4ada11. D1-D9 clean: exact non-empty snapshot byte binding; independently ledger-derived LedgerAppendRef before filtering; journal refs excluded; old-valid/empty rollback, repeated-row and cross-position fixtures fail closed; record-bound exact 0 or 0+1 chain sole closure. Gates, strict trace, budgets 217518/242387/260994/260432/126873, 16 selectors, 11+11=22 and no-script audit pass. Machine taxonomy limitation disclosed.",
+          "deletion_audit": "none: all five chapters remain; no BHV/UNIT, snapshot binding, failure route, invariant, owner boundary, packet falsifier, parity edge, record-bound/retry branch, Integration containment, rollback, runtime probe, archived-task limit, or no-script contract removed or weakened"
+        },
+        {
+          "run_id": "codex-detail-containment-20260722-eb4ada11",
+          "reviewer": "clean-context-codex-containment",
+          "recorded_at": "2026-07-22T13:57:57+08:00",
+          "artifact_digest": "eb4ada11e158cf232564b060ec53402169c11ef576aeed7509bc32a5aadd12c0",
+          "result": "clean",
+          "max_severity": "none",
+          "evidence": "Second independent directory_final bound to Requirements 19002b6e, Overview e6985114, Detail eb4ada11. D1-D9 clean: full replay fixes event_count/last position/final-line and full-file SHA-256; dual-snapshot correlation blocks non-root/older-valid/empty rollback, mismatched/cross-position/repeated-row refs and later pass; record-bound/retry and A/C/D/Integration parity closed. Structural checks, budgets, ownership, selectors and forbidden scope pass; machine taxonomy limitation disclosed.",
+          "deletion_audit": "none: restored snapshot and correlation contracts preserve every existing behavior/status/owner/failure/falsifier/invariant/parity/containment/rollback/probe/record-bound/retry/archived/no-script clause; no task-owned deletion"
+        }
+      ]
+    },
+    "detail": {
+      "confirmed_by": "devSC",
+      "confirmed_at": "2026-07-22T14:00:31+08:00",
+      "confirmation_scope": "detail_gate_only",
+      "allowed_next_action": "task_start",
+      "prompt_summary": "Detail confirmation allows task.py start only",
+      "artifact_digest": "eb4ada11e158cf232564b060ec53402169c11ef576aeed7509bc32a5aadd12c0"
+    }
+  }
+}

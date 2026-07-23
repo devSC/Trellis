@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "review_evidence_schema_version": 2,
+  "slice_id": "SL-RUNTIME-COMPLETION",
+  "owner_unit": "UNIT-runtime-completion",
+  "target_kind": "implementation",
+  "integration_slice": false,
+  "target_paths": [
+    "packages/cli/src/templates/common/commands/finish-work.md",
+    "guru-template/workflows/guru-client-workflow.md"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "finish_work_behavior",
+    "pre_archive_runtime_guard",
+    "agent_only_enforcement"
+  ],
+  "depends_on": [],
+  "requirements_design_inputs": [
+    {
+      "path": "prd.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/design-main.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/chapters/runtime-completion.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/chapters/acceptance-closure-contract.md",
+      "whole_file": true
+    },
+    {
+      "path": "research/framework-source-maintenance-detail-profile.md",
+      "whole_file": true
+    }
+  ],
+  "deterministic_checks": [
+    "for f in packages/cli/src/templates/common/commands/finish-work.md guru-template/workflows/guru-client-workflow.md; do for token in AcceptanceResolution baseline_binding ledger_snapshot_ref reconciliation_snapshot_ref open_correction_debts open_retrospective_reconciliations row_results selected_evidence_refs blocking_evidence_refs task_result blocking_acceptance_ids next_probe; do rg -n -F \"$token\" \"$f\" >/dev/null || exit 1; done; done",
+    "for f in packages/cli/src/templates/common/commands/finish-work.md guru-template/workflows/guru-client-workflow.md; do for token in ClosureSpec ClosureSpec-only LedgerSnapshotRef LedgerAppendRef deriveLedgerAppendRef RetrospectiveReconciliationSnapshot retrospective-reconciliation.jsonl event_count last_event_position last_event_digest previous_event_digest accepted_append_ref record_ref record-bound closes_attempt_ids reconciliation_register_unavailable reconciliation_register_corrupt artifact_ref append_count last_append_position content_digest readAllInAppendOrder allow/block 'append acknowledgment' journal-root-v1 retrospective-ledger-journal-correlation SHA-256 position=1 previous_event_digest=null; do rg -n -F \"$token\" \"$f\" >/dev/null || exit 1; done; done",
+    "! rg -n \"read the complete ledger in append order|按 append order 读取完整 ledger|For each required .*identify the newest append|对每个 required .*newest append|按 failure.*stale.*missing.*pending\" packages/cli/src/templates/common/commands/finish-work.md guru-template/workflows/guru-client-workflow.md",
+    "git diff --check -- packages/cli/src/templates/common/commands/finish-work.md guru-template/workflows/guru-client-workflow.md"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "codex",
+    "ocr": "disabled"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "packages/cli/src/templates/markdown/spec/guides/cross-layer-thinking-guide.md.txt",
+      "packages/cli/src/templates/common/skills/check.md",
+      "guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md",
+      "packages/cli/src/templates/codex/agents/trellis-implement.toml",
+      "packages/cli/src/templates/codex/agents/trellis-check.toml",
+      "guru-template/overlay/agents-skills/flutter-implementation-guru-writing/SKILL.md",
+      "guru-template/overlay/agents-skills/flutter-implementation-guru-review/SKILL.md",
+      "guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md",
+      "packages/cli/src/templates/common/skills/break-loop.md"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-FIN-001",
+      "rule": "Finish passes TaskRef and consumes CH-01's exact result. ClosureSpec discovers/strict-replays the exact journal; missing/corrupt or any record_ref-null entry, including accepted/committed append ref, blocks/nulls probe. Only acknowledged record-bound append+record refs closes; stale snapshots/blockers/non-accepted block archive.",
+      "source": "design-package/chapters/runtime-completion.md",
+      "owner": "UNIT-runtime-completion",
+      "positive_case": "ClosureSpec resolves complete ledger/register snapshots with both blocker sets empty and accepted; Finish owns only allow/block.",
+      "negative_case": "After accepted pending row, journal rolls to older valid prefix/empty or supplies cross-position/repeated-row ref; fresh Finish sees later pass but must block/null probe.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "focused contract search",
+        "Integration runtime-completion scenario",
+        "blocked-before and exact-position-corrected-after termination scenario",
+        "readable-invalid persistent-debt and newest-effective-row scenario",
+        "unfiltered unreadable-append visibility scenario",
+        "cross-ID and baseline-relabel correction rejection scenario",
+        "append-after-accepted-resolution stale-guard scenario",
+        "field-losing private-resolution rejection scenario",
+        "committed-but-unacknowledged retrospective Finish-bypass scenario",
+        "fresh-session exact-path discovery and missing/corrupt journal scenario",
+        "append-ack before record-bound crash with later-pass scenario",
+        "older-valid/empty rollback plus cross-position/repeated-row correlation fixture"
+      ]
+    },
+    {
+      "invariant_id": "INV-FIN-002",
+      "rule": "Technical green, COMMIT_READY, or implementation_verified must not be reported as accepted.",
+      "source": "design-package/chapters/runtime-completion.md",
+      "owner": "UNIT-runtime-completion",
+      "positive_case": "Technical closure reports implementation_verified and hands off exact runtime probes.",
+      "negative_case": "A clean implementation review immediately produces accepted.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "focused contract search",
+        "Integration false-completion scenario"
+      ]
+    },
+    {
+      "invariant_id": "INV-FIN-006",
+      "rule": "The Skill and workflow must not claim that unchanged lifecycle scripts provide a fail-closed runtime guard.",
+      "source": "design-package/chapters/runtime-completion.md",
+      "owner": "UNIT-runtime-completion",
+      "positive_case": "The contract explicitly states that it blocks the agent-owned finish-work path only.",
+      "negative_case": "The documentation promises direct task.py or archive invocation is prevented.",
+      "route_if_missing": "REQ_BLOCKER",
+      "test_evidence": [
+        "focused contract search",
+        "Integration no-script wording review"
+      ]
+    }
+  ]
+}

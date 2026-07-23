@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "review_evidence_schema_version": 2,
+  "slice_id": "SL-ACCEPTANCE-CLOSURE",
+  "owner_unit": "UNIT-acceptance-closure-contract",
+  "target_kind": "implementation",
+  "integration_slice": false,
+  "target_paths": [
+    "packages/cli/src/templates/markdown/spec/guides/cross-layer-thinking-guide.md.txt",
+    "packages/cli/src/templates/common/skills/check.md",
+    "guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "acceptance_completion_semantics",
+    "cross_layer_closure",
+    "mutable_runtime_evidence"
+  ],
+  "depends_on": [],
+  "requirements_design_inputs": [
+    {
+      "path": "prd.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/design-main.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/chapters/acceptance-closure-contract.md",
+      "whole_file": true
+    },
+    {
+      "path": "research/framework-source-maintenance-detail-profile.md",
+      "whole_file": true
+    }
+  ],
+  "deterministic_checks": [
+    "for f in packages/cli/src/templates/markdown/spec/guides/cross-layer-thinking-guide.md.txt packages/cli/src/templates/common/skills/check.md guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md; do for token in AcceptanceResolution baseline_binding ledger_snapshot_ref reconciliation_snapshot_ref open_correction_debts open_retrospective_reconciliations row_results selected_evidence_refs blocking_evidence_refs task_result blocking_acceptance_ids next_probe; do rg -n -F \"$token\" \"$f\" >/dev/null || exit 1; done; done",
+    "for f in packages/cli/src/templates/markdown/spec/guides/cross-layer-thinking-guide.md.txt packages/cli/src/templates/common/skills/check.md guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md; do for token in ClosureSpec ClosureSpec-only LedgerSnapshotRef artifact_ref append_count last_append_position content_digest readAllInAppendOrder corrects_append_position; do rg -n -F \"$token\" \"$f\" >/dev/null || exit 1; done; done",
+    "for f in packages/cli/src/templates/markdown/spec/guides/cross-layer-thinking-guide.md.txt packages/cli/src/templates/common/skills/check.md guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md; do for token in retrospective_artifact_ref runtime_acceptance_pending accepted_append_ref record_ref record-bound closes_attempt_ids LedgerAppendResult LedgerAppendRef deriveLedgerAppendRef RetrospectiveAppendAttempt ReconciliationJournalEvent RetrospectiveReconciliationSnapshot RetrospectiveAppendReconciliation retrospective-reconciliation.jsonl event_position previous_event_digest event_count last_event_position last_event_digest pre_append_ledger_snapshot_ref retry_ordinal reconciliation_register_unavailable reconciliation_register_corrupt retrospective_append_outcome_unknown committed absent ambiguous journal-root-v1 retrospective-ledger-journal-correlation SHA-256 position=1 previous_event_digest=null; do rg -n -F \"$token\" \"$f\" >/dev/null || exit 1; done; done",
+    "! rg -n \"latest valid evidence|先过滤.*stale.*再取最新有效行|fall back to older evidence\" packages/cli/src/templates/markdown/spec/guides/cross-layer-thinking-guide.md.txt packages/cli/src/templates/common/skills/check.md guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md",
+    "git diff --check -- packages/cli/src/templates/markdown/spec/guides/cross-layer-thinking-guide.md.txt packages/cli/src/templates/common/skills/check.md guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "codex",
+    "ocr": "disabled"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "packages/cli/src/templates/codex/agents/trellis-implement.toml",
+      "packages/cli/src/templates/codex/agents/trellis-check.toml",
+      "guru-template/overlay/agents-skills/flutter-implementation-guru-writing/SKILL.md",
+      "guru-template/overlay/agents-skills/flutter-implementation-guru-review/SKILL.md",
+      "guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md",
+      "packages/cli/src/templates/common/skills/break-loop.md",
+      "packages/cli/src/templates/common/commands/finish-work.md",
+      "guru-template/workflows/guru-client-workflow.md"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-ACC-001",
+      "rule": "A runtime-required Full task must read the complete raw ledger before acceptance-ID/status filtering, replay append order, and open persistent correction debt for every identity-unreadable append and every readable current-baseline append whose status or required evidence is invalid. Only the newest later complete row whose corrects_append_position names that exact debt and preserves every parseable target identity/baseline component may close it; normal, cross-ID, stale-relabel, or invalid evidence cannot. After all debts close, the task selects each required acceptance_id's newest effective current-baseline append by position before validation and never falls back.",
+      "source": "design-package/chapters/acceptance-closure-contract.md",
+      "owner": "UNIT-acceptance-closure-contract",
+      "positive_case": "An unfiltered full-ledger read retains unreadable and readable-invalid appends as debts; each newest exact-pointer correction is complete and matches all parseable target identity/baseline components; after all debts close, every required acceptance_id's exact newest effective current-baseline append validates as runtime_acceptance_pass.",
+      "negative_case": "An older ACC-A pass is followed by an unreadable/raw or readable-invalid current append and then a normal pass, wrong pointer, invalid newest correction, ACC-B correction, or stale/different-baseline correction; filtering or relabeling clears debt and exposes the old pass instead of remaining blocked.",
+      "route_if_missing": "DETAIL_DEFECT",
+      "test_evidence": [
+        "focused contract search",
+        "Integration runtime-completion scenario",
+        "older-pass plus invalid-newest-append anti-fallback scenario",
+        "blocked-before and exact-position-corrected-after termination scenario",
+        "unfiltered unreadable-append visibility scenario",
+        "cross-ID and baseline-relabel correction rejection scenario"
+      ]
+    },
+    {
+      "invariant_id": "INV-ACC-005",
+      "rule": "A local layer check must not replace a falsifiable source-to-sink Integration or target-runtime outcome.",
+      "source": "design-package/chapters/acceptance-closure-contract.md",
+      "owner": "UNIT-acceptance-closure-contract",
+      "positive_case": "The known-bad detail.userRole DTO fixture fails along the full API-to-UI path.",
+      "negative_case": "A helper unit test passes while the controller remains loading.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "focused contract search",
+        "Integration Character Chat scenario"
+      ]
+    },
+    {
+      "invariant_id": "INV-ACC-008",
+      "rule": "ClosureSpec alone produces one exact AcceptanceResolution containing baseline_binding, ledger_snapshot_ref, reconciliation_snapshot_ref, both open blocker sets, rows, refs, task result, blocking IDs, and next_probe from complete unfiltered ledger/register snapshots. Any append, register update, or baseline change requires full recomputation.",
+      "source": "design-package/chapters/acceptance-closure-contract.md",
+      "owner": "UNIT-acceptance-closure-contract",
+      "positive_case": "The result binds exact ledger/register snapshot refs and complete fields; an append or register transition forces a new result.",
+      "negative_case": "A consumer reuses an older result or projects away reconciliation so an unacknowledged retrospective/later pass bypasses the blocker.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "focused canonical-resolution contract search",
+        "snapshot-ref mismatch scenario",
+        "append-after-resolution stale-consumer scenario"
+      ]
+    },
+    {
+      "invariant_id": "INV-ACC-007",
+      "rule": "ClosureSpec TaskRef-locates the exact journal and acknowledges prepared before append. Append ref alone stays open. Repair builds record/ref; acknowledged record-bound includes both refs and exact closes_attempt_ids (ordinal-0 or 0+1), binding every chain entry. Missing/extra/cross-chain IDs or missing/corrupt journal blocks; one retry maximum.",
+      "source": "design-package/chapters/acceptance-closure-contract.md",
+      "owner": "UNIT-acceptance-closure-contract",
+      "positive_case": "Prepared is acknowledged before append; accepted or unique suffix match yields append ref, Repair builds record/ref, and acknowledged record-bound with both refs closes before fresh resolution.",
+      "negative_case": "After accepted pending row, journal rolls to older valid prefix/empty, reuses a repeated-row chain or cross-position ref, then later pass; Finish must block/null probe.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "focused contract search",
+        "Integration retrospective scenario",
+        "pre-existing-identical-row and committed-unacknowledged Finish-bypass scenarios",
+        "bounded ordinal-0/ordinal-1 retry scenario",
+        "fresh-session exact-path discovery and missing/corrupt journal scenario",
+        "append-ack before record-bound crash with later-pass scenario",
+        "ordinal-1 exact 0+1 retry-chain closure scenario",
+        "older-valid/empty rollback plus cross-position/repeated-row correlation fixture"
+      ]
+    }
+  ]
+}

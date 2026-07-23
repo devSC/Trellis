@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "review_evidence_schema_version": 2,
+  "slice_id": "SL-IMPLEMENT-REVIEW",
+  "owner_unit": "UNIT-implementation-review-closure",
+  "target_kind": "implementation",
+  "integration_slice": false,
+  "target_paths": [
+    "packages/cli/src/templates/codex/agents/trellis-implement.toml",
+    "packages/cli/src/templates/codex/agents/trellis-check.toml",
+    "guru-template/overlay/agents-skills/flutter-implementation-guru-writing/SKILL.md",
+    "guru-template/overlay/agents-skills/flutter-implementation-guru-review/SKILL.md"
+  ],
+  "risk": "high",
+  "risk_reasons": [
+    "writer_prevention_contract",
+    "semantic_review_boundary",
+    "wrong_ssot_routing"
+  ],
+  "depends_on": [],
+  "requirements_design_inputs": [
+    {
+      "path": "prd.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/design-main.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/chapters/implementation-review-closure.md",
+      "whole_file": true
+    },
+    {
+      "path": "design-package/chapters/acceptance-closure-contract.md",
+      "whole_file": true
+    },
+    {
+      "path": "research/framework-source-maintenance-detail-profile.md",
+      "whole_file": true
+    }
+  ],
+  "deterministic_checks": [
+    "for f in packages/cli/src/templates/codex/agents/trellis-implement.toml packages/cli/src/templates/codex/agents/trellis-check.toml guru-template/overlay/agents-skills/flutter-implementation-guru-writing/SKILL.md guru-template/overlay/agents-skills/flutter-implementation-guru-review/SKILL.md; do for token in AcceptanceResolution baseline_binding ledger_snapshot_ref reconciliation_snapshot_ref open_correction_debts open_retrospective_reconciliations row_results selected_evidence_refs blocking_evidence_refs task_result blocking_acceptance_ids next_probe; do rg -n -F \"$token\" \"$f\" >/dev/null || exit 1; done; done",
+    "for f in packages/cli/src/templates/codex/agents/trellis-implement.toml packages/cli/src/templates/codex/agents/trellis-check.toml guru-template/overlay/agents-skills/flutter-implementation-guru-writing/SKILL.md guru-template/overlay/agents-skills/flutter-implementation-guru-review/SKILL.md; do for token in ClosureSpec ClosureSpec-only readAllInAppendOrder REQ_BLOCKER OVERVIEW_DEFECT DETAIL_DEFECT PROCESS_DEFECT IMPLEMENT_DEFECT; do rg -n -F \"$token\" \"$f\" >/dev/null || exit 1; done; done",
+    "! rg -n \"read the complete ledger|按 append order 读取完整 ledger|direct[- ]read.*ledger|直接读取.*ledger|select.*ledger rows|选择.*ledger row\" packages/cli/src/templates/codex/agents/trellis-implement.toml packages/cli/src/templates/codex/agents/trellis-check.toml guru-template/overlay/agents-skills/flutter-implementation-guru-writing/SKILL.md guru-template/overlay/agents-skills/flutter-implementation-guru-review/SKILL.md",
+    "git diff --check -- packages/cli/src/templates/codex/agents/trellis-implement.toml packages/cli/src/templates/codex/agents/trellis-check.toml guru-template/overlay/agents-skills/flutter-implementation-guru-writing/SKILL.md guru-template/overlay/agents-skills/flutter-implementation-guru-review/SKILL.md"
+  ],
+  "semantic_review_provider": {
+    "required": true,
+    "provider": "codex",
+    "ocr": "disabled"
+  },
+  "dirty_state": {
+    "unrelated": [
+      "packages/cli/src/templates/markdown/spec/guides/cross-layer-thinking-guide.md.txt",
+      "packages/cli/src/templates/common/skills/check.md",
+      "guru-template/specs/guru-flutter-client/harness/implementation/implementation-trace-contract.md",
+      "guru-template/overlay/agents-skills/guru-bug-fast-path/SKILL.md",
+      "packages/cli/src/templates/common/skills/break-loop.md",
+      "packages/cli/src/templates/common/commands/finish-work.md",
+      "guru-template/workflows/guru-client-workflow.md"
+    ]
+  },
+  "invariants": [
+    {
+      "invariant_id": "INV-REV-001",
+      "rule": "Implementation review must not use changed-layer count to skip a declared acceptance path.",
+      "source": "design-package/chapters/implementation-review-closure.md",
+      "owner": "UNIT-implementation-review-closure",
+      "positive_case": "A DTO-only diff is reviewed through the final UI state and Integration evidence.",
+      "negative_case": "The reviewer stops after the DTO unit test because no UI file changed.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "focused contract search",
+        "Integration Character Chat scenario"
+      ]
+    },
+    {
+      "invariant_id": "INV-REV-002",
+      "rule": "Writer and reviewer must not accept a check that remains green on the known-bad implementation.",
+      "source": "design-package/chapters/implementation-review-closure.md",
+      "owner": "UNIT-implementation-review-closure",
+      "positive_case": "The legacy field-loss fixture fails before the repair and passes after it.",
+      "negative_case": "Only a post-fix helper happy path is asserted.",
+      "route_if_missing": "DETAIL_DEFECT",
+      "test_evidence": [
+        "focused contract search",
+        "Integration falsifiability scenario"
+      ]
+    },
+    {
+      "invariant_id": "INV-REV-004",
+      "rule": "The semantic reviewer must not rewrite Requirements, Overview, or Detail when runtime evidence contradicts them.",
+      "source": "design-package/chapters/implementation-review-closure.md",
+      "owner": "UNIT-implementation-review-closure",
+      "positive_case": "The reviewer returns the earliest owning defect class and bounded repair route.",
+      "negative_case": "The reviewer edits the product outcome to match the current implementation.",
+      "route_if_missing": "REQ_BLOCKER",
+      "test_evidence": [
+        "focused contract search",
+        "Integration five-class routing scenario"
+      ]
+    },
+    {
+      "invariant_id": "INV-REV-008",
+      "rule": "Writer, reviewer, and Integration consume CH-01's exact dual-snapshot AcceptanceResolution without private projection and produce no current receipt when missing/stale after append/register/baseline change, field-incomplete, snapshot-mismatched, or either blocker set is open.",
+      "source": "design-package/chapters/implementation-review-closure.md",
+      "owner": "UNIT-implementation-review-closure",
+      "positive_case": "The current result carries baseline, both snapshot refs and blocker sets, rows/refs/task/IDs/probe; both blockers are empty and every consumer uses it unchanged.",
+      "negative_case": "An identity-unreadable global debt or append after resolution is hidden by an acceptance-ID-filtered read, old ledger prefix, or private projection, and a later pass causes writer or reviewer to report green.",
+      "route_if_missing": "PROCESS_DEFECT",
+      "test_evidence": [
+        "focused resolution-consumption contract search",
+        "unreadable-debt plus later-pass writer/reviewer false-green scenario",
+        "Integration stale-resolution and open-debt scenario",
+        "append-after-resolution and private-projection scenario"
+      ]
+    },
+    {
+      "invariant_id": "INV-REV-005",
+      "rule": "Ordinary slice receipts must not replace final Integration or runtime acceptance.",
+      "source": "design-package/chapters/implementation-review-closure.md",
+      "owner": "UNIT-implementation-review-closure",
+      "positive_case": "Integration closes the final union snapshot and hands off required runtime probes.",
+      "negative_case": "Four ordinary green receipts are reported as accepted.",
+      "route_if_missing": "IMPLEMENT_DEFECT",
+      "test_evidence": [
+        "focused contract search",
+        "Integration acceptance scenario"
+      ]
+    }
+  ]
+}
